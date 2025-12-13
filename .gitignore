@@ -1,0 +1,17 @@
+# Runtime directories (created during execution)
+logs/
+state/
+reports/
+backups/
+templates/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
