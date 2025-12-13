@@ -4,12 +4,14 @@ VPS 安全检查与加固脚本，为个人与小型运维场景设计的安全�
 
 ## 特性
 
-- **安全审计模式 (audit)**: 只读安全检查，生成 Markdown + JSON 报告
+- **安全审计模式 (audit)**: 只读安全检查，生成 Markdown + JSON + SARIF 报告
 - **交互式加固 (guide)**: 基于审计结果进行模块选择、修复和执行
 - **可回滚**: 所有被修改的文件均有时间戳快照，支持回滚
 - **幂等性**: 重复执行不会引起额外副作用
 - **多语言**: 支持中文 (zh_CN) 和英文 (en_US)
 - **TUI 界面**: 支持 whiptail/dialog，无 TTY 时自动降级为文本模式
+- **CI/CD 集成**: SARIF 格式输出，可集成到 GitHub Security 等平台
+- **告警通知**: 支持 Webhook (Slack/Discord/Telegram) 和邮件告警
 
 ## 系统要求
 
@@ -19,10 +21,19 @@ VPS 安全检查与加固脚本，为个人与小型运维场景设计的安全�
 
 ## 安装
 
+### 一键安装
+
+```bash
+# 使用安装脚本
+curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/install.sh | sudo bash
+```
+
+### 手动安装
+
 ```bash
 # 克隆仓库
-git clone https://github.com/your-repo/vpssec.git
-cd vpssec
+git clone https://github.com/Lynthar/server-audit.git
+cd server-audit
 
 # 添加执行权限
 chmod +x vpssec
@@ -80,15 +91,26 @@ sudo ./vpssec rollback 20241213_120000
 
 ## 检查模块
 
-| 模块 | 说明 | 默认启用 |
-|------|------|----------|
-| preflight | 环境预检、网络状态、依赖检查 | ✓ |
-| ssh | SSH 加固（密码登录、root 登录、公钥认证） | ✓ |
-| ufw | UFW 防火墙配置 | ✓ |
-| update | 系统更新、自动安全更新 | ✓ |
-| docker | Docker 容器安全检查 | ✓ |
-| nginx | Nginx 兜底配置 | ✓ |
-| baseline | 基线加固（AppArmor、未用服务） | ✓ |
+### 核心模块（默认启用）
+
+| 模块 | 说明 |
+|------|------|
+| preflight | 环境预检、网络状态、依赖检查 |
+| ssh | SSH 加固（密码登录、root 登录、公钥认证） |
+| ufw | UFW 防火墙配置 |
+| update | 系统更新、自动安全更新 |
+| docker | Docker 容器安全检查、daemon 配置 |
+| nginx | Nginx 兜底配置 |
+| baseline | 基线加固（AppArmor、未用服务） |
+| logging | 日志持久化、审计系统 |
+
+### 可选模块
+
+| 模块 | 说明 |
+|------|------|
+| cloudflared | Cloudflare Tunnel 配置检查 |
+| backup | 备份配置模板生成 (restic/borg) |
+| alerts | 告警通知配置 (Webhook/邮件) |
 
 ## 命令行选项
 
