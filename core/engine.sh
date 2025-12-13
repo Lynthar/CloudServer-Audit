@@ -16,6 +16,10 @@ declare -a VPSSEC_MODULE_ORDER=(
     "docker"
     "nginx"
     "baseline"
+    "logging"
+    "cloudflared"
+    "backup"
+    "alerts"
 )
 
 # Module metadata
@@ -54,6 +58,21 @@ module_available() {
             ;;
         nginx)
             check_command nginx || return 1
+            ;;
+        cloudflared)
+            check_command cloudflared || return 1
+            ;;
+        logging)
+            # Always available - uses standard tools
+            return 0
+            ;;
+        backup)
+            # Always available - generates templates
+            return 0
+            ;;
+        alerts)
+            # Always available - generates config
+            return 0
             ;;
     esac
 

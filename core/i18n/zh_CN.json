@@ -160,6 +160,33 @@
     "apparmor_enabled": "AppArmor 已启用",
     "unused_services": "发现 {count} 个可禁用的服务"
   },
+  "logging": {
+    "title": "日志与审计",
+    "desc": "检查系统日志和审计配置",
+    "check_journald": "检查 journald 持久化",
+    "check_logrotate": "检查日志轮转",
+    "check_auditd": "检查审计守护进程",
+    "journald_persistent": "journald 已启用持久化存储",
+    "journald_volatile": "journald 使用临时存储 (重启后丢失)",
+    "logrotate_ok": "日志轮转配置正常",
+    "auditd_configured": "审计守护进程已配置"
+  },
+  "cloudflared": {
+    "title": "Cloudflare 隧道",
+    "desc": "检查 Cloudflared 隧道配置",
+    "not_installed": "Cloudflared 未安装",
+    "service_active": "Cloudflared 服务运行中",
+    "service_inactive": "Cloudflared 服务未运行",
+    "tunnels_configured": "已配置 {count} 个隧道"
+  },
+  "alerts": {
+    "title": "告警通知",
+    "desc": "配置安全告警和通知",
+    "configured": "告警通知已配置",
+    "not_configured": "告警通知未配置",
+    "webhook": "Webhook",
+    "email": "邮件"
+  },
   "report": {
     "title": "安全检查报告",
     "summary": "检查摘要",

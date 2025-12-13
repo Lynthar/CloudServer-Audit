@@ -160,6 +160,33 @@
     "apparmor_enabled": "AppArmor is enabled",
     "unused_services": "Found {count} services that can be disabled"
   },
+  "logging": {
+    "title": "Logging & Audit",
+    "desc": "Check system logging and audit configuration",
+    "check_journald": "Check journald persistence",
+    "check_logrotate": "Check log rotation",
+    "check_auditd": "Check audit daemon",
+    "journald_persistent": "Journald persistent storage enabled",
+    "journald_volatile": "Journald using volatile storage (lost on reboot)",
+    "logrotate_ok": "Log rotation properly configured",
+    "auditd_configured": "Audit daemon configured"
+  },
+  "cloudflared": {
+    "title": "Cloudflare Tunnel",
+    "desc": "Check Cloudflared tunnel configuration",
+    "not_installed": "Cloudflared not installed",
+    "service_active": "Cloudflared service active",
+    "service_inactive": "Cloudflared service not running",
+    "tunnels_configured": "{count} tunnel(s) configured"
+  },
+  "alerts": {
+    "title": "Alert Notifications",
+    "desc": "Configure security alerts and notifications",
+    "configured": "Alert notifications configured",
+    "not_configured": "Alert notifications not configured",
+    "webhook": "Webhook",
+    "email": "Email"
+  },
   "report": {
     "title": "Security Check Report",
     "summary": "Check Summary",

@@ -245,12 +245,143 @@ report_print_summary() {
     print_msg ""
 }
 
+# Generate SARIF report (for CI/CD integration)
+report_generate_sarif() {
+    local output_file="${1:-${VPSSEC_REPORTS}/summary.sarif}"
+    local checks=$(state_get_checks)
+
+    local os=$(detect_os)
+    local os_version=$(detect_os_version)
+    local hostname=$(hostname)
+
+    # Build results array
+    local results="[]"
+    while read -r check; do
+        local id=$(echo "$check" | jq -r '.id')
+        local severity=$(echo "$check" | jq -r '.severity')
+        local status=$(echo "$check" | jq -r '.status')
+        local title=$(echo "$check" | jq -r '.title')
+        local desc=$(echo "$check" | jq -r '.desc // ""')
+        local suggestion=$(echo "$check" | jq -r '.suggestion // ""')
+        local module=$(echo "$check" | jq -r '.module')
+
+        # Map severity to SARIF level
+        local level
+        case "$severity" in
+            high)   level="error" ;;
+            medium) level="warning" ;;
+            low)    level="note" ;;
+            *)      level="none" ;;
+        esac
+
+        # Only include failed checks
+        if [[ "$status" == "failed" ]]; then
+            local result=$(cat <<EOF
+{
+  "ruleId": "$id",
+  "level": "$level",
+  "message": {
+    "text": "$title. $desc"
+  },
+  "locations": [{
+    "physicalLocation": {
+      "artifactLocation": {
+        "uri": "$hostname",
+        "uriBaseId": "ROOTPATH"
+      }
+    },
+    "logicalLocations": [{
+      "name": "$module",
+      "kind": "module"
+    }]
+  }],
+  "fixes": [{
+    "description": {
+      "text": "$suggestion"
+    }
+  }]
+}
+EOF
+)
+            results=$(echo "$results" | jq --argjson r "$result" '. += [$r]')
+        fi
+    done < <(echo "$checks" | jq -c '.[]')
+
+    # Build rules array
+    local rules="[]"
+    while read -r check; do
+        local id=$(echo "$check" | jq -r '.id')
+        local severity=$(echo "$check" | jq -r '.severity')
+        local title=$(echo "$check" | jq -r '.title')
+        local desc=$(echo "$check" | jq -r '.desc // ""')
+
+        local level
+        case "$severity" in
+            high)   level="error" ;;
+            medium) level="warning" ;;
+            low)    level="note" ;;
+            *)      level="none" ;;
+        esac
+
+        local rule=$(cat <<EOF
+{
+  "id": "$id",
+  "name": "$title",
+  "shortDescription": {
+    "text": "$title"
+  },
+  "fullDescription": {
+    "text": "$desc"
+  },
+  "defaultConfiguration": {
+    "level": "$level"
+  },
+  "properties": {
+    "security-severity": "$(case $severity in high) echo "8.0";; medium) echo "5.0";; low) echo "2.0";; *) echo "0.0";; esac)"
+  }
+}
+EOF
+)
+        # Check if rule already exists
+        if ! echo "$rules" | jq -e --arg id "$id" '.[] | select(.id == $id)' &>/dev/null; then
+            rules=$(echo "$rules" | jq --argjson r "$rule" '. += [$r]')
+        fi
+    done < <(echo "$checks" | jq -c '.[]')
+
+    # Generate full SARIF document
+    cat > "$output_file" <<EOF
+{
+  "\$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {
+      "driver": {
+        "name": "vpssec",
+        "version": "${VPSSEC_VERSION}",
+        "informationUri": "https://github.com/vpssec/vpssec",
+        "rules": ${rules}
+      }
+    },
+    "results": ${results},
+    "invocations": [{
+      "executionSuccessful": true,
+      "endTimeUtc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    }]
+  }]
+}
+EOF
+
+    log_info "SARIF report generated: $output_file"
+    echo "$output_file"
+}
+
 # Generate all reports
 report_generate_all() {
     mkdir -p "${VPSSEC_REPORTS}"
 
     report_generate_json
     report_generate_markdown
+    report_generate_sarif
 
     if [[ "${VPSSEC_JSON_ONLY}" != "1" ]]; then
         report_print_summary
