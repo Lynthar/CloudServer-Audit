@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# vpssec - VPS Security Check & Hardening Tool
+#
+# A security audit and hardening tool for VPS environments
+# Supports Debian 12/13 and Ubuntu 22.04/24.04
+#
+# Usage:
+#   vpssec audit [options]    - Read-only security check
+#   vpssec guide [options]    - Interactive hardening wizard
+#   vpssec rollback [backup]  - Rollback previous changes
+#   vpssec status             - Show current status
+#
+# Copyright (c) 2024
+# ==============================================================================
+
+set -euo pipefail
+
+# Get script directory
+VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ==============================================================================
+# Source Core Modules
+# ==============================================================================
+
+source "${VPSSEC_ROOT}/core/common.sh"
+source "${VPSSEC_ROOT}/core/state.sh"
+source "${VPSSEC_ROOT}/core/report.sh"
+source "${VPSSEC_ROOT}/core/ui_tui.sh"
+source "${VPSSEC_ROOT}/core/ui_text.sh"
+source "${VPSSEC_ROOT}/core/engine.sh"
+
+# ==============================================================================
+# CLI Argument Parsing
+# ==============================================================================
+
+show_help() {
+    cat <<EOF
+$(i18n 'cli.usage')
+
+$(i18n 'cli.commands')
+  $(i18n 'cli.cmd_audit')
+  $(i18n 'cli.cmd_guide')
+  $(i18n 'cli.cmd_rollback')
+  $(i18n 'cli.cmd_status')
+
+$(i18n 'cli.options')
+  $(i18n 'cli.opt_lang')
+  $(i18n 'cli.opt_no_color')
+  $(i18n 'cli.opt_json_only')
+  $(i18n 'cli.opt_yes')
+  $(i18n 'cli.opt_include')
+  $(i18n 'cli.opt_exclude')
+  $(i18n 'cli.opt_help')
+  $(i18n 'cli.opt_version')
+
+Examples:
+  vpssec audit                     # Run security audit
+  vpssec audit --json-only         # Output JSON only
+  vpssec guide                     # Interactive hardening
+  vpssec guide --include=ssh,ufw   # Only SSH and UFW modules
+  vpssec rollback                  # Rollback last changes
+
+EOF
+}
+
+show_version() {
+    echo "vpssec version ${VPSSEC_VERSION}"
+}
+
+parse_args() {
+    local command=""
+    local include=""
+    local exclude=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            audit|guide|rollback|status)
+                command="$1"
+                shift
+                ;;
+            --lang=*)
+                VPSSEC_LANG="${1#*=}"
+                shift
+                ;;
+            --no-color)
+                VPSSEC_COLOR=0
+                # Reset color variables
+                RED='' GREEN='' YELLOW='' BLUE='' MAGENTA='' CYAN='' WHITE='' BOLD='' DIM='' NC=''
+                shift
+                ;;
+            --json-only)
+                VPSSEC_JSON_ONLY=1
+                shift
+                ;;
+            --yes|-y)
+                VPSSEC_YES=1
+                shift
+                ;;
+            --include=*)
+                include="${1#*=}"
+                shift
+                ;;
+            --exclude=*)
+                exclude="${1#*=}"
+                shift
+                ;;
+            --debug)
+                VPSSEC_DEBUG=1
+                shift
+                ;;
+            --help|-h)
+                # Need to init i18n first for help
+                vpssec_init
+                show_help
+                exit 0
+                ;;
+            --version|-v)
+                show_version
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Default to audit if no command specified
+    command="${command:-audit}"
+
+    # Export for use in other functions
+    export VPSSEC_INCLUDE="$include"
+    export VPSSEC_EXCLUDE="$exclude"
+
+    echo "$command"
+}
+
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
+
+main() {
+    # Parse command line arguments
+    local command=$(parse_args "$@")
+
+    # Initialize vpssec
+    vpssec_init
+
+    # Check for root (required for most operations)
+    if [[ "$command" != "status" ]] && ! check_root; then
+        print_error "$(i18n 'error.root_required')"
+        echo "Please run with: sudo vpssec $command"
+        exit 1
+    fi
+
+    # Check OS support
+    if ! is_supported_os; then
+        local os=$(detect_os)
+        local version=$(detect_os_version)
+        print_warn "$(i18n 'error.unsupported_os' "os=${os} ${version}")"
+        print_msg "Supported: Debian 12/13, Ubuntu 22.04/24.04"
+        print_msg ""
+
+        if [[ "$command" != "status" ]] && ! confirm "Continue anyway?" "n"; then
+            exit 1
+        fi
+    fi
+
+    # Check required dependencies
+    local missing_deps=$(check_required_deps 2>&1) || true
+    if [[ -n "$missing_deps" ]]; then
+        print_error "$(i18n 'preflight.dep_missing' "dep=$missing_deps")"
+        echo "Install with: apt install $missing_deps"
+        exit 1
+    fi
+
+    # Detect TUI backend
+    tui_detect_backend || true
+
+    # Load modules
+    module_load_all "${VPSSEC_INCLUDE:-}" "${VPSSEC_EXCLUDE:-}"
+
+    # Execute command
+    case "$command" in
+        audit)
+            print_header "vpssec - VPS Security Audit"
+            print_msg "Version: ${VPSSEC_VERSION}"
+            print_msg "Date: $(date '+%Y-%m-%d %H:%M:%S')"
+            print_msg "OS: $(detect_os) $(detect_os_version)"
+            audit_all
+            ;;
+        guide)
+            guide_mode
+            ;;
+        rollback)
+            rollback_mode "${2:-}"
+            ;;
+        status)
+            status_mode
+            ;;
+        *)
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# Run main function
+main "$@"
