@@ -86,19 +86,21 @@ log_init() {
 }
 
 log_debug() {
-    [[ "${VPSSEC_DEBUG}" == "1" ]] && echo "[DEBUG] $(date -Iseconds) $*" >> "${_log_file}"
+    if [[ "${VPSSEC_DEBUG:-0}" == "1" ]]; then
+        echo "[DEBUG] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
+    fi
 }
 
 log_info() {
-    echo "[INFO] $(date -Iseconds) $*" >> "${_log_file}"
+    echo "[INFO] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
 }
 
 log_warn() {
-    echo "[WARN] $(date -Iseconds) $*" >> "${_log_file}"
+    echo "[WARN] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
 }
 
 log_error() {
-    echo "[ERROR] $(date -Iseconds) $*" >> "${_log_file}"
+    echo "[ERROR] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
 }
 
 # ==============================================================================

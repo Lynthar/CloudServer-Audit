@@ -142,6 +142,22 @@ parse_args() {
 # ==============================================================================
 
 main() {
+    # Handle --version and --help before parse_args (which runs in subshell)
+    for arg in "$@"; do
+        case "$arg" in
+            --version|-v)
+                show_version
+                exit 0
+                ;;
+            --help|-h)
+                # Only load i18n for help, skip full init (which requires root)
+                i18n_load "${VPSSEC_LANG}"
+                show_help
+                exit 0
+                ;;
+        esac
+    done
+
     # Parse command line arguments
     local command=$(parse_args "$@")
 
