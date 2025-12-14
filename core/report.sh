@@ -234,20 +234,6 @@ report_print_summary() {
     done
 
     print_msg ""
-    print_msg "───────────────────────────────"
-
-    # Report file locations
-    local json_report="${VPSSEC_REPORTS}/summary.json"
-    local md_report="${VPSSEC_REPORTS}/summary.md"
-
-    if [[ -f "$json_report" ]]; then
-        print_msg "  $(i18n 'report.report_saved' "path=${json_report}")"
-    fi
-    if [[ -f "$md_report" ]]; then
-        print_msg "  $(i18n 'report.report_saved' "path=${md_report}")"
-    fi
-
-    print_msg ""
 }
 
 # Generate SARIF report (for CI/CD integration)
@@ -382,16 +368,30 @@ EOF
 
 # Generate all reports
 report_generate_all() {
-    mkdir -p "${VPSSEC_REPORTS}"
-
-    report_generate_json
-    report_generate_markdown
-    report_generate_sarif
-
     if [[ "${VPSSEC_JSON_ONLY}" != "1" ]]; then
+        # Print summary to terminal
         report_print_summary
+
+        # Ask user if they want to save reports
+        print_msg "───────────────────────────────"
+        print_msg ""
+
+        local save_prompt=$(i18n 'report.save_prompt' 2>/dev/null || echo "Save report files?")
+        if confirm "$save_prompt" "n"; then
+            mkdir -p "${VPSSEC_REPORTS}"
+            report_generate_json
+            report_generate_markdown
+            report_generate_sarif
+
+            print_msg ""
+            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.json")"
+            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.md")"
+            print_msg ""
+        fi
     else
-        # JSON only output
+        # JSON only mode - always generate and output JSON
+        mkdir -p "${VPSSEC_REPORTS}"
+        report_generate_json
         cat "${VPSSEC_REPORTS}/summary.json"
     fi
 }
