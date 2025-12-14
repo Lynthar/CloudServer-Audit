@@ -286,7 +286,8 @@ execute_plan() {
                 echo "  1) $(i18n 'common.skip')"
                 echo "  2) $(i18n 'common.retry')"
                 echo "  3) $(i18n 'common.rollback')"
-                read -rp "  > " choice </dev/tty
+                echo -n "  > "
+                read -r choice </dev/tty 2>/dev/null || choice="1"
 
                 case "$choice" in
                     2)
@@ -390,8 +391,9 @@ guide_mode() {
         done < <(echo "$fixes" | jq -c '.[]')
 
         echo ""
-        echo "$(i18n 'common.info'): Enter numbers separated by spaces, or 'all'"
-        read -rp "> " selection </dev/tty
+        echo "$(i18n 'guide.enter_numbers')"
+        echo -n "> "
+        read -r selection </dev/tty 2>/dev/null || selection=""
 
         if [[ "$selection" == "all" ]]; then
             selected_fixes=$(echo "$fixes" | jq -r '.[].fix_id' | tr '\n' ' ')
@@ -490,8 +492,11 @@ rollback_mode() {
 
         echo ""
         local choice
-        if ! read -rp "$(i18n 'common.next') [1-${#backup_array[@]}] > " choice </dev/tty 2>/dev/null; then
-            print_error "Cannot read user input"
+        # Always print prompt first
+        echo -n "$(i18n 'common.enter_choice') [1-${#backup_array[@]}] > "
+        if ! read -r choice </dev/tty 2>/dev/null; then
+            echo ""
+            print_error "$(i18n 'error.cannot_read_input')"
             return 1
         fi
 
