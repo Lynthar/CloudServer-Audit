@@ -578,6 +578,74 @@ select_language() {
     export VPSSEC_LANG_SET=1
 }
 
+# Mode selection menu (called before i18n is loaded)
+# Returns: sets VPSSEC_MODE global variable
+select_mode() {
+    # Skip if already specified via command line
+    if [[ -n "${VPSSEC_MODE_SET:-}" ]]; then
+        return 0
+    fi
+
+    # Check if we can read from terminal
+    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
+        # No terminal available, use default (audit)
+        VPSSEC_MODE="audit"
+        export VPSSEC_MODE
+        return 0
+    fi
+
+    # Bilingual mode selection
+    local title_en="Select mode"
+    local title_zh="选择模式"
+    local audit_en="Security Audit (read-only scan)"
+    local audit_zh="安全审计 (只读扫描)"
+    local guide_en="Hardening Guide (interactive fix)"
+    local guide_zh="加固向导 (交互式修复)"
+
+    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+        echo ""
+        echo "┌─────────────────────────────────────────┐"
+        echo "│  ${title_en}:                              │"
+        echo "│                                         │"
+        echo "│  [1] ${audit_en}      │"
+        echo "│  [2] ${guide_en}    │"
+        echo "│                                         │"
+        echo "└─────────────────────────────────────────┘"
+    else
+        echo ""
+        echo "┌─────────────────────────────────────────┐"
+        echo "│  ${title_zh}:                              │"
+        echo "│                                         │"
+        echo "│  [1] ${audit_zh}                  │"
+        echo "│  [2] ${guide_zh}              │"
+        echo "│                                         │"
+        echo "└─────────────────────────────────────────┘"
+    fi
+    echo ""
+
+    local choice
+    local prompt_en="Enter choice [1-2] (default: 1): "
+    local prompt_zh="输入选择 [1-2] (默认: 1): "
+
+    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+        read -rp "$prompt_en" choice </dev/tty
+    else
+        read -rp "$prompt_zh" choice </dev/tty
+    fi
+
+    case "${choice:-1}" in
+        2)
+            VPSSEC_MODE="guide"
+            ;;
+        1|*)
+            VPSSEC_MODE="audit"
+            ;;
+    esac
+
+    export VPSSEC_MODE
+    export VPSSEC_MODE_SET=1
+}
+
 vpssec_init() {
     # Create necessary directories
     mkdir -p "${VPSSEC_STATE}" "${VPSSEC_REPORTS}" "${VPSSEC_BACKUPS}" "${VPSSEC_LOGS}"

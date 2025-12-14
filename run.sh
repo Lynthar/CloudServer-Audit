@@ -2,10 +2,11 @@
 # vpssec - VPS Security Check & Hardening Tool
 # One-line runner: curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/run.sh | sudo bash
 #
-# Options:
-#   curl ... | sudo bash -s -- audit          # Run audit only (default)
-#   curl ... | sudo bash -s -- guide          # Interactive hardening
-#   curl ... | sudo bash -s -- --lang=en_US   # English output
+# Usage:
+#   curl ... | sudo bash                      # Interactive mode (select language & mode)
+#   curl ... | sudo bash -s -- audit          # Run audit directly
+#   curl ... | sudo bash -s -- guide          # Run hardening guide directly
+#   curl ... | sudo bash -s -- --lang=en_US   # Specify language
 
 set -euo pipefail
 
@@ -94,13 +95,13 @@ cleanup() {
 main() {
     print_banner
 
-    # Parse arguments
-    local mode="audit"
+    # Parse arguments - don't default mode, let vpssec show interactive menu
+    local mode=""
     local args=()
 
     for arg in "$@"; do
         case "$arg" in
-            audit|guide|status)
+            audit|guide|rollback|status)
                 mode="$arg"
                 ;;
             *)
@@ -115,11 +116,24 @@ main() {
     # Set trap for cleanup
     trap cleanup EXIT
 
-    # Run vpssec
-    print_info "Running vpssec $mode..."
-    echo ""
-
-    ./vpssec "$mode" "${args[@]}"
+    # Run vpssec - if mode specified, pass it; otherwise let interactive menu decide
+    if [[ -n "$mode" ]]; then
+        print_info "Running vpssec $mode..."
+        echo ""
+        if [[ ${#args[@]} -gt 0 ]]; then
+            ./vpssec "$mode" "${args[@]}"
+        else
+            ./vpssec "$mode"
+        fi
+    else
+        print_info "Starting vpssec..."
+        echo ""
+        if [[ ${#args[@]} -gt 0 ]]; then
+            ./vpssec "${args[@]}"
+        else
+            ./vpssec
+        fi
+    fi
 
     # Keep reports if generated
     if [[ -d "reports" ]] && [[ "$(ls -A reports 2>/dev/null)" ]]; then
