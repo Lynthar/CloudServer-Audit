@@ -197,6 +197,7 @@
     "passed_checks": "Passed Checks",
     "recommendations": "Recommendations",
     "report_saved": "Report saved: {path}",
+    "save_prompt": "Save report files?",
     "next_steps": "Next Steps"
   },
   "guide": {

@@ -197,6 +197,7 @@
     "passed_checks": "通过检查",
     "recommendations": "建议操作",
     "report_saved": "报告已保存: {path}",
+    "save_prompt": "是否保存报告文件?",
     "next_steps": "下一步建议"
   },
   "guide": {
