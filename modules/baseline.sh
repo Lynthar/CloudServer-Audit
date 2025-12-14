@@ -101,12 +101,12 @@ _baseline_audit_unused_services() {
             "baseline" \
             "low" \
             "passed" \
-            "No commonly unused services enabled" \
+            "$(i18n 'baseline.no_unused_services')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No commonly unused services enabled"
+        print_ok "$(i18n 'baseline.no_unused_services')"
     fi
 }
 
@@ -132,7 +132,7 @@ baseline_fix() {
 }
 
 _baseline_fix_enable_apparmor() {
-    print_info "Enabling AppArmor..."
+    print_info "$(i18n 'baseline.enabling_apparmor')"
 
     # Install if needed
     if ! check_command aa-status; then
@@ -144,10 +144,10 @@ _baseline_fix_enable_apparmor() {
     systemctl start apparmor
 
     if _baseline_apparmor_enabled; then
-        print_ok "AppArmor enabled"
+        print_ok "$(i18n 'baseline.apparmor_enabled_success')"
         return 0
     else
-        print_error "Failed to enable AppArmor"
+        print_error "$(i18n 'baseline.apparmor_enable_failed')"
         return 1
     fi
 }
@@ -157,11 +157,11 @@ _baseline_fix_disable_unused() {
     local failed=0
 
     for service in $unused; do
-        print_info "Disabling $service..."
+        print_info "$(i18n 'baseline.disabling_service' "service=$service")"
         if systemctl disable "$service" 2>/dev/null && systemctl stop "$service" 2>/dev/null; then
-            print_ok "Disabled: $service"
+            print_ok "$(i18n 'baseline.service_disabled' "service=$service")"
         else
-            print_warn "Could not disable: $service"
+            print_warn "$(i18n 'baseline.service_disable_failed' "service=$service")"
             ((failed++)) || true
         fi
     done
