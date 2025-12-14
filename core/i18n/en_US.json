@@ -211,6 +211,10 @@
     "all_failed": "All fixes failed",
     "rollback_available": "Use 'vpssec rollback' to revert changes"
   },
+  "scan": {
+    "scanning": "Scanning...",
+    "progress": "Scan progress"
+  },
   "backup": {
     "title": "Backup Configuration",
     "desc": "Check backup tools and scheduled task configuration",

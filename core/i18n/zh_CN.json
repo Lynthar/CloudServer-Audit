@@ -211,6 +211,10 @@
     "all_failed": "所有修复项均失败",
     "rollback_available": "可使用 'vpssec rollback' 回滚更改"
   },
+  "scan": {
+    "scanning": "正在扫描...",
+    "progress": "扫描进度"
+  },
   "backup": {
     "title": "备份配置",
     "desc": "检查备份工具和计划任务配置",
