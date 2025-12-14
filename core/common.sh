@@ -25,6 +25,7 @@ VPSSEC_COLOR="${VPSSEC_COLOR:-1}"
 VPSSEC_JSON_ONLY="${VPSSEC_JSON_ONLY:-0}"
 VPSSEC_YES="${VPSSEC_YES:-0}"
 VPSSEC_DEBUG="${VPSSEC_DEBUG:-0}"
+VPSSEC_QUIET_SCAN="${VPSSEC_QUIET_SCAN:-0}"  # Suppress detailed output during scanning
 
 # Runtime state
 declare -A VPSSEC_I18N=()
@@ -113,14 +114,20 @@ print_msg() {
 }
 
 print_info() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     print_msg "${BLUE}${SYM_INFO}${NC} $*"
 }
 
 print_ok() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     print_msg "${GREEN}${SYM_OK}${NC} $*"
 }
 
 print_warn() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     print_msg "${YELLOW}${SYM_WARN}${NC} $*"
 }
 
@@ -139,15 +146,21 @@ print_header() {
 }
 
 print_subheader() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     print_msg ""
     print_msg "${BOLD}${CYAN}▶ $*${NC}"
 }
 
 print_item() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     print_msg "  ${DIM}${SYM_BULLET}${NC} $*"
 }
 
 print_severity() {
+    # Skip if in quiet scan mode
+    [[ "${VPSSEC_QUIET_SCAN:-0}" == "1" ]] && return 0
     local severity="$1"
     local text="$2"
     case "$severity" in
@@ -520,6 +533,41 @@ confirm_critical() {
 # ==============================================================================
 # Initialization
 # ==============================================================================
+
+# Language selection menu (called before i18n is loaded)
+select_language() {
+    # Skip if already specified via --lang or environment
+    if [[ -n "${VPSSEC_LANG_SET:-}" ]]; then
+        return 0
+    fi
+
+    echo ""
+    echo "┌─────────────────────────────────────────┐"
+    echo "│     vpssec - VPS Security Audit         │"
+    echo "├─────────────────────────────────────────┤"
+    echo "│  Select language / 选择语言:            │"
+    echo "│                                         │"
+    echo "│  [1] English                            │"
+    echo "│  [2] 简体中文                           │"
+    echo "│                                         │"
+    echo "└─────────────────────────────────────────┘"
+    echo ""
+
+    local choice
+    read -rp "Enter choice [1-2] (default: 2): " choice
+
+    case "${choice:-2}" in
+        1)
+            VPSSEC_LANG="en_US"
+            ;;
+        2|*)
+            VPSSEC_LANG="zh_CN"
+            ;;
+    esac
+
+    export VPSSEC_LANG
+    export VPSSEC_LANG_SET=1
+}
 
 vpssec_init() {
     # Create necessary directories
