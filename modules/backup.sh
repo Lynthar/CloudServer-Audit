@@ -57,17 +57,17 @@ _backup_audit_tools() {
     local tools_found=0
 
     if _backup_restic_installed; then
-        ((tools_found++))
+        ((tools_found++)) || true
         print_ok "Restic backup tool installed"
     fi
 
     if _backup_borg_installed; then
-        ((tools_found++))
+        ((tools_found++)) || true
         print_ok "Borg backup tool installed"
     fi
 
     if _backup_rclone_installed; then
-        ((tools_found++))
+        ((tools_found++)) || true
         print_ok "Rclone (remote sync) installed"
     fi
 
@@ -101,12 +101,12 @@ _backup_audit_scheduled() {
     local scheduled=0
 
     if _backup_check_cron_job; then
-        ((scheduled++))
+        ((scheduled++)) || true
         print_ok "Backup cron job found"
     fi
 
     if _backup_check_systemd_timer; then
-        ((scheduled++))
+        ((scheduled++)) || true
         print_ok "Backup systemd timer found"
     fi
 

@@ -60,8 +60,8 @@ _alerts_audit_config() {
         local email=$(_alerts_get_email)
 
         local configured=0
-        [[ -n "$webhook" ]] && ((configured++))
-        [[ -n "$email" ]] && ((configured++))
+        [[ -n "$webhook" ]] && { ((configured++)) || true; }
+        [[ -n "$email" ]] && { ((configured++)) || true; }
 
         if ((configured > 0)); then
             local check=$(create_check_json \
@@ -176,8 +176,8 @@ _alerts_fix_setup_config() {
         print_msg "Configure alert notifications:"
         print_msg ""
 
-        read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url
-        read -rp "Email address (leave empty to skip): " email
+        read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url </dev/tty
+        read -rp "Email address (leave empty to skip): " email </dev/tty
 
         cat > "$ALERTS_CONFIG_FILE" <<EOF
 {

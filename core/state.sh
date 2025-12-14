@@ -270,7 +270,7 @@ backup_cleanup() {
     local count=0
 
     backup_list | while read -r timestamp; do
-        ((count++))
+        ((count++)) || true
         if ((count > keep)); then
             rm -rf "${VPSSEC_BACKUPS}/${timestamp}"
             log_info "Removed old backup: $timestamp"
