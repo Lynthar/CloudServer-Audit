@@ -162,7 +162,7 @@ _baseline_fix_disable_unused() {
             print_ok "Disabled: $service"
         else
             print_warn "Could not disable: $service"
-            ((failed++))
+            ((failed++)) || true
         fi
     done
 
