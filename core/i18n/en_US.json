@@ -212,6 +212,8 @@
     "rollback_available": "Use 'vpssec rollback' to revert changes"
   },
   "backup": {
+    "title": "Backup Configuration",
+    "desc": "Check backup tools and scheduled task configuration",
     "creating": "Creating backup...",
     "created": "Backup created: {path}",
     "restoring": "Restoring backup...",
