@@ -161,6 +161,41 @@ EOF
     echo "$output_file"
 }
 
+# Print detailed test results (before summary)
+report_print_details() {
+    local checks=$(state_get_checks)
+    local modules=$(echo "$checks" | jq -r '[.[].module] | unique | .[]')
+
+    for module in $modules; do
+        local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+        print_msg ""
+        print_msg "${BOLD}${CYAN}▶ ${mod_title}${NC}"
+
+        # Get checks for this module
+        local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '.[] | select(.module == $m)')
+
+        while IFS= read -r check; do
+            [[ -z "$check" ]] && continue
+
+            local status=$(echo "$check" | jq -r '.status')
+            local severity=$(echo "$check" | jq -r '.severity')
+            local title=$(echo "$check" | jq -r '.title')
+
+            if [[ "$status" == "passed" ]]; then
+                echo -e "  ${GREEN}✓${NC} ${title}"
+            else
+                case "$severity" in
+                    high)   echo -e "  ${RED}✗${NC} ${title}" ;;
+                    medium) echo -e "  ${YELLOW}●${NC} ${title}" ;;
+                    low)    echo -e "  ${BLUE}○${NC} ${title}" ;;
+                esac
+            fi
+        done <<< "$mod_checks"
+    done
+
+    print_msg ""
+}
+
 # Print terminal summary
 report_print_summary() {
     local checks=$(state_get_checks)
@@ -230,7 +265,8 @@ report_print_summary() {
             mod_status="$(i18n 'common.safe')"
         fi
 
-        printf "  %-20s %s %s\n" "${mod_title}" "${status_icon}" "${status_color}${mod_status}${NC}"
+        printf "  %-20s %s " "${mod_title}" "${status_icon}"
+        echo -e "${status_color}${mod_status}${NC}"
     done
 
     print_msg ""
@@ -369,6 +405,9 @@ EOF
 # Generate all reports
 report_generate_all() {
     if [[ "${VPSSEC_JSON_ONLY}" != "1" ]]; then
+        # Print detailed results first
+        report_print_details
+
         # Print summary to terminal
         report_print_summary
 
