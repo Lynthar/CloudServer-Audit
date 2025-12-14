@@ -322,8 +322,15 @@ ssh_fix() {
 _ssh_open_rescue_port() {
     print_info "$(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
 
-    # Create temporary sshd config for rescue port
-    local rescue_config="/tmp/sshd_rescue.conf"
+    # Create temporary sshd config with secure permissions
+    local rescue_config
+    rescue_config=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
+        print_error "Failed to create temp file for rescue config"
+        return 1
+    }
+    chmod 600 "$rescue_config"
+    SSH_RESCUE_CONFIG="$rescue_config"  # Store for cleanup
+
     cat > "$rescue_config" <<EOF
 Port $SSH_RESCUE_PORT
 Include /etc/ssh/sshd_config
@@ -338,6 +345,7 @@ EOF
         return 0
     else
         print_error "Failed to open rescue port"
+        rm -f "$rescue_config"
         return 1
     fi
 }
@@ -345,17 +353,22 @@ EOF
 # Close rescue port
 _ssh_close_rescue_port() {
     # Kill sshd listening on rescue port
-    local pid=$(ss -tlnp | grep ":${SSH_RESCUE_PORT}" | grep -oP 'pid=\K\d+' | head -1)
+    local pid
+    pid=$(ss -tlnp | grep ":${SSH_RESCUE_PORT}" | grep -oP 'pid=\K\d+' | head -1) || true
     if [[ -n "$pid" ]]; then
-        kill "$pid" 2>/dev/null
+        kill "$pid" 2>/dev/null || true
         log_info "Closed rescue port $SSH_RESCUE_PORT (pid: $pid)"
     fi
-    rm -f "/tmp/sshd_rescue.conf"
+    # Clean up temp config file if it exists
+    if [[ -n "${SSH_RESCUE_CONFIG:-}" ]] && [[ -f "$SSH_RESCUE_CONFIG" ]]; then
+        rm -f "$SSH_RESCUE_CONFIG"
+    fi
 }
 
 # Write SSH hardening config
 _ssh_write_hardening_config() {
     local content="$1"
+    local temp_file
 
     mkdir -p "$SSH_DROPIN_DIR"
 
@@ -364,17 +377,29 @@ _ssh_write_hardening_config() {
         backup_file "$SSH_HARDENING_DROPIN"
     fi
 
-    # Write to temp file first
-    local temp_file=$(mktemp)
-    echo "# vpssec SSH hardening - $(date -Iseconds)" > "$temp_file"
-    echo "$content" >> "$temp_file"
+    # Write to temp file first with secure permissions
+    temp_file=$(mktemp -t vpssec-sshd.XXXXXX) || {
+        print_error "Failed to create temp file"
+        return 1
+    }
+    chmod 600 "$temp_file"
 
-    # Validate config
+    {
+        echo "# vpssec SSH hardening - $(date -Iseconds)"
+        echo "$content"
+    } > "$temp_file"
+
+    # Validate config by testing with the actual sshd_config
     if sshd -t -f /dev/null -o "Include=$temp_file" 2>/dev/null; then
-        mv "$temp_file" "$SSH_HARDENING_DROPIN"
-        chmod 644 "$SSH_HARDENING_DROPIN"
-        print_ok "$(i18n 'ssh.dropin_created' "path=$SSH_HARDENING_DROPIN")"
-        return 0
+        chmod 644 "$temp_file"
+        if mv "$temp_file" "$SSH_HARDENING_DROPIN"; then
+            print_ok "$(i18n 'ssh.dropin_created' "path=$SSH_HARDENING_DROPIN")"
+            return 0
+        else
+            rm -f "$temp_file"
+            print_error "Failed to move config file"
+            return 1
+        fi
     else
         rm -f "$temp_file"
         print_error "$(i18n 'ssh.sshd_test_fail')"
@@ -430,13 +455,17 @@ _ssh_fix_disable_password_auth() {
         return 1
     fi
 
-    # Open rescue port
-    _ssh_open_rescue_port || true
+    # Open rescue port - MANDATORY for SSH changes
+    if ! _ssh_open_rescue_port; then
+        print_error "Cannot open rescue port - aborting SSH changes for safety"
+        print_warn "Please check if port $SSH_RESCUE_PORT is available"
+        return 1
+    fi
 
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(cat "$SSH_HARDENING_DROPIN" | grep -v "^#" | grep -v "^PasswordAuthentication")
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PasswordAuthentication") || true
     fi
 
     # Write config
@@ -471,13 +500,17 @@ _ssh_fix_disable_root_login() {
         return 1
     fi
 
-    # Open rescue port
-    _ssh_open_rescue_port || true
+    # Open rescue port - MANDATORY for SSH changes
+    if ! _ssh_open_rescue_port; then
+        print_error "Cannot open rescue port - aborting SSH changes for safety"
+        print_warn "Please check if port $SSH_RESCUE_PORT is available"
+        return 1
+    fi
 
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(cat "$SSH_HARDENING_DROPIN" | grep -v "^#" | grep -v "^PermitRootLogin")
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PermitRootLogin") || true
     fi
 
     # Write config
@@ -502,7 +535,7 @@ _ssh_fix_enable_pubkey() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(cat "$SSH_HARDENING_DROPIN" | grep -v "^#" | grep -v "^PubkeyAuthentication")
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PubkeyAuthentication") || true
     fi
 
     # Write config
@@ -523,7 +556,7 @@ _ssh_fix_disable_empty_password() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(cat "$SSH_HARDENING_DROPIN" | grep -v "^#" | grep -v "^PermitEmptyPasswords")
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PermitEmptyPasswords") || true
     fi
 
     # Write config

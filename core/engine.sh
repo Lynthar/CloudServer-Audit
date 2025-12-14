@@ -415,8 +415,17 @@ guide_mode() {
     # Generate and show plan
     local plan=$(generate_plan "$selected_fixes")
 
-    # Create temporary file for plan preview
-    local plan_preview=$(mktemp)
+    # Create temporary file for plan preview with cleanup trap
+    local plan_preview
+    plan_preview=$(mktemp -t vpssec-plan.XXXXXX) || {
+        print_error "Failed to create temp file"
+        return 1
+    }
+    chmod 600 "$plan_preview"
+
+    # Set up trap to clean up temp file on exit/interrupt
+    trap "rm -f '$plan_preview'" EXIT INT TERM
+
     echo "# $(i18n 'guide.review_plan')" > "$plan_preview"
     echo "" >> "$plan_preview"
     echo "$(date -Iseconds)" >> "$plan_preview"
@@ -432,6 +441,7 @@ guide_mode() {
         echo ""
     fi
     rm -f "$plan_preview"
+    trap - EXIT INT TERM  # Remove trap after cleanup
 
     # Confirm execution
     if ! ui_confirm_execute; then
@@ -479,7 +489,11 @@ rollback_mode() {
         done <<< "$backups"
 
         echo ""
-        read -rp "$(i18n 'common.next') [1-${#backup_array[@]}] > " choice </dev/tty
+        local choice
+        if ! read -rp "$(i18n 'common.next') [1-${#backup_array[@]}] > " choice </dev/tty 2>/dev/null; then
+            print_error "Cannot read user input"
+            return 1
+        fi
 
         if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#backup_array[@]})); then
             timestamp="${backup_array[$((choice-1))]}"

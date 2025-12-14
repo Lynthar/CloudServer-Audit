@@ -129,8 +129,8 @@ parse_args() {
         esac
     done
 
-    # Default to audit if no command specified
-    command="${command:-audit}"
+    # Use VPSSEC_MODE if set by menu, otherwise default to audit
+    command="${command:-${VPSSEC_MODE:-audit}}"
 
     # Export for use in other functions
     export VPSSEC_INCLUDE="$include"
@@ -144,7 +144,7 @@ parse_args() {
 # ==============================================================================
 
 main() {
-    # Handle --version and --help before parse_args (which runs in subshell)
+    # Handle --version, --help, --lang and detect command before interactive menus
     for arg in "$@"; do
         case "$arg" in
             --version|-v)
@@ -163,13 +163,22 @@ main() {
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
                 ;;
+            audit|guide|rollback|status)
+                # Mark mode as set so we skip selection menu
+                VPSSEC_MODE="$arg"
+                VPSSEC_MODE_SET=1
+                export VPSSEC_MODE VPSSEC_MODE_SET
+                ;;
         esac
     done
 
     # Show language selection if not specified
     select_language
 
-    # Parse command line arguments
+    # Show mode selection if not specified (only for audit/guide, not rollback/status)
+    select_mode
+
+    # Parse command line arguments (will use VPSSEC_MODE if set)
     local command=$(parse_args "$@")
 
     # Initialize vpssec

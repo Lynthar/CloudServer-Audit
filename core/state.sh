@@ -272,8 +272,12 @@ backup_cleanup() {
     backup_list | while read -r timestamp; do
         ((count++)) || true
         if ((count > keep)); then
-            rm -rf "${VPSSEC_BACKUPS}/${timestamp}"
-            log_info "Removed old backup: $timestamp"
+            local backup_path="${VPSSEC_BACKUPS}/${timestamp}"
+            # Safety: validate path is under backup directory
+            if [[ -n "$timestamp" ]] && [[ "$backup_path" =~ ^${VPSSEC_BACKUPS}/[0-9]{8}-[0-9]{6}$ ]] && [[ -d "$backup_path" ]]; then
+                rm -rf "$backup_path"
+                log_info "Removed old backup: $timestamp"
+            fi
         fi
     done
 }
