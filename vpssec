@@ -81,6 +81,8 @@ parse_args() {
                 ;;
             --lang=*)
                 VPSSEC_LANG="${1#*=}"
+                VPSSEC_LANG_SET=1
+                export VPSSEC_LANG VPSSEC_LANG_SET
                 shift
                 ;;
             --no-color)
@@ -155,8 +157,17 @@ main() {
                 show_help
                 exit 0
                 ;;
+            --lang=*)
+                # Mark language as set so we skip selection menu
+                VPSSEC_LANG="${arg#*=}"
+                VPSSEC_LANG_SET=1
+                export VPSSEC_LANG VPSSEC_LANG_SET
+                ;;
         esac
     done
+
+    # Show language selection if not specified
+    select_language
 
     # Parse command line arguments
     local command=$(parse_args "$@")

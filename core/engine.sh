@@ -155,11 +155,38 @@ audit_module() {
 audit_all() {
     state_init
 
-    for module in $(module_get_enabled); do
+    # Get enabled modules as array
+    local -a modules=()
+    while IFS= read -r m; do
+        modules+=("$m")
+    done < <(module_get_enabled)
+
+    local total=${#modules[@]}
+    local current=0
+
+    # Enable quiet scan mode for cleaner output
+    export VPSSEC_QUIET_SCAN=1
+
+    print_msg ""
+    print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
+    print_msg ""
+
+    for module in "${modules[@]}"; do
+        ((current++))
+        # Show progress line
+        local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+        printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
+
         audit_module "$module"
     done
 
-    # Generate reports
+    # Clear progress line
+    printf "\r                                                              \r"
+
+    # Disable quiet mode for summary output
+    export VPSSEC_QUIET_SCAN=0
+
+    # Generate reports and print summary
     report_generate_all
 }
 
