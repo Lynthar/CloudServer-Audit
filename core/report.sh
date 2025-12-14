@@ -207,7 +207,7 @@ report_print_summary() {
     local low=$(echo "$stats" | jq '.low')
     local passed=$(echo "$stats" | jq '.passed')
 
-    print_header "VPS Security Check Summary"
+    print_header "$(i18n 'report.summary')"
 
     # Score bar
     local score_color

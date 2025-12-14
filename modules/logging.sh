@@ -92,23 +92,23 @@ logging_audit() {
     local module="logging"
 
     # Check journald persistence
-    print_item "Checking journald persistence..."
+    print_item "$(i18n 'logging.check_journald')"
     _logging_audit_journald
 
     # Check logrotate
-    print_item "Checking logrotate configuration..."
+    print_item "$(i18n 'logging.check_logrotate')"
     _logging_audit_logrotate
 
     # Check audit system
-    print_item "Checking audit system..."
+    print_item "$(i18n 'logging.check_auditd')"
     _logging_audit_auditd
 
     # Check SSH logs
-    print_item "Checking SSH authentication logs..."
+    print_item "$(i18n 'logging.check_ssh_logs')"
     _logging_audit_ssh_logs
 
     # Check sudo logging
-    print_item "Checking sudo logging..."
+    print_item "$(i18n 'logging.check_sudo_logs')"
     _logging_audit_sudo_logs
 }
 
@@ -120,12 +120,12 @@ _logging_audit_journald() {
             "logging" \
             "low" \
             "passed" \
-            "Journald persistent storage enabled" \
-            "Max size: $max_size" \
+            "$(i18n 'logging.journald_persistent')" \
+            "$(i18n 'logging.journald_max_size' "size=$max_size")" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Journald persistent storage enabled (max: $max_size)"
+        print_ok "$(i18n 'logging.journald_persistent') ($(i18n 'logging.journald_max_size' "size=$max_size"))"
     else
         local check=$(create_check_json \
             "logging.journald_volatile" \

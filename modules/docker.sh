@@ -100,7 +100,7 @@ docker_audit() {
         print_ok "$(i18n 'docker.not_installed') - Skipping"
         return
     fi
-    print_ok "Docker installed and running"
+    print_ok "$(i18n 'docker.installed_running')"
 
     # Check exposed ports
     print_item "$(i18n 'docker.check_exposed_ports')"
@@ -111,15 +111,15 @@ docker_audit() {
     _docker_audit_privileged
 
     # Check containers running as root
-    print_item "Checking containers running as root..."
+    print_item "$(i18n 'docker.check_root_containers')"
     _docker_audit_root_containers
 
     # Check containers with added capabilities
-    print_item "Checking containers with added capabilities..."
+    print_item "$(i18n 'docker.check_capabilities')"
     _docker_audit_capabilities
 
     # Check daemon security settings
-    print_item "Checking Docker daemon security settings..."
+    print_item "$(i18n 'docker.check_daemon_security')"
     _docker_audit_daemon_settings
 }
 
@@ -222,12 +222,12 @@ _docker_audit_root_containers() {
             "docker" \
             "low" \
             "passed" \
-            "No containers running as root" \
+            "$(i18n 'docker.no_root_containers')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No containers running as root"
+        print_ok "$(i18n 'docker.no_root_containers')"
     fi
 }
 
@@ -242,24 +242,24 @@ _docker_audit_capabilities() {
             "docker" \
             "medium" \
             "failed" \
-            "$count containers with added capabilities" \
-            "Containers: $container_list" \
-            "Review if added capabilities are necessary" \
+            "$(i18n 'docker.added_capabilities' "count=$count")" \
+            "" \
+            "$(i18n 'docker.added_capabilities_desc')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$count containers with added capabilities"
+        print_severity "medium" "$(i18n 'docker.added_capabilities' "count=$count")"
     else
         local check=$(create_check_json \
             "docker.no_extra_caps" \
             "docker" \
             "low" \
             "passed" \
-            "No containers with added capabilities" \
+            "$(i18n 'docker.no_added_capabilities')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No containers with added capabilities"
+        print_ok "$(i18n 'docker.no_added_capabilities')"
     fi
 }
 
@@ -304,12 +304,12 @@ _docker_audit_daemon_settings() {
             "docker" \
             "low" \
             "passed" \
-            "Docker daemon security settings OK" \
+            "$(i18n 'docker.daemon_secure')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Docker daemon security settings OK"
+        print_ok "$(i18n 'docker.daemon_secure')"
     fi
 }
 
@@ -332,7 +332,7 @@ docker_fix() {
             ;;
         *)
             log_warn "Docker fix not implemented: $fix_id"
-            print_warn "This Docker fix requires manual intervention"
+            print_warn "$(i18n 'docker.fix_manual')"
             return 1
             ;;
     esac
@@ -345,7 +345,7 @@ _docker_fix_generate_proxy_template() {
 
     local output_file="${template_dir}/docker-compose.proxy.yml"
 
-    print_info "Generating reverse proxy template..."
+    print_info "$(i18n 'docker.generating_template')"
 
     cat > "$output_file" <<'EOF'
 # vpssec generated template - Docker Reverse Proxy Configuration
@@ -434,9 +434,9 @@ EOF
     touch "${template_dir}/traefik/acme.json"
     chmod 600 "${template_dir}/traefik/acme.json"
 
-    print_ok "Template generated: $output_file"
-    print_info "Review and adapt the template for your services"
-    print_info "Template location: $template_dir"
+    print_ok "$(i18n 'docker.template_generated' "path=$output_file")"
+    print_info "$(i18n 'docker.review_template')"
+    print_info "$(i18n 'docker.template_location' "path=$template_dir")"
 
     return 0
 }
@@ -445,7 +445,7 @@ _docker_fix_enable_daemon_setting() {
     local setting="$1"
     local value="$2"
 
-    print_info "Configuring Docker daemon: $setting = $value"
+    print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
     # Create or update daemon.json
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
@@ -458,8 +458,8 @@ _docker_fix_enable_daemon_setting() {
         echo "{\"$setting\": $value}" | jq '.' > "$DOCKER_DAEMON_JSON"
     fi
 
-    print_ok "Docker daemon configuration updated"
-    print_warn "Restart Docker to apply changes: systemctl restart docker"
+    print_ok "$(i18n 'docker.daemon_updated')"
+    print_warn "$(i18n 'docker.restart_docker')"
 
     return 0
 }

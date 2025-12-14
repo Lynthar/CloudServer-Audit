@@ -139,12 +139,12 @@ _preflight_check_deps() {
             "preflight" \
             "low" \
             "passed" \
-            "Required dependencies present" \
+            "$(i18n 'common.required_deps')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Required dependencies present"
+        print_ok "$(i18n 'common.required_deps')"
     fi
 
     # Optional dependencies
@@ -186,9 +186,9 @@ _preflight_check_ports() {
             "preflight" \
             "medium" \
             "failed" \
-            "Potentially dangerous ports exposed" \
-            "Ports: ${exposed_dangerous[*]}" \
-            "Consider restricting access via firewall" \
+            "$(i18n 'preflight.dangerous_ports' "ports=${exposed_dangerous[*]}")" \
+            "" \
+            "$(i18n 'ufw.fix_allow_ssh')" \
             "ufw.add_rules")
         state_add_check "$check"
         print_warn "$(i18n 'preflight.listening_ports' "count=$port_count") - Dangerous: ${exposed_dangerous[*]}"
