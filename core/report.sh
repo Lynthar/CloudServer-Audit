@@ -88,7 +88,10 @@ report_generate_markdown() {
 EOF
 
     # High severity issues
-    echo "$checks" | jq -r '.[] | select(.status == "failed" and .severity == "high") | "### \(.title)\n\n- **ID**: \(.id)\n- **$(i18n "common.info")**: \(.desc)\n- **$(i18n "report.recommendations")**: \(.suggestion)\n- **Fix ID**: \(.fix_id)\n"' >> "$output_file"
+    local label_info=$(i18n "common.info")
+    local label_recommendations=$(i18n "report.recommendations")
+    echo "$checks" | jq -r --arg info "$label_info" --arg recs "$label_recommendations" \
+        '.[] | select(.status == "failed" and .severity == "high") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n- **Fix ID**: \(.fix_id)\n"' >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -99,7 +102,8 @@ EOF
 EOF
 
     # Medium severity issues
-    echo "$checks" | jq -r '.[] | select(.status == "failed" and .severity == "medium") | "### \(.title)\n\n- **ID**: \(.id)\n- **$(i18n "common.info")**: \(.desc)\n- **$(i18n "report.recommendations")**: \(.suggestion)\n- **Fix ID**: \(.fix_id)\n"' >> "$output_file"
+    echo "$checks" | jq -r --arg info "$label_info" --arg recs "$label_recommendations" \
+        '.[] | select(.status == "failed" and .severity == "medium") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n- **Fix ID**: \(.fix_id)\n"' >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -110,7 +114,8 @@ EOF
 EOF
 
     # Low severity issues
-    echo "$checks" | jq -r '.[] | select(.status == "failed" and .severity == "low") | "### \(.title)\n\n- **ID**: \(.id)\n- **$(i18n "common.info")**: \(.desc)\n- **$(i18n "report.recommendations")**: \(.suggestion)\n"' >> "$output_file"
+    echo "$checks" | jq -r --arg info "$label_info" --arg recs "$label_recommendations" \
+        '.[] | select(.status == "failed" and .severity == "low") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n"' >> "$output_file"
 
     cat >> "$output_file" <<EOF
 

@@ -212,6 +212,8 @@
     "rollback_available": "可使用 'vpssec rollback' 回滚更改"
   },
   "backup": {
+    "title": "备份配置",
+    "desc": "检查备份工具和计划任务配置",
     "creating": "正在创建备份...",
     "created": "备份已创建: {path}",
     "restoring": "正在恢复备份...",

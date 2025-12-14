@@ -71,8 +71,12 @@ _logging_check_audit_rules() {
 
 _logging_get_failed_logins() {
     # Get recent failed login attempts
-    journalctl _SYSTEMD_UNIT=sshd.service --since "24 hours ago" 2>/dev/null | \
-        grep -c "Failed password\|authentication failure" || echo "0"
+    # Note: grep -c outputs "0" AND exits with code 1 when no matches
+    # Using || true prevents double output from || echo "0"
+    local count
+    count=$(journalctl _SYSTEMD_UNIT=sshd.service --since "24 hours ago" 2>/dev/null | \
+        grep -c "Failed password\|authentication failure" 2>/dev/null) || true
+    echo "${count:-0}"
 }
 
 _logging_get_sudo_events() {
