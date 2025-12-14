@@ -247,10 +247,10 @@ KEEP_WEEKLY=4
 KEEP_MONTHLY=12
 KEEP_YEARLY=3
 
-# Build exclude arguments
-EXCLUDE_ARGS=""
+# Build exclude arguments as array (safe, no eval needed)
+EXCLUDE_ARGS=()
 for pattern in "${EXCLUDE_PATTERNS[@]}"; do
-    EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude '$pattern'"
+    EXCLUDE_ARGS+=("--exclude" "$pattern")
 done
 
 # Log file
@@ -266,18 +266,18 @@ if ! restic snapshots &>/dev/null; then
     restic init
 fi
 
-# Run backup
+# Run backup (using array expansion - safe, no eval)
 log "Starting backup..."
-eval restic backup "${BACKUP_PATHS[@]}" $EXCLUDE_ARGS --verbose 2>&1 | tee -a "$LOG_FILE"
+restic backup "${BACKUP_PATHS[@]}" "${EXCLUDE_ARGS[@]}" --verbose 2>&1 | tee -a "$LOG_FILE"
 
 # Prune old snapshots
 log "Pruning old snapshots..."
 restic forget \
-    --keep-last $KEEP_LAST \
-    --keep-daily $KEEP_DAILY \
-    --keep-weekly $KEEP_WEEKLY \
-    --keep-monthly $KEEP_MONTHLY \
-    --keep-yearly $KEEP_YEARLY \
+    --keep-last "$KEEP_LAST" \
+    --keep-daily "$KEEP_DAILY" \
+    --keep-weekly "$KEEP_WEEKLY" \
+    --keep-monthly "$KEEP_MONTHLY" \
+    --keep-yearly "$KEEP_YEARLY" \
     --prune 2>&1 | tee -a "$LOG_FILE"
 
 # Check repository integrity (weekly)
@@ -339,10 +339,10 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-# Build exclude arguments
-EXCLUDE_ARGS=""
+# Build exclude arguments as array (safe, no eval needed)
+EXCLUDE_ARGS=()
 for pattern in "${EXCLUDE_PATTERNS[@]}"; do
-    EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude '$pattern'"
+    EXCLUDE_ARGS+=("--exclude" "$pattern")
 done
 
 # Initialize repository if needed
@@ -354,23 +354,23 @@ fi
 # Create archive name with timestamp
 ARCHIVE_NAME="$(hostname)-$(date +%Y%m%d-%H%M%S)"
 
-# Run backup
+# Run backup (using array expansion - safe, no eval)
 log "Starting backup: $ARCHIVE_NAME"
-eval borg create \
+borg create \
     --verbose \
     --stats \
     --compression lz4 \
+    "${EXCLUDE_ARGS[@]}" \
     "$BORG_REPO::$ARCHIVE_NAME" \
-    "${BACKUP_PATHS[@]}" \
-    $EXCLUDE_ARGS 2>&1 | tee -a "$LOG_FILE"
+    "${BACKUP_PATHS[@]}" 2>&1 | tee -a "$LOG_FILE"
 
 # Prune old archives
 log "Pruning old archives..."
 borg prune \
-    --keep-last $KEEP_LAST \
-    --keep-daily $KEEP_DAILY \
-    --keep-weekly $KEEP_WEEKLY \
-    --keep-monthly $KEEP_MONTHLY \
+    --keep-last "$KEEP_LAST" \
+    --keep-daily "$KEEP_DAILY" \
+    --keep-weekly "$KEEP_WEEKLY" \
+    --keep-monthly "$KEEP_MONTHLY" \
     "$BORG_REPO" 2>&1 | tee -a "$LOG_FILE"
 
 # Compact repository
