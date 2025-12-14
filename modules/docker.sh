@@ -279,7 +279,7 @@ _docker_audit_daemon_settings() {
             "docker.enable_live_restore")
         state_add_check "$check"
         print_severity "low" "Docker live-restore not enabled"
-        ((issues++))
+        ((issues++)) || true
     fi
 
     # Check no-new-privileges
@@ -295,7 +295,7 @@ _docker_audit_daemon_settings() {
             "docker.enable_no_new_privileges")
         state_add_check "$check"
         print_severity "medium" "Docker no-new-privileges not set as default"
-        ((issues++))
+        ((issues++)) || true
     fi
 
     if ((issues == 0)); then

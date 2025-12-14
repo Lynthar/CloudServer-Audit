@@ -15,7 +15,7 @@ text_msgbox() {
     print_header "$title"
     echo "$message"
     echo ""
-    read -rp "$(i18n 'common.ok') > " _
+    read -rp "$(i18n 'common.ok') > " _ </dev/tty
 }
 
 # Yes/No prompt
@@ -36,7 +36,7 @@ text_yesno() {
     fi
 
     local answer
-    read -rp "$prompt > " answer
+    read -rp "$prompt > " answer </dev/tty
     answer="${answer:-$default}"
 
     [[ "${answer,,}" == "y" || "${answer,,}" == "yes" ]]
@@ -53,10 +53,10 @@ text_inputbox() {
 
     local input
     if [[ -n "$default" ]]; then
-        read -rp "[$default] > " input
+        read -rp "[$default] > " input </dev/tty
         input="${input:-$default}"
     else
-        read -rp "> " input
+        read -rp "> " input </dev/tty
     fi
 
     echo "$input"
@@ -86,7 +86,7 @@ text_menu() {
 
     echo ""
     local choice
-    read -rp "$(i18n 'common.next') [1-${#tags[@]}] > " choice
+    read -rp "$(i18n 'common.next') [1-${#tags[@]}] > " choice </dev/tty
 
     if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#tags[@]})); then
         echo "${tags[$((choice-1))]}"
@@ -122,7 +122,7 @@ text_checklist() {
     echo ""
     echo "$(i18n 'common.info'): Enter numbers separated by spaces, or 'all' for all, 'none' for none"
     local choices
-    read -rp "> " choices
+    read -rp "> " choices </dev/tty
 
     local selected=""
     if [[ "$choices" == "all" ]]; then
@@ -150,7 +150,7 @@ text_textbox() {
     fi
 
     echo ""
-    read -rp "$(i18n 'common.ok') > " _
+    read -rp "$(i18n 'common.ok') > " _ </dev/tty
 }
 
 # Progress display

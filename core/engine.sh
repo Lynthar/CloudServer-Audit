@@ -172,7 +172,7 @@ audit_all() {
     print_msg ""
 
     for module in "${modules[@]}"; do
-        ((current++))
+        ((current++)) || true
         # Show progress line
         local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
         printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
@@ -263,7 +263,7 @@ execute_plan() {
         local fix_id=$(echo "$fix" | jq -r '.fix_id')
         local title=$(echo "$fix" | jq -r '.title')
 
-        ((i++))
+        ((i++)) || true
 
         # Save progress
         local completed_json=$(printf '%s\n' "${completed[@]}" | jq -Rs 'split("\n") | map(select(. != ""))')
@@ -286,7 +286,7 @@ execute_plan() {
                 echo "  1) $(i18n 'common.skip')"
                 echo "  2) $(i18n 'common.retry')"
                 echo "  3) $(i18n 'common.rollback')"
-                read -rp "  > " choice
+                read -rp "  > " choice </dev/tty
 
                 case "$choice" in
                     2)
@@ -391,7 +391,7 @@ guide_mode() {
 
         echo ""
         echo "$(i18n 'common.info'): Enter numbers separated by spaces, or 'all'"
-        read -rp "> " selection
+        read -rp "> " selection </dev/tty
 
         if [[ "$selection" == "all" ]]; then
             selected_fixes=$(echo "$fixes" | jq -r '.[].fix_id' | tr '\n' ' ')
@@ -479,7 +479,7 @@ rollback_mode() {
         done <<< "$backups"
 
         echo ""
-        read -rp "$(i18n 'common.next') [1-${#backup_array[@]}] > " choice
+        read -rp "$(i18n 'common.next') [1-${#backup_array[@]}] > " choice </dev/tty
 
         if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#backup_array[@]})); then
             timestamp="${backup_array[$((choice-1))]}"
