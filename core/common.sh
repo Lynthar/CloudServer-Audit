@@ -370,9 +370,20 @@ backup_file() {
 write_file_atomic() {
     local target="$1"
     local content="$2"
-    local temp_file=$(mktemp)
+    local temp_file
 
-    echo "$content" > "$temp_file"
+    # Create temp file with secure permissions (mode 600)
+    temp_file=$(mktemp) || { log_error "Failed to create temp file"; return 1; }
+    chmod 600 "$temp_file"
+
+    # Write content
+    if ! echo "$content" > "$temp_file"; then
+        rm -f "$temp_file"
+        log_error "Failed to write content to temp file"
+        return 1
+    fi
+
+    # Set appropriate permissions (copy from target or default to 644)
     chmod --reference="$target" "$temp_file" 2>/dev/null || chmod 644 "$temp_file"
 
     if mv "$temp_file" "$target"; then
@@ -509,11 +520,16 @@ confirm() {
 
     local yn
     # Read from /dev/tty to handle curl|bash piped execution
+    # If /dev/tty is not available, use the default value
     if [[ "$default" == "y" ]]; then
-        read -rp "$prompt [Y/n] " yn </dev/tty
+        if ! read -rp "$prompt [Y/n] " yn </dev/tty 2>/dev/null; then
+            yn="$default"  # Default to yes if cannot read
+        fi
         yn="${yn:-y}"
     else
-        read -rp "$prompt [y/N] " yn </dev/tty
+        if ! read -rp "$prompt [y/N] " yn </dev/tty 2>/dev/null; then
+            yn="$default"  # Default to no if cannot read
+        fi
         yn="${yn:-n}"
     fi
 
@@ -526,8 +542,13 @@ confirm_critical() {
     local yn
 
     print_warn "$(i18n 'common.warning'): $prompt"
-    # Read from /dev/tty to handle curl|bash piped execution
-    read -rp "$(i18n 'common.confirm') [yes/NO] " yn </dev/tty
+
+    # For critical operations, we MUST get user confirmation
+    # If /dev/tty is not available, return failure (do not proceed)
+    if ! read -rp "$(i18n 'common.confirm') [yes/NO] " yn </dev/tty 2>/dev/null; then
+        print_error "Cannot read user input for critical confirmation - aborting"
+        return 1
+    fi
 
     [[ "${yn,,}" == "yes" ]]
 }
@@ -563,7 +584,10 @@ select_language() {
 
     local choice
     # Read from /dev/tty to handle curl|bash piped execution
-    read -rp "Enter choice [1-2] (default: 2): " choice </dev/tty
+    # Fall back to default if read fails
+    if ! read -rp "Enter choice [1-2] (default: 2): " choice </dev/tty 2>/dev/null; then
+        choice="2"  # Default to Chinese
+    fi
 
     case "${choice:-2}" in
         1)
@@ -627,10 +651,15 @@ select_mode() {
     local prompt_en="Enter choice [1-2] (default: 1): "
     local prompt_zh="输入选择 [1-2] (默认: 1): "
 
+    # Read from /dev/tty, fall back to default if read fails
     if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
-        read -rp "$prompt_en" choice </dev/tty
+        if ! read -rp "$prompt_en" choice </dev/tty 2>/dev/null; then
+            choice="1"  # Default to audit
+        fi
     else
-        read -rp "$prompt_zh" choice </dev/tty
+        if ! read -rp "$prompt_zh" choice </dev/tty 2>/dev/null; then
+            choice="1"  # Default to audit
+        fi
     fi
 
     case "${choice:-1}" in
