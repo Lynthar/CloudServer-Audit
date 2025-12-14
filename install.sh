@@ -22,6 +22,23 @@ print_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# Safely remove install directory (validate path first)
+safe_remove_install_dir() {
+    # Only allow removal if path is non-empty and looks like a vpssec install path
+    if [[ -z "$INSTALL_DIR" ]]; then
+        print_error "INSTALL_DIR is empty, refusing to remove"
+        return 1
+    fi
+    # Must be under /opt/ or /var/lib/ (typical install locations)
+    if [[ ! "$INSTALL_DIR" =~ ^/(opt|var/lib)/[a-zA-Z0-9_-]+$ ]]; then
+        print_error "INSTALL_DIR path '$INSTALL_DIR' is not a safe location"
+        return 1
+    fi
+    if [[ -d "$INSTALL_DIR" ]]; then
+        rm -rf "$INSTALL_DIR"
+    fi
+}
+
 # Check if running as root
 check_root() {
     if [[ "$(id -u)" != "0" ]]; then
@@ -86,7 +103,7 @@ install_vpssec() {
                 cd "$INSTALL_DIR"
                 git pull origin main
             else
-                rm -rf "$INSTALL_DIR"
+                safe_remove_install_dir
                 git clone "https://github.com/${GITHUB_REPO}.git" "$INSTALL_DIR"
             fi
         else
@@ -94,7 +111,7 @@ install_vpssec() {
             local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz"
             print_info "Downloading from $tarball_url"
             curl -fsSL "$tarball_url" | tar -xz -C /tmp
-            rm -rf "$INSTALL_DIR"
+            safe_remove_install_dir
             mv /tmp/server-audit-main "$INSTALL_DIR"
         fi
     else
@@ -102,7 +119,7 @@ install_vpssec() {
         local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/tags/v${VPSSEC_VERSION}.tar.gz"
         print_info "Downloading version $VPSSEC_VERSION..."
         curl -fsSL "$tarball_url" | tar -xz -C /tmp
-        rm -rf "$INSTALL_DIR"
+        safe_remove_install_dir
         mv "/tmp/server-audit-${VPSSEC_VERSION}" "$INSTALL_DIR"
     fi
 
