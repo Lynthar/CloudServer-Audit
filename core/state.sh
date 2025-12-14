@@ -19,12 +19,20 @@ STATE_CHECKS_FILE="${VPSSEC_STATE}/checks.json"
 state_init() {
     mkdir -p "${VPSSEC_STATE}"
 
-    # Initialize ok.json if not exists
-    if [[ ! -f "$STATE_OK_FILE" ]]; then
-        echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
-    fi
+    # Set secure permissions on state directory
+    chmod 700 "${VPSSEC_STATE}"
 
-    # Initialize checks.json
+    # Initialize ok.json if not exists (atomic check with mkdir lock pattern)
+    # Using a lock to prevent race condition
+    local lock_file="${VPSSEC_STATE}/.init.lock"
+    (
+        flock -n 200 || exit 0  # Skip if another process is initializing
+        if [[ ! -f "$STATE_OK_FILE" ]]; then
+            echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+        fi
+    ) 200>"$lock_file"
+
+    # Initialize checks.json (always start fresh for each run)
     echo '[]' > "$STATE_CHECKS_FILE"
 }
 
@@ -32,16 +40,28 @@ state_init() {
 # Check State Management
 # ==============================================================================
 
-# Add a check result to state
+# Add a check result to state (thread-safe with file locking)
 state_add_check() {
     local check_json="$1"
+    local lock_file="${VPSSEC_STATE}/.checks.lock"
 
-    if [[ ! -f "$STATE_CHECKS_FILE" ]]; then
-        echo '[]' > "$STATE_CHECKS_FILE"
-    fi
+    (
+        flock -x 200  # Exclusive lock for write operation
 
-    local current=$(cat "$STATE_CHECKS_FILE")
-    echo "$current" | jq --argjson check "$check_json" '. += [$check]' > "$STATE_CHECKS_FILE"
+        # Initialize if file doesn't exist
+        [[ -f "$STATE_CHECKS_FILE" ]] || echo '[]' > "$STATE_CHECKS_FILE"
+
+        # Read current state, add check, write to temp file, then move atomically
+        local temp_file
+        temp_file=$(mktemp "${STATE_CHECKS_FILE}.XXXXXX") || return 1
+
+        if jq --argjson check "$check_json" '. += [$check]' "$STATE_CHECKS_FILE" > "$temp_file" 2>/dev/null; then
+            mv -f "$temp_file" "$STATE_CHECKS_FILE"
+        else
+            rm -f "$temp_file"
+            return 1
+        fi
+    ) 200>"$lock_file"
 }
 
 # Get all checks
@@ -81,14 +101,32 @@ state_count_checks() {
 # Fix State Management
 # ==============================================================================
 
-# Record a completed fix
+# Record a completed fix (thread-safe with file locking)
 state_mark_fix_complete() {
     local fix_id="$1"
-    local timestamp=$(date -Iseconds)
+    local timestamp
+    timestamp=$(date -Iseconds)
+    local lock_file="${VPSSEC_STATE}/.ok.lock"
 
-    local current=$(cat "$STATE_OK_FILE")
-    echo "$current" | jq --arg id "$fix_id" --arg ts "$timestamp" \
-        '.completed_fixes += [{"id": $id, "timestamp": $ts}] | .last_run = $ts' > "$STATE_OK_FILE"
+    (
+        flock -x 200  # Exclusive lock for write operation
+
+        # Initialize if file doesn't exist
+        [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+
+        # Read, modify, write atomically
+        local temp_file
+        temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") || return 1
+
+        if jq --arg id "$fix_id" --arg ts "$timestamp" \
+            '.completed_fixes += [{"id": $id, "timestamp": $ts}] | .last_run = $ts' \
+            "$STATE_OK_FILE" > "$temp_file" 2>/dev/null; then
+            mv -f "$temp_file" "$STATE_OK_FILE"
+        else
+            rm -f "$temp_file"
+            return 1
+        fi
+    ) 200>"$lock_file"
 
     log_info "Fix marked complete: $fix_id"
 }

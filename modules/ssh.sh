@@ -16,14 +16,29 @@ SSH_RESCUE_PORT=2222
 # SSH Helper Functions
 # ==============================================================================
 
-# Get effective SSH config value (considering drop-ins)
+# Get effective SSH config value using sshd -T (most accurate method)
+# Falls back to file parsing if sshd -T is not available
 _ssh_get_config() {
     local key="$1"
     local default="$2"
+    local value=""
 
-    # Check drop-ins first (higher priority)
+    # Method 1: Use sshd -T for accurate effective configuration
+    # This handles Match blocks, Include directives, and all override rules correctly
+    if command -v sshd &>/dev/null; then
+        # sshd -T outputs all effective settings in lowercase
+        local key_lower="${key,,}"
+        value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{print $2}')
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return
+        fi
+    fi
+
+    # Method 2: Fallback to file parsing (less accurate but works without root)
+    # Check drop-ins first (higher priority, sorted by name)
     if [[ -d "$SSH_DROPIN_DIR" ]]; then
-        local value=$(grep -h "^${key}\s" "$SSH_DROPIN_DIR"/*.conf 2>/dev/null | tail -1 | awk '{print $2}')
+        value=$(grep -h "^${key}[[:space:]]" "$SSH_DROPIN_DIR"/*.conf 2>/dev/null | tail -1 | awk '{print $2}')
         if [[ -n "$value" ]]; then
             echo "$value"
             return
@@ -31,7 +46,7 @@ _ssh_get_config() {
     fi
 
     # Check main config
-    local value=$(grep "^${key}\s" "$SSH_CONFIG" 2>/dev/null | awk '{print $2}')
+    value=$(grep "^${key}[[:space:]]" "$SSH_CONFIG" 2>/dev/null | tail -1 | awk '{print $2}')
     if [[ -n "$value" ]]; then
         echo "$value"
         return
@@ -39,6 +54,23 @@ _ssh_get_config() {
 
     # Return default
     echo "$default"
+}
+
+# Get SSH listening port (handles multiple ports)
+_ssh_get_port() {
+    local port=""
+
+    # Try sshd -T first
+    if command -v sshd &>/dev/null; then
+        port=$(sshd -T 2>/dev/null | grep -i "^port " | head -1 | awk '{print $2}')
+    fi
+
+    # Fallback to file parsing
+    if [[ -z "$port" ]]; then
+        port=$(grep "^Port[[:space:]]" "$SSH_CONFIG" 2>/dev/null | head -1 | awk '{print $2}')
+    fi
+
+    echo "${port:-22}"
 }
 
 # Check if password auth is enabled
@@ -99,10 +131,54 @@ _ssh_get_admin_users() {
 # Check if user has authorized_keys
 _ssh_user_has_key() {
     local user="$1"
-    local home_dir=$(getent passwd "$user" | cut -d: -f6)
+    local home_dir
+    home_dir=$(getent passwd "$user" | cut -d: -f6)
     local auth_keys="${home_dir}/.ssh/authorized_keys"
 
     [[ -f "$auth_keys" ]] && [[ -s "$auth_keys" ]]
+}
+
+# Check authorized_keys file permissions (security check)
+_ssh_check_authkeys_permissions() {
+    local user="$1"
+    local home_dir
+    home_dir=$(getent passwd "$user" | cut -d: -f6)
+    local ssh_dir="${home_dir}/.ssh"
+    local auth_keys="${ssh_dir}/authorized_keys"
+    local issues=()
+
+    if [[ ! -d "$ssh_dir" ]]; then
+        return 0  # No .ssh dir, nothing to check
+    fi
+
+    # Check .ssh directory permissions (should be 700 or 755)
+    local ssh_perms
+    ssh_perms=$(stat -c "%a" "$ssh_dir" 2>/dev/null)
+    if [[ -n "$ssh_perms" ]] && [[ "$ssh_perms" != "700" ]] && [[ "$ssh_perms" != "755" ]]; then
+        issues+=("$ssh_dir has permissions $ssh_perms (should be 700)")
+    fi
+
+    # Check authorized_keys permissions (should be 600 or 644)
+    if [[ -f "$auth_keys" ]]; then
+        local ak_perms
+        ak_perms=$(stat -c "%a" "$auth_keys" 2>/dev/null)
+        if [[ -n "$ak_perms" ]] && [[ "$ak_perms" != "600" ]] && [[ "$ak_perms" != "644" ]]; then
+            issues+=("$auth_keys has permissions $ak_perms (should be 600)")
+        fi
+
+        # Check ownership
+        local ak_owner
+        ak_owner=$(stat -c "%U" "$auth_keys" 2>/dev/null)
+        if [[ -n "$ak_owner" ]] && [[ "$ak_owner" != "$user" ]] && [[ "$ak_owner" != "root" ]]; then
+            issues+=("$auth_keys owned by $ak_owner (should be $user)")
+        fi
+    fi
+
+    if [[ ${#issues[@]} -gt 0 ]]; then
+        printf '%s\n' "${issues[@]}"
+        return 1
+    fi
+    return 0
 }
 
 # ==============================================================================
@@ -218,11 +294,14 @@ _ssh_audit_pubkey() {
 }
 
 _ssh_audit_admin_user() {
-    local admin_users=$(_ssh_get_admin_users)
+    local admin_users
+    admin_users=$(_ssh_get_admin_users)
 
     if [[ -n "$admin_users" ]]; then
-        local first_admin=$(echo "$admin_users" | head -1)
-        local check=$(create_check_json \
+        local first_admin
+        first_admin=$(echo "$admin_users" | head -1)
+        local check
+        check=$(create_check_json \
             "ssh.admin_user_exists" \
             "ssh" \
             "low" \
@@ -236,7 +315,7 @@ _ssh_audit_admin_user() {
 
         # Check if admin has SSH key
         if ! _ssh_user_has_key "$first_admin"; then
-            local check=$(create_check_json \
+            check=$(create_check_json \
                 "ssh.admin_no_key" \
                 "ssh" \
                 "medium" \
@@ -247,9 +326,27 @@ _ssh_audit_admin_user() {
                 "")
             state_add_check "$check"
             print_severity "medium" "Admin user $first_admin has no SSH key"
+        else
+            # Check authorized_keys permissions if key exists
+            local perm_issues
+            perm_issues=$(_ssh_check_authkeys_permissions "$first_admin")
+            if [[ -n "$perm_issues" ]]; then
+                check=$(create_check_json \
+                    "ssh.authkeys_permissions" \
+                    "ssh" \
+                    "medium" \
+                    "failed" \
+                    "SSH key files have insecure permissions" \
+                    "$perm_issues" \
+                    "Fix permissions: chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" \
+                    "")
+                state_add_check "$check"
+                print_severity "medium" "SSH key files have insecure permissions"
+            fi
         fi
     else
-        local check=$(create_check_json \
+        local check
+        check=$(create_check_json \
             "ssh.no_admin_user" \
             "ssh" \
             "high" \

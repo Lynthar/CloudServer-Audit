@@ -345,22 +345,113 @@ check_optional_deps() {
 }
 
 # ==============================================================================
+# Input Validation Functions
+# ==============================================================================
+
+# Validate that a path is safe (no path traversal)
+validate_path() {
+    local path="$1"
+    local base_dir="${2:-}"
+
+    # Check for null or empty
+    [[ -z "$path" ]] && return 1
+
+    # Check for path traversal attempts
+    if [[ "$path" =~ \.\. ]] || [[ "$path" =~ ^[[:space:]] ]] || [[ "$path" =~ [[:space:]]$ ]]; then
+        log_warn "Potentially unsafe path detected: $path"
+        return 1
+    fi
+
+    # If base_dir is specified, ensure path is under it
+    if [[ -n "$base_dir" ]]; then
+        local resolved_path
+        resolved_path=$(realpath -m "$path" 2>/dev/null) || return 1
+        local resolved_base
+        resolved_base=$(realpath -m "$base_dir" 2>/dev/null) || return 1
+
+        if [[ "$resolved_path" != "$resolved_base"* ]]; then
+            log_warn "Path $path is not under base directory $base_dir"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+# Validate that input matches expected pattern
+validate_input() {
+    local input="$1"
+    local pattern="$2"
+    local max_length="${3:-1024}"
+
+    # Check length
+    if [[ ${#input} -gt $max_length ]]; then
+        return 1
+    fi
+
+    # Check pattern
+    if [[ -n "$pattern" ]] && [[ ! "$input" =~ $pattern ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Validate port number
+validate_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 ]] && [[ "$port" -le 65535 ]]
+}
+
+# Validate IP address (basic check)
+validate_ip() {
+    local ip="$1"
+    # IPv4 basic validation
+    if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        return 0
+    fi
+    # IPv6 basic validation (simplified)
+    if [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$ip" == *:* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# ==============================================================================
 # File Operations (Safe)
 # ==============================================================================
 
 # Create a timestamped backup of a file
 backup_file() {
     local file="$1"
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+
+    # Validate input path
+    if ! validate_path "$file"; then
+        log_error "Invalid path for backup: $file"
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
 
+    # Create backup directory with secure permissions
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
 
     if [[ -f "$file" ]]; then
         local relative_path="${file#/}"
         local backup_path="${backup_dir}/${relative_path}"
+
+        # Validate the constructed backup path
+        if ! validate_path "$backup_path" "$VPSSEC_BACKUPS"; then
+            log_error "Unsafe backup path: $backup_path"
+            return 1
+        fi
+
         mkdir -p "$(dirname "$backup_path")"
         cp -p "$file" "$backup_path"
+        chmod 600 "$backup_path"
         log_info "Backed up: $file -> $backup_path"
         echo "$backup_path"
     fi
@@ -370,23 +461,44 @@ backup_file() {
 write_file_atomic() {
     local target="$1"
     local content="$2"
-    local temp_file
 
-    # Create temp file with secure permissions (mode 600)
-    temp_file=$(mktemp) || { log_error "Failed to create temp file"; return 1; }
+    # Validate target path
+    if ! validate_path "$target"; then
+        log_error "Invalid target path: $target"
+        return 1
+    fi
+
+    local temp_file
+    local target_dir
+    target_dir=$(dirname "$target")
+
+    # Ensure target directory exists
+    mkdir -p "$target_dir"
+
+    # Create temp file in the same directory for atomic mv
+    temp_file=$(mktemp "${target_dir}/.vpssec.XXXXXX") || {
+        log_error "Failed to create temp file in $target_dir"
+        return 1
+    }
+
+    # Set secure permissions initially
     chmod 600 "$temp_file"
 
     # Write content
-    if ! echo "$content" > "$temp_file"; then
+    if ! printf '%s' "$content" > "$temp_file"; then
         rm -f "$temp_file"
         log_error "Failed to write content to temp file"
         return 1
     fi
 
     # Set appropriate permissions (copy from target or default to 644)
-    chmod --reference="$target" "$temp_file" 2>/dev/null || chmod 644 "$temp_file"
+    if [[ -f "$target" ]]; then
+        chmod --reference="$target" "$temp_file" 2>/dev/null || chmod 644 "$temp_file"
+    else
+        chmod 644 "$temp_file"
+    fi
 
-    if mv "$temp_file" "$target"; then
+    if mv -f "$temp_file" "$target"; then
         log_info "Atomically wrote: $target"
         return 0
     else
@@ -688,8 +800,13 @@ select_mode() {
 }
 
 vpssec_init() {
-    # Create necessary directories
-    mkdir -p "${VPSSEC_STATE}" "${VPSSEC_REPORTS}" "${VPSSEC_BACKUPS}" "${VPSSEC_LOGS}"
+    # Create necessary directories with secure permissions
+    mkdir -p "${VPSSEC_STATE}" "${VPSSEC_REPORTS}" "${VPSSEC_BACKUPS}" "${VPSSEC_LOGS}" "${VPSSEC_TEMPLATES}"
+
+    # Set secure permissions on sensitive directories
+    chmod 700 "${VPSSEC_STATE}" "${VPSSEC_BACKUPS}"
+    chmod 750 "${VPSSEC_REPORTS}" "${VPSSEC_LOGS}"
+    chmod 755 "${VPSSEC_TEMPLATES}"
 
     # Initialize logging
     log_init

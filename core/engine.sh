@@ -36,8 +36,25 @@ module_load() {
         return 1
     fi
 
+    # Validate module file is readable
+    if [[ ! -r "$module_file" ]]; then
+        log_error "Module file not readable: $module_file"
+        return 1
+    fi
+
+    # Source module with error handling
     # shellcheck source=/dev/null
-    source "$module_file"
+    if ! source "$module_file" 2>/dev/null; then
+        log_error "Failed to source module: $module_file"
+        return 1
+    fi
+
+    # Verify the module's audit function exists
+    local audit_func="${module}_audit"
+    if ! declare -f "$audit_func" > /dev/null 2>&1; then
+        log_warn "Module $module loaded but missing ${audit_func}() function"
+        # Still mark as loaded, but log warning
+    fi
 
     VPSSEC_MODULE_LOADED[$module]=1
     log_debug "Module loaded: $module"
@@ -144,9 +161,19 @@ audit_module() {
     if declare -f "$audit_func" > /dev/null; then
         log_info "Running audit: $module"
         print_subheader "$(i18n "${module}.title")"
-        "$audit_func"
+
+        # Execute audit with error capture
+        local audit_result=0
+        if ! "$audit_func"; then
+            audit_result=$?
+            log_warn "Audit function $audit_func returned non-zero: $audit_result"
+            # Don't fail the whole audit for individual module failures
+        fi
+
+        return 0  # Module audit completed (even if with warnings)
     else
         log_warn "Audit function not found: $audit_func"
+        print_error "$(i18n 'error.audit_func_not_found' "func=$audit_func" 2>/dev/null || echo "Audit function not found: $audit_func")"
         return 1
     fi
 }
