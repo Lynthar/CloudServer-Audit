@@ -86,7 +86,8 @@ download_vpssec() {
 
 # Cleanup
 cleanup() {
-    if [[ -d "$VPSSEC_TMP" ]]; then
+    # Safety: only remove if path is valid and under /tmp
+    if [[ -n "$VPSSEC_TMP" ]] && [[ "$VPSSEC_TMP" =~ ^/tmp/vpssec- ]] && [[ -d "$VPSSEC_TMP" ]]; then
         rm -rf "$VPSSEC_TMP"
     fi
 }
