@@ -519,19 +519,22 @@ confirm() {
     fi
 
     local yn
-    # Read from /dev/tty to handle curl|bash piped execution
-    # If /dev/tty is not available, use the default value
+    local prompt_text
     if [[ "$default" == "y" ]]; then
-        if ! read -rp "$prompt [Y/n] " yn </dev/tty 2>/dev/null; then
-            yn="$default"  # Default to yes if cannot read
-        fi
-        yn="${yn:-y}"
+        prompt_text="$prompt [Y/n] > "
     else
-        if ! read -rp "$prompt [y/N] " yn </dev/tty 2>/dev/null; then
-            yn="$default"  # Default to no if cannot read
-        fi
-        yn="${yn:-n}"
+        prompt_text="$prompt [y/N] > "
     fi
+
+    # Always print prompt first (works even if tty read fails)
+    echo -n "$prompt_text"
+
+    # Read from /dev/tty to handle curl|bash piped execution
+    if ! read -r yn </dev/tty 2>/dev/null; then
+        echo ""  # Newline after failed read
+        yn="$default"
+    fi
+    yn="${yn:-$default}"
 
     [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]]
 }
@@ -543,10 +546,14 @@ confirm_critical() {
 
     print_warn "$(i18n 'common.warning'): $prompt"
 
+    # Always print prompt first
+    echo -n "$(i18n 'common.confirm') [yes/NO] > "
+
     # For critical operations, we MUST get user confirmation
     # If /dev/tty is not available, return failure (do not proceed)
-    if ! read -rp "$(i18n 'common.confirm') [yes/NO] " yn </dev/tty 2>/dev/null; then
-        print_error "Cannot read user input for critical confirmation - aborting"
+    if ! read -r yn </dev/tty 2>/dev/null; then
+        echo ""
+        print_error "$(i18n 'error.cannot_read_critical')"
         return 1
     fi
 
@@ -583,9 +590,12 @@ select_language() {
     echo ""
 
     local choice
+    # Always print prompt first
+    echo -n "Enter choice / 输入选项 [1-2] (default: 2) > "
+
     # Read from /dev/tty to handle curl|bash piped execution
-    # Fall back to default if read fails
-    if ! read -rp "Enter choice [1-2] (default: 2): " choice </dev/tty 2>/dev/null; then
+    if ! read -r choice </dev/tty 2>/dev/null; then
+        echo ""
         choice="2"  # Default to Chinese
     fi
 
@@ -648,18 +658,20 @@ select_mode() {
     echo ""
 
     local choice
-    local prompt_en="Enter choice [1-2] (default: 1): "
-    local prompt_zh="输入选择 [1-2] (默认: 1): "
+    local prompt_en="Enter choice [1-2] (default: 1) > "
+    local prompt_zh="输入选择 [1-2] (默认: 1) > "
+
+    # Always print prompt first
+    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+        echo -n "$prompt_en"
+    else
+        echo -n "$prompt_zh"
+    fi
 
     # Read from /dev/tty, fall back to default if read fails
-    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
-        if ! read -rp "$prompt_en" choice </dev/tty 2>/dev/null; then
-            choice="1"  # Default to audit
-        fi
-    else
-        if ! read -rp "$prompt_zh" choice </dev/tty 2>/dev/null; then
-            choice="1"  # Default to audit
-        fi
+    if ! read -r choice </dev/tty 2>/dev/null; then
+        echo ""
+        choice="1"  # Default to audit
     fi
 
     case "${choice:-1}" in
