@@ -508,11 +508,12 @@ confirm() {
     fi
 
     local yn
+    # Read from /dev/tty to handle curl|bash piped execution
     if [[ "$default" == "y" ]]; then
-        read -rp "$prompt [Y/n] " yn
+        read -rp "$prompt [Y/n] " yn </dev/tty
         yn="${yn:-y}"
     else
-        read -rp "$prompt [y/N] " yn
+        read -rp "$prompt [y/N] " yn </dev/tty
         yn="${yn:-n}"
     fi
 
@@ -525,7 +526,8 @@ confirm_critical() {
     local yn
 
     print_warn "$(i18n 'common.warning'): $prompt"
-    read -rp "$(i18n 'common.confirm') [yes/NO] " yn
+    # Read from /dev/tty to handle curl|bash piped execution
+    read -rp "$(i18n 'common.confirm') [yes/NO] " yn </dev/tty
 
     [[ "${yn,,}" == "yes" ]]
 }
@@ -538,6 +540,12 @@ confirm_critical() {
 select_language() {
     # Skip if already specified via --lang or environment
     if [[ -n "${VPSSEC_LANG_SET:-}" ]]; then
+        return 0
+    fi
+
+    # Check if we can read from terminal (handle curl|bash piped execution)
+    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
+        # No terminal available, use default
         return 0
     fi
 
@@ -554,7 +562,8 @@ select_language() {
     echo ""
 
     local choice
-    read -rp "Enter choice [1-2] (default: 2): " choice
+    # Read from /dev/tty to handle curl|bash piped execution
+    read -rp "Enter choice [1-2] (default: 2): " choice </dev/tty
 
     case "${choice:-2}" in
         1)
