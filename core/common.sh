@@ -799,6 +799,97 @@ select_mode() {
     export VPSSEC_MODE_SET=1
 }
 
+# Security level selection menu
+# Returns: sets VPSSEC_SECURITY_LEVEL global variable
+select_security_level() {
+    # Skip if already specified via command line
+    if [[ -n "${VPSSEC_LEVEL_SET:-}" ]]; then
+        return 0
+    fi
+
+    # Only show in guide mode
+    if [[ "${VPSSEC_MODE:-audit}" != "guide" ]]; then
+        # Default to standard for audit mode
+        VPSSEC_SECURITY_LEVEL="${VPSSEC_SECURITY_LEVEL:-standard}"
+        export VPSSEC_SECURITY_LEVEL
+        return 0
+    fi
+
+    # Check if we can read from terminal
+    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
+        # No terminal available, use default (standard)
+        VPSSEC_SECURITY_LEVEL="standard"
+        export VPSSEC_SECURITY_LEVEL
+        return 0
+    fi
+
+    # Bilingual level selection
+    local title_en="Select security level"
+    local title_zh="选择安全等级"
+
+    local basic_en="Basic - Essential checks, no auto-fixes"
+    local basic_zh="基础 - 基本检查，不自动修复"
+    local standard_en="Standard - Balanced security (recommended)"
+    local standard_zh="标准 - 均衡安全 (推荐)"
+    local strict_en="Strict - Maximum security"
+    local strict_zh="严格 - 最高安全等级"
+
+    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+        echo ""
+        echo "┌─────────────────────────────────────────────────┐"
+        echo "│  ${title_en}:                                │"
+        echo "│                                                 │"
+        echo "│  [1] ${basic_en}      │"
+        echo "│  [2] ${standard_en}   │"
+        echo "│  [3] ${strict_en}                    │"
+        echo "│                                                 │"
+        echo "└─────────────────────────────────────────────────┘"
+    else
+        echo ""
+        echo "┌─────────────────────────────────────────────────┐"
+        echo "│  ${title_zh}:                                    │"
+        echo "│                                                 │"
+        echo "│  [1] ${basic_zh}               │"
+        echo "│  [2] ${standard_zh}                   │"
+        echo "│  [3] ${strict_zh}                  │"
+        echo "│                                                 │"
+        echo "└─────────────────────────────────────────────────┘"
+    fi
+    echo ""
+
+    local choice
+    local prompt_en="Enter choice [1-3] (default: 2) > "
+    local prompt_zh="输入选择 [1-3] (默认: 2) > "
+
+    # Always print prompt first
+    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+        echo -n "$prompt_en"
+    else
+        echo -n "$prompt_zh"
+    fi
+
+    # Read from /dev/tty, fall back to default if read fails
+    if ! read -r choice </dev/tty 2>/dev/null; then
+        echo ""
+        choice="2"  # Default to standard
+    fi
+
+    case "${choice:-2}" in
+        1)
+            VPSSEC_SECURITY_LEVEL="basic"
+            ;;
+        3)
+            VPSSEC_SECURITY_LEVEL="strict"
+            ;;
+        2|*)
+            VPSSEC_SECURITY_LEVEL="standard"
+            ;;
+    esac
+
+    export VPSSEC_SECURITY_LEVEL
+    export VPSSEC_LEVEL_SET=1
+}
+
 vpssec_init() {
     # Create necessary directories with secure permissions
     mkdir -p "${VPSSEC_STATE}" "${VPSSEC_REPORTS}" "${VPSSEC_BACKUPS}" "${VPSSEC_LOGS}" "${VPSSEC_TEMPLATES}"

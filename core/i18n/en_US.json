@@ -57,6 +57,7 @@
     "cmd_status": "status   View current security status",
     "options": "Options:",
     "opt_lang": "--lang=LANG      Set language (zh_CN|en_US)",
+    "opt_level": "--level=LEVEL    Set security level (basic|standard|strict)",
     "opt_no_color": "--no-color       Disable colored output",
     "opt_json_only": "--json-only      Output JSON format only",
     "opt_yes": "--yes            Skip non-critical confirmations",
@@ -548,6 +549,7 @@
   },
   "guide": {
     "welcome": "Welcome to VPS Security Hardening Wizard",
+    "security_level": "Security Level",
     "select_modules": "Select modules to check/fix",
     "select_fixes": "Select fixes to execute",
     "review_plan": "Review execution plan",
@@ -559,6 +561,14 @@
     "rollback_available": "Use 'vpssec rollback' to revert changes",
     "enter_numbers": "Enter numbers separated by spaces, or 'all'",
     "no_fixes_needed": "No fixes needed, system security is good"
+  },
+  "fix": {
+    "alert_only": "Alert only - manual fix required",
+    "risky_skipped": "Risky fix skipped",
+    "confirm_skipped": "Fix skipped in basic mode",
+    "safe": "Safe fix",
+    "confirm": "Requires confirmation",
+    "risky": "Risky operation"
   },
   "scan": {
     "scanning": "Scanning...",

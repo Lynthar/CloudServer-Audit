@@ -46,6 +46,7 @@ $(i18n 'cli.commands')
 
 $(i18n 'cli.options')
   $(i18n 'cli.opt_lang')
+  $(i18n 'cli.opt_level')
   $(i18n 'cli.opt_no_color')
   $(i18n 'cli.opt_json_only')
   $(i18n 'cli.opt_yes')
@@ -58,6 +59,7 @@ Examples:
   vpssec audit                     # Run security audit
   vpssec audit --json-only         # Output JSON only
   vpssec guide                     # Interactive hardening
+  vpssec guide --level=strict      # Maximum security level
   vpssec guide --include=ssh,ufw   # Only SSH and UFW modules
   vpssec rollback                  # Rollback last changes
 
@@ -83,6 +85,12 @@ parse_args() {
                 VPSSEC_LANG="${1#*=}"
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
+                shift
+                ;;
+            --level=*)
+                VPSSEC_SECURITY_LEVEL="${1#*=}"
+                VPSSEC_LEVEL_SET=1
+                export VPSSEC_SECURITY_LEVEL VPSSEC_LEVEL_SET
                 shift
                 ;;
             --no-color)
@@ -144,7 +152,7 @@ parse_args() {
 # ==============================================================================
 
 main() {
-    # Handle --version, --help, --lang and detect command before interactive menus
+    # Handle --version, --help, --lang, --level and detect command before interactive menus
     for arg in "$@"; do
         case "$arg" in
             --version|-v)
@@ -163,6 +171,12 @@ main() {
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
                 ;;
+            --level=*)
+                # Mark level as set so we skip selection menu
+                VPSSEC_SECURITY_LEVEL="${arg#*=}"
+                VPSSEC_LEVEL_SET=1
+                export VPSSEC_SECURITY_LEVEL VPSSEC_LEVEL_SET
+                ;;
             audit|guide|rollback|status)
                 # Mark mode as set so we skip selection menu
                 VPSSEC_MODE="$arg"
@@ -177,6 +191,9 @@ main() {
 
     # Show mode selection if not specified (only for audit/guide, not rollback/status)
     select_mode
+
+    # Show security level selection if in guide mode and not specified
+    select_security_level
 
     # Parse command line arguments (will use VPSSEC_MODE if set)
     local command=$(parse_args "$@")
@@ -225,6 +242,7 @@ main() {
             print_msg "Version: ${VPSSEC_VERSION}"
             print_msg "Date: $(date '+%Y-%m-%d %H:%M:%S')"
             print_msg "OS: $(detect_os) $(detect_os_version)"
+            print_msg "Security Level: ${VPSSEC_SECURITY_LEVEL:-standard}"
             audit_all
             ;;
         guide)
