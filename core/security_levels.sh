@@ -453,27 +453,82 @@ get_security_level() {
 }
 
 # Print security level description
+# Takes optional second arg for mode (audit/guide)
 print_security_level_info() {
     local level="$1"
+    local mode="${2:-${VPSSEC_MODE:-audit}}"
 
-    case "$level" in
-        basic)
-            echo "Basic - Essential security checks, no automatic fixes"
-            echo "  • Core SSH, firewall, and update checks"
-            echo "  • Alert-only mode for all issues"
-            echo "  • Suitable for first-time users or audit-only runs"
-            ;;
-        standard)
-            echo "Standard - Balanced security with safe auto-fixes (recommended)"
-            echo "  • Comprehensive security checks"
-            echo "  • Auto-fix for low-risk items"
-            echo "  • Confirmation required for medium-risk changes"
-            ;;
-        strict)
-            echo "Strict - Maximum security for production servers"
-            echo "  • All available security checks"
-            echo "  • More aggressive auto-fixes"
-            echo "  • Includes risky fixes with safeguards"
-            ;;
-    esac
+    if [[ "$mode" == "guide" ]]; then
+        # Guide mode - describe fix behavior
+        case "$level" in
+            basic)
+                echo "Basic - Essential security checks, no automatic fixes"
+                echo "  • Core SSH, firewall, and update checks"
+                echo "  • Alert-only mode for all issues"
+                echo "  • Suitable for first-time users"
+                ;;
+            standard)
+                echo "Standard - Balanced security with safe auto-fixes (recommended)"
+                echo "  • Comprehensive security checks"
+                echo "  • Auto-fix for low-risk items"
+                echo "  • Confirmation required for medium-risk changes"
+                ;;
+            strict)
+                echo "Strict - Maximum security for production servers"
+                echo "  • All available security checks"
+                echo "  • More aggressive auto-fixes"
+                echo "  • Includes risky fixes with safeguards"
+                ;;
+        esac
+    else
+        # Audit mode - describe check scope
+        case "$level" in
+            basic)
+                echo "Basic - Core security checks only"
+                echo "  • SSH authentication & root login"
+                echo "  • Firewall status"
+                echo "  • System updates"
+                echo "  • Critical file permissions"
+                ;;
+            standard)
+                echo "Standard - Comprehensive security audit (recommended)"
+                echo "  • All basic checks plus:"
+                echo "  • Service hardening (fail2ban, AppArmor)"
+                echo "  • Docker security (if installed)"
+                echo "  • Kernel parameters"
+                echo "  • Filesystem security"
+                ;;
+            strict)
+                echo "Strict - Full compliance audit"
+                echo "  • All standard checks plus:"
+                echo "  • Audit logging (auditd)"
+                echo "  • Alert configuration"
+                echo "  • SGID binaries"
+                echo "  • /tmp mount options"
+                ;;
+        esac
+    fi
+}
+
+# Count checks at each level
+count_checks_by_level() {
+    local level="$1"
+    local count=0
+
+    for check_id in "${!CHECK_LEVEL[@]}"; do
+        local check_level="${CHECK_LEVEL[$check_id]}"
+        case "$level" in
+            basic)
+                [[ "$check_level" == "basic" ]] && ((count++))
+                ;;
+            standard)
+                [[ "$check_level" == "basic" || "$check_level" == "standard" ]] && ((count++))
+                ;;
+            strict)
+                ((count++))  # All checks
+                ;;
+        esac
+    done
+
+    echo "$count"
 }

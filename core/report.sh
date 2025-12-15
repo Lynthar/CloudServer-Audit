@@ -19,6 +19,8 @@ report_generate_json() {
     local hostname=$(hostname)
     local virt=$(detect_virtualization)
 
+    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
+
     cat > "$output_file" <<EOF
 {
   "meta": {
@@ -28,7 +30,8 @@ report_generate_json() {
     "os_version": "${os_version}",
     "hostname": "${hostname}",
     "virtualization": "${virt}",
-    "lang": "${VPSSEC_LANG}"
+    "lang": "${VPSSEC_LANG}",
+    "security_level": "${security_level}"
   },
   "score": ${score},
   "stats": ${stats},
@@ -55,6 +58,16 @@ report_generate_markdown() {
     local os=$(detect_os)
     local os_version=$(detect_os_version)
     local hostname=$(hostname)
+    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
+
+    # Get localized level name
+    local level_name
+    case "$security_level" in
+        basic)    level_name=$(i18n 'level.basic' 2>/dev/null || echo "Basic") ;;
+        standard) level_name=$(i18n 'level.standard' 2>/dev/null || echo "Standard") ;;
+        strict)   level_name=$(i18n 'level.strict' 2>/dev/null || echo "Strict") ;;
+        *)        level_name="$security_level" ;;
+    esac
 
     cat > "$output_file" <<EOF
 # $(i18n 'report.title')
@@ -67,6 +80,7 @@ report_generate_markdown() {
 | OS | ${os} ${os_version} |
 | Date | $(date '+%Y-%m-%d %H:%M:%S') |
 | vpssec Version | ${VPSSEC_VERSION} |
+| Security Level | ${level_name} |
 
 ---
 
@@ -207,6 +221,17 @@ report_print_summary() {
     local low=$(echo "$stats" | jq '.low')
     local passed=$(echo "$stats" | jq '.passed')
 
+    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
+
+    # Get localized level name
+    local level_name
+    case "$security_level" in
+        basic)    level_name=$(i18n 'level.basic' 2>/dev/null || echo "Basic") ;;
+        standard) level_name=$(i18n 'level.standard' 2>/dev/null || echo "Standard") ;;
+        strict)   level_name=$(i18n 'level.strict' 2>/dev/null || echo "Strict") ;;
+        *)        level_name="$security_level" ;;
+    esac
+
     print_header "$(i18n 'report.summary')"
 
     # Score bar
@@ -220,7 +245,7 @@ report_print_summary() {
     fi
 
     print_msg ""
-    print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${score}/100${NC}"
+    print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${score}/100${NC}  ${DIM}(${level_name})${NC}"
     print_msg ""
 
     # Module summary

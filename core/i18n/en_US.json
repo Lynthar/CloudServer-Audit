@@ -570,6 +570,11 @@
     "confirm": "Requires confirmation",
     "risky": "Risky operation"
   },
+  "level": {
+    "basic": "Basic",
+    "standard": "Standard",
+    "strict": "Strict"
+  },
   "scan": {
     "scanning": "Scanning...",
     "progress": "Scan progress",
