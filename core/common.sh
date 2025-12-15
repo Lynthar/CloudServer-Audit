@@ -807,14 +807,6 @@ select_security_level() {
         return 0
     fi
 
-    # Only show in guide mode
-    if [[ "${VPSSEC_MODE:-audit}" != "guide" ]]; then
-        # Default to standard for audit mode
-        VPSSEC_SECURITY_LEVEL="${VPSSEC_SECURITY_LEVEL:-standard}"
-        export VPSSEC_SECURITY_LEVEL
-        return 0
-    fi
-
     # Check if we can read from terminal
     if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
         # No terminal available, use default (standard)
@@ -823,37 +815,53 @@ select_security_level() {
         return 0
     fi
 
-    # Bilingual level selection
-    local title_en="Select security level"
-    local title_zh="选择安全等级"
+    local mode="${VPSSEC_MODE:-audit}"
 
-    local basic_en="Basic - Essential checks, no auto-fixes"
-    local basic_zh="基础 - 基本检查，不自动修复"
-    local standard_en="Standard - Balanced security (recommended)"
-    local standard_zh="标准 - 均衡安全 (推荐)"
-    local strict_en="Strict - Maximum security"
-    local strict_zh="严格 - 最高安全等级"
+    # Bilingual level selection - different descriptions for audit vs guide mode
+    local title_en title_zh
+    local basic_en basic_zh standard_en standard_zh strict_en strict_zh
+
+    if [[ "$mode" == "guide" ]]; then
+        title_en="Select security level"
+        title_zh="选择安全等级"
+        basic_en="Basic - Essential checks, no auto-fixes"
+        basic_zh="基础 - 基本检查，不自动修复"
+        standard_en="Standard - Balanced security (recommended)"
+        standard_zh="标准 - 均衡安全 (推荐)"
+        strict_en="Strict - Maximum security"
+        strict_zh="严格 - 最高安全等级"
+    else
+        # Audit mode - describe check scope
+        title_en="Select check scope"
+        title_zh="选择检查范围"
+        basic_en="Basic - Core security checks only (fast)"
+        basic_zh="基础 - 仅核心安全检查 (快速)"
+        standard_en="Standard - Comprehensive checks (recommended)"
+        standard_zh="标准 - 全面检查 (推荐)"
+        strict_en="Strict - All checks including compliance"
+        strict_zh="严格 - 全部检查含合规项"
+    fi
 
     if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
         echo ""
-        echo "┌─────────────────────────────────────────────────┐"
-        echo "│  ${title_en}:                                │"
-        echo "│                                                 │"
-        echo "│  [1] ${basic_en}      │"
-        echo "│  [2] ${standard_en}   │"
-        echo "│  [3] ${strict_en}                    │"
-        echo "│                                                 │"
-        echo "└─────────────────────────────────────────────────┘"
+        echo "┌─────────────────────────────────────────────────────┐"
+        echo "│  ${title_en}:                                    │"
+        echo "│                                                     │"
+        echo "│  [1] ${basic_en}         │"
+        echo "│  [2] ${standard_en}  │"
+        echo "│  [3] ${strict_en}     │"
+        echo "│                                                     │"
+        echo "└─────────────────────────────────────────────────────┘"
     else
         echo ""
-        echo "┌─────────────────────────────────────────────────┐"
-        echo "│  ${title_zh}:                                    │"
-        echo "│                                                 │"
-        echo "│  [1] ${basic_zh}               │"
-        echo "│  [2] ${standard_zh}                   │"
+        echo "┌─────────────────────────────────────────────────────┐"
+        echo "│  ${title_zh}:                                        │"
+        echo "│                                                     │"
+        echo "│  [1] ${basic_zh}                   │"
+        echo "│  [2] ${standard_zh}                       │"
         echo "│  [3] ${strict_zh}                  │"
-        echo "│                                                 │"
-        echo "└─────────────────────────────────────────────────┘"
+        echo "│                                                     │"
+        echo "└─────────────────────────────────────────────────────┘"
     fi
     echo ""
 

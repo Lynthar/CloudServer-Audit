@@ -570,6 +570,11 @@
     "confirm": "需要确认",
     "risky": "高风险操作"
   },
+  "level": {
+    "basic": "基础",
+    "standard": "标准",
+    "strict": "严格"
+  },
   "scan": {
     "scanning": "正在扫描...",
     "progress": "扫描进度",
