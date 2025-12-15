@@ -207,6 +207,22 @@ ssh_audit() {
     # Check empty passwords
     print_item "$(i18n 'ssh.check_empty_password')"
     _ssh_audit_empty_password
+
+    # Check MaxAuthTries
+    print_item "$(i18n 'ssh.check_max_auth_tries')"
+    _ssh_audit_max_auth_tries
+
+    # Check LoginGraceTime
+    print_item "$(i18n 'ssh.check_login_grace_time')"
+    _ssh_audit_login_grace_time
+
+    # Check X11Forwarding
+    print_item "$(i18n 'ssh.check_x11_forwarding')"
+    _ssh_audit_x11_forwarding
+
+    # Check SSH protocol and algorithms
+    print_item "$(i18n 'ssh.check_algorithms')"
+    _ssh_audit_algorithms
 }
 
 _ssh_audit_password_auth() {
@@ -388,6 +404,171 @@ _ssh_audit_empty_password() {
     fi
 }
 
+_ssh_audit_max_auth_tries() {
+    local max_auth=$(_ssh_get_config "MaxAuthTries" "6")
+
+    if [[ "$max_auth" -le 4 ]]; then
+        local check=$(create_check_json \
+            "ssh.max_auth_tries_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.max_auth_tries_ok')" \
+            "MaxAuthTries=$max_auth" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.max_auth_tries_ok') ($max_auth)"
+    else
+        local check=$(create_check_json \
+            "ssh.max_auth_tries_high" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.max_auth_tries_high')" \
+            "MaxAuthTries=$max_auth (recommended: 3-4)" \
+            "Set MaxAuthTries to 4 or less" \
+            "ssh.set_max_auth_tries")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.max_auth_tries_high') ($max_auth)"
+    fi
+}
+
+_ssh_audit_login_grace_time() {
+    local grace_time=$(_ssh_get_config "LoginGraceTime" "120")
+
+    # Handle time suffixes (s, m, h)
+    local seconds="$grace_time"
+    if [[ "$grace_time" =~ ^[0-9]+m$ ]]; then
+        seconds=$((${grace_time%m} * 60))
+    elif [[ "$grace_time" =~ ^[0-9]+h$ ]]; then
+        seconds=$((${grace_time%h} * 3600))
+    elif [[ "$grace_time" =~ ^[0-9]+s$ ]]; then
+        seconds="${grace_time%s}"
+    fi
+
+    if [[ "$seconds" -le 60 ]]; then
+        local check=$(create_check_json \
+            "ssh.login_grace_time_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.login_grace_time_ok')" \
+            "LoginGraceTime=$grace_time" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.login_grace_time_ok') ($grace_time)"
+    else
+        local check=$(create_check_json \
+            "ssh.login_grace_time_long" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.login_grace_time_long')" \
+            "LoginGraceTime=$grace_time (recommended: 60s or less)" \
+            "Set LoginGraceTime to 60" \
+            "ssh.set_login_grace_time")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.login_grace_time_long') ($grace_time)"
+    fi
+}
+
+_ssh_audit_x11_forwarding() {
+    local x11=$(_ssh_get_config "X11Forwarding" "no")
+
+    if [[ "${x11,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.x11_forwarding_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.x11_forwarding_disabled')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.x11_forwarding_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.x11_forwarding_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.x11_forwarding_enabled')" \
+            "X11Forwarding is enabled" \
+            "Disable X11 forwarding unless needed" \
+            "ssh.disable_x11_forwarding")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.x11_forwarding_enabled')"
+    fi
+}
+
+_ssh_audit_algorithms() {
+    local issues=()
+
+    # Check for weak ciphers using sshd -T
+    if command -v sshd &>/dev/null; then
+        local ciphers
+        ciphers=$(sshd -T 2>/dev/null | grep "^ciphers " | cut -d' ' -f2-)
+
+        # Check for known weak ciphers
+        local weak_ciphers=("3des-cbc" "arcfour" "arcfour128" "arcfour256" "blowfish-cbc" "cast128-cbc")
+        for weak in "${weak_ciphers[@]}"; do
+            if [[ "$ciphers" == *"$weak"* ]]; then
+                issues+=("cipher:$weak")
+            fi
+        done
+
+        # Check for weak MACs
+        local macs
+        macs=$(sshd -T 2>/dev/null | grep "^macs " | cut -d' ' -f2-)
+        local weak_macs=("hmac-md5" "hmac-md5-96" "hmac-sha1-96")
+        for weak in "${weak_macs[@]}"; do
+            if [[ "$macs" == *"$weak"* ]]; then
+                issues+=("mac:$weak")
+            fi
+        done
+
+        # Check for weak KEX algorithms
+        local kex
+        kex=$(sshd -T 2>/dev/null | grep "^kexalgorithms " | cut -d' ' -f2-)
+        local weak_kex=("diffie-hellman-group1-sha1" "diffie-hellman-group-exchange-sha1")
+        for weak in "${weak_kex[@]}"; do
+            if [[ "$kex" == *"$weak"* ]]; then
+                issues+=("kex:$weak")
+            fi
+        done
+    fi
+
+    if [[ ${#issues[@]} -gt 0 ]]; then
+        local issue_list=$(printf '%s ' "${issues[@]}")
+        local check=$(create_check_json \
+            "ssh.weak_algorithms" \
+            "ssh" \
+            "medium" \
+            "failed" \
+            "$(i18n 'ssh.weak_algorithms')" \
+            "Weak algorithms: $issue_list" \
+            "$(i18n 'ssh.fix_algorithms')" \
+            "ssh.harden_algorithms")
+        state_add_check "$check"
+        print_severity "medium" "$(i18n 'ssh.weak_algorithms'): ${#issues[@]} found"
+    else
+        local check=$(create_check_json \
+            "ssh.algorithms_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.algorithms_ok')" \
+            "No weak algorithms detected" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.algorithms_ok')"
+    fi
+}
+
 # ==============================================================================
 # SSH Fix Functions
 # ==============================================================================
@@ -407,6 +588,18 @@ ssh_fix() {
             ;;
         ssh.disable_empty_password)
             _ssh_fix_disable_empty_password
+            ;;
+        ssh.set_max_auth_tries)
+            _ssh_fix_set_max_auth_tries
+            ;;
+        ssh.set_login_grace_time)
+            _ssh_fix_set_login_grace_time
+            ;;
+        ssh.disable_x11_forwarding)
+            _ssh_fix_disable_x11_forwarding
+            ;;
+        ssh.harden_algorithms)
+            _ssh_fix_harden_algorithms
             ;;
         *)
             log_error "Unknown SSH fix: $fix_id"
@@ -665,6 +858,104 @@ $content"
 
     if _ssh_write_hardening_config "$content"; then
         _ssh_reload_safe
+    else
+        return 1
+    fi
+}
+
+_ssh_fix_set_max_auth_tries() {
+    # Read existing hardening config
+    local existing=""
+    if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^MaxAuthTries") || true
+    fi
+
+    # Write config
+    local content="MaxAuthTries 4"
+    if [[ -n "$existing" ]]; then
+        content="$existing
+$content"
+    fi
+
+    if _ssh_write_hardening_config "$content"; then
+        _ssh_reload_safe
+    else
+        return 1
+    fi
+}
+
+_ssh_fix_set_login_grace_time() {
+    # Read existing hardening config
+    local existing=""
+    if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^LoginGraceTime") || true
+    fi
+
+    # Write config
+    local content="LoginGraceTime 60"
+    if [[ -n "$existing" ]]; then
+        content="$existing
+$content"
+    fi
+
+    if _ssh_write_hardening_config "$content"; then
+        _ssh_reload_safe
+    else
+        return 1
+    fi
+}
+
+_ssh_fix_disable_x11_forwarding() {
+    # Read existing hardening config
+    local existing=""
+    if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^X11Forwarding") || true
+    fi
+
+    # Write config
+    local content="X11Forwarding no"
+    if [[ -n "$existing" ]]; then
+        content="$existing
+$content"
+    fi
+
+    if _ssh_write_hardening_config "$content"; then
+        _ssh_reload_safe
+    else
+        return 1
+    fi
+}
+
+_ssh_fix_harden_algorithms() {
+    print_info "$(i18n 'ssh.hardening_algorithms')"
+
+    # Read existing hardening config
+    local existing=""
+    if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | \
+            grep -v "^Ciphers" | \
+            grep -v "^MACs" | \
+            grep -v "^KexAlgorithms") || true
+    fi
+
+    # Recommended secure algorithms (modern OpenSSH)
+    local secure_ciphers="chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+    local secure_macs="hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+    local secure_kex="curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256"
+
+    # Write config
+    local content="Ciphers $secure_ciphers
+MACs $secure_macs
+KexAlgorithms $secure_kex"
+
+    if [[ -n "$existing" ]]; then
+        content="$existing
+$content"
+    fi
+
+    if _ssh_write_hardening_config "$content"; then
+        _ssh_reload_safe
+        return $?
     else
         return 1
     fi
