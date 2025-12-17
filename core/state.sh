@@ -41,9 +41,23 @@ state_init() {
 # ==============================================================================
 
 # Add a check result to state (thread-safe with file locking)
+# Checks are filtered based on the current security level
 state_add_check() {
     local check_json="$1"
     local lock_file="${VPSSEC_STATE}/.checks.lock"
+
+    # Extract check_id from the JSON to filter based on security level
+    local check_id
+    check_id=$(echo "$check_json" | jq -r '.check_id // empty' 2>/dev/null)
+
+    # Filter check based on security level (if level_includes_check is available)
+    if [[ -n "$check_id" ]] && declare -f level_includes_check &>/dev/null; then
+        if ! level_includes_check "$check_id"; then
+            # Skip this check - not included in current security level
+            log_debug "Check skipped (level filter): $check_id"
+            return 0
+        fi
+    fi
 
     (
         flock -x 200  # Exclusive lock for write operation

@@ -4,6 +4,17 @@
 # Copyright (c) 2024
 
 # ==============================================================================
+# Security Levels
+# ==============================================================================
+
+# Source security level configuration
+VPSSEC_SECURITY_LEVELS_FILE="${VPSSEC_CORE}/security_levels.sh"
+if [[ -f "$VPSSEC_SECURITY_LEVELS_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$VPSSEC_SECURITY_LEVELS_FILE"
+fi
+
+# ==============================================================================
 # Module Management
 # ==============================================================================
 
@@ -226,8 +237,56 @@ audit_all() {
 
 # Get available fixes from audit results
 get_available_fixes() {
+    local show_all="${1:-false}"
     local checks=$(state_get_checks)
-    echo "$checks" | jq -r '[.[] | select(.status == "failed" and .fix_id != null and .fix_id != "")]'
+
+    # Get fixes that have a fix_id
+    local fixes=$(echo "$checks" | jq -r '[.[] | select(.status == "failed" and .fix_id != null and .fix_id != "")]')
+
+    # Add safety classification if security_levels is loaded
+    if declare -f get_fix_safety &>/dev/null; then
+        local enriched_fixes="[]"
+        while read -r fix; do
+            local fix_id=$(echo "$fix" | jq -r '.fix_id')
+            local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
+            local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
+            local can_fix=$(can_auto_fix "$fix_id" 2>/dev/null && echo "true" || echo "false")
+
+            # Add safety info to fix
+            local enriched=$(echo "$fix" | jq --arg safety "$safety" --arg warning "$warning" --arg can_fix "$can_fix" \
+                '. + {safety: $safety, safety_warning: $warning, can_auto_fix: ($can_fix == "true")}')
+
+            enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
+        done < <(echo "$fixes" | jq -c '.[]')
+
+        # Filter based on security level (unless show_all is true)
+        if [[ "$show_all" != "true" ]]; then
+            # In basic mode, show all but mark as non-fixable
+            # In standard mode, hide alert_only
+            # In strict mode, show all
+            case "$VPSSEC_SECURITY_LEVEL" in
+                basic)
+                    # Show all, they will all be marked as not auto-fixable
+                    echo "$enriched_fixes"
+                    ;;
+                standard)
+                    # Hide alert_only items from selection
+                    echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only" or .can_auto_fix == true)]'
+                    ;;
+                strict)
+                    # Show all fixes
+                    echo "$enriched_fixes"
+                    ;;
+                *)
+                    echo "$enriched_fixes"
+                    ;;
+            esac
+        else
+            echo "$enriched_fixes"
+        fi
+    else
+        echo "$fixes"
+    fi
 }
 
 # Generate execution plan
@@ -257,7 +316,42 @@ generate_plan() {
 # Execute a single fix
 execute_fix() {
     local fix_id="$1"
+    local skip_safety_check="${2:-false}"
     local module="${fix_id%%.*}"
+
+    # Check fix safety (unless explicitly skipped)
+    if [[ "$skip_safety_check" != "true" ]]; then
+        local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
+
+        case "$safety" in
+            alert_only)
+                local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
+                print_warn "$(i18n 'fix.alert_only' 2>/dev/null || echo "Alert only"): $warning"
+                return 1
+                ;;
+            risky)
+                if [[ "$VPSSEC_SECURITY_LEVEL" != "strict" ]]; then
+                    local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "Risky operation")
+                    print_warn "$(i18n 'fix.risky_skipped' 2>/dev/null || echo "Risky fix skipped"): $warning"
+                    print_info "Use --level strict to enable risky fixes"
+                    return 1
+                fi
+                ;;
+            confirm)
+                if [[ "$VPSSEC_SECURITY_LEVEL" == "basic" ]]; then
+                    local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "Fix requires confirmation")
+                    print_warn "$(i18n 'fix.confirm_skipped' 2>/dev/null || echo "Fix skipped in basic mode"): $warning"
+                    return 1
+                fi
+                ;;
+            safe)
+                if [[ "$VPSSEC_SECURITY_LEVEL" == "basic" ]]; then
+                    print_info "Fix skipped in basic mode (audit only)"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
 
     # Call module's fix function
     local fix_func="${module}_fix"
@@ -369,6 +463,16 @@ guide_mode() {
     print_header "$(i18n 'guide.welcome')"
     print_msg ""
 
+    # Show security level info
+    if declare -f get_security_level &>/dev/null; then
+        local level=$(get_security_level)
+        print_msg "$(i18n 'guide.security_level' 2>/dev/null || echo "Security Level"): $level"
+        print_security_level_info "$level" 2>/dev/null | while read -r line; do
+            print_msg "  $line"
+        done
+        print_msg ""
+    fi
+
     # Run audit
     state_init
     for module in $(module_get_enabled); do
@@ -408,6 +512,8 @@ guide_mode() {
             local fix_id=$(echo "$fix" | jq -r '.fix_id')
             local title=$(echo "$fix" | jq -r '.title')
             local severity=$(echo "$fix" | jq -r '.severity')
+            local safety=$(echo "$fix" | jq -r '.safety // "unknown"')
+            local can_fix=$(echo "$fix" | jq -r '.can_auto_fix // false')
 
             local prefix=""
             case "$severity" in
@@ -416,7 +522,22 @@ guide_mode() {
                 low)    prefix="${BLUE}[-]${NC}" ;;
             esac
 
-            echo -e "  $i) $prefix $title ($fix_id)"
+            # Add safety indicator
+            local safety_indicator=""
+            case "$safety" in
+                safe)       safety_indicator="${GREEN}[safe]${NC}" ;;
+                confirm)    safety_indicator="${YELLOW}[confirm]${NC}" ;;
+                risky)      safety_indicator="${RED}[risky]${NC}" ;;
+                alert_only) safety_indicator="${CYAN}[alert]${NC}" ;;
+                *)          safety_indicator="" ;;
+            esac
+
+            # Show whether it can be auto-fixed at current level
+            if [[ "$can_fix" == "true" ]]; then
+                echo -e "  $i) $prefix $title $safety_indicator"
+            else
+                echo -e "  $i) $prefix $title $safety_indicator ${DIM}(manual)${NC}"
+            fi
             ((i++))
         done < <(echo "$fixes" | jq -c '.[]')
 
