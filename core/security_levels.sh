@@ -1,0 +1,534 @@
+#!/usr/bin/env bash
+# vpssec - VPS Security Check & Hardening Tool
+# Security level definitions and fix safety configuration
+# Copyright (c) 2024
+
+# ==============================================================================
+# Security Level Definitions
+# ==============================================================================
+#
+# Three preset security levels:
+#   basic    - Essential checks, no auto-fixes, suitable for first-time users
+#   standard - Balanced security with safe auto-fixes (default)
+#   strict   - Maximum security, comprehensive checks, requires confirmation
+#
+# ==============================================================================
+
+# Available security levels
+declare -a VPSSEC_SECURITY_LEVELS=("basic" "standard" "strict")
+
+# Default security level
+VPSSEC_DEFAULT_LEVEL="standard"
+
+# Current security level (set at runtime)
+VPSSEC_SECURITY_LEVEL="${VPSSEC_SECURITY_LEVEL:-$VPSSEC_DEFAULT_LEVEL}"
+
+# ==============================================================================
+# Fix Safety Classifications
+# ==============================================================================
+#
+# SAFE        - Can be auto-fixed without special confirmation
+# CONFIRM     - Requires user confirmation before fixing
+# RISKY       - Only in strict mode, requires explicit confirmation + safeguards
+# ALERT_ONLY  - No auto-fix available, only alert user
+#
+# ==============================================================================
+
+# Safe fixes - can be auto-applied in standard/strict modes
+declare -A FIX_SAFE=(
+    # Fail2ban - service management and config
+    ["fail2ban.install"]="true"
+    ["fail2ban.enable_service"]="true"
+    ["fail2ban.enable_ssh_jail"]="true"
+    ["fail2ban.configure_ssh_jail"]="true"
+
+    # Update - package management
+    ["update.install_unattended"]="true"
+    ["update.enable_unattended"]="true"
+
+    # Baseline - security services
+    ["baseline.enable_apparmor"]="true"
+    ["baseline.disable_unused"]="true"
+
+    # Logging - logging configuration
+    ["logging.enable_persistent_journal"]="true"
+    ["logging.setup_logrotate"]="true"
+    ["logging.install_auditd"]="true"
+    ["logging.enable_auditd"]="true"
+    ["logging.setup_audit_rules"]="true"
+
+    # Kernel - sysctl hardening (except network in containers)
+    ["kernel.enable_aslr"]="true"
+    ["kernel.harden_kernel"]="true"
+    ["kernel.disable_core_dump"]="true"
+
+    # Filesystem - permission fixes
+    ["filesystem.fix_sensitive_perms"]="true"
+    ["filesystem.fix_umask"]="true"
+
+    # SSH - safe settings that don't affect access
+    ["ssh.enable_pubkey"]="true"
+    ["ssh.disable_empty_password"]="true"
+    ["ssh.set_max_auth_tries"]="true"
+    ["ssh.set_login_grace_time"]="true"
+    ["ssh.disable_x11_forwarding"]="true"
+
+    # UFW - adding rules only
+    ["ufw.install"]="true"
+    ["ufw.allow_ssh"]="true"
+
+    # Docker - safe daemon settings
+    ["docker.enable_live_restore"]="true"
+
+    # Template generation only
+    ["docker.generate_proxy_template"]="true"
+    ["cloudflared.generate_config"]="true"
+    ["cloudflared.setup_service"]="true"
+    ["backup.generate_templates"]="true"
+    ["alerts.setup_config"]="true"
+    ["alerts.generate_templates"]="true"
+)
+
+# Fixes requiring confirmation - medium risk
+declare -A FIX_CONFIRM=(
+    # Network params may conflict with Docker/containers
+    ["kernel.harden_network"]="May affect container networking if Docker/LXC is in use"
+
+    # Requires service restart
+    ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"
+
+    # Modifies web server config
+    ["nginx.add_catchall"]="Modifies Nginx configuration"
+
+    # Could affect running services
+    ["ufw.set_default_deny"]="May block services not explicitly allowed"
+
+    # Could break old SSH clients
+    ["ssh.harden_algorithms"]="May break connections from older SSH clients"
+)
+
+# Risky fixes - strict mode only, requires safeguards
+declare -A FIX_RISKY=(
+    # Can lock user out of SSH
+    ["ssh.disable_password_auth"]="Can lock you out if SSH key not configured properly"
+    ["ssh.disable_root_login"]="Can lock you out if no admin user exists"
+
+    # Can lock user out of server
+    ["ufw.enable"]="Can lock you out if SSH not allowed"
+
+    # Can break system packages
+    ["update.apply_security"]="May break system packages or services"
+)
+
+# Alert-only - no auto-fix available
+declare -A FIX_ALERT_ONLY=(
+    # Require manual review and decision
+    ["docker.privileged_containers"]="Container configuration requires manual review"
+    ["docker.exposed_ports"]="Port exposure is an architecture decision"
+    ["docker.all_root_containers"]="Container user requires Dockerfile changes"
+    ["docker.some_root_containers"]="Container user requires Dockerfile changes"
+    ["docker.containers_with_caps"]="Container capabilities require manual review"
+
+    # Filesystem - require manual review
+    ["filesystem.suspicious_suid"]="Review and remove SUID bit if not needed"
+    ["filesystem.suspicious_sgid"]="Review and remove SGID bit if not needed"
+    ["filesystem.world_writable"]="Review and fix permissions manually"
+    ["filesystem.no_owner"]="Review and assign ownership manually"
+    ["filesystem.tmp_not_separate"]="Requires partition changes"
+    ["filesystem.tmp_mount_missing_opts"]="Requires fstab modification"
+
+    # SSH - no auto-fix defined
+    ["ssh.no_admin_user"]="Create admin user manually before disabling root"
+    ["ssh.admin_no_key"]="Add SSH key manually"
+    ["ssh.authkeys_permissions"]="Fix permissions manually"
+
+    # Update - APT lock
+    ["update.apt_locked"]="Wait for other process or remove lock manually"
+
+    # Logging - info only
+    ["logging.ssh_many_failures"]="Consider fail2ban or firewall rules"
+    ["logging.ssh_some_failures"]="Monitor for brute force attempts"
+    ["logging.logrotate_missing"]="Add logrotate configuration manually"
+
+    # Cloudflared
+    ["cloudflared.service_inactive"]="Start service manually"
+    ["cloudflared.config_issues"]="Review configuration manually"
+    ["cloudflared.no_tunnels"]="Create tunnel: cloudflared tunnel create"
+)
+
+# ==============================================================================
+# Check Level Classification
+# ==============================================================================
+#
+# Defines which checks are included in each security level
+# Format: check_id -> minimum level (basic, standard, strict)
+#
+# ==============================================================================
+
+declare -A CHECK_LEVEL=(
+    # === SSH Module ===
+    # Basic level - core SSH security
+    ["ssh.password_auth_enabled"]="basic"
+    ["ssh.password_auth_disabled"]="basic"
+    ["ssh.root_login_enabled"]="basic"
+    ["ssh.root_login_disabled"]="basic"
+    ["ssh.pubkey_enabled"]="basic"
+    ["ssh.pubkey_disabled"]="basic"
+    ["ssh.admin_user_exists"]="basic"
+    ["ssh.no_admin_user"]="basic"
+    ["ssh.empty_password_allowed"]="basic"
+    ["ssh.empty_password_denied"]="basic"
+
+    # Standard level - additional SSH hardening
+    ["ssh.admin_no_key"]="standard"
+    ["ssh.authkeys_permissions"]="standard"
+    ["ssh.max_auth_tries_ok"]="standard"
+    ["ssh.max_auth_tries_high"]="standard"
+    ["ssh.login_grace_time_ok"]="standard"
+    ["ssh.login_grace_time_long"]="standard"
+    ["ssh.x11_forwarding_disabled"]="standard"
+    ["ssh.x11_forwarding_enabled"]="standard"
+    ["ssh.weak_algorithms"]="standard"
+    ["ssh.algorithms_ok"]="standard"
+
+    # === UFW Module ===
+    ["ufw.not_installed"]="basic"
+    ["ufw.enabled"]="basic"
+    ["ufw.disabled"]="basic"
+    ["ufw.default_deny"]="standard"
+    ["ufw.default_accept"]="standard"
+    ["ufw.ssh_allowed"]="standard"
+    ["ufw.no_ssh_rule"]="standard"
+
+    # === Fail2ban Module ===
+    ["fail2ban.not_installed"]="basic"
+    ["fail2ban.installed"]="basic"
+    ["fail2ban.service_active"]="standard"
+    ["fail2ban.service_inactive"]="standard"
+    ["fail2ban.service_not_enabled"]="standard"
+    ["fail2ban.ssh_jail_enabled"]="standard"
+    ["fail2ban.ssh_jail_disabled"]="standard"
+    ["fail2ban.maxretry_high"]="strict"
+    ["fail2ban.custom_config"]="strict"
+    ["fail2ban.default_config"]="strict"
+
+    # === Update Module ===
+    ["update.apt_available"]="basic"
+    ["update.apt_locked"]="basic"
+    ["update.no_updates"]="basic"
+    ["update.updates_available"]="basic"
+    ["update.unattended_enabled"]="standard"
+    ["update.unattended_disabled"]="standard"
+    ["update.unattended_not_installed"]="standard"
+
+    # === Docker Module ===
+    ["docker.not_installed"]="basic"
+    ["docker.exposed_ports"]="standard"
+    ["docker.no_exposed_ports"]="standard"
+    ["docker.privileged_containers"]="standard"
+    ["docker.no_privileged"]="standard"
+    ["docker.all_root_containers"]="strict"
+    ["docker.some_root_containers"]="strict"
+    ["docker.no_root_containers"]="strict"
+    ["docker.containers_with_caps"]="strict"
+    ["docker.no_extra_caps"]="strict"
+    ["docker.no_live_restore"]="standard"
+    ["docker.no_new_privileges_disabled"]="standard"
+    ["docker.daemon_secure"]="standard"
+
+    # === Nginx Module ===
+    ["nginx.not_installed"]="basic"
+    ["nginx.catchall_exists"]="standard"
+    ["nginx.no_catchall"]="standard"
+
+    # === Baseline Module ===
+    ["baseline.apparmor_enabled"]="standard"
+    ["baseline.apparmor_disabled"]="standard"
+    ["baseline.unused_services"]="standard"
+    ["baseline.no_unused_services"]="standard"
+
+    # === Logging Module ===
+    ["logging.journald_persistent"]="basic"
+    ["logging.journald_volatile"]="basic"
+    ["logging.logrotate_ok"]="standard"
+    ["logging.logrotate_missing"]="standard"
+    ["logging.logrotate_not_configured"]="standard"
+    ["logging.auditd_configured"]="strict"
+    ["logging.auditd_no_rules"]="strict"
+    ["logging.auditd_inactive"]="strict"
+    ["logging.auditd_not_installed"]="strict"
+    ["logging.ssh_logs_ok"]="basic"
+    ["logging.ssh_many_failures"]="basic"
+    ["logging.ssh_some_failures"]="basic"
+    ["logging.sudo_logging_ok"]="standard"
+    ["logging.sudo_no_events"]="standard"
+
+    # === Cloudflared Module ===
+    ["cloudflared.not_installed"]="basic"
+    ["cloudflared.service_active"]="standard"
+    ["cloudflared.service_inactive"]="standard"
+    ["cloudflared.tunnel_running"]="standard"
+    ["cloudflared.config_ok"]="standard"
+    ["cloudflared.config_issues"]="standard"
+    ["cloudflared.no_config"]="standard"
+    ["cloudflared.tunnels_configured"]="standard"
+    ["cloudflared.no_tunnels"]="standard"
+
+    # === Backup Module ===
+    ["backup.no_tools"]="standard"
+    ["backup.tools_installed"]="standard"
+    ["backup.no_schedule"]="standard"
+    ["backup.scheduled"]="standard"
+    ["backup.critical_paths"]="standard"
+
+    # === Alerts Module ===
+    ["alerts.configured"]="strict"
+    ["alerts.not_configured"]="strict"
+    ["alerts.no_config"]="strict"
+    ["alerts.capabilities_ok"]="strict"
+    ["alerts.no_capabilities"]="strict"
+
+    # === Kernel Module ===
+    ["kernel.aslr_full"]="basic"
+    ["kernel.aslr_partial"]="basic"
+    ["kernel.aslr_disabled"]="basic"
+    ["kernel.aslr_unknown"]="basic"
+    ["kernel.network_params_high"]="standard"
+    ["kernel.network_params_medium"]="standard"
+    ["kernel.network_params_ok"]="standard"
+    ["kernel.kernel_params_ok"]="standard"
+    ["kernel.kernel_params_weak"]="standard"
+    ["kernel.core_dump_ok"]="standard"
+    ["kernel.core_dump_enabled"]="standard"
+
+    # === Filesystem Module ===
+    ["filesystem.suspicious_suid"]="standard"
+    ["filesystem.suid_ok"]="standard"
+    ["filesystem.suspicious_sgid"]="strict"
+    ["filesystem.sgid_ok"]="strict"
+    ["filesystem.world_writable"]="standard"
+    ["filesystem.no_world_writable"]="standard"
+    ["filesystem.no_owner"]="standard"
+    ["filesystem.owner_ok"]="standard"
+    ["filesystem.sensitive_perms_wrong"]="basic"
+    ["filesystem.sensitive_perms_ok"]="basic"
+    ["filesystem.tmp_mount_ok"]="strict"
+    ["filesystem.tmp_not_separate"]="strict"
+    ["filesystem.tmp_mount_missing_opts"]="strict"
+    ["filesystem.umask_ok"]="standard"
+    ["filesystem.umask_default"]="standard"
+    ["filesystem.umask_weak"]="standard"
+)
+
+# ==============================================================================
+# Security Level Helper Functions
+# ==============================================================================
+
+# Check if a security level is valid
+_level_is_valid() {
+    local level="$1"
+    for l in "${VPSSEC_SECURITY_LEVELS[@]}"; do
+        [[ "$l" == "$level" ]] && return 0
+    done
+    return 1
+}
+
+# Get numeric value for security level (for comparison)
+_level_to_num() {
+    local level="$1"
+    case "$level" in
+        basic)    echo 1 ;;
+        standard) echo 2 ;;
+        strict)   echo 3 ;;
+        *)        echo 0 ;;
+    esac
+}
+
+# Check if current level includes a check
+level_includes_check() {
+    local check_id="$1"
+    local check_level="${CHECK_LEVEL[$check_id]:-basic}"
+
+    local current_num=$(_level_to_num "$VPSSEC_SECURITY_LEVEL")
+    local check_num=$(_level_to_num "$check_level")
+
+    [[ $current_num -ge $check_num ]]
+}
+
+# Get fix safety classification
+get_fix_safety() {
+    local fix_id="$1"
+
+    if [[ -n "${FIX_SAFE[$fix_id]}" ]]; then
+        echo "safe"
+    elif [[ -n "${FIX_CONFIRM[$fix_id]}" ]]; then
+        echo "confirm"
+    elif [[ -n "${FIX_RISKY[$fix_id]}" ]]; then
+        echo "risky"
+    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]}" ]]; then
+        echo "alert_only"
+    else
+        echo "unknown"
+    fi
+}
+
+# Get fix warning message
+get_fix_warning() {
+    local fix_id="$1"
+
+    if [[ -n "${FIX_CONFIRM[$fix_id]}" ]]; then
+        echo "${FIX_CONFIRM[$fix_id]}"
+    elif [[ -n "${FIX_RISKY[$fix_id]}" ]]; then
+        echo "${FIX_RISKY[$fix_id]}"
+    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]}" ]]; then
+        echo "${FIX_ALERT_ONLY[$fix_id]}"
+    fi
+}
+
+# Check if fix can be auto-applied at current level
+can_auto_fix() {
+    local fix_id="$1"
+    local safety=$(get_fix_safety "$fix_id")
+
+    case "$safety" in
+        safe)
+            # Safe fixes allowed in standard and strict modes
+            [[ "$VPSSEC_SECURITY_LEVEL" != "basic" ]]
+            ;;
+        confirm)
+            # Confirm fixes allowed in standard (with confirm) and strict modes
+            [[ "$VPSSEC_SECURITY_LEVEL" != "basic" ]]
+            ;;
+        risky)
+            # Risky fixes only allowed in strict mode
+            [[ "$VPSSEC_SECURITY_LEVEL" == "strict" ]]
+            ;;
+        alert_only|unknown)
+            # Never auto-fix
+            return 1
+            ;;
+    esac
+}
+
+# Check if fix requires confirmation
+fix_requires_confirmation() {
+    local fix_id="$1"
+    local safety=$(get_fix_safety "$fix_id")
+
+    case "$safety" in
+        safe)
+            return 1  # No confirmation needed
+            ;;
+        confirm)
+            # In standard mode, always confirm
+            # In strict mode, only confirm first time
+            [[ "$VPSSEC_SECURITY_LEVEL" != "strict" ]]
+            ;;
+        risky)
+            return 0  # Always confirm risky fixes
+            ;;
+        *)
+            return 0  # Unknown, require confirmation
+            ;;
+    esac
+}
+
+# Set security level
+set_security_level() {
+    local level="$1"
+
+    if _level_is_valid "$level"; then
+        VPSSEC_SECURITY_LEVEL="$level"
+        export VPSSEC_SECURITY_LEVEL
+        return 0
+    else
+        log_error "Invalid security level: $level"
+        return 1
+    fi
+}
+
+# Get current security level
+get_security_level() {
+    echo "$VPSSEC_SECURITY_LEVEL"
+}
+
+# Print security level description
+# Takes optional second arg for mode (audit/guide)
+print_security_level_info() {
+    local level="$1"
+    local mode="${2:-${VPSSEC_MODE:-audit}}"
+
+    if [[ "$mode" == "guide" ]]; then
+        # Guide mode - describe fix behavior
+        case "$level" in
+            basic)
+                echo "Basic - Essential security checks, no automatic fixes"
+                echo "  • Core SSH, firewall, and update checks"
+                echo "  • Alert-only mode for all issues"
+                echo "  • Suitable for first-time users"
+                ;;
+            standard)
+                echo "Standard - Balanced security with safe auto-fixes (recommended)"
+                echo "  • Comprehensive security checks"
+                echo "  • Auto-fix for low-risk items"
+                echo "  • Confirmation required for medium-risk changes"
+                ;;
+            strict)
+                echo "Strict - Maximum security for production servers"
+                echo "  • All available security checks"
+                echo "  • More aggressive auto-fixes"
+                echo "  • Includes risky fixes with safeguards"
+                ;;
+        esac
+    else
+        # Audit mode - describe check scope
+        case "$level" in
+            basic)
+                echo "Basic - Core security checks only"
+                echo "  • SSH authentication & root login"
+                echo "  • Firewall status"
+                echo "  • System updates"
+                echo "  • Critical file permissions"
+                ;;
+            standard)
+                echo "Standard - Comprehensive security audit (recommended)"
+                echo "  • All basic checks plus:"
+                echo "  • Service hardening (fail2ban, AppArmor)"
+                echo "  • Docker security (if installed)"
+                echo "  • Kernel parameters"
+                echo "  • Filesystem security"
+                ;;
+            strict)
+                echo "Strict - Full compliance audit"
+                echo "  • All standard checks plus:"
+                echo "  • Audit logging (auditd)"
+                echo "  • Alert configuration"
+                echo "  • SGID binaries"
+                echo "  • /tmp mount options"
+                ;;
+        esac
+    fi
+}
+
+# Count checks at each level
+count_checks_by_level() {
+    local level="$1"
+    local count=0
+
+    for check_id in "${!CHECK_LEVEL[@]}"; do
+        local check_level="${CHECK_LEVEL[$check_id]}"
+        case "$level" in
+            basic)
+                [[ "$check_level" == "basic" ]] && ((count++))
+                ;;
+            standard)
+                [[ "$check_level" == "basic" || "$check_level" == "standard" ]] && ((count++))
+                ;;
+            strict)
+                ((count++))  # All checks
+                ;;
+        esac
+    done
+
+    echo "$count"
+}

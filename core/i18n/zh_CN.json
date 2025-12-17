@@ -57,6 +57,7 @@
     "cmd_status": "status   查看当前安全状态",
     "options": "选项:",
     "opt_lang": "--lang=LANG      设置语言 (zh_CN|en_US)",
+    "opt_level": "--level=LEVEL    设置安全等级 (basic|standard|strict)",
     "opt_no_color": "--no-color       禁用彩色输出",
     "opt_json_only": "--json-only      仅输出 JSON 格式",
     "opt_yes": "--yes            跳过非关键确认",
@@ -548,6 +549,7 @@
   },
   "guide": {
     "welcome": "欢迎使用 VPS 安全加固向导",
+    "security_level": "安全等级",
     "select_modules": "选择要检查/修复的模块",
     "select_fixes": "选择要执行的修复项",
     "review_plan": "检查执行计划",
@@ -559,6 +561,19 @@
     "rollback_available": "可使用 'vpssec rollback' 回滚更改",
     "enter_numbers": "输入编号 (空格分隔) 或 'all'",
     "no_fixes_needed": "无需修复，系统安全状态良好"
+  },
+  "fix": {
+    "alert_only": "仅告警 - 需要手动修复",
+    "risky_skipped": "高风险修复已跳过",
+    "confirm_skipped": "在基础模式下跳过修复",
+    "safe": "安全修复",
+    "confirm": "需要确认",
+    "risky": "高风险操作"
+  },
+  "level": {
+    "basic": "基础",
+    "standard": "标准",
+    "strict": "严格"
   },
   "scan": {
     "scanning": "正在扫描...",
