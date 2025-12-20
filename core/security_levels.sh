@@ -354,6 +354,191 @@ declare -A CHECK_LEVEL=(
 )
 
 # ==============================================================================
+# Check Score Categories
+# ==============================================================================
+#
+# Defines how each check affects the security score:
+#   required     - Always counts in score (core security)
+#   recommended  - Counts if component is installed, deduct for missing config
+#   conditional  - Only counts if the component is installed
+#   optional     - Only counts in strict mode
+#   info         - Never affects score (informational only)
+#
+# ==============================================================================
+
+declare -A CHECK_SCORE_CATEGORY=(
+    # === SSH Module - required (core security) ===
+    ["ssh.password_auth_enabled"]="required"
+    ["ssh.password_auth_disabled"]="required"
+    ["ssh.root_login_enabled"]="required"
+    ["ssh.root_login_disabled"]="required"
+    ["ssh.pubkey_enabled"]="required"
+    ["ssh.pubkey_disabled"]="required"
+    ["ssh.admin_user_exists"]="required"
+    ["ssh.no_admin_user"]="required"
+    ["ssh.empty_password_allowed"]="required"
+    ["ssh.empty_password_denied"]="required"
+    ["ssh.admin_no_key"]="recommended"
+    ["ssh.authkeys_permissions"]="recommended"
+    ["ssh.max_auth_tries_ok"]="recommended"
+    ["ssh.max_auth_tries_high"]="recommended"
+    ["ssh.login_grace_time_ok"]="recommended"
+    ["ssh.login_grace_time_long"]="recommended"
+    ["ssh.x11_forwarding_disabled"]="recommended"
+    ["ssh.x11_forwarding_enabled"]="recommended"
+    ["ssh.weak_algorithms"]="optional"
+    ["ssh.algorithms_ok"]="optional"
+
+    # === UFW Module - required (core firewall) ===
+    ["ufw.not_installed"]="required"
+    ["ufw.enabled"]="required"
+    ["ufw.disabled"]="required"
+    ["ufw.default_deny"]="recommended"
+    ["ufw.default_accept"]="recommended"
+    ["ufw.ssh_allowed"]="recommended"
+    ["ufw.no_ssh_rule"]="recommended"
+
+    # === Fail2ban Module - recommended ===
+    ["fail2ban.not_installed"]="recommended"
+    ["fail2ban.installed"]="recommended"
+    ["fail2ban.service_active"]="recommended"
+    ["fail2ban.service_inactive"]="recommended"
+    ["fail2ban.service_not_enabled"]="recommended"
+    ["fail2ban.ssh_jail_enabled"]="recommended"
+    ["fail2ban.ssh_jail_disabled"]="recommended"
+    ["fail2ban.maxretry_high"]="optional"
+    ["fail2ban.custom_config"]="optional"
+    ["fail2ban.default_config"]="optional"
+
+    # === Update Module - required ===
+    ["update.apt_available"]="required"
+    ["update.apt_locked"]="required"
+    ["update.no_updates"]="required"
+    ["update.updates_available"]="required"
+    ["update.unattended_enabled"]="recommended"
+    ["update.unattended_disabled"]="recommended"
+    ["update.unattended_not_installed"]="recommended"
+
+    # === Docker Module - conditional (only if Docker installed) ===
+    ["docker.not_installed"]="info"
+    ["docker.exposed_ports"]="conditional"
+    ["docker.no_exposed_ports"]="conditional"
+    ["docker.privileged_containers"]="conditional"
+    ["docker.no_privileged"]="conditional"
+    ["docker.all_root_containers"]="conditional"
+    ["docker.some_root_containers"]="conditional"
+    ["docker.no_root_containers"]="conditional"
+    ["docker.containers_with_caps"]="conditional"
+    ["docker.no_extra_caps"]="conditional"
+    ["docker.no_live_restore"]="conditional"
+    ["docker.no_new_privileges_disabled"]="conditional"
+    ["docker.daemon_secure"]="conditional"
+
+    # === Nginx Module - conditional (only if Nginx installed) ===
+    ["nginx.not_installed"]="info"
+    ["nginx.catchall_exists"]="conditional"
+    ["nginx.no_catchall"]="conditional"
+
+    # === Baseline Module - recommended ===
+    ["baseline.apparmor_enabled"]="recommended"
+    ["baseline.apparmor_disabled"]="recommended"
+    ["baseline.unused_services"]="recommended"
+    ["baseline.no_unused_services"]="recommended"
+
+    # === Logging Module ===
+    ["logging.journald_persistent"]="recommended"
+    ["logging.journald_volatile"]="recommended"
+    ["logging.logrotate_ok"]="recommended"
+    ["logging.logrotate_missing"]="recommended"
+    ["logging.logrotate_not_configured"]="recommended"
+    ["logging.auditd_configured"]="optional"
+    ["logging.auditd_no_rules"]="optional"
+    ["logging.auditd_inactive"]="optional"
+    ["logging.auditd_not_installed"]="optional"
+    ["logging.ssh_logs_ok"]="info"
+    ["logging.ssh_many_failures"]="info"
+    ["logging.ssh_some_failures"]="info"
+    ["logging.sudo_logging_ok"]="recommended"
+    ["logging.sudo_no_events"]="recommended"
+
+    # === Cloudflared Module - conditional (only if installed) ===
+    ["cloudflared.not_installed"]="info"
+    ["cloudflared.service_active"]="conditional"
+    ["cloudflared.service_inactive"]="conditional"
+    ["cloudflared.tunnel_running"]="conditional"
+    ["cloudflared.config_ok"]="conditional"
+    ["cloudflared.config_issues"]="conditional"
+    ["cloudflared.no_config"]="conditional"
+    ["cloudflared.tunnels_configured"]="conditional"
+    ["cloudflared.no_tunnels"]="conditional"
+
+    # === Backup Module - optional ===
+    ["backup.no_tools"]="optional"
+    ["backup.tools_installed"]="optional"
+    ["backup.no_schedule"]="optional"
+    ["backup.scheduled"]="optional"
+    ["backup.critical_paths"]="optional"
+
+    # === Alerts Module - optional ===
+    ["alerts.configured"]="optional"
+    ["alerts.not_configured"]="optional"
+    ["alerts.no_config"]="optional"
+    ["alerts.capabilities_ok"]="optional"
+    ["alerts.no_capabilities"]="optional"
+
+    # === Kernel Module - required/recommended ===
+    ["kernel.aslr_full"]="required"
+    ["kernel.aslr_partial"]="required"
+    ["kernel.aslr_disabled"]="required"
+    ["kernel.aslr_unknown"]="required"
+    ["kernel.network_params_high"]="recommended"
+    ["kernel.network_params_medium"]="recommended"
+    ["kernel.network_params_ok"]="recommended"
+    ["kernel.kernel_params_ok"]="recommended"
+    ["kernel.kernel_params_weak"]="recommended"
+    ["kernel.core_dump_ok"]="recommended"
+    ["kernel.core_dump_enabled"]="recommended"
+
+    # === Filesystem Module ===
+    ["filesystem.suspicious_suid"]="recommended"
+    ["filesystem.suid_ok"]="recommended"
+    ["filesystem.suspicious_sgid"]="optional"
+    ["filesystem.sgid_ok"]="optional"
+    ["filesystem.world_writable"]="recommended"
+    ["filesystem.no_world_writable"]="recommended"
+    ["filesystem.no_owner"]="recommended"
+    ["filesystem.owner_ok"]="recommended"
+    ["filesystem.sensitive_perms_wrong"]="required"
+    ["filesystem.sensitive_perms_ok"]="required"
+    ["filesystem.tmp_mount_ok"]="optional"
+    ["filesystem.tmp_not_separate"]="optional"
+    ["filesystem.tmp_mount_missing_opts"]="optional"
+    ["filesystem.umask_ok"]="recommended"
+    ["filesystem.umask_default"]="recommended"
+    ["filesystem.umask_weak"]="recommended"
+
+    # === Cloud Module - info only ===
+    ["cloud.provider_detected"]="info"
+    ["cloud.provider_unknown"]="info"
+    ["cloud.agents_found"]="info"
+    ["cloud.no_known_agents"]="info"
+    ["cloud.suspicious_agents"]="info"
+
+    # === Users Module ===
+    ["users.uid0_found"]="required"
+    ["users.uid0_ok"]="required"
+    ["users.empty_password"]="required"
+    ["users.no_empty_password"]="required"
+    ["users.system_with_shell"]="recommended"
+    ["users.sudo_users"]="info"
+    ["users.recent_users"]="info"
+    ["users.ssh_keys_perms"]="recommended"
+    ["users.ssh_keys_info"]="info"
+    ["users.suspicious_names"]="recommended"
+    ["users.unusual_home"]="recommended"
+)
+
+# ==============================================================================
 # Security Level Helper Functions
 # ==============================================================================
 
@@ -564,4 +749,43 @@ count_checks_by_level() {
     done
 
     echo "$count"
+}
+
+# Get score category for a check
+get_check_score_category() {
+    local check_id="$1"
+    echo "${CHECK_SCORE_CATEGORY[$check_id]:-required}"
+}
+
+# Check if a check should be included in score
+# Returns: 0 = include, 1 = exclude
+check_counts_in_score() {
+    local check_id="$1"
+    local category
+    category=$(get_check_score_category "$check_id")
+
+    case "$category" in
+        required|recommended)
+            # Always count
+            return 0
+            ;;
+        conditional)
+            # Only count if parent component is installed
+            # This is determined by checking if we have any non-"not_installed" checks
+            # for the same module. The caller should handle this.
+            return 0
+            ;;
+        optional)
+            # Only count in strict mode
+            [[ "$VPSSEC_SECURITY_LEVEL" == "strict" ]]
+            ;;
+        info)
+            # Never count
+            return 1
+            ;;
+        *)
+            # Unknown category, include by default
+            return 0
+            ;;
+    esac
 }
