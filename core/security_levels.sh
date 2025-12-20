@@ -154,6 +154,19 @@ declare -A FIX_ALERT_ONLY=(
     ["cloudflared.service_inactive"]="Start service manually"
     ["cloudflared.config_issues"]="Review configuration manually"
     ["cloudflared.no_tunnels"]="Create tunnel: cloudflared tunnel create"
+
+    # Cloud - all require manual review
+    ["cloud.agents_found"]="Review if monitoring agents are needed"
+    ["cloud.suspicious_agents"]="Investigate unknown agent processes"
+
+    # Users - ALL are alert-only, NEVER auto-modify users
+    ["users.uid0_found"]="CRITICAL: Review UID 0 accounts - may be backdoors"
+    ["users.empty_password"]="CRITICAL: Set passwords or lock accounts"
+    ["users.system_with_shell"]="Review if shell access is needed"
+    ["users.recent_users"]="Verify recently created users"
+    ["users.ssh_keys_perms"]="Fix SSH key file permissions"
+    ["users.suspicious_names"]="Review suspicious usernames"
+    ["users.unusual_home"]="Review unusual home directories"
 )
 
 # ==============================================================================
@@ -318,6 +331,26 @@ declare -A CHECK_LEVEL=(
     ["filesystem.umask_ok"]="standard"
     ["filesystem.umask_default"]="standard"
     ["filesystem.umask_weak"]="standard"
+
+    # === Cloud Module ===
+    ["cloud.provider_detected"]="basic"
+    ["cloud.provider_unknown"]="basic"
+    ["cloud.agents_found"]="standard"
+    ["cloud.no_known_agents"]="standard"
+    ["cloud.suspicious_agents"]="strict"
+
+    # === Users Module ===
+    ["users.uid0_found"]="basic"
+    ["users.uid0_ok"]="basic"
+    ["users.empty_password"]="basic"
+    ["users.no_empty_password"]="basic"
+    ["users.system_with_shell"]="standard"
+    ["users.sudo_users"]="standard"
+    ["users.recent_users"]="standard"
+    ["users.ssh_keys_perms"]="standard"
+    ["users.ssh_keys_info"]="standard"
+    ["users.suspicious_names"]="strict"
+    ["users.unusual_home"]="strict"
 )
 
 # ==============================================================================
