@@ -22,14 +22,14 @@ A VPS security auditing and hardening script designed for individuals and small-
 ### One-Line Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/run.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
 ### Manual Installation
 
 ```bash
-git clone https://github.com/Lynthar/server-audit.git
-cd server-audit
+git clone https://github.com/Lynthar/CloudServer-Audit.git
+cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
@@ -81,13 +81,18 @@ View current security score and status.
 | Module | Description |
 |--------|-------------|
 | `preflight` | Environment pre-checks (OS, network, dependencies) |
+| `cloud` | Cloud provider detection and monitoring agent audit |
+| `users` | User security audit (UID 0, empty passwords, suspicious accounts) |
 | `ssh` | SSH hardening (password auth, root login, key auth) |
 | `ufw` | Firewall configuration (UFW status, rules) |
+| `fail2ban` | Fail2ban installation and SSH jail configuration |
 | `update` | System updates (security updates, unattended-upgrades) |
 | `docker` | Docker security (privileged containers, exposed ports) |
 | `nginx` | Nginx catchall (prevent cert/hostname leakage) |
 | `baseline` | Baseline hardening (AppArmor, unused services) |
 | `logging` | Logging & audit (journald, auditd, logrotate) |
+| `kernel` | Kernel hardening (ASLR, sysctl network/security params) |
+| `filesystem` | Filesystem security (SUID/SGID, permissions, umask) |
 
 ### Optional Modules
 
@@ -96,6 +101,36 @@ View current security score and status.
 | `cloudflared` | Cloudflare Tunnel configuration checks |
 | `backup` | Backup tool detection and template generation |
 | `alerts` | Webhook/email alert configuration |
+
+## Security Levels
+
+vpssec supports three security levels that control check scope and fix behavior:
+
+| Level | Check Scope | Fix Behavior |
+|-------|-------------|--------------|
+| `basic` | Core security only (SSH, firewall, updates) | Alert only, no auto-fixes |
+| `standard` | Comprehensive checks (default) | Safe auto-fixes, confirm medium-risk |
+| `strict` | Full compliance audit | Aggressive fixes with safeguards |
+
+Use `--level=<level>` to set the security level:
+```bash
+sudo ./vpssec audit --level=basic      # Quick core checks
+sudo ./vpssec guide --level=strict     # Maximum hardening
+```
+
+## Score Categories
+
+Checks are categorized to ensure fair scoring:
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `required` | Always affects score | SSH auth, firewall, kernel ASLR |
+| `recommended` | Counts when relevant | fail2ban, AppArmor |
+| `conditional` | Only if component installed | Docker, Nginx, Cloudflared |
+| `optional` | Only in strict mode | auditd, alerts, backup |
+| `info` | Never affects score | Cloud provider detection |
+
+This prevents score penalties for components you don't use.
 
 ## Command Line Options
 
@@ -163,7 +198,7 @@ jobs:
 
       - name: Run Security Audit
         run: |
-          curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/run.sh -o vpssec-run.sh
+          curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh -o vpssec-run.sh
           chmod +x vpssec-run.sh
           sudo ./vpssec-run.sh --json-only
 
@@ -185,23 +220,33 @@ vpssec/
 │   ├── engine.sh       # Module loader & executor
 │   ├── state.sh        # State management
 │   ├── report.sh       # Report generation
+│   ├── security_levels.sh  # Security level & score category definitions
 │   ├── ui_tui.sh       # TUI interface (whiptail/dialog)
 │   ├── ui_text.sh      # Text fallback interface
 │   └── i18n/           # Internationalization
 │       ├── zh_CN.json
 │       └── en_US.json
-└── modules/            # Security check modules
-    ├── preflight.sh
-    ├── ssh.sh
-    ├── ufw.sh
-    ├── update.sh
-    ├── docker.sh
-    ├── nginx.sh
-    ├── baseline.sh
-    ├── logging.sh
-    ├── cloudflared.sh
-    ├── backup.sh
-    └── alerts.sh
+├── modules/            # Security check modules
+│   ├── preflight.sh    # Environment pre-checks
+│   ├── cloud.sh        # Cloud provider & agent detection
+│   ├── users.sh        # User security audit
+│   ├── ssh.sh          # SSH hardening
+│   ├── ufw.sh          # UFW firewall
+│   ├── fail2ban.sh     # Fail2ban configuration
+│   ├── update.sh       # System updates
+│   ├── docker.sh       # Docker security
+│   ├── nginx.sh        # Nginx catchall
+│   ├── baseline.sh     # Baseline hardening
+│   ├── logging.sh      # Logging & audit
+│   ├── kernel.sh       # Kernel hardening
+│   ├── filesystem.sh   # Filesystem security
+│   ├── cloudflared.sh  # Cloudflare Tunnel
+│   ├── backup.sh       # Backup configuration
+│   └── alerts.sh       # Alert notifications
+├── state/              # State files (runtime)
+├── reports/            # Generated reports
+├── backups/            # Configuration backups
+└── logs/               # Log files
 ```
 
 ## Extending vpssec

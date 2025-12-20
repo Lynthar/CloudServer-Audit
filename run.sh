@@ -1,6 +1,6 @@
 #!/bin/bash
 # vpssec - VPS Security Check & Hardening Tool
-# One-line runner: curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/run.sh | sudo bash
+# One-line runner: curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 #
 # Usage:
 #   curl ... | sudo bash                      # Interactive mode (select language & mode)
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Configuration
-VPSSEC_REPO="Lynthar/server-audit"
+VPSSEC_REPO="Lynthar/CloudServer-Audit"
 VPSSEC_BRANCH="main"
 VPSSEC_TMP="/tmp/vpssec-$$"
 VPSSEC_URL="https://raw.githubusercontent.com/${VPSSEC_REPO}/${VPSSEC_BRANCH}"
