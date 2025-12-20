@@ -21,6 +21,8 @@ fi
 # Available modules (order matters for execution)
 declare -a VPSSEC_MODULE_ORDER=(
     "preflight"
+    "cloud"
+    "users"
     "ssh"
     "ufw"
     "fail2ban"
