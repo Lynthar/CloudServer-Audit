@@ -27,15 +27,15 @@ VPS 安全检查与加固脚本，为个人与小型运维场景设计的安全�
 
 ```bash
 # 使用安装脚本
-curl -fsSL https://raw.githubusercontent.com/Lynthar/server-audit/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo bash
 ```
 
 ### 手动安装
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Lynthar/server-audit.git
-cd server-audit
+git clone https://github.com/Lynthar/CloudServer-Audit.git
+cd CloudServer-Audit
 
 # 添加执行权限
 chmod +x vpssec
@@ -98,13 +98,18 @@ sudo ./vpssec rollback 20241213_120000
 | 模块 | 说明 |
 |------|------|
 | preflight | 环境预检、网络状态、依赖检查 |
+| cloud | 云厂商检测、监控代理审计 |
+| users | 用户安全审计（UID 0、空密码、可疑账户） |
 | ssh | SSH 加固（密码登录、root 登录、公钥认证） |
 | ufw | UFW 防火墙配置 |
+| fail2ban | Fail2ban 安装与 SSH jail 配置 |
 | update | 系统更新、自动安全更新 |
 | docker | Docker 容器安全检查、daemon 配置 |
 | nginx | Nginx 兜底配置 |
 | baseline | 基线加固（AppArmor、未用服务） |
 | logging | 日志持久化、审计系统 |
+| kernel | 内核加固（ASLR、sysctl 网络/安全参数） |
+| filesystem | 文件系统安全（SUID/SGID、权限、umask） |
 
 ### 可选模块
 
@@ -113,6 +118,36 @@ sudo ./vpssec rollback 20241213_120000
 | cloudflared | Cloudflare Tunnel 配置检查 |
 | backup | 备份配置模板生成 (restic/borg) |
 | alerts | 告警通知配置 (Webhook/邮件) |
+
+## 安全等级
+
+vpssec 支持三种安全等级，控制检查范围和修复行为：
+
+| 等级 | 检查范围 | 修复行为 |
+|------|----------|----------|
+| `basic` | 仅核心安全（SSH、防火墙、更新） | 仅告警，不自动修复 |
+| `standard` | 全面检查（默认） | 安全项自动修复，中风险需确认 |
+| `strict` | 完整合规审计 | 激进修复，带安全护栏 |
+
+使用 `--level=<level>` 设置安全等级：
+```bash
+sudo ./vpssec audit --level=basic      # 快速核心检查
+sudo ./vpssec guide --level=strict     # 最大化加固
+```
+
+## 评分分类
+
+检查项按类别计入评分，确保公平评分：
+
+| 类别 | 说明 | 示例 |
+|------|------|------|
+| `required` | 始终计入评分 | SSH 认证、防火墙、内核 ASLR |
+| `recommended` | 相关时计入 | fail2ban、AppArmor |
+| `conditional` | 仅安装时计入 | Docker、Nginx、Cloudflared |
+| `optional` | 仅 strict 模式计入 | auditd、alerts、backup |
+| `info` | 不计入评分 | 云厂商检测 |
+
+这样可以避免未使用的组件影响评分。
 
 ## 命令行选项
 
@@ -141,11 +176,14 @@ sudo ./vpssec rollback 20241213_120000
 ```
 vpssec/
 ├── vpssec              # 主入口脚本
+├── run.sh              # 一键运行脚本
+├── install.sh          # 安装脚本
 ├── core/
 │   ├── common.sh       # 公共函数
 │   ├── engine.sh       # 核心引擎
 │   ├── state.sh        # 状态管理
 │   ├── report.sh       # 报告生成
+│   ├── security_levels.sh  # 安全等级与评分分类定义
 │   ├── ui_tui.sh       # TUI 界面
 │   ├── ui_text.sh      # 文本界面
 │   └── i18n/
@@ -153,12 +191,21 @@ vpssec/
 │       └── en_US.json  # 英文
 ├── modules/
 │   ├── preflight.sh    # 环境预检
+│   ├── cloud.sh        # 云厂商与代理检测
+│   ├── users.sh        # 用户安全审计
 │   ├── ssh.sh          # SSH 加固
 │   ├── ufw.sh          # UFW 防火墙
+│   ├── fail2ban.sh     # Fail2ban 配置
 │   ├── update.sh       # 系统更新
 │   ├── docker.sh       # Docker 安全
 │   ├── nginx.sh        # Nginx 兜底
-│   └── baseline.sh     # 基线加固
+│   ├── baseline.sh     # 基线加固
+│   ├── logging.sh      # 日志与审计
+│   ├── kernel.sh       # 内核加固
+│   ├── filesystem.sh   # 文件系统安全
+│   ├── cloudflared.sh  # Cloudflare Tunnel
+│   ├── backup.sh       # 备份配置
+│   └── alerts.sh       # 告警通知
 ├── state/              # 状态文件
 ├── reports/            # 生成的报告
 ├── backups/            # 配置备份
