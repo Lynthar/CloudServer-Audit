@@ -338,13 +338,133 @@ backup_cleanup() {
 # Score Calculation
 # ==============================================================================
 
+# Detect which conditional components are installed
+# Returns a JSON object with component installation status
+_detect_installed_components() {
+    local checks="$1"
+
+    # Check for each conditional component by looking for checks that indicate installation
+    # If we only have a "not_installed" check for a module, the component is not installed
+
+    local docker_installed="false"
+    local nginx_installed="false"
+    local cloudflared_installed="false"
+
+    # Docker: installed if we have any docker.* check that is NOT docker.not_installed
+    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("docker.")) | select(.check_id != "docker.not_installed")] | length > 0' >/dev/null 2>&1; then
+        docker_installed="true"
+    fi
+
+    # Nginx: installed if we have any nginx.* check that is NOT nginx.not_installed
+    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("nginx.")) | select(.check_id != "nginx.not_installed")] | length > 0' >/dev/null 2>&1; then
+        nginx_installed="true"
+    fi
+
+    # Cloudflared: installed if we have any cloudflared.* check that is NOT cloudflared.not_installed
+    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("cloudflared.")) | select(.check_id != "cloudflared.not_installed")] | length > 0' >/dev/null 2>&1; then
+        cloudflared_installed="true"
+    fi
+
+    echo "{\"docker\": $docker_installed, \"nginx\": $nginx_installed, \"cloudflared\": $cloudflared_installed}"
+}
+
+# Check if a check should be included in score calculation
+# Args: check_id, installed_components_json
+_check_counts_in_score() {
+    local check_id="$1"
+    local installed="$2"
+
+    # Get category (default to required if not found)
+    local category
+    if declare -f get_check_score_category &>/dev/null; then
+        category=$(get_check_score_category "$check_id")
+    else
+        category="required"
+    fi
+
+    case "$category" in
+        required|recommended)
+            # Always count
+            return 0
+            ;;
+        conditional)
+            # Only count if parent component is installed
+            local module="${check_id%%.*}"
+            case "$module" in
+                docker)
+                    [[ $(echo "$installed" | jq -r '.docker') == "true" ]]
+                    ;;
+                nginx)
+                    [[ $(echo "$installed" | jq -r '.nginx') == "true" ]]
+                    ;;
+                cloudflared)
+                    [[ $(echo "$installed" | jq -r '.cloudflared') == "true" ]]
+                    ;;
+                *)
+                    return 0  # Unknown module, include
+                    ;;
+            esac
+            ;;
+        optional)
+            # Only count in strict mode
+            [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]]
+            ;;
+        info)
+            # Never count
+            return 1
+            ;;
+        *)
+            # Unknown category, include by default
+            return 0
+            ;;
+    esac
+}
+
 calculate_score() {
     local checks=$(state_get_checks)
-    local total=$(echo "$checks" | jq 'length')
-    local high_fail=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "high")] | length')
-    local medium_fail=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "medium")] | length')
-    local low_fail=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "low")] | length')
-    local passed=$(echo "$checks" | jq '[.[] | select(.status == "passed")] | length')
+    local installed=$(_detect_installed_components "$checks")
+
+    # Count failures by severity, but only for checks that should count in score
+    local high_fail=0
+    local medium_fail=0
+    local low_fail=0
+    local scored_total=0
+
+    # Read checks into array and process
+    local check_ids
+    check_ids=$(echo "$checks" | jq -r '.[] | @json')
+
+    while IFS= read -r check_json; do
+        [[ -z "$check_json" ]] && continue
+
+        local check_id status severity
+        check_id=$(echo "$check_json" | jq -r '.check_id // empty')
+        status=$(echo "$check_json" | jq -r '.status // empty')
+        severity=$(echo "$check_json" | jq -r '.severity // "low"')
+
+        [[ -z "$check_id" ]] && continue
+
+        # Check if this check should be included in score
+        if ! _check_counts_in_score "$check_id" "$installed"; then
+            continue
+        fi
+
+        ((scored_total++)) || true
+
+        if [[ "$status" == "failed" ]]; then
+            case "$severity" in
+                high|critical)
+                    ((high_fail++)) || true
+                    ;;
+                medium)
+                    ((medium_fail++)) || true
+                    ;;
+                low|info)
+                    ((low_fail++)) || true
+                    ;;
+            esac
+        fi
+    done <<< "$(echo "$checks" | jq -c '.[]')"
 
     # Score calculation:
     # Start at 100, deduct for failures
@@ -366,13 +486,49 @@ calculate_score() {
     echo "$score"
 }
 
-# Get check statistics
+# Get check statistics (only for scored checks)
 get_check_stats() {
     local checks=$(state_get_checks)
-    local high=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "high")] | length')
-    local medium=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "medium")] | length')
-    local low=$(echo "$checks" | jq '[.[] | select(.status == "failed" and .severity == "low")] | length')
-    local passed=$(echo "$checks" | jq '[.[] | select(.status == "passed")] | length')
+    local installed=$(_detect_installed_components "$checks")
 
-    echo "{\"high\": $high, \"medium\": $medium, \"low\": $low, \"passed\": $passed}"
+    local high=0
+    local medium=0
+    local low=0
+    local passed=0
+    local info_count=0
+
+    while IFS= read -r check_json; do
+        [[ -z "$check_json" ]] && continue
+
+        local check_id status severity
+        check_id=$(echo "$check_json" | jq -r '.check_id // empty')
+        status=$(echo "$check_json" | jq -r '.status // empty')
+        severity=$(echo "$check_json" | jq -r '.severity // "low"')
+
+        [[ -z "$check_id" ]] && continue
+
+        # Check if this check should be included in score
+        if ! _check_counts_in_score "$check_id" "$installed"; then
+            ((info_count++)) || true
+            continue
+        fi
+
+        if [[ "$status" == "passed" ]]; then
+            ((passed++)) || true
+        elif [[ "$status" == "failed" ]]; then
+            case "$severity" in
+                high|critical)
+                    ((high++)) || true
+                    ;;
+                medium)
+                    ((medium++)) || true
+                    ;;
+                low|info)
+                    ((low++)) || true
+                    ;;
+            esac
+        fi
+    done <<< "$(echo "$checks" | jq -c '.[]')"
+
+    echo "{\"high\": $high, \"medium\": $medium, \"low\": $low, \"passed\": $passed, \"info\": $info_count}"
 }
