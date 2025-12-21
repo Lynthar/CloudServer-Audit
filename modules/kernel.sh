@@ -48,11 +48,80 @@ declare -a KERNEL_SECURITY_PARAMS=(
     "fs.protected_hardlinks:1:medium:Hardlink protection"
     "fs.protected_symlinks:1:medium:Symlink protection"
     "kernel.core_uses_pid:1:low:Core dump filename includes PID"
+
+    # Additional kernel hardening (may not be available on all systems)
+    "kernel.unprivileged_userns_clone:0:high:Disable unprivileged user namespaces (container escape prevention)"
+    "kernel.unprivileged_bpf_disabled:1:high:Disable unprivileged BPF (exploit prevention)"
+    "net.core.bpf_jit_harden:2:medium:BPF JIT hardening"
+    "kernel.sysrq:0:medium:Disable Magic SysRq key (or use 176 for safe subset)"
+    "kernel.perf_event_paranoid:3:medium:Restrict perf events"
+    "fs.protected_fifos:2:low:FIFO protection"
+    "fs.protected_regular:2:low:Regular file protection"
 )
 
 # ==============================================================================
 # Kernel Helper Functions
 # ==============================================================================
+
+# Detect if running in a container (OpenVZ, LXC, Docker)
+# Many kernel parameters cannot be modified in containers
+_kernel_is_container() {
+    # Check for OpenVZ
+    if [[ -f /proc/vz/veinfo ]] || [[ -d /proc/vz ]]; then
+        echo "openvz"
+        return 0
+    fi
+
+    # Check for LXC
+    if grep -qa "lxc" /proc/1/cgroup 2>/dev/null; then
+        echo "lxc"
+        return 0
+    fi
+
+    # Check for Docker
+    if [[ -f /.dockerenv ]] || grep -qa "docker" /proc/1/cgroup 2>/dev/null; then
+        echo "docker"
+        return 0
+    fi
+
+    # Check for systemd-nspawn
+    if grep -qa "machine.slice" /proc/1/cgroup 2>/dev/null; then
+        echo "nspawn"
+        return 0
+    fi
+
+    # Check /proc/1/environ for container hints
+    if tr '\0' '\n' < /proc/1/environ 2>/dev/null | grep -q "container="; then
+        echo "container"
+        return 0
+    fi
+
+    # Not a container
+    return 1
+}
+
+# Check if a kernel parameter is modifiable (not read-only in container)
+_kernel_param_modifiable() {
+    local param="$1"
+
+    # Try to read the current value
+    if ! sysctl -n "$param" &>/dev/null; then
+        return 1  # Parameter doesn't exist
+    fi
+
+    # In containers, some params are read-only
+    # Try a dry-run write (this won't actually change anything)
+    local current
+    current=$(sysctl -n "$param" 2>/dev/null)
+
+    # Check if the sysctl file is writable
+    local sysctl_file="/proc/sys/${param//\.//}"
+    if [[ -f "$sysctl_file" ]] && [[ ! -w "$sysctl_file" ]]; then
+        return 1  # Read-only
+    fi
+
+    return 0
+}
 
 # Get current sysctl value
 _kernel_get_sysctl() {
@@ -149,6 +218,25 @@ _kernel_check_core_dump() {
 
 kernel_audit() {
     local module="kernel"
+
+    # Check if running in a container first
+    local container_type
+    container_type=$(_kernel_is_container)
+    if [[ -n "$container_type" ]]; then
+        print_item "$(i18n 'kernel.check_container')"
+        local check=$(create_check_json \
+            "kernel.container_detected" \
+            "kernel" \
+            "low" \
+            "info" \
+            "Running in container environment: $container_type" \
+            "Some kernel parameters cannot be modified in containers" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_info "Container environment detected: $container_type"
+        print_info "Some kernel hardening options may be unavailable"
+    fi
 
     # Check ASLR
     print_item "$(i18n 'kernel.check_aslr')"
@@ -316,8 +404,17 @@ _kernel_audit_network_params() {
 }
 
 _kernel_audit_kernel_params() {
-    local issues=()
+    local issues_high=()
+    local issues_medium=()
+    local issues_low=()
+    local unavailable=()
     local passed=0
+
+    # Check if we're in a container
+    local in_container=false
+    if _kernel_is_container &>/dev/null; then
+        in_container=true
+    fi
 
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
         local param="${entry%%:*}"
@@ -325,6 +422,7 @@ _kernel_audit_kernel_params() {
         local expected="${rest%%:*}"
         rest="${rest#*:}"
         local severity="${rest%%:*}"
+        local desc="${rest#*:}"
 
         # Only check kernel.* and fs.* params here
         if [[ ! "$param" =~ ^(kernel\.|fs\.) ]]; then
@@ -337,25 +435,59 @@ _kernel_audit_kernel_params() {
 
         if [[ $result -eq 0 ]]; then
             ((passed++))
+        elif [[ $result -eq 2 ]]; then
+            # Parameter unavailable (common in containers)
+            unavailable+=("$param")
         elif [[ $result -eq 1 ]]; then
-            issues+=("$param=$actual")
+            case "$severity" in
+                high)   issues_high+=("$param=$actual (expected $expected)") ;;
+                medium) issues_medium+=("$param=$actual") ;;
+                low)    issues_low+=("$param=$actual") ;;
+            esac
         fi
     done
 
-    if [[ ${#issues[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues[@]}" | head -5 | tr '\n' '; ')
+    local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
+
+    # Report high-severity kernel issues separately (userns, bpf)
+    if [[ ${#issues_high[@]} -gt 0 ]]; then
+        local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
+        local check=$(create_check_json \
+            "kernel.kernel_params_high" \
+            "kernel" \
+            "high" \
+            "failed" \
+            "$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")" \
+            "Critical: $issue_list" \
+            "$(i18n 'kernel.fix_kernel_params')" \
+            "kernel.harden_kernel")
+        state_add_check "$check"
+        print_severity "high" "Critical kernel hardening issues: ${#issues_high[@]}"
+    fi
+
+    # Report medium-severity issues
+    if [[ ${#issues_medium[@]} -gt 0 ]]; then
+        local issue_list=$(printf '%s\n' "${issues_medium[@]}" | head -5 | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.kernel_params_weak" \
             "kernel" \
             "medium" \
             "failed" \
-            "$(i18n 'kernel.kernel_params_weak' "count=${#issues[@]}")" \
+            "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")" \
             "Issues: $issue_list" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'kernel.kernel_params_weak' "count=${#issues[@]}")"
-    else
+        print_severity "medium" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")"
+    fi
+
+    # Report unavailable parameters (info only, not penalized)
+    if [[ ${#unavailable[@]} -gt 0 ]] && [[ "$in_container" == true ]]; then
+        local unavail_list=$(printf '%s ' "${unavailable[@]}")
+        log_debug "Unavailable kernel params (container): $unavail_list"
+    fi
+
+    if [[ $total_issues -eq 0 ]]; then
         local check=$(create_check_json \
             "kernel.kernel_params_ok" \
             "kernel" \

@@ -138,6 +138,56 @@ _ssh_user_has_key() {
     [[ -f "$auth_keys" ]] && [[ -s "$auth_keys" ]]
 }
 
+# Check if SSH access control is configured (AllowUsers/DenyUsers/AllowGroups/DenyGroups)
+_ssh_has_access_control() {
+    local has_control=false
+
+    # Check for AllowUsers
+    local allow_users=$(_ssh_get_config "AllowUsers" "")
+    if [[ -n "$allow_users" ]]; then
+        has_control=true
+    fi
+
+    # Check for AllowGroups
+    local allow_groups=$(_ssh_get_config "AllowGroups" "")
+    if [[ -n "$allow_groups" ]]; then
+        has_control=true
+    fi
+
+    # Check for DenyUsers
+    local deny_users=$(_ssh_get_config "DenyUsers" "")
+    if [[ -n "$deny_users" ]]; then
+        has_control=true
+    fi
+
+    # Check for DenyGroups
+    local deny_groups=$(_ssh_get_config "DenyGroups" "")
+    if [[ -n "$deny_groups" ]]; then
+        has_control=true
+    fi
+
+    $has_control
+}
+
+# Get SSH access control details
+_ssh_get_access_control_info() {
+    local info=()
+
+    local allow_users=$(_ssh_get_config "AllowUsers" "")
+    [[ -n "$allow_users" ]] && info+=("AllowUsers: $allow_users")
+
+    local allow_groups=$(_ssh_get_config "AllowGroups" "")
+    [[ -n "$allow_groups" ]] && info+=("AllowGroups: $allow_groups")
+
+    local deny_users=$(_ssh_get_config "DenyUsers" "")
+    [[ -n "$deny_users" ]] && info+=("DenyUsers: $deny_users")
+
+    local deny_groups=$(_ssh_get_config "DenyGroups" "")
+    [[ -n "$deny_groups" ]] && info+=("DenyGroups: $deny_groups")
+
+    printf '%s; ' "${info[@]}"
+}
+
 # Check authorized_keys file permissions (security check)
 _ssh_check_authkeys_permissions() {
     local user="$1"
@@ -223,6 +273,10 @@ ssh_audit() {
     # Check SSH protocol and algorithms
     print_item "$(i18n 'ssh.check_algorithms')"
     _ssh_audit_algorithms
+
+    # Check SSH access control (AllowUsers/DenyUsers)
+    print_item "$(i18n 'ssh.check_access_control')"
+    _ssh_audit_access_control
 }
 
 _ssh_audit_password_auth() {
@@ -566,6 +620,36 @@ _ssh_audit_algorithms() {
             "")
         state_add_check "$check"
         print_ok "$(i18n 'ssh.algorithms_ok')"
+    fi
+}
+
+_ssh_audit_access_control() {
+    if _ssh_has_access_control; then
+        local control_info=$(_ssh_get_access_control_info)
+        local check=$(create_check_json \
+            "ssh.access_control_configured" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.access_control_configured')" \
+            "$control_info" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "SSH access control configured"
+    else
+        # This is a recommendation, not critical
+        local check=$(create_check_json \
+            "ssh.no_access_control" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.no_access_control')" \
+            "No AllowUsers/DenyUsers/AllowGroups/DenyGroups configured" \
+            "Consider adding AllowUsers or AllowGroups to restrict SSH access" \
+            "ssh.configure_access_control")
+        state_add_check "$check"
+        print_severity "low" "No SSH access control configured (AllowUsers/DenyUsers)"
     fi
 }
 

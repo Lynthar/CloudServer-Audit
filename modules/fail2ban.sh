@@ -27,6 +27,64 @@ _f2b_service_enabled() {
     systemctl is-enabled --quiet fail2ban 2>/dev/null
 }
 
+# Detect the correct SSH auth log path
+# Returns: log path suitable for fail2ban
+_f2b_detect_ssh_logpath() {
+    # Check for systemd journal (modern systems)
+    # fail2ban can use systemd backend directly
+    if systemctl is-active --quiet systemd-journald 2>/dev/null; then
+        # Check if rsyslog/syslog-ng is also writing to files
+        if [[ -f /var/log/auth.log ]] && [[ -s /var/log/auth.log ]]; then
+            echo "/var/log/auth.log"
+            return
+        fi
+        if [[ -f /var/log/secure ]] && [[ -s /var/log/secure ]]; then
+            echo "/var/log/secure"
+            return
+        fi
+        # Use systemd journal backend
+        echo "%(sshd_log)s"
+        return
+    fi
+
+    # Traditional log files
+    # Debian/Ubuntu use /var/log/auth.log
+    if [[ -f /var/log/auth.log ]]; then
+        echo "/var/log/auth.log"
+        return
+    fi
+
+    # RHEL/CentOS use /var/log/secure
+    if [[ -f /var/log/secure ]]; then
+        echo "/var/log/secure"
+        return
+    fi
+
+    # Fallback - let fail2ban figure it out
+    echo "%(sshd_log)s"
+}
+
+# Detect the correct fail2ban backend
+_f2b_detect_backend() {
+    # Check if systemd journal is available and working
+    if systemctl is-active --quiet systemd-journald 2>/dev/null; then
+        # Check if journalctl works
+        if journalctl -n 1 &>/dev/null; then
+            echo "systemd"
+            return
+        fi
+    fi
+
+    # Check for pyinotify (more efficient than polling)
+    if python3 -c "import pyinotify" 2>/dev/null; then
+        echo "pyinotify"
+        return
+    fi
+
+    # Default to auto
+    echo "auto"
+}
+
 # Check if SSH jail is enabled
 _f2b_ssh_jail_enabled() {
     if ! _f2b_installed || ! _f2b_service_active; then
@@ -367,13 +425,20 @@ _f2b_fix_configure_ssh_jail() {
         backup_file "$F2B_JAIL_LOCAL"
     fi
 
-    # Get SSH port
+    # Get SSH port and detect log path/backend
     local ssh_port=$(get_ssh_port)
+    local ssh_logpath=$(_f2b_detect_ssh_logpath)
+    local f2b_backend=$(_f2b_detect_backend)
+
+    print_info "Detected log path: $ssh_logpath"
+    print_info "Detected backend: $f2b_backend"
 
     # Create jail.local with SSH configuration
     cat > "$F2B_JAIL_LOCAL" <<EOF
 # vpssec fail2ban configuration
 # Generated: $(date -Iseconds)
+# Detected logpath: $ssh_logpath
+# Detected backend: $f2b_backend
 
 [DEFAULT]
 # Ban duration (default: 10 minutes, increase for production)
@@ -384,6 +449,9 @@ findtime = 10m
 
 # Max failures before ban
 maxretry = 3
+
+# Backend for log monitoring
+backend = $f2b_backend
 
 # Action: ban IP using iptables/nftables
 banaction = iptables-multiport
@@ -398,7 +466,8 @@ banaction_allports = iptables-allports
 enabled = true
 port = $ssh_port
 filter = sshd
-logpath = /var/log/auth.log
+logpath = $ssh_logpath
+backend = $f2b_backend
 maxretry = 3
 bantime = 1h
 findtime = 10m
@@ -408,7 +477,7 @@ findtime = 10m
 # enabled = true
 # port = $ssh_port
 # filter = sshd[mode=aggressive]
-# logpath = /var/log/auth.log
+# logpath = $ssh_logpath
 # maxretry = 1
 # bantime = 1w
 EOF
