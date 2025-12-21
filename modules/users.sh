@@ -182,6 +182,51 @@ _find_sudo_users() {
     printf '%s\n' "${sudo_users[@]}" | sort -u
 }
 
+# Find NOPASSWD sudo entries - HIGH RISK
+_find_nopasswd_sudo() {
+    local findings=()
+
+    # Check /etc/sudoers
+    if [[ -r /etc/sudoers ]]; then
+        while IFS= read -r line; do
+            # Skip comments and empty lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+
+            # Check for NOPASSWD
+            if [[ "$line" =~ NOPASSWD ]]; then
+                # Extract user/group
+                local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
+                findings+=("/etc/sudoers: $entry")
+            fi
+        done < /etc/sudoers
+    fi
+
+    # Check /etc/sudoers.d/
+    if [[ -d /etc/sudoers.d ]]; then
+        for f in /etc/sudoers.d/*; do
+            [[ -f "$f" ]] || continue
+            [[ -r "$f" ]] || continue
+
+            # Skip backup files
+            [[ "$f" =~ ~$ ]] && continue
+            [[ "$f" =~ \.bak$ ]] && continue
+
+            while IFS= read -r line; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ -z "$line" ]] && continue
+
+                if [[ "$line" =~ NOPASSWD ]]; then
+                    local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
+                    findings+=("$f: $entry")
+                fi
+            done < "$f"
+        done
+    fi
+
+    printf '%s\n' "${findings[@]}"
+}
+
 # Get recently created users
 _find_recent_users() {
     local recent=()
@@ -416,6 +461,35 @@ EOF
         state_add_check "$check_json"
     fi
 
+    # 4.5 Check for NOPASSWD sudo - HIGH RISK
+    local nopasswd=$(_find_nopasswd_sudo)
+    local nopasswd_count=$(echo "$nopasswd" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ -n "$nopasswd" && "$nopasswd_count" -gt 0 ]]; then
+        local nopasswd_list=""
+        while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            nopasswd_list+="$entry; "
+        done <<< "$nopasswd"
+        nopasswd_list="${nopasswd_list%; }"
+
+        check_json=$(cat <<EOF
+{
+    "id": "users.nopasswd_sudo",
+    "check_id": "users.nopasswd_sudo",
+    "module": "users",
+    "title": "$(i18n 'users.nopasswd_sudo' 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count",
+    "desc": "$nopasswd_list",
+    "status": "failed",
+    "severity": "high",
+    "suggestion": "$(i18n 'users.review_nopasswd' 2>/dev/null || echo 'NOPASSWD allows privilege escalation without password - review if necessary')",
+    "fix_id": "users.nopasswd_sudo"
+}
+EOF
+)
+        state_add_check "$check_json"
+    fi
+
     # 5. Check recently created users - INFO/LOW
     local recent=$(_find_recent_users)
     local recent_count=$(echo "$recent" | grep -c '|' 2>/dev/null || echo 0)
@@ -617,6 +691,35 @@ users_fix() {
             done <<< "$sys_shells"
 
             print_info "$(i18n 'users.verify_before_change' 2>/dev/null || echo 'Verify the user does not need shell access before changing')"
+            return 1
+            ;;
+
+        users.nopasswd_sudo)
+            print_warn "⚠️  $(i18n 'users.high_risk_alert' 2>/dev/null || echo 'HIGH RISK SECURITY ISSUE')"
+            echo ""
+            echo "$(i18n 'users.nopasswd_warning' 2>/dev/null || echo 'NOPASSWD sudo entries allow privilege escalation without password verification'):"
+            echo ""
+
+            local nopasswd=$(_find_nopasswd_sudo)
+            while IFS= read -r entry; do
+                [[ -z "$entry" ]] && continue
+                echo "  ⚠️  $entry"
+            done <<< "$nopasswd"
+
+            echo ""
+            echo "$(i18n 'users.nopasswd_risks' 2>/dev/null || echo 'Risks'):"
+            echo "  • $(i18n 'users.nopasswd_risk1' 2>/dev/null || echo 'Compromised user account = full root access')"
+            echo "  • $(i18n 'users.nopasswd_risk2' 2>/dev/null || echo 'Malware can escalate privileges without interaction')"
+            echo "  • $(i18n 'users.nopasswd_risk3' 2>/dev/null || echo 'No audit trail for privilege escalation')"
+            echo ""
+            echo "$(i18n 'users.nopasswd_action' 2>/dev/null || echo 'Recommended actions'):"
+            echo "  1. $(i18n 'users.nopasswd_action1' 2>/dev/null || echo 'Review if NOPASSWD is absolutely necessary')"
+            echo "  2. $(i18n 'users.nopasswd_action2' 2>/dev/null || echo 'Limit NOPASSWD to specific commands only')"
+            echo "  3. $(i18n 'users.nopasswd_action3' 2>/dev/null || echo 'Remove NOPASSWD and use password authentication')"
+            echo ""
+            echo "$(i18n 'users.edit_sudoers' 2>/dev/null || echo 'To edit safely'): sudo visudo"
+            echo ""
+            print_warn "$(i18n 'users.manual_action' 2>/dev/null || echo 'Manual action required - DO NOT auto-modify sudoers')"
             return 1
             ;;
 

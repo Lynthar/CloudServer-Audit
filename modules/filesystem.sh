@@ -39,12 +39,17 @@ declare -a FS_SUID_WHITELIST=(
 )
 
 # Sensitive files and their expected permissions
+# Note: sshd_config is 644 on Debian/Ubuntu by default (no secrets stored)
+# SSH private keys should be 600, public keys 644
 declare -A FS_SENSITIVE_FILES=(
     ["/etc/passwd"]="644"
     ["/etc/shadow"]="640"
     ["/etc/group"]="644"
     ["/etc/gshadow"]="640"
-    ["/etc/ssh/sshd_config"]="600"
+    ["/etc/ssh/sshd_config"]="644"
+    ["/etc/ssh/ssh_host_rsa_key"]="600"
+    ["/etc/ssh/ssh_host_ecdsa_key"]="600"
+    ["/etc/ssh/ssh_host_ed25519_key"]="600"
     ["/etc/crontab"]="600"
     ["/etc/sudoers"]="440"
     ["/etc/hosts.allow"]="644"
