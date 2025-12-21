@@ -160,14 +160,25 @@ Options:
 The security score is calculated based on check results:
 
 - Base score: 100
-- High severity failure: -15 points (max -60)
-- Medium severity failure: -5 points (max -25)
-- Low severity failure: -2 points (max -10)
+- High/Critical severity failure: -20 points each (max -80)
+- Medium severity failure: -8 points each (max -40)
+- Low severity failure: -3 points each (max -15)
+
+Example outcomes:
+| Issues | Score | Rating |
+|--------|-------|--------|
+| 0 issues | 100 | Excellent |
+| 1 medium | 92 | Good |
+| 2 medium | 84 | Good |
+| 1 high | 80 | Fair |
+| 2 high | 60 | Poor |
+| 1 high + 2 medium | 64 | Poor |
+| 3+ high | ≤40 | Critical |
 
 Score ranges:
 - 90-100: Excellent
-- 70-89: Good
-- 50-69: Fair
+- 75-89: Good
+- 50-74: Fair
 - 0-49: Poor
 
 ## Safety Features
