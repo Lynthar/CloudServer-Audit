@@ -1,4 +1,4 @@
-# vpssec - VPS Security Check & Hardening Tool
+# CloudServer Audit - VPS Security Check & Hardening Tool
 
 English | [简体中文](README_zh.md)
 
