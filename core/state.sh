@@ -468,17 +468,33 @@ calculate_score() {
 
     # Score calculation:
     # Start at 100, deduct for failures
-    # High: -15 points each (max 60)
-    # Medium: -5 points each (max 25)
-    # Low: -2 points each (max 10)
+    #
+    # Deduction per issue:
+    #   Critical/High: -20 points each
+    #   Medium: -8 points each
+    #   Low: -3 points each
+    #
+    # Caps (to prevent going too negative):
+    #   High: max -80 points (4+ high issues = very poor)
+    #   Medium: max -40 points (5+ medium issues = significant concern)
+    #   Low: max -15 points (5+ low issues = notable)
+    #
+    # Expected outcomes:
+    #   0 issues         → 100 (Excellent)
+    #   1 medium         → 92  (Good)
+    #   2 medium         → 84  (Good)
+    #   1 high           → 80  (Fair)
+    #   2 high           → 60  (Poor)
+    #   3 high           → 40  (Critical)
+    #   1 high + 2 medium→ 64  (Poor)
 
     local score=100
-    local high_deduct=$((high_fail * 15))
-    ((high_deduct > 60)) && high_deduct=60
-    local medium_deduct=$((medium_fail * 5))
-    ((medium_deduct > 25)) && medium_deduct=25
-    local low_deduct=$((low_fail * 2))
-    ((low_deduct > 10)) && low_deduct=10
+    local high_deduct=$((high_fail * 20))
+    ((high_deduct > 80)) && high_deduct=80
+    local medium_deduct=$((medium_fail * 8))
+    ((medium_deduct > 40)) && medium_deduct=40
+    local low_deduct=$((low_fail * 3))
+    ((low_deduct > 15)) && low_deduct=15
 
     score=$((score - high_deduct - medium_deduct - low_deduct))
     ((score < 0)) && score=0
