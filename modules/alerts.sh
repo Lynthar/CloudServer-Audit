@@ -46,11 +46,11 @@ alerts_audit() {
     local module="alerts"
 
     # Check alert configuration
-    print_item "Checking alert configuration..."
+    print_item "$(i18n 'alerts.check_config')"
     _alerts_audit_config
 
     # Check notification capabilities
-    print_item "Checking notification capabilities..."
+    print_item "$(i18n 'alerts.check_capabilities')"
     _alerts_audit_capabilities
 }
 
@@ -64,29 +64,31 @@ _alerts_audit_config() {
         [[ -n "$email" ]] && { ((configured++)) || true; }
 
         if ((configured > 0)); then
+            local webhook_status="${webhook:+yes}${webhook:-no}"
+            local email_status="${email:+yes}${email:-no}"
             local check=$(create_check_json \
                 "alerts.configured" \
                 "alerts" \
                 "low" \
                 "passed" \
-                "Alert notifications configured" \
-                "Webhook: ${webhook:+yes}${webhook:-no}, Email: ${email:+yes}${email:-no}" \
+                "$(i18n 'alerts.configured')" \
+                "$(i18n 'alerts.config_status' "webhook=$webhook_status" "email=$email_status")" \
                 "" \
                 "")
             state_add_check "$check"
-            print_ok "Alert notifications configured"
+            print_ok "$(i18n 'alerts.configured')"
         else
             local check=$(create_check_json \
                 "alerts.not_configured" \
                 "alerts" \
                 "low" \
                 "failed" \
-                "Alert notifications not configured" \
-                "No webhook or email configured" \
-                "Configure alert notifications" \
+                "$(i18n 'alerts.not_configured')" \
+                "$(i18n 'alerts.no_webhook_email')" \
+                "$(i18n 'alerts.fix_configure')" \
                 "alerts.setup_config")
             state_add_check "$check"
-            print_severity "low" "Alert notifications not configured"
+            print_severity "low" "$(i18n 'alerts.not_configured')"
         fi
     else
         local check=$(create_check_json \
@@ -94,12 +96,12 @@ _alerts_audit_config() {
             "alerts" \
             "low" \
             "failed" \
-            "Alert configuration not found" \
-            "alerts.json not present" \
-            "Set up alert configuration" \
+            "$(i18n 'alerts.config_not_found')" \
+            "$(i18n 'alerts.config_not_found_desc')" \
+            "$(i18n 'alerts.fix_setup')" \
             "alerts.setup_config")
         state_add_check "$check"
-        print_severity "low" "Alert configuration not found"
+        print_severity "low" "$(i18n 'alerts.config_not_found')"
     fi
 }
 
@@ -115,29 +117,30 @@ _alerts_audit_capabilities() {
     fi
 
     if [[ ${#capabilities[@]} -gt 0 ]]; then
+        local caps_list="${capabilities[*]}"
         local check=$(create_check_json \
             "alerts.capabilities_ok" \
             "alerts" \
             "low" \
             "passed" \
-            "Alert capabilities available" \
-            "Available: ${capabilities[*]}" \
+            "$(i18n 'alerts.capabilities_available')" \
+            "$(i18n 'alerts.capabilities_list' "types=$caps_list")" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Alert capabilities: ${capabilities[*]}"
+        print_ok "$(i18n 'alerts.capabilities' "types=$caps_list")"
     else
         local check=$(create_check_json \
             "alerts.no_capabilities" \
             "alerts" \
             "low" \
             "failed" \
-            "No alert capabilities available" \
-            "Neither curl nor mail command available" \
-            "Install curl for webhook support" \
+            "$(i18n 'alerts.no_capabilities')" \
+            "$(i18n 'alerts.no_capabilities_desc')" \
+            "$(i18n 'alerts.fix_install_curl')" \
             "")
         state_add_check "$check"
-        print_severity "low" "No alert capabilities (install curl)"
+        print_severity "low" "$(i18n 'alerts.no_capabilities')"
     fi
 }
 
@@ -163,7 +166,7 @@ alerts_fix() {
 }
 
 _alerts_fix_setup_config() {
-    print_info "Setting up alert configuration..."
+    print_info "$(i18n 'alerts.setting_up')"
 
     mkdir -p "$(dirname "$ALERTS_CONFIG_FILE")"
 
@@ -173,7 +176,7 @@ _alerts_fix_setup_config() {
         local email=""
 
         print_msg ""
-        print_msg "Configure alert notifications:"
+        print_msg "$(i18n 'alerts.configure_prompt')"
         print_msg ""
 
         read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url </dev/tty
@@ -193,7 +196,7 @@ _alerts_fix_setup_config() {
 }
 EOF
 
-        print_ok "Alert configuration saved"
+        print_ok "$(i18n 'alerts.config_saved')"
     else
         # Non-interactive: generate template
         cat > "$ALERTS_CONFIG_FILE" <<'EOF'
@@ -209,8 +212,8 @@ EOF
   "throttle_minutes": 5
 }
 EOF
-        print_ok "Alert configuration template created: $ALERTS_CONFIG_FILE"
-        print_info "Edit the file to add your webhook URL and/or email"
+        print_ok "$(i18n 'alerts.template_created' "path=$ALERTS_CONFIG_FILE")"
+        print_info "$(i18n 'alerts.edit_template')"
     fi
 
     # Generate monitoring scripts
@@ -222,7 +225,7 @@ EOF
 _alerts_fix_generate_templates() {
     mkdir -p "$ALERTS_TEMPLATES_DIR"
 
-    print_info "Generating alert hook scripts..."
+    print_info "$(i18n 'alerts.generating_hooks')"
 
     # Main alert function library
     cat > "${ALERTS_TEMPLATES_DIR}/alert-lib.sh" <<'EOF'
@@ -331,7 +334,7 @@ vpssec_alert_load_config
 EOF
 
     chmod +x "${ALERTS_TEMPLATES_DIR}/alert-lib.sh"
-    print_item "Created: alert-lib.sh"
+    print_item "$(i18n 'alerts.hook_created' "name=alert-lib.sh")"
 
     # SSH login monitor
     cat > "${ALERTS_TEMPLATES_DIR}/ssh-login-monitor.sh" <<'EOF'
@@ -364,7 +367,7 @@ esac
 EOF
 
     chmod +x "${ALERTS_TEMPLATES_DIR}/ssh-login-monitor.sh"
-    print_item "Created: ssh-login-monitor.sh"
+    print_item "$(i18n 'alerts.hook_created' "name=ssh-login-monitor.sh")"
 
     # Firewall change monitor
     cat > "${ALERTS_TEMPLATES_DIR}/ufw-monitor.sh" <<'EOF'
@@ -390,7 +393,7 @@ fi
 EOF
 
     chmod +x "${ALERTS_TEMPLATES_DIR}/ufw-monitor.sh"
-    print_item "Created: ufw-monitor.sh"
+    print_item "$(i18n 'alerts.hook_created' "name=ufw-monitor.sh")"
 
     # Service monitor
     cat > "${ALERTS_TEMPLATES_DIR}/service-monitor.sh" <<'EOF'
@@ -419,7 +422,7 @@ done
 EOF
 
     chmod +x "${ALERTS_TEMPLATES_DIR}/service-monitor.sh"
-    print_item "Created: service-monitor.sh"
+    print_item "$(i18n 'alerts.hook_created' "name=service-monitor.sh")"
 
     # Installation instructions
     cat > "${ALERTS_TEMPLATES_DIR}/README.md" <<'EOF'
@@ -478,8 +481,8 @@ vpssec_alert "Test Alert" "This is a test notification" "info"
 ```
 EOF
 
-    print_item "Created: README.md"
-    print_ok "Alert templates generated in: $ALERTS_TEMPLATES_DIR"
+    print_item "$(i18n 'alerts.hook_created' "name=README.md")"
+    print_ok "$(i18n 'alerts.templates_generated' "path=$ALERTS_TEMPLATES_DIR")"
 
     return 0
 }

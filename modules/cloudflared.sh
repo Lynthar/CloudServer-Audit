@@ -71,33 +71,33 @@ cloudflared_audit() {
     local module="cloudflared"
 
     # Check if Cloudflared is installed
-    print_item "Checking Cloudflared installation..."
+    print_item "$(i18n 'cloudflared.check_installed')"
     if ! _cloudflared_installed; then
         local check=$(create_check_json \
             "cloudflared.not_installed" \
             "cloudflared" \
             "low" \
             "passed" \
-            "Cloudflared not installed" \
-            "Cloudflared tunnel is not installed (skip)" \
+            "$(i18n 'cloudflared.not_installed')" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Cloudflared not installed - Skipping"
+        print_ok "$(i18n 'cloudflared.not_installed')"
         return
     fi
-    print_ok "Cloudflared installed"
+    print_ok "$(i18n 'cloudflared.installed')"
 
     # Check service status
-    print_item "Checking Cloudflared service status..."
+    print_item "$(i18n 'cloudflared.check_service')"
     _cloudflared_audit_service
 
     # Check configuration
-    print_item "Checking Cloudflared configuration..."
+    print_item "$(i18n 'cloudflared.check_config')"
     _cloudflared_audit_config
 
     # Check tunnel status
-    print_item "Checking tunnel status..."
+    print_item "$(i18n 'cloudflared.check_tunnels')"
     _cloudflared_audit_tunnels
 }
 
@@ -108,36 +108,36 @@ _cloudflared_audit_service() {
             "cloudflared" \
             "low" \
             "passed" \
-            "Cloudflared service is active" \
+            "$(i18n 'cloudflared.service_active')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Cloudflared service is active"
+        print_ok "$(i18n 'cloudflared.service_active')"
     elif _cloudflared_tunnel_running; then
         local check=$(create_check_json \
             "cloudflared.tunnel_running" \
             "cloudflared" \
             "low" \
             "passed" \
-            "Cloudflared tunnel is running (manual)" \
-            "Tunnel running but not as systemd service" \
-            "Consider configuring as systemd service" \
+            "$(i18n 'cloudflared.tunnel_running_manual')" \
+            "$(i18n 'cloudflared.tunnel_not_systemd')" \
+            "$(i18n 'cloudflared.fix_setup_service')" \
             "cloudflared.setup_service")
         state_add_check "$check"
-        print_ok "Cloudflared tunnel running (manual mode)"
+        print_ok "$(i18n 'cloudflared.tunnel_running_manual')"
     else
         local check=$(create_check_json \
             "cloudflared.service_inactive" \
             "cloudflared" \
             "medium" \
             "failed" \
-            "Cloudflared service not running" \
-            "No active Cloudflared tunnel detected" \
-            "Start the Cloudflared service" \
+            "$(i18n 'cloudflared.service_not_running')" \
+            "$(i18n 'cloudflared.no_tunnel_detected')" \
+            "$(i18n 'cloudflared.fix_start_service')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "Cloudflared service not running"
+        print_severity "medium" "$(i18n 'cloudflared.service_not_running')"
     fi
 }
 
@@ -148,12 +148,12 @@ _cloudflared_audit_config() {
             "cloudflared" \
             "medium" \
             "failed" \
-            "Cloudflared configuration not found" \
-            "No config.yml found in standard locations" \
-            "Create configuration file" \
+            "$(i18n 'cloudflared.config_not_found')" \
+            "$(i18n 'cloudflared.config_not_found_desc')" \
+            "$(i18n 'cloudflared.fix_create_config')" \
             "cloudflared.generate_config")
         state_add_check "$check"
-        print_severity "medium" "Cloudflared configuration not found"
+        print_severity "medium" "$(i18n 'cloudflared.config_not_found')"
         return
     fi
 
@@ -174,24 +174,24 @@ _cloudflared_audit_config() {
                 "cloudflared" \
                 "medium" \
                 "failed" \
-                "Cloudflared configuration has security issues" \
-                "Issues: $issues" \
-                "Review and fix configuration" \
+                "$(i18n 'cloudflared.config_has_issues')" \
+                "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
+                "$(i18n 'cloudflared.fix_review_config')" \
                 "cloudflared.generate_config")
             state_add_check "$check"
-            print_severity "medium" "Configuration issues: $issues"
+            print_severity "medium" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
         else
             local check=$(create_check_json \
                 "cloudflared.config_ok" \
                 "cloudflared" \
                 "low" \
                 "passed" \
-                "Cloudflared configuration OK" \
+                "$(i18n 'cloudflared.config_ok')" \
                 "" \
                 "" \
                 "")
             state_add_check "$check"
-            print_ok "Cloudflared configuration OK"
+            print_ok "$(i18n 'cloudflared.config_ok')"
         fi
     fi
 }
@@ -206,24 +206,24 @@ _cloudflared_audit_tunnels() {
             "cloudflared" \
             "low" \
             "passed" \
-            "$tunnel_count Cloudflare tunnel(s) configured" \
+            "$(i18n 'cloudflared.tunnels_count' "count=$tunnel_count")" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$tunnel_count Cloudflare tunnel(s) configured"
+        print_ok "$(i18n 'cloudflared.tunnels_count' "count=$tunnel_count")"
     else
         local check=$(create_check_json \
             "cloudflared.no_tunnels" \
             "cloudflared" \
             "low" \
             "failed" \
-            "No Cloudflare tunnels configured" \
-            "No tunnels found in cloudflared" \
-            "Create a tunnel: cloudflared tunnel create <name>" \
+            "$(i18n 'cloudflared.no_tunnels')" \
+            "$(i18n 'cloudflared.no_tunnels_desc')" \
+            "$(i18n 'cloudflared.fix_create_tunnel')" \
             "")
         state_add_check "$check"
-        print_severity "low" "No Cloudflare tunnels configured"
+        print_severity "low" "$(i18n 'cloudflared.no_tunnels')"
     fi
 }
 
@@ -243,7 +243,7 @@ cloudflared_fix() {
             ;;
         *)
             log_warn "Cloudflared fix not implemented: $fix_id"
-            print_warn "This fix requires manual configuration"
+            print_warn "$(i18n 'cloudflared.fix_manual_required')"
             return 1
             ;;
     esac
@@ -255,7 +255,7 @@ _cloudflared_fix_generate_config() {
 
     local output_file="${template_dir}/config.yml.example"
 
-    print_info "Generating Cloudflared configuration template..."
+    print_info "$(i18n 'cloudflared.generating_template')"
 
     cat > "$output_file" <<'EOF'
 # Cloudflared Tunnel Configuration Template
@@ -345,45 +345,45 @@ ProtectControlGroups=yes
 WantedBy=multi-user.target
 EOF
 
-    print_ok "Templates generated in: $template_dir"
-    print_info "Configuration template: $output_file"
-    print_info "Service template: ${template_dir}/cloudflared.service.example"
+    print_ok "$(i18n 'cloudflared.templates_generated' "dir=$template_dir")"
+    print_info "$(i18n 'cloudflared.config_template' "file=$output_file")"
+    print_info "$(i18n 'cloudflared.service_template' "file=${template_dir}/cloudflared.service.example")"
     print_msg ""
-    print_msg "Next steps:"
-    print_msg "  1. Create tunnel: cloudflared tunnel create my-tunnel"
-    print_msg "  2. Edit and copy config: cp $output_file /etc/cloudflared/config.yml"
-    print_msg "  3. Install service: cloudflared service install"
+    print_msg "$(i18n 'cloudflared.next_steps')"
+    print_msg "  1. $(i18n 'cloudflared.step_create_tunnel')"
+    print_msg "  2. $(i18n 'cloudflared.step_copy_config' "file=$output_file")"
+    print_msg "  3. $(i18n 'cloudflared.step_install_service')"
 
     return 0
 }
 
 _cloudflared_fix_setup_service() {
-    print_info "Setting up Cloudflared as systemd service..."
+    print_info "$(i18n 'cloudflared.setting_up_service')"
 
     # Check if config exists
     if ! _cloudflared_has_config; then
-        print_error "Configuration file not found. Run generate_config first."
+        print_error "$(i18n 'cloudflared.config_required')"
         return 1
     fi
 
     # Install service using cloudflared
     if cloudflared service install 2>/dev/null; then
-        print_ok "Cloudflared service installed"
+        print_ok "$(i18n 'cloudflared.service_installed')"
 
         # Enable and start
         systemctl enable cloudflared
         systemctl start cloudflared
 
         if _cloudflared_service_active; then
-            print_ok "Cloudflared service is now active"
+            print_ok "$(i18n 'cloudflared.service_now_active')"
             return 0
         else
-            print_error "Service installed but failed to start"
-            print_info "Check logs: journalctl -u cloudflared"
+            print_error "$(i18n 'cloudflared.service_start_failed')"
+            print_info "$(i18n 'cloudflared.check_logs')"
             return 1
         fi
     else
-        print_error "Failed to install Cloudflared service"
+        print_error "$(i18n 'cloudflared.service_install_failed')"
         return 1
     fi
 }
