@@ -353,6 +353,84 @@ _fs_find_caps_files() {
     printf '%s\n' "${results[@]}"
 }
 
+# Find suspicious cron entries
+_fs_find_suspicious_cron() {
+    local suspicious=()
+
+    # Suspicious patterns in cron entries
+    local patterns=(
+        "curl.*\\|.*sh"
+        "wget.*\\|.*sh"
+        "base64.*-d"
+        "/dev/tcp/"
+        "nc\\s+-e"
+        "ncat.*-e"
+        "python.*-c.*import"
+        "perl.*-e"
+        "ruby.*-e"
+        "\\\\x[0-9a-f]"
+        "/tmp/\\."
+    )
+
+    # Check system crontabs
+    local cron_dirs=(
+        "/etc/cron.d"
+        "/etc/cron.daily"
+        "/etc/cron.hourly"
+        "/etc/cron.weekly"
+        "/etc/cron.monthly"
+    )
+
+    # Check /etc/crontab
+    if [[ -f /etc/crontab ]]; then
+        for pattern in "${patterns[@]}"; do
+            local matches=$(grep -iE "$pattern" /etc/crontab 2>/dev/null | head -2)
+            if [[ -n "$matches" ]]; then
+                suspicious+=("/etc/crontab: matches '$pattern'")
+            fi
+        done
+    fi
+
+    # Check cron directories
+    for dir in "${cron_dirs[@]}"; do
+        [[ -d "$dir" ]] || continue
+        for file in "$dir"/*; do
+            [[ -f "$file" ]] || continue
+            for pattern in "${patterns[@]}"; do
+                local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
+                if [[ -n "$matches" ]]; then
+                    suspicious+=("$file: matches '$pattern'")
+                fi
+            done
+        done
+    done
+
+    # Check user crontabs
+    if [[ -d /var/spool/cron/crontabs ]]; then
+        for file in /var/spool/cron/crontabs/*; do
+            [[ -f "$file" ]] || continue
+            local username=$(basename "$file")
+            for pattern in "${patterns[@]}"; do
+                local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
+                if [[ -n "$matches" ]]; then
+                    suspicious+=("User $username crontab: matches '$pattern'")
+                fi
+            done
+        done
+    fi
+
+    printf '%s\n' "${suspicious[@]}"
+}
+
+# Count user crontabs
+_fs_count_user_crontabs() {
+    local count=0
+    if [[ -d /var/spool/cron/crontabs ]]; then
+        count=$(ls -1 /var/spool/cron/crontabs 2>/dev/null | wc -l)
+    fi
+    echo "$count"
+}
+
 # ==============================================================================
 # Filesystem Audit
 # ==============================================================================
@@ -391,6 +469,10 @@ filesystem_audit() {
     # Check files with capabilities (setcap)
     print_item "$(i18n 'filesystem.check_caps')"
     _fs_audit_caps
+
+    # Check cron jobs for suspicious entries
+    print_item "$(i18n 'filesystem.check_cron')"
+    _fs_audit_cron
 }
 
 _fs_audit_suid() {
@@ -736,6 +818,47 @@ _fs_audit_caps() {
             "")
         state_add_check "$check"
         print_ok "No suspicious file capabilities"
+    fi
+}
+
+_fs_audit_cron() {
+    local suspicious
+    suspicious=$(_fs_find_suspicious_cron)
+    local sus_count=$(echo "$suspicious" | grep -c . 2>/dev/null || echo "0")
+
+    local user_crontabs=$(_fs_count_user_crontabs)
+
+    if ((sus_count > 0)); then
+        local sus_list=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            sus_list+="$line; "
+        done <<< "$suspicious"
+        sus_list="${sus_list%; }"
+
+        local check=$(create_check_json \
+            "filesystem.suspicious_cron" \
+            "filesystem" \
+            "high" \
+            "failed" \
+            "$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
+            "$sus_list" \
+            "Review cron entries for potential malware or backdoors" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "Suspicious cron entries found: $sus_count"
+    else
+        local check=$(create_check_json \
+            "filesystem.cron_ok" \
+            "filesystem" \
+            "low" \
+            "passed" \
+            "$(i18n 'filesystem.cron_ok')" \
+            "No suspicious patterns found. User crontabs: $user_crontabs" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "Cron entries appear clean"
     fi
 }
 

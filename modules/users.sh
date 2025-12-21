@@ -432,6 +432,53 @@ _check_pwquality() {
     printf '%s\n' "${issues[@]}"
 }
 
+# Check bash history security settings
+_check_history_security() {
+    local issues=()
+
+    # Check global profile for HISTSIZE and HISTFILESIZE
+    local histsize=""
+    local histfilesize=""
+
+    # Check /etc/profile and /etc/bash.bashrc
+    for config in /etc/profile /etc/bash.bashrc /etc/profile.d/*.sh; do
+        [[ -f "$config" ]] || continue
+        if [[ -z "$histsize" ]]; then
+            histsize=$(grep -h "^HISTSIZE=" "$config" 2>/dev/null | tail -1 | cut -d= -f2)
+        fi
+        if [[ -z "$histfilesize" ]]; then
+            histfilesize=$(grep -h "^HISTFILESIZE=" "$config" 2>/dev/null | tail -1 | cut -d= -f2)
+        fi
+    done
+
+    # Check for HISTCONTROL (should include ignorespace or ignoreboth)
+    local histcontrol=""
+    for config in /etc/profile /etc/bash.bashrc; do
+        [[ -f "$config" ]] || continue
+        histcontrol=$(grep -h "^HISTCONTROL=" "$config" 2>/dev/null | tail -1 | cut -d= -f2)
+        [[ -n "$histcontrol" ]] && break
+    done
+
+    # Check for timestamp in history
+    local histtimeformat=""
+    for config in /etc/profile /etc/bash.bashrc; do
+        [[ -f "$config" ]] || continue
+        histtimeformat=$(grep -h "^HISTTIMEFORMAT=" "$config" 2>/dev/null | tail -1)
+        [[ -n "$histtimeformat" ]] && break
+    done
+
+    # Report issues
+    if [[ -z "$histtimeformat" ]]; then
+        issues+=("HISTTIMEFORMAT not set (no timestamps in history)")
+    fi
+
+    if [[ -z "$histcontrol" ]] || [[ ! "$histcontrol" =~ ignore ]]; then
+        issues+=("HISTCONTROL not set to ignore duplicates/spaces")
+    fi
+
+    printf '%s\n' "${issues[@]}"
+}
+
 # ==============================================================================
 # Audit Functions
 # ==============================================================================
@@ -790,6 +837,35 @@ EOF
     "severity": "low",
     "suggestion": "$(i18n 'users.fix_pwquality' 2>/dev/null || echo 'Configure pam_pwquality or pam_cracklib for password complexity')",
     "fix_id": "users.pwquality"
+}
+EOF
+)
+        state_add_check "$check_json"
+    fi
+
+    # 11. Check bash history security - LOW
+    local history_issues=$(_check_history_security)
+    local history_count=$(echo "$history_issues" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ -n "$history_issues" && "$history_count" -gt 0 ]]; then
+        local hist_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            hist_list+="$issue; "
+        done <<< "$history_issues"
+        hist_list="${hist_list%; }"
+
+        check_json=$(cat <<EOF
+{
+    "id": "users.history_insecure",
+    "check_id": "users.history_insecure",
+    "module": "users",
+    "title": "$(i18n 'users.history_insecure' 2>/dev/null || echo 'Bash History Security'): $history_count issues",
+    "desc": "$hist_list",
+    "status": "failed",
+    "severity": "low",
+    "suggestion": "$(i18n 'users.fix_history' 2>/dev/null || echo 'Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile')",
+    "fix_id": "users.history"
 }
 EOF
 )

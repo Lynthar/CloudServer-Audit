@@ -38,6 +38,52 @@ _update_unattended_enabled() {
     grep -q 'APT::Periodic::Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null
 }
 
+# Check if system reboot is required
+_update_reboot_required() {
+    [[ -f /var/run/reboot-required ]]
+}
+
+# Get reboot required packages
+_update_reboot_packages() {
+    if [[ -f /var/run/reboot-required.pkgs ]]; then
+        cat /var/run/reboot-required.pkgs 2>/dev/null
+    fi
+}
+
+# Check time synchronization status
+_update_check_timesync() {
+    local issues=()
+
+    # Check if timesyncd is active
+    if systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
+        # Check if time is synchronized
+        if timedatectl show 2>/dev/null | grep -q "NTPSynchronized=yes"; then
+            echo "synced:timesyncd"
+            return 0
+        else
+            issues+=("timesyncd active but not synchronized")
+        fi
+    # Check if ntpd is running
+    elif systemctl is-active --quiet ntp 2>/dev/null || \
+         systemctl is-active --quiet ntpd 2>/dev/null; then
+        echo "synced:ntpd"
+        return 0
+    # Check if chronyd is running
+    elif systemctl is-active --quiet chronyd 2>/dev/null; then
+        if chronyc tracking 2>/dev/null | grep -q "Leap status.*Normal"; then
+            echo "synced:chronyd"
+            return 0
+        else
+            issues+=("chronyd active but not synchronized")
+        fi
+    else
+        issues+=("No NTP service running")
+    fi
+
+    printf '%s\n' "${issues[@]}"
+    return 1
+}
+
 # ==============================================================================
 # Update Audit
 # ==============================================================================
@@ -56,6 +102,14 @@ update_audit() {
     # Check unattended-upgrades
     print_item "$(i18n 'update.check_unattended')"
     _update_audit_unattended
+
+    # Check if reboot is required
+    print_item "$(i18n 'update.check_reboot')"
+    _update_audit_reboot
+
+    # Check time synchronization
+    print_item "$(i18n 'update.check_timesync')"
+    _update_audit_timesync
 }
 
 _update_audit_apt_lock() {
@@ -173,6 +227,74 @@ _update_audit_unattended() {
             "update.enable_unattended")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'update.unattended_disabled')"
+    fi
+}
+
+_update_audit_reboot() {
+    if _update_reboot_required; then
+        local packages=$(_update_reboot_packages)
+        local pkg_list=""
+        if [[ -n "$packages" ]]; then
+            pkg_list=$(echo "$packages" | head -5 | tr '\n' ', ')
+            pkg_list="${pkg_list%, }"
+        fi
+
+        local check=$(create_check_json \
+            "update.reboot_required" \
+            "update" \
+            "medium" \
+            "failed" \
+            "$(i18n 'update.reboot_required')" \
+            "Packages requiring reboot: $pkg_list" \
+            "Schedule a system reboot to apply kernel/security updates" \
+            "")
+        state_add_check "$check"
+        print_severity "medium" "System reboot required"
+    else
+        local check=$(create_check_json \
+            "update.no_reboot" \
+            "update" \
+            "low" \
+            "passed" \
+            "$(i18n 'update.no_reboot')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "No reboot required"
+    fi
+}
+
+_update_audit_timesync() {
+    local sync_status
+    sync_status=$(_update_check_timesync)
+    local result=$?
+
+    if [[ $result -eq 0 ]]; then
+        local service="${sync_status#*:}"
+        local check=$(create_check_json \
+            "update.timesync_ok" \
+            "update" \
+            "low" \
+            "passed" \
+            "$(i18n 'update.timesync_ok')" \
+            "Time synchronized via $service" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "Time synchronized ($service)"
+    else
+        local check=$(create_check_json \
+            "update.timesync_failed" \
+            "update" \
+            "medium" \
+            "failed" \
+            "$(i18n 'update.timesync_failed')" \
+            "$sync_status" \
+            "Enable time synchronization: timedatectl set-ntp true" \
+            "update.enable_timesync")
+        state_add_check "$check"
+        print_severity "medium" "Time synchronization not configured"
     fi
 }
 
