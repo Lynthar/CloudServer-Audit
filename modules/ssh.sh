@@ -423,14 +423,14 @@ _ssh_audit_admin_user() {
         check=$(create_check_json \
             "ssh.no_admin_user" \
             "ssh" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'ssh.no_admin_user')" \
             "No non-root user with sudo privileges found" \
             "Create a non-root admin user before disabling root login" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ssh.no_admin_user')"
+        print_severity "medium" "$(i18n 'ssh.no_admin_user')"
     fi
 }
 

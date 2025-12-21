@@ -16,12 +16,16 @@ _update_apt_locked() {
 
 # Get count of available updates
 _update_get_count() {
-    apt-get -s upgrade 2>/dev/null | grep -c "^Inst " || echo "0"
+    local count
+    count=$(apt-get -s upgrade 2>/dev/null | grep -c "^Inst ") || true
+    echo "${count:-0}"
 }
 
 # Get count of security updates
 _update_get_security_count() {
-    apt-get -s upgrade 2>/dev/null | grep -c "security" || echo "0"
+    local count
+    count=$(apt-get -s upgrade 2>/dev/null | grep -c "security") || true
+    echo "${count:-0}"
 }
 
 # Check if unattended-upgrades is installed
@@ -249,7 +253,7 @@ _update_audit_reboot() {
             "Schedule a system reboot to apply kernel/security updates" \
             "")
         state_add_check "$check"
-        print_severity "medium" "System reboot required"
+        print_severity "medium" "$(i18n 'update.reboot_required')"
     else
         local check=$(create_check_json \
             "update.no_reboot" \
@@ -261,7 +265,7 @@ _update_audit_reboot() {
             "" \
             "")
         state_add_check "$check"
-        print_ok "No reboot required"
+        print_ok "$(i18n 'update.no_reboot')"
     fi
 }
 
@@ -282,7 +286,7 @@ _update_audit_timesync() {
             "" \
             "")
         state_add_check "$check"
-        print_ok "Time synchronized ($service)"
+        print_ok "$(i18n 'update.timesync_ok') ($service)"
     else
         local check=$(create_check_json \
             "update.timesync_failed" \
@@ -294,7 +298,7 @@ _update_audit_timesync() {
             "Enable time synchronization: timedatectl set-ntp true" \
             "update.enable_timesync")
         state_add_check "$check"
-        print_severity "medium" "Time synchronization not configured"
+        print_severity "medium" "$(i18n 'update.timesync_failed')"
     fi
 }
 
@@ -323,12 +327,12 @@ update_fix() {
 }
 
 _update_fix_apply_security() {
-    print_info "Applying security updates..."
+    print_info "$(i18n 'update.applying_updates')"
 
     # Use unattended-upgrade if available for safer updates
     if _update_unattended_installed; then
         if unattended-upgrade -d 2>/dev/null; then
-            print_ok "Security updates applied"
+            print_ok "$(i18n 'update.updates_applied')"
             return 0
         fi
     fi
@@ -336,16 +340,16 @@ _update_fix_apply_security() {
     # Fallback to apt upgrade
     export DEBIAN_FRONTEND=noninteractive
     if apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"; then
-        print_ok "Updates applied"
+        print_ok "$(i18n 'update.all_updates_applied')"
         return 0
     else
-        print_error "Failed to apply updates"
+        print_error "$(i18n 'update.updates_failed')"
         return 1
     fi
 }
 
 _update_fix_install_unattended() {
-    print_info "Installing unattended-upgrades..."
+    print_info "$(i18n 'update.installing_unattended')"
 
     export DEBIAN_FRONTEND=noninteractive
 
@@ -354,13 +358,13 @@ _update_fix_install_unattended() {
         _update_fix_enable_unattended
         return $?
     else
-        print_error "Failed to install unattended-upgrades"
+        print_error "$(i18n 'update.unattended_install_failed')"
         return 1
     fi
 }
 
 _update_fix_enable_unattended() {
-    print_info "Configuring unattended-upgrades..."
+    print_info "$(i18n 'update.configuring_unattended')"
 
     # Create auto-upgrades config
     cat > /etc/apt/apt.conf.d/20auto-upgrades <<EOF
@@ -411,7 +415,7 @@ EOF
         print_ok "$(i18n 'update.unattended_configured')"
         return 0
     else
-        print_error "Failed to enable unattended-upgrades"
+        print_error "$(i18n 'update.unattended_enable_failed')"
         return 1
     fi
 }

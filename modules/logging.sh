@@ -132,12 +132,12 @@ _logging_audit_journald() {
             "logging" \
             "medium" \
             "failed" \
-            "Journald using volatile storage" \
-            "Logs are lost on reboot" \
-            "Enable persistent storage" \
+            "$(i18n 'logging.journald_volatile')" \
+            "$(i18n 'logging.journald_volatile_desc')" \
+            "$(i18n 'logging.fix_enable_persistent')" \
             "logging.enable_persistent_journal")
         state_add_check "$check"
-        print_severity "medium" "Journald using volatile storage (logs lost on reboot)"
+        print_severity "medium" "$(i18n 'logging.journald_volatile')"
     fi
 }
 
@@ -158,24 +158,24 @@ _logging_audit_logrotate() {
                 "logging" \
                 "low" \
                 "passed" \
-                "Logrotate properly configured" \
+                "$(i18n 'logging.logrotate_ok')" \
                 "" \
                 "" \
                 "")
             state_add_check "$check"
-            print_ok "Logrotate properly configured"
+            print_ok "$(i18n 'logging.logrotate_ok')"
         else
             local check=$(create_check_json \
                 "logging.logrotate_missing" \
                 "logging" \
                 "low" \
                 "failed" \
-                "Some logs missing rotation config" \
-                "Missing: ${missing[*]}" \
-                "Add logrotate configuration" \
+                "$(i18n 'logging.logrotate_some_missing' "logs=${missing[*]}")" \
+                "$(i18n 'logging.logrotate_missing_desc')" \
+                "$(i18n 'logging.fix_configure_logrotate')" \
                 "")
             state_add_check "$check"
-            print_severity "low" "Some logs missing rotation: ${missing[*]}"
+            print_severity "low" "$(i18n 'logging.logrotate_some_missing' "logs=${missing[*]}")"
         fi
     else
         local check=$(create_check_json \
@@ -183,12 +183,12 @@ _logging_audit_logrotate() {
             "logging" \
             "medium" \
             "failed" \
-            "Logrotate not configured" \
-            "Log rotation is not set up" \
-            "Install and configure logrotate" \
+            "$(i18n 'logging.logrotate_missing')" \
+            "$(i18n 'logging.logrotate_missing_desc')" \
+            "$(i18n 'logging.fix_configure_logrotate')" \
             "logging.setup_logrotate")
         state_add_check "$check"
-        print_severity "medium" "Logrotate not configured"
+        print_severity "medium" "$(i18n 'logging.logrotate_missing')"
     fi
 }
 
@@ -201,24 +201,24 @@ _logging_audit_auditd() {
                     "logging" \
                     "low" \
                     "passed" \
-                    "Audit daemon running with rules" \
+                    "$(i18n 'logging.auditd_running')" \
                     "" \
                     "" \
                     "")
                 state_add_check "$check"
-                print_ok "Audit daemon running with rules configured"
+                print_ok "$(i18n 'logging.auditd_running')"
             else
                 local check=$(create_check_json \
                     "logging.auditd_no_rules" \
                     "logging" \
                     "medium" \
                     "failed" \
-                    "Audit daemon running but no rules" \
-                    "No audit rules configured" \
-                    "Add audit rules" \
+                    "$(i18n 'logging.auditd_no_rules')" \
+                    "$(i18n 'logging.auditd_no_rules_desc')" \
+                    "$(i18n 'logging.fix_configure_auditd')" \
                     "logging.setup_audit_rules")
                 state_add_check "$check"
-                print_severity "medium" "Audit daemon running but no rules configured"
+                print_severity "medium" "$(i18n 'logging.auditd_no_rules')"
             fi
         else
             local check=$(create_check_json \
@@ -226,12 +226,12 @@ _logging_audit_auditd() {
                 "logging" \
                 "medium" \
                 "failed" \
-                "Audit daemon not running" \
-                "auditd is installed but not active" \
-                "Start and enable auditd" \
+                "$(i18n 'logging.auditd_not_running')" \
+                "$(i18n 'logging.auditd_not_running_desc')" \
+                "$(i18n 'logging.fix_enable_auditd')" \
                 "logging.enable_auditd")
             state_add_check "$check"
-            print_severity "medium" "Audit daemon not running"
+            print_severity "medium" "$(i18n 'logging.auditd_not_running')"
         fi
     else
         local check=$(create_check_json \
@@ -239,12 +239,12 @@ _logging_audit_auditd() {
             "logging" \
             "low" \
             "failed" \
-            "Audit daemon not installed" \
-            "auditd provides detailed system auditing" \
-            "Install auditd for enhanced auditing" \
+            "$(i18n 'logging.auditd_not_installed')" \
+            "$(i18n 'logging.auditd_not_running_desc')" \
+            "$(i18n 'logging.fix_install_auditd')" \
             "logging.install_auditd")
         state_add_check "$check"
-        print_severity "low" "Audit daemon not installed (optional but recommended)"
+        print_severity "low" "$(i18n 'logging.auditd_not_installed')"
     fi
 }
 
@@ -257,36 +257,36 @@ _logging_audit_ssh_logs() {
             "logging" \
             "high" \
             "failed" \
-            "High number of SSH login failures" \
-            "$failed_logins failed attempts in last 24h" \
-            "Consider fail2ban or stricter firewall rules" \
+            "$(i18n 'logging.ssh_logs_warning')" \
+            "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
+            "" \
             "")
         state_add_check "$check"
-        print_severity "high" "$failed_logins SSH login failures in last 24h (possible brute force)"
+        print_severity "high" "$(i18n 'logging.ssh_logs_high' "count=$failed_logins")"
     elif ((failed_logins > 20)); then
         local check=$(create_check_json \
             "logging.ssh_some_failures" \
             "logging" \
             "medium" \
             "failed" \
-            "Moderate SSH login failures" \
-            "$failed_logins failed attempts in last 24h" \
-            "Monitor for brute force attempts" \
+            "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")" \
+            "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
+            "" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$failed_logins SSH login failures in last 24h"
+        print_severity "medium" "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")"
     else
         local check=$(create_check_json \
             "logging.ssh_logs_ok" \
             "logging" \
             "low" \
             "passed" \
-            "SSH authentication logs normal" \
-            "$failed_logins failed attempts in last 24h" \
+            "$(i18n 'logging.ssh_logs_normal' "count=$failed_logins")" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "SSH logs normal ($failed_logins failures in 24h)"
+        print_ok "$(i18n 'logging.ssh_logs_normal' "count=$failed_logins")"
     fi
 }
 
@@ -300,24 +300,24 @@ _logging_audit_sudo_logs() {
             "logging" \
             "low" \
             "passed" \
-            "Sudo events being logged" \
-            "$sudo_events events in last 24h" \
+            "$(i18n 'logging.sudo_logs_active' "count=$sudo_events")" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Sudo logging active ($sudo_events events in 24h)"
+        print_ok "$(i18n 'logging.sudo_logs_active' "count=$sudo_events")"
     else
         local check=$(create_check_json \
             "logging.sudo_no_events" \
             "logging" \
             "low" \
             "passed" \
-            "No sudo events in last 24h" \
+            "$(i18n 'logging.sudo_no_events')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No sudo events in last 24h"
+        print_ok "$(i18n 'logging.sudo_no_events')"
     fi
 }
 
@@ -352,7 +352,7 @@ logging_fix() {
 }
 
 _logging_fix_enable_persistent_journal() {
-    print_info "Enabling persistent journal storage..."
+    print_info "$(i18n 'logging.enabling_persistent')"
 
     # Create journal directory
     mkdir -p /var/log/journal
@@ -374,16 +374,16 @@ EOF
     systemctl restart systemd-journald
 
     if _logging_journald_persistent; then
-        print_ok "Persistent journal storage enabled"
+        print_ok "$(i18n 'logging.persistent_enabled')"
         return 0
     else
-        print_error "Failed to enable persistent storage"
+        print_error "$(i18n 'logging.persistent_failed')"
         return 1
     fi
 }
 
 _logging_fix_setup_logrotate() {
-    print_info "Setting up logrotate..."
+    print_info "$(i18n 'logging.configuring_logrotate')"
 
     apt-get install -y logrotate 2>/dev/null
 
@@ -401,41 +401,41 @@ include /etc/logrotate.d
 EOF
     fi
 
-    print_ok "Logrotate configured"
+    print_ok "$(i18n 'logging.logrotate_configured')"
     return 0
 }
 
 _logging_fix_install_auditd() {
-    print_info "Installing auditd..."
+    print_info "$(i18n 'logging.installing_auditd')"
 
     if apt-get install -y auditd audispd-plugins 2>/dev/null; then
-        print_ok "Auditd installed"
+        print_ok "$(i18n 'logging.auditd_installed')"
         _logging_fix_enable_auditd
         _logging_fix_setup_audit_rules
         return 0
     else
-        print_error "Failed to install auditd"
+        print_error "$(i18n 'logging.auditd_install_failed')"
         return 1
     fi
 }
 
 _logging_fix_enable_auditd() {
-    print_info "Enabling auditd service..."
+    print_info "$(i18n 'logging.enabling_auditd')"
 
     systemctl enable auditd
     systemctl start auditd
 
     if systemctl is-active --quiet auditd; then
-        print_ok "Auditd service enabled and started"
+        print_ok "$(i18n 'logging.auditd_service_enabled')"
         return 0
     else
-        print_error "Failed to start auditd"
+        print_error "$(i18n 'logging.auditd_start_failed')"
         return 1
     fi
 }
 
 _logging_fix_setup_audit_rules() {
-    print_info "Setting up audit rules..."
+    print_info "$(i18n 'logging.configuring_audit_rules')"
 
     mkdir -p "$AUDIT_RULES_D"
 
@@ -490,10 +490,10 @@ EOF
     augenrules --load 2>/dev/null || auditctl -R "${AUDIT_RULES_D}/99-vpssec.rules" 2>/dev/null
 
     if _logging_check_audit_rules; then
-        print_ok "Audit rules configured"
+        print_ok "$(i18n 'logging.audit_rules_configured')"
         return 0
     else
-        print_error "Failed to configure audit rules"
+        print_error "$(i18n 'logging.audit_rules_failed')"
         return 1
     fi
 }
