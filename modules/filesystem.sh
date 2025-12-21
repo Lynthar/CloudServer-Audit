@@ -273,6 +273,86 @@ _fs_check_umask() {
     echo "${umask_value:-022}"
 }
 
+# Known legitimate binaries with capabilities (whitelist)
+declare -a FS_CAPS_WHITELIST=(
+    "/usr/bin/ping:cap_net_raw"
+    "/usr/bin/traceroute:cap_net_raw"
+    "/usr/bin/mtr-packet:cap_net_raw"
+    "/usr/bin/arping:cap_net_raw"
+    "/usr/sbin/clockdiff:cap_net_raw"
+    "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
+    "/usr/bin/systemd-resolve:cap_net_bind_service"
+)
+
+# Dangerous capabilities that grant significant privileges
+declare -a FS_DANGEROUS_CAPS=(
+    "cap_sys_admin"
+    "cap_sys_ptrace"
+    "cap_sys_module"
+    "cap_sys_rawio"
+    "cap_sys_boot"
+    "cap_dac_override"
+    "cap_dac_read_search"
+    "cap_setuid"
+    "cap_setgid"
+    "cap_chown"
+    "cap_fowner"
+)
+
+# Find files with capabilities set
+_fs_find_caps_files() {
+    local results=()
+    local count=0
+
+    # Check if getcap is available
+    if ! command -v getcap &>/dev/null; then
+        return
+    fi
+
+    # Find all files with capabilities
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local file="${line%% =*}"
+        local caps="${line#*= }"
+
+        # Check if in whitelist
+        local whitelisted=false
+        for entry in "${FS_CAPS_WHITELIST[@]}"; do
+            local wl_file="${entry%%:*}"
+            local wl_cap="${entry#*:}"
+            if [[ "$file" == "$wl_file" && "$caps" =~ $wl_cap ]]; then
+                whitelisted=true
+                break
+            fi
+        done
+
+        if [[ "$whitelisted" == false ]]; then
+            # Check if dangerous capability
+            local is_dangerous=false
+            for dangerous in "${FS_DANGEROUS_CAPS[@]}"; do
+                if [[ "$caps" =~ $dangerous ]]; then
+                    is_dangerous=true
+                    break
+                fi
+            done
+
+            if [[ "$is_dangerous" == true ]]; then
+                results+=("DANGEROUS:$file:$caps")
+            else
+                results+=("$file:$caps")
+            fi
+
+            ((count++))
+            if ((count >= FS_MAX_REPORT_ITEMS)); then
+                break
+            fi
+        fi
+    done < <(getcap -r / 2>/dev/null | grep -v "^$")
+
+    printf '%s\n' "${results[@]}"
+}
+
 # ==============================================================================
 # Filesystem Audit
 # ==============================================================================
@@ -307,6 +387,10 @@ filesystem_audit() {
     # Check umask
     print_item "$(i18n 'filesystem.check_umask')"
     _fs_audit_umask
+
+    # Check files with capabilities (setcap)
+    print_item "$(i18n 'filesystem.check_caps')"
+    _fs_audit_caps
 }
 
 _fs_audit_suid() {
@@ -572,6 +656,86 @@ _fs_audit_umask() {
             "filesystem.fix_umask")
         state_add_check "$check"
         print_severity "medium" "Weak umask: $umask_value"
+    fi
+}
+
+_fs_audit_caps() {
+    # Check if getcap is available
+    if ! command -v getcap &>/dev/null; then
+        local check=$(create_check_json \
+            "filesystem.caps_unavailable" \
+            "filesystem" \
+            "low" \
+            "info" \
+            "getcap not available" \
+            "Install libcap2-bin to check file capabilities" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_info "getcap not available (install libcap2-bin)"
+        return
+    fi
+
+    local caps_files
+    caps_files=$(_fs_find_caps_files)
+    local total_count=$(echo "$caps_files" | grep -c . 2>/dev/null || echo "0")
+    local dangerous_count=$(echo "$caps_files" | grep -c "^DANGEROUS:" 2>/dev/null || echo "0")
+
+    if ((dangerous_count > 0)); then
+        # Extract dangerous files list
+        local dangerous_list=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$line" =~ ^DANGEROUS: ]]; then
+                local file_info="${line#DANGEROUS:}"
+                dangerous_list+="${file_info}; "
+            fi
+        done <<< "$caps_files"
+        dangerous_list="${dangerous_list%; }"
+
+        local check=$(create_check_json \
+            "filesystem.dangerous_caps" \
+            "filesystem" \
+            "high" \
+            "failed" \
+            "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
+            "Dangerous capabilities: $dangerous_list" \
+            "$(i18n 'filesystem.review_caps')" \
+            "filesystem.review_caps")
+        state_add_check "$check"
+        print_severity "high" "Files with dangerous capabilities: $dangerous_count"
+    elif ((total_count > 0)); then
+        local caps_list=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            [[ "$line" =~ ^DANGEROUS: ]] && continue
+            caps_list+="$line; "
+        done <<< "$caps_files"
+        caps_list="${caps_list%; }"
+
+        local check=$(create_check_json \
+            "filesystem.non_standard_caps" \
+            "filesystem" \
+            "low" \
+            "failed" \
+            "$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
+            "Files with capabilities: $caps_list" \
+            "Review if these capabilities are needed" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "Non-standard file capabilities: $total_count"
+    else
+        local check=$(create_check_json \
+            "filesystem.caps_ok" \
+            "filesystem" \
+            "low" \
+            "passed" \
+            "$(i18n 'filesystem.caps_ok')" \
+            "No suspicious file capabilities found" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "No suspicious file capabilities"
     fi
 }
 

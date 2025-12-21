@@ -44,6 +44,69 @@ _ufw_port_allowed() {
     ufw status 2>/dev/null | grep -qE "^${port}(/tcp)?\s+ALLOW"
 }
 
+# Detect overly permissive rules (from Anywhere to sensitive ports)
+# Returns: list of problematic rules
+_ufw_find_permissive_rules() {
+    local issues=()
+
+    # Sensitive ports that shouldn't be open to the world
+    local sensitive_ports=(
+        "3306:MySQL"
+        "5432:PostgreSQL"
+        "6379:Redis"
+        "27017:MongoDB"
+        "11211:Memcached"
+        "5672:RabbitMQ"
+        "9200:Elasticsearch"
+        "2375:Docker"
+        "2376:Docker TLS"
+        "8080:HTTP Proxy"
+        "23:Telnet"
+        "21:FTP"
+        "1433:MSSQL"
+        "3389:RDP"
+        "5900:VNC"
+    )
+
+    # Get UFW status
+    local ufw_output
+    ufw_output=$(ufw status 2>/dev/null)
+
+    # Check for sensitive ports open to Anywhere
+    for entry in "${sensitive_ports[@]}"; do
+        local port="${entry%%:*}"
+        local service="${entry#*:}"
+
+        # Check if this port is ALLOW from Anywhere
+        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then
+            issues+=("$port ($service) open to Anywhere")
+        fi
+        if echo "$ufw_output" | grep -qE "^${port}/udp\s+ALLOW\s+(IN\s+)?Anywhere"; then
+            issues+=("$port/udp ($service) open to Anywhere")
+        fi
+    done
+
+    # Check for overly broad rules (allow all from specific IP with no port)
+    # This is less critical but worth noting
+    while read -r line; do
+        if echo "$line" | grep -qE "ALLOW\s+IN\s+Anywhere\s*$" && ! echo "$line" | grep -qE "^(22|80|443)"; then
+            # Non-standard port open to anywhere
+            local rule_port=$(echo "$line" | awk '{print $1}')
+            if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then
+                # Only flag if not already in sensitive_ports and not common web ports
+                case "$rule_port" in
+                    22|80|443|22/tcp|80/tcp|443/tcp) ;;
+                    *)
+                        issues+=("$rule_port open to Anywhere (review if needed)")
+                        ;;
+                esac
+            fi
+        fi
+    done <<< "$ufw_output"
+
+    printf '%s\n' "${issues[@]}"
+}
+
 # ==============================================================================
 # UFW Audit
 # ==============================================================================
@@ -80,6 +143,12 @@ ufw_audit() {
     # Check SSH rule
     print_item "$(i18n 'ufw.check_ssh_rule')"
     _ufw_audit_ssh_rule
+
+    # Check for permissive rules (only if UFW is enabled)
+    if _ufw_enabled; then
+        print_item "$(i18n 'ufw.check_permissive_rules')"
+        _ufw_audit_permissive_rules
+    fi
 }
 
 _ufw_audit_enabled() {
@@ -170,6 +239,51 @@ _ufw_audit_ssh_rule() {
     fi
 }
 
+_ufw_audit_permissive_rules() {
+    local issues
+    issues=$(_ufw_find_permissive_rules)
+    local issue_count=$(echo "$issues" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ -n "$issues" && "$issue_count" -gt 0 ]]; then
+        local issue_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            issue_list+="$issue; "
+        done <<< "$issues"
+        issue_list="${issue_list%; }"
+
+        # Check severity - sensitive database ports are high risk
+        local severity="medium"
+        if echo "$issues" | grep -qE "(MySQL|PostgreSQL|Redis|MongoDB|Elasticsearch|Docker)"; then
+            severity="high"
+        fi
+
+        local check=$(create_check_json \
+            "ufw.permissive_rules" \
+            "ufw" \
+            "$severity" \
+            "failed" \
+            "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")" \
+            "$issue_list" \
+            "$(i18n 'ufw.fix_restrict_rules')" \
+            "ufw.review_rules")
+        state_add_check "$check"
+        print_severity "$severity" "Overly permissive firewall rules: $issue_count"
+    else
+        local check=$(create_check_json \
+            "ufw.rules_ok" \
+            "ufw" \
+            "low" \
+            "passed" \
+            "$(i18n 'ufw.no_permissive_rules')" \
+            "No sensitive ports open to the world" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "No overly permissive firewall rules detected"
+    fi
+}
+
 # ==============================================================================
 # UFW Fix Functions
 # ==============================================================================
@@ -189,6 +303,9 @@ ufw_fix() {
             ;;
         ufw.allow_ssh)
             _ufw_fix_allow_ssh
+            ;;
+        ufw.review_rules)
+            _ufw_fix_review_rules
             ;;
         *)
             log_error "Unknown UFW fix: $fix_id"
@@ -288,6 +405,42 @@ _ufw_fix_allow_ssh() {
         print_error "Failed to add SSH rule"
         return 1
     fi
+}
+
+_ufw_fix_review_rules() {
+    print_warn "$(i18n 'ufw.review_rules_title' 2>/dev/null || echo 'Overly Permissive Firewall Rules Detected')"
+    echo ""
+
+    # Show current problematic rules
+    local issues=$(_ufw_find_permissive_rules)
+    if [[ -n "$issues" ]]; then
+        echo "$(i18n 'ufw.problematic_rules' 2>/dev/null || echo 'Problematic rules found'):"
+        echo ""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            echo "  ⚠️  $issue"
+        done <<< "$issues"
+        echo ""
+    fi
+
+    echo "$(i18n 'ufw.recommendations' 2>/dev/null || echo 'Recommendations'):"
+    echo ""
+    echo "  1. $(i18n 'ufw.rec_restrict_source' 2>/dev/null || echo 'Restrict source IPs for database/internal services'):"
+    echo "     ufw delete allow 3306"
+    echo "     ufw allow from 10.0.0.0/8 to any port 3306 comment 'MySQL internal'"
+    echo ""
+    echo "  2. $(i18n 'ufw.rec_use_localhost' 2>/dev/null || echo 'Use localhost binding for database services'):"
+    echo "     Configure MySQL/PostgreSQL/Redis to bind to 127.0.0.1"
+    echo ""
+    echo "  3. $(i18n 'ufw.rec_use_vpn' 2>/dev/null || echo 'Use VPN or SSH tunnel for remote access'):"
+    echo "     ssh -L 3306:localhost:3306 user@server"
+    echo ""
+    echo "  4. $(i18n 'ufw.rec_review_numbered' 2>/dev/null || echo 'Review and delete unnecessary rules'):"
+    echo "     ufw status numbered"
+    echo "     ufw delete <rule_number>"
+    echo ""
+
+    return 1  # Return 1 since this is informational only
 }
 
 # ==============================================================================

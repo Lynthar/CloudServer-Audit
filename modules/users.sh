@@ -63,6 +63,24 @@ declare -a SUSPICIOUS_USERNAMES=(
 # Days to consider a user "recently created"
 RECENT_USER_DAYS=7
 
+# Password policy settings (recommended values)
+declare -A PASSWORD_POLICY=(
+    ["PASS_MAX_DAYS"]="90"      # Maximum days before password expires
+    ["PASS_MIN_DAYS"]="1"       # Minimum days between password changes
+    ["PASS_MIN_LEN"]="8"        # Minimum password length
+    ["PASS_WARN_AGE"]="7"       # Days before expiry to warn user
+)
+
+# pwquality recommended settings
+declare -A PWQUALITY_POLICY=(
+    ["minlen"]="12"
+    ["dcredit"]="-1"
+    ["ucredit"]="-1"
+    ["lcredit"]="-1"
+    ["ocredit"]="-1"
+    ["minclass"]="3"
+)
+
 # ==============================================================================
 # Detection Functions
 # ==============================================================================
@@ -330,6 +348,88 @@ _find_unusual_home() {
     done < /etc/passwd
 
     printf '%s\n' "${unusual[@]}"
+}
+
+# Check password policy in /etc/login.defs
+_check_password_policy() {
+    local issues=()
+    local login_defs="/etc/login.defs"
+
+    if [[ ! -f "$login_defs" ]]; then
+        echo "login.defs_missing"
+        return
+    fi
+
+    # Check PASS_MAX_DAYS
+    local pass_max=$(grep -E "^PASS_MAX_DAYS" "$login_defs" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$pass_max" ]]; then
+        issues+=("PASS_MAX_DAYS not set")
+    elif [[ "$pass_max" == "99999" || "$pass_max" -gt 365 ]]; then
+        issues+=("PASS_MAX_DAYS=$pass_max (no expiry or too long)")
+    fi
+
+    # Check PASS_MIN_DAYS
+    local pass_min=$(grep -E "^PASS_MIN_DAYS" "$login_defs" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$pass_min" || "$pass_min" == "0" ]]; then
+        issues+=("PASS_MIN_DAYS=$pass_min (allows immediate changes)")
+    fi
+
+    # Check PASS_MIN_LEN (may be deprecated in favor of pam)
+    local pass_len=$(grep -E "^PASS_MIN_LEN" "$login_defs" 2>/dev/null | awk '{print $2}')
+    if [[ -n "$pass_len" && "$pass_len" -lt 8 ]]; then
+        issues+=("PASS_MIN_LEN=$pass_len (too short)")
+    fi
+
+    # Check PASS_WARN_AGE
+    local pass_warn=$(grep -E "^PASS_WARN_AGE" "$login_defs" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$pass_warn" || "$pass_warn" -lt 7 ]]; then
+        issues+=("PASS_WARN_AGE=$pass_warn (should be at least 7)")
+    fi
+
+    printf '%s\n' "${issues[@]}"
+}
+
+# Check password quality settings (pwquality.conf or pam_pwquality)
+_check_pwquality() {
+    local issues=()
+    local pwquality_conf="/etc/security/pwquality.conf"
+
+    # Check if pwquality is used in PAM
+    local pam_uses_pwquality=false
+    if grep -rq "pam_pwquality" /etc/pam.d/ 2>/dev/null; then
+        pam_uses_pwquality=true
+    fi
+
+    if [[ "$pam_uses_pwquality" == false ]]; then
+        # Check for pam_cracklib as alternative
+        if ! grep -rq "pam_cracklib" /etc/pam.d/ 2>/dev/null; then
+            issues+=("No password quality module (pwquality/cracklib) in PAM")
+        fi
+    fi
+
+    # If pwquality.conf exists, check settings
+    if [[ -f "$pwquality_conf" ]]; then
+        local minlen=$(grep -E "^minlen" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        if [[ -z "$minlen" || "$minlen" -lt 8 ]]; then
+            issues+=("minlen=$minlen (should be at least 12)")
+        fi
+
+        # Check for complexity requirements
+        local dcredit=$(grep -E "^dcredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        local ucredit=$(grep -E "^ucredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        local lcredit=$(grep -E "^lcredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        local ocredit=$(grep -E "^ocredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+
+        # Negative values mean required, 0 or positive means not enforced
+        if [[ -z "$dcredit" || "$dcredit" -ge 0 ]]; then
+            issues+=("dcredit not enforcing digit requirement")
+        fi
+        if [[ -z "$ucredit" || "$ucredit" -ge 0 ]]; then
+            issues+=("ucredit not enforcing uppercase requirement")
+        fi
+    fi
+
+    printf '%s\n' "${issues[@]}"
 }
 
 # ==============================================================================
@@ -624,6 +724,78 @@ EOF
         state_add_check "$check_json"
     fi
 
+    # 9. Check password policy in login.defs - MEDIUM
+    local policy_issues=$(_check_password_policy)
+    local policy_count=$(echo "$policy_issues" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ -n "$policy_issues" && "$policy_count" -gt 0 ]]; then
+        local policy_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            policy_list+="$issue; "
+        done <<< "$policy_issues"
+        policy_list="${policy_list%; }"
+
+        check_json=$(cat <<EOF
+{
+    "id": "users.password_policy_weak",
+    "check_id": "users.password_policy_weak",
+    "module": "users",
+    "title": "$(i18n 'users.password_policy_weak' 2>/dev/null || echo 'Weak Password Policy'): $policy_count issues",
+    "desc": "$policy_list",
+    "status": "failed",
+    "severity": "medium",
+    "suggestion": "$(i18n 'users.fix_password_policy' 2>/dev/null || echo 'Configure password aging in /etc/login.defs')",
+    "fix_id": "users.password_policy"
+}
+EOF
+)
+        state_add_check "$check_json"
+    else
+        check_json=$(cat <<EOF
+{
+    "id": "users.password_policy_ok",
+    "check_id": "users.password_policy_ok",
+    "module": "users",
+    "title": "$(i18n 'users.password_policy_ok' 2>/dev/null || echo 'Password Policy Configured')",
+    "desc": "$(i18n 'users.password_policy_ok_desc' 2>/dev/null || echo 'Password aging and length policies are set')",
+    "status": "passed",
+    "severity": "info"
+}
+EOF
+)
+        state_add_check "$check_json"
+    fi
+
+    # 10. Check password quality settings - LOW
+    local pwquality_issues=$(_check_pwquality)
+    local pwquality_count=$(echo "$pwquality_issues" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ -n "$pwquality_issues" && "$pwquality_count" -gt 0 ]]; then
+        local pwq_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            pwq_list+="$issue; "
+        done <<< "$pwquality_issues"
+        pwq_list="${pwq_list%; }"
+
+        check_json=$(cat <<EOF
+{
+    "id": "users.pwquality_weak",
+    "check_id": "users.pwquality_weak",
+    "module": "users",
+    "title": "$(i18n 'users.pwquality_weak' 2>/dev/null || echo 'Password Quality Not Enforced'): $pwquality_count issues",
+    "desc": "$pwq_list",
+    "status": "failed",
+    "severity": "low",
+    "suggestion": "$(i18n 'users.fix_pwquality' 2>/dev/null || echo 'Configure pam_pwquality or pam_cracklib for password complexity')",
+    "fix_id": "users.pwquality"
+}
+EOF
+)
+        state_add_check "$check_json"
+    fi
+
     return 0
 }
 
@@ -765,6 +937,41 @@ users_fix() {
             print_info "$(i18n 'users.info_only' 2>/dev/null || echo 'Information Only')"
             echo ""
             echo "$(i18n 'users.review_accounts' 2>/dev/null || echo 'Please review these accounts manually')"
+            echo ""
+            return 1
+            ;;
+
+        users.password_policy)
+            print_info "$(i18n 'users.password_policy_info' 2>/dev/null || echo 'Password Policy Configuration')"
+            echo ""
+            echo "$(i18n 'users.login_defs_location' 2>/dev/null || echo 'Configuration file'): /etc/login.defs"
+            echo ""
+            echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
+            echo "  PASS_MAX_DAYS   90    # Password expires after 90 days"
+            echo "  PASS_MIN_DAYS   1     # Minimum 1 day between changes"
+            echo "  PASS_MIN_LEN    8     # Minimum 8 characters (use pam for better)"
+            echo "  PASS_WARN_AGE   7     # Warn 7 days before expiry"
+            echo ""
+            echo "$(i18n 'users.apply_to_existing' 2>/dev/null || echo 'To apply to existing users'):"
+            echo "  chage -M 90 -m 1 -W 7 <username>"
+            echo ""
+            return 1
+            ;;
+
+        users.pwquality)
+            print_info "$(i18n 'users.pwquality_info' 2>/dev/null || echo 'Password Quality Configuration')"
+            echo ""
+            echo "$(i18n 'users.pwquality_location' 2>/dev/null || echo 'Configuration file'): /etc/security/pwquality.conf"
+            echo ""
+            echo "$(i18n 'users.install_pwquality' 2>/dev/null || echo 'Install'): apt install libpam-pwquality"
+            echo ""
+            echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
+            echo "  minlen = 12       # Minimum password length"
+            echo "  dcredit = -1      # Require at least 1 digit"
+            echo "  ucredit = -1      # Require at least 1 uppercase"
+            echo "  lcredit = -1      # Require at least 1 lowercase"
+            echo "  ocredit = -1      # Require at least 1 special char"
+            echo "  minclass = 3      # Require 3 character classes"
             echo ""
             return 1
             ;;
