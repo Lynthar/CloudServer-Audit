@@ -211,7 +211,19 @@
     "check_permissive_rules": "检查过于宽松的规则",
     "permissive_rules_found": "发现 {count} 条过于宽松的规则",
     "no_permissive_rules": "未检测到过于宽松的规则",
-    "fix_restrict_rules": "检查并限制防火墙规则"
+    "fix_restrict_rules": "审查并限制防火墙规则",
+    "check_firewall_status": "检查防火墙状态",
+    "firewall_active": "防火墙已启用 ({type})",
+    "other_firewall_note": "使用非 UFW 防火墙，跳过 UFW 特定检查",
+    "no_firewall": "未检测到防火墙保护",
+    "no_firewall_desc": "系统没有启用防火墙，暴露于网络攻击风险中",
+    "installing_ufw": "正在安装 UFW...",
+    "enabling_ufw": "正在启用 UFW...",
+    "ufw_enable_failed": "UFW 启用失败",
+    "adding_ssh_rule": "正在添加 SSH 规则...",
+    "default_deny_set": "已设置默认入站策略为拒绝",
+    "default_deny_failed": "设置默认策略失败",
+    "ssh_rule_failed": "添加 SSH 规则失败"
   },
   "update": {
     "title": "系统更新",

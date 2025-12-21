@@ -4,7 +4,7 @@
 # Copyright (c) 2024
 
 # ==============================================================================
-# UFW Helper Functions
+# Firewall Helper Functions
 # ==============================================================================
 
 # Check if UFW is installed
@@ -15,6 +15,45 @@ _ufw_installed() {
 # Check if UFW is enabled
 _ufw_enabled() {
     ufw status 2>/dev/null | grep -q "Status: active"
+}
+
+# Check if iptables has rules (beyond default)
+_iptables_has_rules() {
+    local rule_count
+    rule_count=$(iptables -L -n 2>/dev/null | grep -cE "^(ACCEPT|DROP|REJECT)" || echo 0)
+    [[ "$rule_count" -gt 3 ]]  # More than default policy rules
+}
+
+# Check if nftables is active
+_nftables_active() {
+    if check_command nft; then
+        local table_count
+        table_count=$(nft list tables 2>/dev/null | wc -l || echo 0)
+        [[ "$table_count" -gt 0 ]]
+    else
+        return 1
+    fi
+}
+
+# Check if firewalld is running
+_firewalld_active() {
+    systemctl is-active --quiet firewalld 2>/dev/null
+}
+
+# Detect active firewall type
+# Returns: ufw, iptables, nftables, firewalld, or none
+_detect_firewall() {
+    if _ufw_enabled; then
+        echo "ufw"
+    elif _firewalld_active; then
+        echo "firewalld"
+    elif _nftables_active; then
+        echo "nftables"
+    elif _iptables_has_rules; then
+        echo "iptables"
+    else
+        echo "none"
+    fi
 }
 
 # Get UFW default incoming policy
@@ -114,6 +153,86 @@ _ufw_find_permissive_rules() {
 ufw_audit() {
     local module="ufw"
 
+    # First, detect what firewall is active
+    print_item "$(i18n 'ufw.check_firewall_status')"
+    local active_fw=$(_detect_firewall)
+
+    case "$active_fw" in
+        ufw)
+            local check=$(create_check_json \
+                "ufw.firewall_active" \
+                "ufw" \
+                "low" \
+                "passed" \
+                "$(i18n 'ufw.firewall_active' "type=UFW")" \
+                "" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'ufw.firewall_active' "type=UFW")"
+            ;;
+        firewalld)
+            local check=$(create_check_json \
+                "ufw.firewall_active" \
+                "ufw" \
+                "low" \
+                "passed" \
+                "$(i18n 'ufw.firewall_active' "type=firewalld")" \
+                "$(i18n 'ufw.other_firewall_note')" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'ufw.firewall_active' "type=firewalld")"
+            # Skip UFW-specific checks
+            return
+            ;;
+        nftables)
+            local check=$(create_check_json \
+                "ufw.firewall_active" \
+                "ufw" \
+                "low" \
+                "passed" \
+                "$(i18n 'ufw.firewall_active' "type=nftables")" \
+                "$(i18n 'ufw.other_firewall_note')" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'ufw.firewall_active' "type=nftables")"
+            # Skip UFW-specific checks
+            return
+            ;;
+        iptables)
+            local check=$(create_check_json \
+                "ufw.firewall_active" \
+                "ufw" \
+                "low" \
+                "passed" \
+                "$(i18n 'ufw.firewall_active' "type=iptables")" \
+                "$(i18n 'ufw.other_firewall_note')" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'ufw.firewall_active' "type=iptables")"
+            # Skip UFW-specific checks
+            return
+            ;;
+        none)
+            # No firewall active - this is a security issue
+            local check=$(create_check_json \
+                "ufw.no_firewall" \
+                "ufw" \
+                "high" \
+                "failed" \
+                "$(i18n 'ufw.no_firewall')" \
+                "$(i18n 'ufw.no_firewall_desc')" \
+                "$(i18n 'ufw.fix_install')" \
+                "ufw.install")
+            state_add_check "$check"
+            print_severity "high" "$(i18n 'ufw.no_firewall')"
+            # Continue to check if UFW is installed but not enabled
+            ;;
+    esac
+
     # Check if UFW is installed
     print_item "$(i18n 'ufw.check_installed')"
     if ! _ufw_installed; then
@@ -123,14 +242,14 @@ ufw_audit() {
             "medium" \
             "failed" \
             "$(i18n 'ufw.not_installed')" \
-            "UFW firewall is not installed" \
+            "$(i18n 'ufw.not_installed_desc')" \
             "$(i18n 'ufw.fix_install')" \
             "ufw.install")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'ufw.not_installed')"
         return
     fi
-    print_ok "UFW installed"
+    print_ok "$(i18n 'ufw.ufw_installed')"
 
     # Check if UFW is enabled
     print_item "$(i18n 'ufw.check_enabled')"
@@ -268,7 +387,7 @@ _ufw_audit_permissive_rules() {
             "$(i18n 'ufw.fix_restrict_rules')" \
             "ufw.review_rules")
         state_add_check "$check"
-        print_severity "$severity" "Overly permissive firewall rules: $issue_count"
+        print_severity "$severity" "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")"
     else
         local check=$(create_check_json \
             "ufw.rules_ok" \
@@ -276,11 +395,11 @@ _ufw_audit_permissive_rules() {
             "low" \
             "passed" \
             "$(i18n 'ufw.no_permissive_rules')" \
-            "No sensitive ports open to the world" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No overly permissive firewall rules detected"
+        print_ok "$(i18n 'ufw.no_permissive_rules')"
     fi
 }
 
@@ -315,13 +434,13 @@ ufw_fix() {
 }
 
 _ufw_fix_install() {
-    print_info "Installing UFW..."
+    print_info "$(i18n 'ufw.installing_ufw')"
 
     if apt-get update -qq && apt-get install -y ufw; then
-        print_ok "UFW installed successfully"
+        print_ok "$(i18n 'ufw.ufw_installed')"
         return 0
     else
-        print_error "Failed to install UFW"
+        print_error "$(i18n 'ufw.ufw_install_failed')"
         return 1
     fi
 }
@@ -344,7 +463,7 @@ _ufw_fix_enable() {
 
     # Critical confirmation
     print_msg ""
-    print_warn "Current rules before enabling:"
+    print_warn "$(i18n 'ufw.current_rules')"
     ufw status 2>/dev/null | head -20
 
     if ! confirm_critical "$(i18n 'ufw.confirm_ufw_enable')"; then
@@ -356,7 +475,7 @@ _ufw_fix_enable() {
     fi
 
     # Enable UFW
-    print_info "Enabling UFW..."
+    print_info "$(i18n 'ufw.enabling_ufw')"
     if echo "y" | ufw enable; then
         print_ok "$(i18n 'ufw.ufw_enabled')"
 
@@ -367,7 +486,7 @@ _ufw_fix_enable() {
 
         return 0
     else
-        print_error "Failed to enable UFW"
+        print_error "$(i18n 'ufw.ufw_enable_failed')"
         return 1
     fi
 }
@@ -377,20 +496,20 @@ _ufw_fix_default_deny() {
 
     # Ensure SSH is allowed first
     if ! _ufw_ssh_allowed; then
-        print_info "Adding SSH rule before changing default policy..."
+        print_info "$(i18n 'ufw.adding_ssh_rule')"
         ufw allow "$ssh_port/tcp" comment "SSH (vpssec)" 2>/dev/null
     fi
 
     # Set default deny incoming
     if ufw default deny incoming; then
-        print_ok "Default incoming policy set to deny"
+        print_ok "$(i18n 'ufw.default_deny_set')"
 
         # Set default allow outgoing (standard)
         ufw default allow outgoing 2>/dev/null
 
         return 0
     else
-        print_error "Failed to set default policy"
+        print_error "$(i18n 'ufw.default_deny_failed')"
         return 1
     fi
 }
@@ -402,7 +521,7 @@ _ufw_fix_allow_ssh() {
         print_ok "$(i18n 'ufw.rule_added' "rule=${ssh_port}/tcp ALLOW")"
         return 0
     else
-        print_error "Failed to add SSH rule"
+        print_error "$(i18n 'ufw.ssh_rule_failed')"
         return 1
     fi
 }
