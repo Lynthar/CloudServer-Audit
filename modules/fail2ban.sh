@@ -430,8 +430,8 @@ _f2b_fix_configure_ssh_jail() {
     local ssh_logpath=$(_f2b_detect_ssh_logpath)
     local f2b_backend=$(_f2b_detect_backend)
 
-    print_info "Detected log path: $ssh_logpath"
-    print_info "Detected backend: $f2b_backend"
+    print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
+    print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
 
     # Create jail.local with SSH configuration
     cat > "$F2B_JAIL_LOCAL" <<EOF

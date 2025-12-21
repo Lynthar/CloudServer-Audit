@@ -229,13 +229,13 @@ kernel_audit() {
             "kernel" \
             "low" \
             "info" \
-            "Running in container environment: $container_type" \
-            "Some kernel parameters cannot be modified in containers" \
+            "$(i18n 'kernel.container_detected' "type=$container_type")" \
+            "$(i18n 'kernel.container_limitations')" \
             "" \
             "")
         state_add_check "$check"
-        print_info "Container environment detected: $container_type"
-        print_info "Some kernel hardening options may be unavailable"
+        print_info "$(i18n 'kernel.container_detected' "type=$container_type")"
+        print_info "$(i18n 'kernel.container_limitations')"
     fi
 
     # Check ASLR
