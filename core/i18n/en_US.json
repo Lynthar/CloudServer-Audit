@@ -172,7 +172,12 @@
     "weak_algorithms": "Weak SSH algorithms detected",
     "algorithms_ok": "SSH algorithms are secure",
     "fix_algorithms": "Harden SSH algorithms",
-    "hardening_algorithms": "Hardening SSH algorithms..."
+    "hardening_algorithms": "Hardening SSH algorithms...",
+    "check_access_control": "Checking SSH access control",
+    "access_control_configured": "SSH access control configured",
+    "no_access_control": "No SSH access control configured",
+    "default_port": "SSH using default port",
+    "custom_port": "SSH using non-default port"
   },
   "ufw": {
     "title": "UFW Firewall",
@@ -202,7 +207,11 @@
     "ufw_installed": "UFW installed successfully",
     "ufw_install_failed": "Failed to install UFW",
     "rule_added": "Rule added: {rule}",
-    "current_rules": "Current rules before enabling:"
+    "current_rules": "Current rules before enabling:",
+    "check_permissive_rules": "Checking for overly permissive rules",
+    "permissive_rules_found": "{count} overly permissive rules found",
+    "no_permissive_rules": "No overly permissive rules detected",
+    "fix_restrict_rules": "Review and restrict firewall rules"
   },
   "update": {
     "title": "System Updates",
@@ -232,7 +241,13 @@
     "installing_unattended": "Installing unattended-upgrades...",
     "unattended_install_failed": "Failed to install unattended-upgrades",
     "configuring_unattended": "Configuring unattended-upgrades...",
-    "unattended_enable_failed": "Failed to enable unattended-upgrades"
+    "unattended_enable_failed": "Failed to enable unattended-upgrades",
+    "check_reboot": "Checking if reboot is required",
+    "reboot_required": "System reboot required",
+    "no_reboot": "No reboot required",
+    "check_timesync": "Checking time synchronization",
+    "timesync_ok": "Time is synchronized",
+    "timesync_failed": "Time synchronization not configured"
   },
   "docker": {
     "title": "Docker Security",
@@ -489,7 +504,14 @@
     "hardening_kernel": "Hardening kernel parameters...",
     "kernel_already_hardened": "Kernel parameters already hardened",
     "kernel_hardened": "{count} kernel parameters hardened",
-    "disabling_core_dump": "Disabling core dumps..."
+    "disabling_core_dump": "Disabling core dumps...",
+    "check_container": "Checking container environment",
+    "kernel_params_critical": "{count} critical kernel parameters need hardening",
+    "check_auditd": "Checking audit daemon status",
+    "auditd_not_installed": "Linux audit daemon not installed",
+    "auditd_active": "Audit daemon is active",
+    "auditd_few_rules": "Audit daemon has few rules configured",
+    "auditd_not_running": "Audit daemon is not running"
   },
   "filesystem": {
     "title": "Filesystem Security",
@@ -528,7 +550,15 @@
     "fixing_umask": "Setting secure umask...",
     "umask_fixed": "umask set to 027",
     "login_defs_not_found": "/etc/login.defs not found",
-    "manual_review_required": "Manual review required for this issue"
+    "manual_review_required": "Manual review required for this issue",
+    "check_caps": "Checking file capabilities",
+    "dangerous_caps": "{count} files with dangerous capabilities",
+    "non_standard_caps": "{count} files with non-standard capabilities",
+    "caps_ok": "No suspicious file capabilities",
+    "review_caps": "Review and remove unnecessary capabilities",
+    "check_cron": "Checking cron jobs for suspicious entries",
+    "suspicious_cron": "{count} suspicious cron entries found",
+    "cron_ok": "Cron entries appear clean"
   },
   "cloud": {
     "title": "Cloud Environment",
@@ -598,7 +628,18 @@
     "created": "Created",
     "current_perms": "Current",
     "verify_before_change": "Verify before making changes",
-    "review_accounts": "Please review these accounts manually"
+    "review_accounts": "Please review these accounts manually",
+    "nopasswd_sudo": "NOPASSWD sudo entries found",
+    "nopasswd_sudo_desc": "Users can run sudo commands without password",
+    "fix_nopasswd_sudo": "Review and remove NOPASSWD entries",
+    "password_policy_weak": "Weak password policy",
+    "password_policy_ok": "Password policy configured",
+    "password_policy_ok_desc": "Password aging and length policies are set",
+    "fix_password_policy": "Configure password aging in /etc/login.defs",
+    "pwquality_weak": "Password quality not enforced",
+    "fix_pwquality": "Configure pam_pwquality for password complexity",
+    "history_insecure": "Bash history security issues",
+    "fix_history": "Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile"
   },
   "report": {
     "title": "Security Check Report",

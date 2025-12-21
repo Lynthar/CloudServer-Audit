@@ -172,7 +172,12 @@
     "weak_algorithms": "检测到弱 SSH 算法",
     "algorithms_ok": "SSH 算法安全",
     "fix_algorithms": "加固 SSH 算法",
-    "hardening_algorithms": "正在加固 SSH 算法..."
+    "hardening_algorithms": "正在加固 SSH 算法...",
+    "check_access_control": "检查 SSH 访问控制",
+    "access_control_configured": "SSH 访问控制已配置",
+    "no_access_control": "未配置 SSH 访问控制",
+    "default_port": "SSH 使用默认端口",
+    "custom_port": "SSH 使用非默认端口"
   },
   "ufw": {
     "title": "UFW 防火墙",
@@ -202,7 +207,11 @@
     "ufw_installed": "UFW 安装成功",
     "ufw_install_failed": "UFW 安装失败",
     "rule_added": "规则已添加: {rule}",
-    "current_rules": "启用前的当前规则:"
+    "current_rules": "启用前的当前规则:",
+    "check_permissive_rules": "检查过于宽松的规则",
+    "permissive_rules_found": "发现 {count} 条过于宽松的规则",
+    "no_permissive_rules": "未检测到过于宽松的规则",
+    "fix_restrict_rules": "检查并限制防火墙规则"
   },
   "update": {
     "title": "系统更新",
@@ -232,7 +241,13 @@
     "installing_unattended": "正在安装 unattended-upgrades...",
     "unattended_install_failed": "unattended-upgrades 安装失败",
     "configuring_unattended": "正在配置 unattended-upgrades...",
-    "unattended_enable_failed": "启用 unattended-upgrades 失败"
+    "unattended_enable_failed": "启用 unattended-upgrades 失败",
+    "check_reboot": "检查是否需要重启",
+    "reboot_required": "系统需要重启",
+    "no_reboot": "无需重启",
+    "check_timesync": "检查时间同步",
+    "timesync_ok": "时间已同步",
+    "timesync_failed": "时间同步未配置"
   },
   "docker": {
     "title": "Docker 安全",
@@ -489,7 +504,14 @@
     "hardening_kernel": "正在加固内核参数...",
     "kernel_already_hardened": "内核参数已加固",
     "kernel_hardened": "{count} 个内核参数已加固",
-    "disabling_core_dump": "正在禁用核心转储..."
+    "disabling_core_dump": "正在禁用核心转储...",
+    "check_container": "检查容器环境",
+    "kernel_params_critical": "{count} 个关键内核参数需要加固",
+    "check_auditd": "检查审计守护进程状态",
+    "auditd_not_installed": "Linux 审计守护进程未安装",
+    "auditd_active": "审计守护进程运行中",
+    "auditd_few_rules": "审计守护进程规则配置较少",
+    "auditd_not_running": "审计守护进程未运行"
   },
   "filesystem": {
     "title": "文件系统安全",
@@ -528,7 +550,15 @@
     "fixing_umask": "正在设置安全 umask...",
     "umask_fixed": "umask 已设置为 027",
     "login_defs_not_found": "未找到 /etc/login.defs",
-    "manual_review_required": "此问题需要手动检查"
+    "manual_review_required": "此问题需要手动检查",
+    "check_caps": "检查文件能力",
+    "dangerous_caps": "{count} 个文件具有危险能力",
+    "non_standard_caps": "{count} 个文件具有非标准能力",
+    "caps_ok": "未发现可疑文件能力",
+    "review_caps": "检查并移除不必要的能力",
+    "check_cron": "检查 cron 任务是否存在可疑条目",
+    "suspicious_cron": "发现 {count} 个可疑 cron 条目",
+    "cron_ok": "cron 任务看起来正常"
   },
   "cloud": {
     "title": "云环境检测",
@@ -598,7 +628,18 @@
     "created": "创建时间",
     "current_perms": "当前权限",
     "verify_before_change": "修改前请先确认",
-    "review_accounts": "请手动检查这些账户"
+    "review_accounts": "请手动检查这些账户",
+    "nopasswd_sudo": "发现 NOPASSWD sudo 条目",
+    "nopasswd_sudo_desc": "用户可以无需密码执行 sudo 命令",
+    "fix_nopasswd_sudo": "检查并移除 NOPASSWD 条目",
+    "password_policy_weak": "密码策略较弱",
+    "password_policy_ok": "密码策略已配置",
+    "password_policy_ok_desc": "密码过期和长度策略已设置",
+    "fix_password_policy": "在 /etc/login.defs 中配置密码过期策略",
+    "pwquality_weak": "密码复杂度未强制",
+    "fix_pwquality": "配置 pam_pwquality 以强制密码复杂度",
+    "history_insecure": "Bash 历史记录安全问题",
+    "fix_history": "在 /etc/profile 中添加 HISTTIMEFORMAT 和 HISTCONTROL"
   },
   "report": {
     "title": "安全检查报告",
