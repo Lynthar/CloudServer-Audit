@@ -87,6 +87,13 @@ declare -A FIX_SAFE=(
     ["backup.generate_templates"]="true"
     ["alerts.setup_config"]="true"
     ["alerts.generate_templates"]="true"
+
+    # Timezone - safe configurations
+    ["timezone.set_timezone"]="true"
+    ["timezone.enable_ntp"]="true"
+    ["timezone.sync_time"]="true"
+    ["timezone.set_rtc_utc"]="true"
+    ["timezone.set_locale"]="true"
 )
 
 # Fixes requiring confirmation - medium risk
@@ -352,6 +359,19 @@ declare -A CHECK_LEVEL=(
     ["users.ssh_keys_info"]="standard"
     ["users.suspicious_names"]="strict"
     ["users.unusual_home"]="strict"
+
+    # === Timezone Module ===
+    ["timezone.configured"]="basic"
+    ["timezone.not_configured"]="basic"
+    ["timezone.using_utc"]="basic"
+    ["timezone.ntp_synced"]="basic"
+    ["timezone.ntp_not_synced"]="basic"
+    ["timezone.ntp_disabled"]="basic"
+    ["timezone.time_accurate"]="basic"
+    ["timezone.time_drift"]="basic"
+    ["timezone.rtc_local"]="standard"
+    ["timezone.locale_ok"]="basic"
+    ["timezone.locale_not_set"]="basic"
 )
 
 # ==============================================================================
@@ -538,6 +558,19 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["users.ssh_keys_info"]="info"
     ["users.suspicious_names"]="recommended"
     ["users.unusual_home"]="recommended"
+
+    # === Timezone Module ===
+    ["timezone.configured"]="info"
+    ["timezone.not_configured"]="recommended"
+    ["timezone.using_utc"]="info"
+    ["timezone.ntp_synced"]="recommended"
+    ["timezone.ntp_not_synced"]="recommended"
+    ["timezone.ntp_disabled"]="recommended"
+    ["timezone.time_accurate"]="recommended"
+    ["timezone.time_drift"]="recommended"
+    ["timezone.rtc_local"]="recommended"
+    ["timezone.locale_ok"]="info"
+    ["timezone.locale_not_set"]="info"
 )
 
 # ==============================================================================

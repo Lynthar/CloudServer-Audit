@@ -19,23 +19,68 @@ fi
 # ==============================================================================
 
 # Available modules (order matters for execution)
+# Organized from basic to advanced:
+#   1. System Basics: preflight, cloud, timezone
+#   2. Access Control: users, ssh
+#   3. Network Security: ufw, fail2ban
+#   4. System Hardening: update, kernel, filesystem, baseline
+#   5. Service Security: docker, nginx, cloudflared
+#   6. Operations & Compliance: logging, backup, alerts
 declare -a VPSSEC_MODULE_ORDER=(
+    # System Basics
     "preflight"
     "cloud"
+    "timezone"
+    # Access Control
     "users"
     "ssh"
+    # Network Security
     "ufw"
     "fail2ban"
+    # System Hardening
     "update"
     "kernel"
     "filesystem"
+    "baseline"
+    # Service Security
     "docker"
     "nginx"
-    "baseline"
-    "logging"
     "cloudflared"
+    # Operations & Compliance
+    "logging"
     "backup"
     "alerts"
+)
+
+# Module category definitions for grouped reporting
+declare -A VPSSEC_MODULE_CATEGORY=(
+    ["preflight"]="basics"
+    ["cloud"]="basics"
+    ["timezone"]="basics"
+    ["users"]="access"
+    ["ssh"]="access"
+    ["ufw"]="network"
+    ["fail2ban"]="network"
+    ["update"]="hardening"
+    ["kernel"]="hardening"
+    ["filesystem"]="hardening"
+    ["baseline"]="hardening"
+    ["docker"]="services"
+    ["nginx"]="services"
+    ["cloudflared"]="services"
+    ["logging"]="operations"
+    ["backup"]="operations"
+    ["alerts"]="operations"
+)
+
+# Category order for reporting (basic to advanced)
+declare -a VPSSEC_CATEGORY_ORDER=(
+    "basics"
+    "access"
+    "network"
+    "hardening"
+    "services"
+    "operations"
 )
 
 # Module metadata
