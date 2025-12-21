@@ -831,7 +831,8 @@
     "rtc_set_failed": "设置硬件时钟失败",
     "setting_locale": "正在设置系统语言...",
     "locale_set": "系统语言已设置为: {locale}",
-    "locale_set_failed": "设置系统语言失败"
+    "locale_set_failed": "设置系统语言失败",
+    "change_available": "可在引导模式中更改"
   },
   "error": {
     "root_required": "需要 root 权限运行此命令",

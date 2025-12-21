@@ -831,7 +831,8 @@
     "rtc_set_failed": "Failed to set hardware clock",
     "setting_locale": "Setting system locale...",
     "locale_set": "System locale set to: {locale}",
-    "locale_set_failed": "Failed to set system locale"
+    "locale_set_failed": "Failed to set system locale",
+    "change_available": "Change available in guide mode"
   },
   "error": {
     "root_required": "Root privileges required to run this command",
