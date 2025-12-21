@@ -253,6 +253,12 @@ kernel_audit() {
     # Check core dump settings
     print_item "$(i18n 'kernel.check_core_dump')"
     _kernel_audit_core_dump
+
+    # Check auditd status (only if not in container)
+    if [[ -z "$container_type" ]]; then
+        print_item "$(i18n 'kernel.check_auditd')"
+        _kernel_audit_auditd
+    fi
 }
 
 _kernel_audit_aslr() {
@@ -530,6 +536,68 @@ _kernel_audit_core_dump() {
             "kernel.disable_core_dump")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'kernel.core_dump_enabled')"
+    fi
+}
+
+_kernel_audit_auditd() {
+    # Check if auditd is installed
+    if ! command -v auditd &>/dev/null && ! command -v auditctl &>/dev/null; then
+        local check=$(create_check_json \
+            "kernel.auditd_not_installed" \
+            "kernel" \
+            "low" \
+            "failed" \
+            "$(i18n 'kernel.auditd_not_installed')" \
+            "Linux Audit daemon not installed" \
+            "Install auditd for security event logging: apt install auditd" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "auditd not installed"
+        return
+    fi
+
+    # Check if auditd service is running
+    if systemctl is-active --quiet auditd 2>/dev/null; then
+        # Check if rules are loaded
+        local rule_count=$(auditctl -l 2>/dev/null | grep -cv "^No rules" || echo 0)
+
+        if ((rule_count > 5)); then
+            local check=$(create_check_json \
+                "kernel.auditd_active" \
+                "kernel" \
+                "low" \
+                "passed" \
+                "$(i18n 'kernel.auditd_active')" \
+                "auditd running with $rule_count rules" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "auditd active with $rule_count rules"
+        else
+            local check=$(create_check_json \
+                "kernel.auditd_few_rules" \
+                "kernel" \
+                "low" \
+                "failed" \
+                "$(i18n 'kernel.auditd_few_rules')" \
+                "auditd running but only $rule_count rules configured" \
+                "Consider adding audit rules for security monitoring" \
+                "")
+            state_add_check "$check"
+            print_severity "low" "auditd has few rules configured"
+        fi
+    else
+        local check=$(create_check_json \
+            "kernel.auditd_not_running" \
+            "kernel" \
+            "low" \
+            "failed" \
+            "$(i18n 'kernel.auditd_not_running')" \
+            "auditd installed but not running" \
+            "Enable auditd: systemctl enable --now auditd" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "auditd not running"
     fi
 }
 

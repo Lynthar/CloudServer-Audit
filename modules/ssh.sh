@@ -277,6 +277,10 @@ ssh_audit() {
     # Check SSH access control (AllowUsers/DenyUsers)
     print_item "$(i18n 'ssh.check_access_control')"
     _ssh_audit_access_control
+
+    # Check SSH port (recommend non-default)
+    print_item "$(i18n 'ssh.check_port')"
+    _ssh_audit_port
 }
 
 _ssh_audit_password_auth() {
@@ -650,6 +654,37 @@ _ssh_audit_access_control() {
             "ssh.configure_access_control")
         state_add_check "$check"
         print_severity "low" "No SSH access control configured (AllowUsers/DenyUsers)"
+    fi
+}
+
+_ssh_audit_port() {
+    local ssh_port=$(_ssh_get_port)
+
+    if [[ "$ssh_port" == "22" ]]; then
+        # Default port - recommend changing for security through obscurity
+        local check=$(create_check_json \
+            "ssh.default_port" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.default_port')" \
+            "SSH running on default port 22" \
+            "Consider changing to a non-standard port (e.g., 2222, 22222)" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "SSH using default port 22 (consider changing)"
+    else
+        local check=$(create_check_json \
+            "ssh.custom_port" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.custom_port')" \
+            "SSH running on port $ssh_port" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "SSH using non-default port: $ssh_port"
     fi
 }
 
