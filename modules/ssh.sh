@@ -453,12 +453,12 @@ _ssh_audit_empty_password() {
             "ssh" \
             "low" \
             "passed" \
-            "Empty password login denied" \
+            "$(i18n 'ssh.empty_password_disabled')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Empty password login denied"
+        print_ok "$(i18n 'ssh.empty_password_disabled')"
     fi
 }
 
@@ -640,7 +640,7 @@ _ssh_audit_access_control() {
             "" \
             "")
         state_add_check "$check"
-        print_ok "SSH access control configured"
+        print_ok "$(i18n 'ssh.access_control_configured')"
     else
         # This is a recommendation, not critical
         local check=$(create_check_json \
@@ -649,11 +649,11 @@ _ssh_audit_access_control() {
             "low" \
             "failed" \
             "$(i18n 'ssh.no_access_control')" \
-            "No AllowUsers/DenyUsers/AllowGroups/DenyGroups configured" \
-            "Consider adding AllowUsers or AllowGroups to restrict SSH access" \
+            "$(i18n 'ssh.no_access_control_desc')" \
+            "$(i18n 'ssh.fix_access_control')" \
             "ssh.configure_access_control")
         state_add_check "$check"
-        print_severity "low" "No SSH access control configured (AllowUsers/DenyUsers)"
+        print_severity "low" "$(i18n 'ssh.no_access_control')"
     fi
 }
 
@@ -684,7 +684,7 @@ _ssh_audit_port() {
             "" \
             "")
         state_add_check "$check"
-        print_ok "SSH using non-default port: $ssh_port"
+        print_ok "$(i18n 'ssh.custom_port') ($ssh_port)"
     fi
 }
 
@@ -734,7 +734,7 @@ _ssh_open_rescue_port() {
     # Create temporary sshd config with secure permissions
     local rescue_config
     rescue_config=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
-        print_error "Failed to create temp file for rescue config"
+        print_error "$(i18n 'common.temp_file_failed')"
         return 1
     }
     chmod 600 "$rescue_config"
@@ -753,7 +753,7 @@ EOF
         print_warn "$(i18n 'ssh.rescue_port_test' "port=$SSH_RESCUE_PORT")"
         return 0
     else
-        print_error "Failed to open rescue port"
+        print_error "$(i18n 'ssh.rescue_port_failed')"
         rm -f "$rescue_config"
         return 1
     fi
@@ -788,7 +788,7 @@ _ssh_write_hardening_config() {
 
     # Write to temp file first with secure permissions
     temp_file=$(mktemp -t vpssec-sshd.XXXXXX) || {
-        print_error "Failed to create temp file"
+        print_error "$(i18n 'common.temp_file_failed')"
         return 1
     }
     chmod 600 "$temp_file"
@@ -806,7 +806,7 @@ _ssh_write_hardening_config() {
             return 0
         else
             rm -f "$temp_file"
-            print_error "Failed to move config file"
+            print_error "$(i18n 'ssh.move_file_failed')"
             return 1
         fi
     else
@@ -826,7 +826,7 @@ _ssh_reload_safe() {
             print_ok "$(i18n 'ssh.sshd_reloaded')"
             return 0
         else
-            print_error "Failed to reload SSH"
+            print_error "$(i18n 'ssh.reload_failed')"
             return 1
         fi
     else
@@ -839,7 +839,7 @@ _ssh_fix_disable_password_auth() {
     # Safety check - ensure user has SSH key access
     local current_ip=$(get_current_ssh_ip)
     if [[ -n "$current_ip" ]]; then
-        print_info "Current connection from: $current_ip"
+        print_info "$(i18n 'ssh.current_connection' "ip=$current_ip")"
     fi
 
     # Check for admin with SSH key
@@ -854,8 +854,8 @@ _ssh_fix_disable_password_auth() {
     done
 
     if [[ -z "$has_key_user" ]] && ! _ssh_user_has_key "root"; then
-        print_error "No user with SSH key found. Cannot safely disable password auth."
-        print_warn "Please add an SSH key first: ssh-copy-id user@host"
+        print_error "$(i18n 'ssh.no_key_user')"
+        print_warn "$(i18n 'ssh.add_key_first')"
         return 1
     fi
 
@@ -866,8 +866,8 @@ _ssh_fix_disable_password_auth() {
 
     # Open rescue port - MANDATORY for SSH changes
     if ! _ssh_open_rescue_port; then
-        print_error "Cannot open rescue port - aborting SSH changes for safety"
-        print_warn "Please check if port $SSH_RESCUE_PORT is available"
+        print_error "$(i18n 'ssh.rescue_port_failed')"
+        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
         return 1
     fi
 
@@ -899,8 +899,8 @@ _ssh_fix_disable_root_login() {
     # Safety check - ensure non-root admin exists
     local admin_users=$(_ssh_get_admin_users)
     if [[ -z "$admin_users" ]]; then
-        print_error "No non-root admin user found. Cannot safely disable root login."
-        print_warn "Create a sudo user first: adduser newuser && usermod -aG sudo newuser"
+        print_error "$(i18n 'ssh.no_admin_for_root')"
+        print_warn "$(i18n 'ssh.create_admin_first')"
         return 1
     fi
 
@@ -911,8 +911,8 @@ _ssh_fix_disable_root_login() {
 
     # Open rescue port - MANDATORY for SSH changes
     if ! _ssh_open_rescue_port; then
-        print_error "Cannot open rescue port - aborting SSH changes for safety"
-        print_warn "Please check if port $SSH_RESCUE_PORT is available"
+        print_error "$(i18n 'ssh.rescue_port_failed')"
+        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
         return 1
     fi
 

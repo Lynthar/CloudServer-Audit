@@ -813,11 +813,11 @@ _fs_audit_caps() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.caps_ok')" \
-            "No suspicious file capabilities found" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "No suspicious file capabilities"
+        print_ok "$(i18n 'filesystem.caps_ok')"
     fi
 }
 
@@ -854,11 +854,11 @@ _fs_audit_cron() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.cron_ok')" \
-            "No suspicious patterns found. User crontabs: $user_crontabs" \
+            "User crontabs: $user_crontabs" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "Cron entries appear clean"
+        print_ok "$(i18n 'filesystem.cron_ok')"
     fi
 }
 
@@ -903,13 +903,13 @@ _fs_fix_sensitive_perms() {
         local expected_num=$((8#$expected))
 
         if ((actual_num > expected_num)); then
-            print_info "Fixing $file: $actual -> $expected"
+            print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$expected")"
             if chmod "$expected" "$file" 2>/dev/null; then
                 ((fixed++))
-                print_ok "Fixed: $file"
+                print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"
             else
                 ((failed++))
-                print_error "Failed to fix: $file"
+                print_error "$(i18n 'filesystem.file_fix_failed' "file=$file")"
             fi
         fi
     done

@@ -46,11 +46,11 @@ nginx_audit() {
             "low" \
             "passed" \
             "$(i18n 'nginx.not_installed')" \
-            "Nginx is not installed (skip)" \
+            "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'nginx.not_installed') - Skipping"
+        print_ok "$(i18n 'nginx.not_installed')"
         return
     fi
 
@@ -79,7 +79,7 @@ _nginx_audit_catchall() {
             "medium" \
             "failed" \
             "$(i18n 'nginx.no_catchall')" \
-            "Missing default_server with return 444" \
+            "$(i18n 'nginx.no_catchall_desc')" \
             "$(i18n 'nginx.fix_add_catchall')" \
             "nginx.add_catchall")
         state_add_check "$check"
@@ -106,7 +106,7 @@ nginx_fix() {
 }
 
 _nginx_fix_add_catchall() {
-    print_info "Creating Nginx catchall configuration..."
+    print_info "$(i18n 'nginx.creating_catchall')"
 
     mkdir -p "$NGINX_SITES_AVAILABLE"
 
@@ -145,7 +145,7 @@ EOF
     mkdir -p /etc/nginx/ssl
 
     if [[ ! -f /etc/nginx/ssl/default.crt ]]; then
-        print_info "Generating self-signed certificate for catchall..."
+        print_info "$(i18n 'nginx.generating_cert')"
         openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
             -keyout /etc/nginx/ssl/default.key \
             -out /etc/nginx/ssl/default.crt \
@@ -164,11 +164,11 @@ EOF
 
         # Reload nginx
         if systemctl reload nginx 2>/dev/null; then
-            print_ok "Nginx reloaded"
+            print_ok "$(i18n 'nginx.nginx_reloaded')"
             return 0
         fi
     else
-        print_error "Nginx configuration test failed"
+        print_error "$(i18n 'nginx.nginx_test_failed')"
         rm -f "$NGINX_CATCHALL_CONF" "${NGINX_SITES_ENABLED}/99-catchall.conf"
         return 1
     fi

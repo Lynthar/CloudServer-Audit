@@ -41,15 +41,15 @@ backup_audit() {
     local module="backup"
 
     # Check for backup tools
-    print_item "Checking backup tools installation..."
+    print_item "$(i18n 'backup.check_tools')"
     _backup_audit_tools
 
     # Check for scheduled backups
-    print_item "Checking scheduled backup jobs..."
+    print_item "$(i18n 'backup.check_scheduled')"
     _backup_audit_scheduled
 
     # Check critical paths for backup
-    print_item "Identifying critical paths for backup..."
+    print_item "$(i18n 'backup.check_critical_paths')"
     _backup_audit_critical_paths
 }
 
@@ -58,17 +58,17 @@ _backup_audit_tools() {
 
     if _backup_restic_installed; then
         ((tools_found++)) || true
-        print_ok "Restic backup tool installed"
+        print_ok "$(i18n 'backup.restic_installed')"
     fi
 
     if _backup_borg_installed; then
         ((tools_found++)) || true
-        print_ok "Borg backup tool installed"
+        print_ok "$(i18n 'backup.borg_installed')"
     fi
 
     if _backup_rclone_installed; then
         ((tools_found++)) || true
-        print_ok "Rclone (remote sync) installed"
+        print_ok "$(i18n 'backup.rclone_installed')"
     fi
 
     if ((tools_found == 0)); then
@@ -77,19 +77,19 @@ _backup_audit_tools() {
             "backup" \
             "medium" \
             "failed" \
-            "No backup tools installed" \
-            "No restic, borg, or rclone found" \
-            "Install a backup tool" \
+            "$(i18n 'backup.no_tools')" \
+            "$(i18n 'backup.no_tools_desc')" \
+            "$(i18n 'backup.fix_install_tool')" \
             "backup.generate_templates")
         state_add_check "$check"
-        print_severity "medium" "No backup tools installed"
+        print_severity "medium" "$(i18n 'backup.no_tools')"
     else
         local check=$(create_check_json \
             "backup.tools_installed" \
             "backup" \
             "low" \
             "passed" \
-            "$tools_found backup tool(s) installed" \
+            "$(i18n 'backup.tools_count' "count=$tools_found")" \
             "" \
             "" \
             "")
@@ -102,12 +102,12 @@ _backup_audit_scheduled() {
 
     if _backup_check_cron_job; then
         ((scheduled++)) || true
-        print_ok "Backup cron job found"
+        print_ok "$(i18n 'backup.cron_found')"
     fi
 
     if _backup_check_systemd_timer; then
         ((scheduled++)) || true
-        print_ok "Backup systemd timer found"
+        print_ok "$(i18n 'backup.timer_found')"
     fi
 
     if ((scheduled == 0)); then
@@ -116,19 +116,19 @@ _backup_audit_scheduled() {
             "backup" \
             "medium" \
             "failed" \
-            "No scheduled backups found" \
-            "No cron jobs or systemd timers for backup" \
-            "Set up scheduled backups" \
+            "$(i18n 'backup.no_scheduled')" \
+            "$(i18n 'backup.no_scheduled_desc')" \
+            "$(i18n 'backup.fix_setup_schedule')" \
             "backup.generate_templates")
         state_add_check "$check"
-        print_severity "medium" "No scheduled backups found"
+        print_severity "medium" "$(i18n 'backup.no_scheduled')"
     else
         local check=$(create_check_json \
             "backup.scheduled" \
             "backup" \
             "low" \
             "passed" \
-            "Backup schedule configured" \
+            "$(i18n 'backup.schedule_configured')" \
             "" \
             "" \
             "")
@@ -152,17 +152,18 @@ _backup_audit_critical_paths() {
         fi
     done
 
+    local paths_list="${existing[*]}"
     local check=$(create_check_json \
         "backup.critical_paths" \
         "backup" \
         "low" \
         "passed" \
-        "Critical paths identified for backup" \
-        "Paths: ${existing[*]}" \
+        "$(i18n 'backup.paths_identified')" \
+        "$(i18n 'backup.paths_list' "paths=$paths_list")" \
         "" \
         "")
     state_add_check "$check"
-    print_ok "Critical paths for backup: ${existing[*]}"
+    print_ok "$(i18n 'backup.critical_paths' "paths=$paths_list")"
 }
 
 # ==============================================================================
@@ -186,7 +187,7 @@ backup_fix() {
 _backup_fix_generate_templates() {
     mkdir -p "$BACKUP_TEMPLATES_DIR"
 
-    print_info "Generating backup configuration templates..."
+    print_info "$(i18n 'backup.generating_templates')"
 
     # Generate Restic template
     _backup_generate_restic_template
@@ -197,7 +198,7 @@ _backup_fix_generate_templates() {
     # Generate systemd timer template
     _backup_generate_systemd_template
 
-    print_ok "Backup templates generated in: $BACKUP_TEMPLATES_DIR"
+    print_ok "$(i18n 'backup.templates_generated' "path=$BACKUP_TEMPLATES_DIR")"
     return 0
 }
 
@@ -290,7 +291,7 @@ log "Backup completed successfully"
 EOF
 
     chmod +x "${BACKUP_TEMPLATES_DIR}/restic-backup.sh"
-    print_item "Created: restic-backup.sh"
+    print_item "$(i18n 'backup.template_created' "name=restic-backup.sh")"
 }
 
 _backup_generate_borg_template() {
@@ -380,7 +381,7 @@ log "Backup completed successfully"
 EOF
 
     chmod +x "${BACKUP_TEMPLATES_DIR}/borg-backup.sh"
-    print_item "Created: borg-backup.sh"
+    print_item "$(i18n 'backup.template_created' "name=borg-backup.sh")"
 }
 
 _backup_generate_systemd_template() {
@@ -431,8 +432,8 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-    print_item "Created: backup.service"
-    print_item "Created: backup.timer"
+    print_item "$(i18n 'backup.template_created' "name=backup.service")"
+    print_item "$(i18n 'backup.template_created' "name=backup.timer")"
 
     # Installation instructions
     cat > "${BACKUP_TEMPLATES_DIR}/README.md" <<'EOF'
@@ -532,5 +533,5 @@ borg mount /path/to/repo /mnt/borg-mount
 ```
 EOF
 
-    print_item "Created: README.md"
+    print_item "$(i18n 'backup.template_created' "name=README.md")"
 }
