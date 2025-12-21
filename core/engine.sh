@@ -86,6 +86,7 @@ declare -a VPSSEC_CATEGORY_ORDER=(
 # Module metadata
 declare -A VPSSEC_MODULE_ENABLED=()
 declare -A VPSSEC_MODULE_LOADED=()
+declare -A VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
 
 # Load a module
 module_load() {
@@ -183,6 +184,7 @@ module_load_all() {
         if ! module_available "$module"; then
             log_info "Module unavailable (missing deps): $module"
             VPSSEC_MODULE_ENABLED[$module]=0
+            VPSSEC_MODULE_UNAVAILABLE[$module]=1
             continue
         fi
 
@@ -239,6 +241,25 @@ audit_module() {
     fi
 }
 
+# Record unavailable modules in state
+_record_unavailable_modules() {
+    for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
+        if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]]; then
+            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+            local check=$(create_check_json \
+                "${module}.not_installed" \
+                "${module}" \
+                "low" \
+                "passed" \
+                "$(i18n "${module}.not_installed" 2>/dev/null || echo "${mod_title} not installed")" \
+                "$(i18n 'common.skipping' 2>/dev/null || echo "Skipping") - $(i18n 'common.not_installed' 2>/dev/null || echo "Not installed")" \
+                "" \
+                "")
+            state_add_check "$check"
+        fi
+    done
+}
+
 # Run audit for all enabled modules
 audit_all() {
     state_init
@@ -249,7 +270,13 @@ audit_all() {
         modules+=("$m")
     done < <(module_get_enabled)
 
-    local total=${#modules[@]}
+    # Count total including unavailable for progress
+    local unavailable_count=0
+    for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
+        [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]] && ((unavailable_count++)) || true
+    done
+
+    local total=$((${#modules[@]} + unavailable_count))
     local current=0
 
     # Enable quiet scan mode for cleaner output
@@ -267,6 +294,16 @@ audit_all() {
 
         audit_module "$module"
     done
+
+    # Record unavailable modules
+    for module in "${VPSSEC_MODULE_ORDER[@]}"; do
+        if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
+            ((current++)) || true
+            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+            printf "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
+        fi
+    done
+    _record_unavailable_modules
 
     # Clear progress line
     printf "\r                                                              \r"
@@ -287,8 +324,8 @@ get_available_fixes() {
     local show_all="${1:-false}"
     local checks=$(state_get_checks)
 
-    # Get fixes that have a fix_id
-    local fixes=$(echo "$checks" | jq -r '[.[] | select(.status == "failed" and .fix_id != null and .fix_id != "")]')
+    # Get fixes that have a fix_id (failed items + passed items with fix_id for optional config like timezone)
+    local fixes=$(echo "$checks" | jq -r '[.[] | select(.fix_id != null and .fix_id != "" and (.status == "failed" or (.status == "passed" and (.fix_id | startswith("timezone.")))))]')
 
     # Add safety classification if security_levels is loaded
     if declare -f get_fix_safety &>/dev/null; then
@@ -520,23 +557,69 @@ guide_mode() {
         print_msg ""
     fi
 
-    # Run audit
+    # Run audit (same as audit_all for consistency)
     state_init
-    for module in $(module_get_enabled); do
+
+    # Get enabled modules as array
+    local -a modules=()
+    while IFS= read -r m; do
+        modules+=("$m")
+    done < <(module_get_enabled)
+
+    # Count total including unavailable for progress
+    local unavailable_count=0
+    for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
+        [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]] && ((unavailable_count++)) || true
+    done
+
+    local total=$((${#modules[@]} + unavailable_count))
+    local current=0
+
+    # Enable quiet scan mode for cleaner output (same as audit mode)
+    export VPSSEC_QUIET_SCAN=1
+
+    print_msg ""
+    print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
+    print_msg ""
+
+    for module in "${modules[@]}"; do
+        ((current++)) || true
+        # Show progress line
+        local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+        printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
+
         audit_module "$module"
     done
+
+    # Record unavailable modules
+    for module in "${VPSSEC_MODULE_ORDER[@]}"; do
+        if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
+            ((current++)) || true
+            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+            printf "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
+        fi
+    done
+    _record_unavailable_modules
+
+    # Clear progress line
+    printf "\r                                                              \r"
+
+    # Disable quiet mode for summary output
+    export VPSSEC_QUIET_SCAN=0
 
     # Get available fixes
     local fixes=$(get_available_fixes)
     local fix_count=$(echo "$fixes" | jq 'length')
 
     if ((fix_count == 0)); then
-        print_ok "$(i18n 'common.safe') - $(i18n 'guide.complete')"
+        # Show full report same as audit mode
         report_generate_all
+        print_ok "$(i18n 'common.safe') - $(i18n 'guide.complete')"
         return 0
     fi
 
-    # Show results
+    # Show full report (same as audit mode)
+    report_print_details
     report_print_summary
 
     # Module/fix selection

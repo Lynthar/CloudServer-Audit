@@ -71,6 +71,7 @@ _timezone_check_current() {
     fi
 
     # Check if using UTC (common for cloud VPS but may not be desired)
+    # Always provide fix_id to allow user to change timezone in guide mode
     if [[ "$current_tz" == "UTC" || "$current_tz" == "Etc/UTC" ]]; then
         local check=$(create_check_json \
             "timezone.using_utc" \
@@ -78,9 +79,9 @@ _timezone_check_current() {
             "low" \
             "passed" \
             "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "$(i18n 'timezone.utc_note')" \
-            "" \
-            "")
+            "$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.fix_set_timezone')" \
+            "timezone.set_timezone")
         state_add_check "$check"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     else
@@ -90,9 +91,9 @@ _timezone_check_current() {
             "low" \
             "passed" \
             "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "" \
-            "" \
-            "")
+            "$(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.fix_set_timezone')" \
+            "timezone.set_timezone")
         state_add_check "$check"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     fi
@@ -294,15 +295,16 @@ _timezone_check_locale() {
         state_add_check "$check"
         print_warn "$(i18n 'timezone.locale_not_set')"
     else
+        # Provide fix_id to allow user to change locale in guide mode
         local check=$(create_check_json \
             "timezone.locale_ok" \
             "timezone" \
             "low" \
             "passed" \
             "$(i18n 'timezone.locale_ok' "locale=$current_locale")" \
-            "" \
-            "" \
-            "")
+            "$(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.fix_set_locale')" \
+            "timezone.set_locale")
         state_add_check "$check"
         print_ok "$(i18n 'timezone.locale_ok' "locale=$current_locale")"
     fi
