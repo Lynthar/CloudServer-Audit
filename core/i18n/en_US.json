@@ -211,7 +211,19 @@
     "check_permissive_rules": "Checking for overly permissive rules",
     "permissive_rules_found": "{count} overly permissive rules found",
     "no_permissive_rules": "No overly permissive rules detected",
-    "fix_restrict_rules": "Review and restrict firewall rules"
+    "fix_restrict_rules": "Review and restrict firewall rules",
+    "check_firewall_status": "Checking firewall status",
+    "firewall_active": "Firewall active ({type})",
+    "other_firewall_note": "Using non-UFW firewall, skipping UFW-specific checks",
+    "no_firewall": "No firewall protection detected",
+    "no_firewall_desc": "System has no active firewall, exposed to network attacks",
+    "installing_ufw": "Installing UFW...",
+    "enabling_ufw": "Enabling UFW...",
+    "ufw_enable_failed": "Failed to enable UFW",
+    "adding_ssh_rule": "Adding SSH rule before changing default policy...",
+    "default_deny_set": "Default incoming policy set to deny",
+    "default_deny_failed": "Failed to set default policy",
+    "ssh_rule_failed": "Failed to add SSH rule"
   },
   "update": {
     "title": "System Updates",
