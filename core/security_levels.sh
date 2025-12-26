@@ -61,6 +61,7 @@ declare -A FIX_SAFE=(
     ["kernel.enable_aslr"]="true"
     ["kernel.harden_kernel"]="true"
     ["kernel.disable_core_dump"]="true"
+    ["kernel.harden_ipv6"]="true"
 
     # Filesystem - permission fixes
     ["filesystem.fix_sensitive_perms"]="true"
@@ -100,6 +101,9 @@ declare -A FIX_SAFE=(
 declare -A FIX_CONFIRM=(
     # Network params may conflict with Docker/containers
     ["kernel.harden_network"]="May affect container networking if Docker/LXC is in use"
+
+    # SELinux - can cause service issues if policies not configured
+    ["baseline.selinux_set_enforcing"]="May cause service denials if SELinux policies not configured properly"
 
     # Requires service restart
     ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"
@@ -165,6 +169,9 @@ declare -A FIX_ALERT_ONLY=(
     # Cloud - all require manual review
     ["cloud.agents_found"]="Review if monitoring agents are needed"
     ["cloud.suspicious_agents"]="Investigate unknown agent processes"
+
+    # SELinux - requires reboot
+    ["baseline.selinux_enable"]="Enabling SELinux requires system reboot and may cause service issues"
 
     # Users - ALL are alert-only, NEVER auto-modify users
     ["users.uid0_found"]="CRITICAL: Review UID 0 accounts - may be backdoors"
@@ -261,9 +268,15 @@ declare -A CHECK_LEVEL=(
     ["nginx.catchall_exists"]="standard"
     ["nginx.no_catchall"]="standard"
 
-    # === Baseline Module ===
+    # === Baseline Module (MAC: SELinux/AppArmor) ===
     ["baseline.apparmor_enabled"]="standard"
     ["baseline.apparmor_disabled"]="standard"
+    ["baseline.apparmor_many_complain"]="strict"
+    ["baseline.selinux_enforcing"]="standard"
+    ["baseline.selinux_permissive"]="standard"
+    ["baseline.selinux_disabled"]="standard"
+    ["baseline.selinux_many_denials"]="strict"
+    ["baseline.no_mac_system"]="standard"
     ["baseline.unused_services"]="standard"
     ["baseline.no_unused_services"]="standard"
 
@@ -320,6 +333,14 @@ declare -A CHECK_LEVEL=(
     ["kernel.kernel_params_weak"]="standard"
     ["kernel.core_dump_ok"]="standard"
     ["kernel.core_dump_enabled"]="standard"
+    # IPv6 checks
+    ["kernel.ipv6_disabled"]="standard"
+    ["kernel.ipv6_secure"]="standard"
+    ["kernel.ipv6_insecure"]="standard"
+    ["kernel.ipv6_unused_insecure"]="standard"
+    ["kernel.ipv6_enabled_unused"]="standard"
+    ["kernel.ipv6_firewall_missing"]="standard"
+    ["kernel.ipv6_firewall_ok"]="standard"
 
     # === Filesystem Module ===
     ["filesystem.suspicious_suid"]="standard"
@@ -460,9 +481,15 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["nginx.catchall_exists"]="conditional"
     ["nginx.no_catchall"]="conditional"
 
-    # === Baseline Module - recommended ===
+    # === Baseline Module - recommended (MAC: SELinux/AppArmor) ===
     ["baseline.apparmor_enabled"]="recommended"
     ["baseline.apparmor_disabled"]="recommended"
+    ["baseline.apparmor_many_complain"]="recommended"
+    ["baseline.selinux_enforcing"]="recommended"
+    ["baseline.selinux_permissive"]="recommended"
+    ["baseline.selinux_disabled"]="recommended"
+    ["baseline.selinux_many_denials"]="info"
+    ["baseline.no_mac_system"]="recommended"
     ["baseline.unused_services"]="recommended"
     ["baseline.no_unused_services"]="recommended"
 
@@ -519,6 +546,14 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["kernel.kernel_params_weak"]="recommended"
     ["kernel.core_dump_ok"]="recommended"
     ["kernel.core_dump_enabled"]="recommended"
+    # IPv6 checks - recommended
+    ["kernel.ipv6_disabled"]="info"
+    ["kernel.ipv6_secure"]="recommended"
+    ["kernel.ipv6_insecure"]="recommended"
+    ["kernel.ipv6_unused_insecure"]="recommended"
+    ["kernel.ipv6_enabled_unused"]="info"
+    ["kernel.ipv6_firewall_missing"]="required"
+    ["kernel.ipv6_firewall_ok"]="recommended"
 
     # === Filesystem Module ===
     ["filesystem.suspicious_suid"]="recommended"
