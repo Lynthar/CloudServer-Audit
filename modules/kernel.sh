@@ -33,11 +33,21 @@ declare -a KERNEL_SECURITY_PARAMS=(
     "net.ipv4.tcp_syncookies:1:high:SYN flood protection"
     "net.ipv4.tcp_timestamps:1:low:TCP timestamps"
 
-    # Network security - IPv6
-    "net.ipv6.conf.all.accept_redirects:0:low:IPv6 ICMP redirects"
-    "net.ipv6.conf.default.accept_redirects:0:low:IPv6 ICMP redirects (default)"
-    "net.ipv6.conf.all.accept_source_route:0:low:IPv6 source routing"
-    "net.ipv6.conf.default.accept_source_route:0:low:IPv6 source routing (default)"
+    # Network security - IPv6 (Enhanced)
+    "net.ipv6.conf.all.accept_redirects:0:medium:IPv6 ICMP redirects"
+    "net.ipv6.conf.default.accept_redirects:0:medium:IPv6 ICMP redirects (default)"
+    "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"
+    "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"
+    "net.ipv6.conf.all.accept_ra:0:medium:IPv6 Router Advertisements (can be MITM vector)"
+    "net.ipv6.conf.default.accept_ra:0:medium:IPv6 Router Advertisements (default)"
+    "net.ipv6.conf.all.use_tempaddr:2:low:IPv6 privacy extensions (use temp addresses)"
+    "net.ipv6.conf.default.use_tempaddr:2:low:IPv6 privacy extensions (default)"
+    "net.ipv6.conf.all.max_addresses:1:low:Limit IPv6 addresses per interface"
+    "net.ipv6.conf.all.accept_ra_defrtr:0:low:Accept RA default router"
+    "net.ipv6.conf.all.accept_ra_pinfo:0:low:Accept RA prefix info"
+    "net.ipv6.conf.all.accept_ra_rtr_pref:0:low:Accept RA router preference"
+    "net.ipv6.conf.all.autoconf:0:low:IPv6 stateless autoconfiguration"
+    "net.ipv6.conf.all.dad_transmits:0:low:Duplicate address detection transmits"
 
     # Kernel security
     "kernel.randomize_va_space:2:high:ASLR (Address Space Layout Randomization)"
@@ -184,6 +194,119 @@ _kernel_ip_forward_needed() {
     return 1
 }
 
+# ==============================================================================
+# IPv6 Detection Functions
+# ==============================================================================
+
+# Check if IPv6 is enabled system-wide
+_kernel_ipv6_enabled() {
+    # Check kernel module
+    if [[ -d /proc/sys/net/ipv6 ]]; then
+        # Check if disabled via sysctl
+        local disabled=$(_kernel_get_sysctl "net.ipv6.conf.all.disable_ipv6")
+        [[ "$disabled" != "1" ]]
+        return $?
+    fi
+    return 1
+}
+
+# Check if IPv6 is actively used (has global addresses)
+_kernel_ipv6_in_use() {
+    # Check for global IPv6 addresses (not link-local fe80::)
+    ip -6 addr show scope global 2>/dev/null | grep -q "inet6" 2>/dev/null
+}
+
+# Get IPv6 statistics
+_kernel_ipv6_get_stats() {
+    local stats=""
+
+    # Count interfaces with IPv6
+    local iface_count=$(ip -6 addr show 2>/dev/null | grep -c "inet6" || echo "0")
+    stats+="interfaces:$iface_count;"
+
+    # Count global addresses
+    local global_count=$(ip -6 addr show scope global 2>/dev/null | grep -c "inet6" || echo "0")
+    stats+="global:$global_count;"
+
+    # Check if IPv6 forwarding is enabled
+    local forward=$(_kernel_get_sysctl "net.ipv6.conf.all.forwarding")
+    stats+="forwarding:${forward:-0};"
+
+    # Check for IPv6 default route
+    if ip -6 route show default 2>/dev/null | grep -q "default"; then
+        stats+="default_route:yes"
+    else
+        stats+="default_route:no"
+    fi
+
+    echo "$stats"
+}
+
+# Check for IPv6-specific security issues
+_kernel_ipv6_check_security() {
+    local issues=()
+
+    # 1. Check if IPv6 is enabled but not secured
+    if _kernel_ipv6_enabled; then
+        # Check Router Advertisements (MITM vector)
+        local accept_ra=$(_kernel_get_sysctl "net.ipv6.conf.all.accept_ra")
+        if [[ "$accept_ra" == "1" ]]; then
+            issues+=("accept_ra_enabled")
+        fi
+
+        # Check if forwarding is unexpectedly enabled
+        local forward=$(_kernel_get_sysctl "net.ipv6.conf.all.forwarding")
+        if [[ "$forward" == "1" ]] && ! _kernel_ip_forward_needed; then
+            issues+=("forwarding_enabled")
+        fi
+
+        # Check privacy extensions
+        local tempaddr=$(_kernel_get_sysctl "net.ipv6.conf.all.use_tempaddr")
+        if [[ "$tempaddr" != "2" ]]; then
+            issues+=("privacy_extensions_weak")
+        fi
+
+        # Check accept_redirects
+        local redirects=$(_kernel_get_sysctl "net.ipv6.conf.all.accept_redirects")
+        if [[ "$redirects" == "1" ]]; then
+            issues+=("accept_redirects_enabled")
+        fi
+    fi
+
+    echo "${issues[*]}"
+}
+
+# Check for dual-stack firewall consistency
+_kernel_ipv6_firewall_check() {
+    local result="unknown"
+
+    # Check if UFW is managing IPv6
+    if check_command ufw; then
+        if grep -q "IPV6=yes" /etc/default/ufw 2>/dev/null; then
+            result="ufw_ipv6_enabled"
+        else
+            result="ufw_ipv6_disabled"
+        fi
+    # Check if ip6tables has rules
+    elif check_command ip6tables; then
+        local rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" || echo "0")
+        if [[ "$rule_count" -gt 0 ]]; then
+            result="ip6tables_configured"
+        else
+            result="ip6tables_empty"
+        fi
+    # Check nftables
+    elif check_command nft; then
+        if nft list tables 2>/dev/null | grep -q "ip6\|inet"; then
+            result="nftables_ipv6_configured"
+        else
+            result="nftables_ipv6_missing"
+        fi
+    fi
+
+    echo "$result"
+}
+
 # Check core dump settings
 _kernel_check_core_dump() {
     local issues=()
@@ -246,6 +369,10 @@ kernel_audit() {
     print_item "$(i18n 'kernel.check_network_params')"
     _kernel_audit_network_params
 
+    # Check IPv6 security (dedicated section)
+    print_item "$(i18n 'kernel.check_ipv6')"
+    _kernel_audit_ipv6
+
     # Check kernel security parameters
     print_item "$(i18n 'kernel.check_kernel_params')"
     _kernel_audit_kernel_params
@@ -258,6 +385,127 @@ kernel_audit() {
     if [[ -z "$container_type" ]]; then
         print_item "$(i18n 'kernel.check_auditd')"
         _kernel_audit_auditd
+    fi
+}
+
+# ==============================================================================
+# IPv6 Audit Function
+# ==============================================================================
+
+_kernel_audit_ipv6() {
+    # Check if IPv6 is enabled
+    if ! _kernel_ipv6_enabled; then
+        local check=$(create_check_json \
+            "kernel.ipv6_disabled" \
+            "kernel" \
+            "low" \
+            "passed" \
+            "$(i18n 'kernel.ipv6_disabled')" \
+            "IPv6 is disabled system-wide (reduced attack surface)" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'kernel.ipv6_disabled')"
+        return
+    fi
+
+    # IPv6 is enabled - check if it's actively used
+    local ipv6_stats=$(_kernel_ipv6_get_stats)
+    local ipv6_in_use=$(_kernel_ipv6_in_use && echo "yes" || echo "no")
+    local ipv6_issues=$(_kernel_ipv6_check_security)
+    local ipv6_fw=$(_kernel_ipv6_firewall_check)
+
+    # Report IPv6 status
+    if [[ "$ipv6_in_use" == "yes" ]]; then
+        # IPv6 is actively used
+        local issue_count=$(echo "$ipv6_issues" | wc -w)
+
+        if [[ "$issue_count" -gt 0 ]]; then
+            local check=$(create_check_json \
+                "kernel.ipv6_insecure" \
+                "kernel" \
+                "medium" \
+                "failed" \
+                "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
+                "IPv6 in use with security issues: $ipv6_issues" \
+                "$(i18n 'kernel.fix_ipv6')" \
+                "kernel.harden_ipv6")
+            state_add_check "$check"
+            print_severity "medium" "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")"
+        else
+            local check=$(create_check_json \
+                "kernel.ipv6_secure" \
+                "kernel" \
+                "low" \
+                "passed" \
+                "$(i18n 'kernel.ipv6_secure')" \
+                "IPv6 enabled and properly secured" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'kernel.ipv6_secure')"
+        fi
+    else
+        # IPv6 enabled but not actively used
+        local issue_count=$(echo "$ipv6_issues" | wc -w)
+
+        if [[ "$issue_count" -gt 2 ]]; then
+            local check=$(create_check_json \
+                "kernel.ipv6_unused_insecure" \
+                "kernel" \
+                "low" \
+                "failed" \
+                "$(i18n 'kernel.ipv6_unused_insecure')" \
+                "IPv6 enabled but not used, with weak settings" \
+                "Consider disabling IPv6 or hardening settings" \
+                "kernel.harden_ipv6")
+            state_add_check "$check"
+            print_severity "low" "$(i18n 'kernel.ipv6_unused_insecure')"
+        else
+            local check=$(create_check_json \
+                "kernel.ipv6_enabled_unused" \
+                "kernel" \
+                "low" \
+                "passed" \
+                "$(i18n 'kernel.ipv6_enabled_unused')" \
+                "IPv6 enabled but not actively used" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_ok "$(i18n 'kernel.ipv6_enabled_unused')"
+        fi
+    fi
+
+    # Check IPv6 firewall consistency (only if IPv6 is in use)
+    if [[ "$ipv6_in_use" == "yes" ]]; then
+        case "$ipv6_fw" in
+            ufw_ipv6_disabled|ip6tables_empty|nftables_ipv6_missing)
+                local check=$(create_check_json \
+                    "kernel.ipv6_firewall_missing" \
+                    "kernel" \
+                    "high" \
+                    "failed" \
+                    "$(i18n 'kernel.ipv6_firewall_missing')" \
+                    "IPv6 is in use but firewall not configured for IPv6" \
+                    "Enable IPv6 in firewall configuration" \
+                    "")
+                state_add_check "$check"
+                print_severity "high" "$(i18n 'kernel.ipv6_firewall_missing')"
+                ;;
+            ufw_ipv6_enabled|ip6tables_configured|nftables_ipv6_configured)
+                local check=$(create_check_json \
+                    "kernel.ipv6_firewall_ok" \
+                    "kernel" \
+                    "low" \
+                    "passed" \
+                    "$(i18n 'kernel.ipv6_firewall_ok')" \
+                    "IPv6 firewall is configured" \
+                    "" \
+                    "")
+                state_add_check "$check"
+                print_ok "$(i18n 'kernel.ipv6_firewall_ok')"
+                ;;
+        esac
     fi
 }
 
@@ -618,6 +866,9 @@ kernel_fix() {
         kernel.harden_kernel)
             _kernel_fix_kernel_params
             ;;
+        kernel.harden_ipv6)
+            _kernel_fix_ipv6
+            ;;
         kernel.disable_core_dump)
             _kernel_fix_core_dump
             ;;
@@ -629,6 +880,49 @@ kernel_fix() {
             return 1
             ;;
     esac
+}
+
+# ==============================================================================
+# IPv6 Fix Function
+# ==============================================================================
+
+_kernel_fix_ipv6() {
+    print_info "$(i18n 'kernel.hardening_ipv6')"
+
+    local ipv6_params=(
+        "net.ipv6.conf.all.accept_redirects=0"
+        "net.ipv6.conf.default.accept_redirects=0"
+        "net.ipv6.conf.all.accept_source_route=0"
+        "net.ipv6.conf.default.accept_source_route=0"
+        "net.ipv6.conf.all.accept_ra=0"
+        "net.ipv6.conf.default.accept_ra=0"
+        "net.ipv6.conf.all.use_tempaddr=2"
+        "net.ipv6.conf.default.use_tempaddr=2"
+        "net.ipv6.conf.all.accept_ra_defrtr=0"
+        "net.ipv6.conf.all.accept_ra_pinfo=0"
+        "net.ipv6.conf.all.accept_ra_rtr_pref=0"
+    )
+
+    local fixed=0
+
+    for setting in "${ipv6_params[@]}"; do
+        local param="${setting%%=*}"
+        local value="${setting#*=}"
+
+        # Apply immediately
+        if sysctl -w "$param=$value" 2>/dev/null; then
+            _kernel_write_sysctl "$param" "$value"
+            ((fixed++)) || true
+        fi
+    done
+
+    if [[ "$fixed" -gt 0 ]]; then
+        print_ok "$(i18n 'kernel.ipv6_hardened' "count=$fixed")"
+        return 0
+    else
+        print_warn "$(i18n 'kernel.ipv6_harden_failed')"
+        return 1
+    fi
 }
 
 _kernel_fix_aslr() {
