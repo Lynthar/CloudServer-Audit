@@ -95,6 +95,10 @@ declare -A FIX_SAFE=(
     ["timezone.sync_time"]="true"
     ["timezone.set_rtc_utc"]="true"
     ["timezone.set_locale"]="true"
+
+    # Webapp - safe header configurations
+    ["webapp.nginx_server_tokens"]="true"
+    ["webapp.nginx_security_headers"]="true"
 )
 
 # Fixes requiring confirmation - medium risk
@@ -116,6 +120,11 @@ declare -A FIX_CONFIRM=(
 
     # Could break old SSH clients
     ["ssh.harden_algorithms"]="May break connections from older SSH clients"
+
+    # Webapp - SSL changes may affect connectivity
+    ["webapp.nginx_ssl_protocols"]="May break old browser/client connections"
+    ["webapp.nginx_ssl_ciphers"]="May break old browser/client connections"
+    ["webapp.nginx_hsts"]="Once enabled, browsers will refuse HTTP"
 )
 
 # Risky fixes - strict mode only, requires safeguards
@@ -181,6 +190,38 @@ declare -A FIX_ALERT_ONLY=(
     ["users.ssh_keys_perms"]="Fix SSH key file permissions"
     ["users.suspicious_names"]="Review suspicious usernames"
     ["users.unusual_home"]="Review unusual home directories"
+
+    # Malware - ALL are alert-only, NEVER auto-remove malware
+    ["malware.hidden_processes"]="CRITICAL: System may be compromised by rootkit"
+    ["malware.hidden_ports"]="CRITICAL: Investigate hidden network ports"
+    ["malware.ld_preload"]="CRITICAL: LD_PRELOAD hijacking detected"
+    ["malware.ld_so_preload"]="CRITICAL: Library injection detected"
+    ["malware.suspicious_lkm"]="CRITICAL: Kernel module anomaly detected"
+    ["malware.crypto_miner"]="Kill mining processes and investigate"
+    ["malware.mining_pool_connection"]="Block mining pool and remove malware"
+    ["malware.cpu_anomaly"]="Investigate high CPU processes"
+    ["malware.webshell"]="Remove webshell and investigate access logs"
+    ["malware.deleted_binary"]="CRITICAL: Investigate deleted binary process"
+    ["malware.memfd_execution"]="CRITICAL: Fileless malware detected"
+    ["malware.suspicious_path"]="Investigate processes from /tmp or /dev/shm"
+    ["malware.reverse_shell"]="CRITICAL: Reverse shell detected"
+    ["malware.c2_connection"]="Block suspicious outbound connections"
+    ["malware.unusual_outbound"]="Review unusual connection patterns"
+
+    # Webapp - some require manual configuration
+    ["webapp.nginx_directory_listing"]="Disable autoindex in Nginx config"
+    ["webapp.apache_server_signature"]="Configure Apache security settings"
+    ["webapp.apache_server_tokens"]="Configure Apache security settings"
+    ["webapp.apache_trace"]="Disable TRACE method in Apache"
+    ["webapp.apache_directory_index"]="Disable directory indexing in Apache"
+    ["webapp.apache_modules"]="Review and disable unnecessary modules"
+    ["webapp.php_security"]="Update php.ini security settings"
+    ["webapp.php_dangerous_functions"]="Add dangerous functions to disable_functions"
+    ["webapp.php_session"]="Update PHP session security settings"
+    ["webapp.php_open_basedir"]="Configure open_basedir restriction"
+    ["webapp.ssl_cert_expiry"]="Renew SSL certificates"
+    ["webapp.sensitive_files"]="Remove or protect sensitive files"
+    ["webapp.backup_files"]="Remove backup files from web root"
 )
 
 # ==============================================================================
@@ -393,6 +434,60 @@ declare -A CHECK_LEVEL=(
     ["timezone.rtc_local"]="standard"
     ["timezone.locale_ok"]="basic"
     ["timezone.locale_not_set"]="basic"
+
+    # === Malware Module ===
+    # Rootkit detection - strict mode only (can have false positives)
+    ["malware.hidden_processes"]="strict"
+    ["malware.hidden_ports"]="strict"
+    ["malware.ld_preload"]="strict"
+    ["malware.ld_so_preload"]="strict"
+    ["malware.suspicious_lkm"]="strict"
+    # Crypto miner detection - standard mode
+    ["malware.crypto_miner"]="standard"
+    ["malware.mining_pool_connection"]="standard"
+    ["malware.cpu_anomaly"]="standard"
+    # WebShell detection - standard mode
+    ["malware.webshell"]="standard"
+    # Suspicious process detection - standard mode
+    ["malware.deleted_binary"]="standard"
+    ["malware.memfd_execution"]="standard"
+    ["malware.suspicious_path"]="standard"
+    # Network anomaly detection - standard mode
+    ["malware.reverse_shell"]="standard"
+    ["malware.c2_connection"]="standard"
+    ["malware.unusual_outbound"]="standard"
+    # Clean status
+    ["malware.clean"]="basic"
+
+    # === Webapp Module ===
+    # Nginx checks
+    ["webapp.nginx_server_tokens"]="standard"
+    ["webapp.nginx_server_tokens_ok"]="standard"
+    ["webapp.nginx_security_headers"]="standard"
+    ["webapp.nginx_security_headers_ok"]="standard"
+    ["webapp.nginx_hsts_missing"]="standard"
+    ["webapp.nginx_directory_listing"]="standard"
+    ["webapp.nginx_weak_ssl"]="basic"
+    ["webapp.nginx_weak_ciphers"]="basic"
+    # Apache checks
+    ["webapp.apache_server_signature"]="standard"
+    ["webapp.apache_server_tokens"]="standard"
+    ["webapp.apache_trace_enabled"]="standard"
+    ["webapp.apache_directory_index"]="standard"
+    ["webapp.apache_dangerous_modules"]="standard"
+    # PHP checks
+    ["webapp.php_security_issues"]="standard"
+    ["webapp.php_dangerous_functions"]="standard"
+    ["webapp.php_session_security"]="standard"
+    ["webapp.php_open_basedir"]="standard"
+    # SSL/TLS checks
+    ["webapp.ssl_cert_expiry"]="basic"
+    # Exposure checks
+    ["webapp.sensitive_files"]="standard"
+    ["webapp.sensitive_files_ok"]="standard"
+    ["webapp.backup_files"]="standard"
+    # Status checks
+    ["webapp.no_webserver"]="basic"
 )
 
 # ==============================================================================
@@ -606,6 +701,48 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["timezone.rtc_local"]="recommended"
     ["timezone.locale_ok"]="info"
     ["timezone.locale_not_set"]="info"
+
+    # === Malware Module - all required (security critical) ===
+    ["malware.hidden_processes"]="required"
+    ["malware.hidden_ports"]="required"
+    ["malware.ld_preload"]="required"
+    ["malware.ld_so_preload"]="required"
+    ["malware.suspicious_lkm"]="required"
+    ["malware.crypto_miner"]="required"
+    ["malware.mining_pool_connection"]="required"
+    ["malware.cpu_anomaly"]="recommended"
+    ["malware.webshell"]="required"
+    ["malware.deleted_binary"]="required"
+    ["malware.memfd_execution"]="required"
+    ["malware.suspicious_path"]="recommended"
+    ["malware.reverse_shell"]="required"
+    ["malware.c2_connection"]="required"
+    ["malware.unusual_outbound"]="recommended"
+    ["malware.clean"]="info"
+
+    # === Webapp Module - conditional (only if webserver installed) ===
+    ["webapp.nginx_server_tokens"]="conditional"
+    ["webapp.nginx_server_tokens_ok"]="conditional"
+    ["webapp.nginx_security_headers"]="conditional"
+    ["webapp.nginx_security_headers_ok"]="conditional"
+    ["webapp.nginx_hsts_missing"]="conditional"
+    ["webapp.nginx_directory_listing"]="conditional"
+    ["webapp.nginx_weak_ssl"]="required"
+    ["webapp.nginx_weak_ciphers"]="required"
+    ["webapp.apache_server_signature"]="conditional"
+    ["webapp.apache_server_tokens"]="conditional"
+    ["webapp.apache_trace_enabled"]="conditional"
+    ["webapp.apache_directory_index"]="conditional"
+    ["webapp.apache_dangerous_modules"]="conditional"
+    ["webapp.php_security_issues"]="conditional"
+    ["webapp.php_dangerous_functions"]="conditional"
+    ["webapp.php_session_security"]="conditional"
+    ["webapp.php_open_basedir"]="conditional"
+    ["webapp.ssl_cert_expiry"]="required"
+    ["webapp.sensitive_files"]="required"
+    ["webapp.sensitive_files_ok"]="required"
+    ["webapp.backup_files"]="recommended"
+    ["webapp.no_webserver"]="info"
 )
 
 # ==============================================================================
