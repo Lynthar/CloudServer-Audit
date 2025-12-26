@@ -24,8 +24,9 @@ fi
 #   2. Access Control: users, ssh
 #   3. Network Security: ufw, fail2ban
 #   4. System Hardening: update, kernel, filesystem, baseline
-#   5. Service Security: docker, nginx, cloudflared
-#   6. Operations & Compliance: logging, backup, alerts
+#   5. Service Security: docker, nginx, cloudflared, webapp
+#   6. Security Scanning: malware
+#   7. Operations & Compliance: logging, backup, alerts
 declare -a VPSSEC_MODULE_ORDER=(
     # System Basics
     "preflight"
@@ -46,6 +47,9 @@ declare -a VPSSEC_MODULE_ORDER=(
     "docker"
     "nginx"
     "cloudflared"
+    "webapp"
+    # Security Scanning
+    "malware"
     # Operations & Compliance
     "logging"
     "backup"
@@ -68,6 +72,8 @@ declare -A VPSSEC_MODULE_CATEGORY=(
     ["docker"]="services"
     ["nginx"]="services"
     ["cloudflared"]="services"
+    ["webapp"]="services"
+    ["malware"]="security"
     ["logging"]="operations"
     ["backup"]="operations"
     ["alerts"]="operations"
@@ -80,6 +86,7 @@ declare -a VPSSEC_CATEGORY_ORDER=(
     "network"
     "hardening"
     "services"
+    "security"
     "operations"
 )
 
@@ -151,6 +158,14 @@ module_available() {
             ;;
         alerts)
             # Always available - generates config
+            return 0
+            ;;
+        webapp)
+            # Available if nginx or apache is installed
+            (check_command nginx || check_command apache2 || check_command httpd) || return 1
+            ;;
+        malware)
+            # Always available - uses built-in Linux tools
             return 0
             ;;
     esac
