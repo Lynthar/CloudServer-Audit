@@ -1,6 +1,6 @@
 # CloudServer Audit - VPS Security Check & Hardening Tool
 
-English | [简体中文](README_zh.md)
+English | [简体中文](README_zh.md) | [User Guide](docs/USER_GUIDE.md)
 
 A VPS security auditing and hardening script designed for individuals and small-scale operations.
 
@@ -10,9 +10,10 @@ A VPS security auditing and hardening script designed for individuals and small-
 - **Guided Hardening Mode (guide)**: Interactive security hardening wizard with step-by-step guidance
 - **Modular Selection**: Choose which security modules to run by category or individually
 - **One-Click Rollback (rollback)**: Automatic backup before changes with quick recovery capability
-- **Tree-Style Output**: Compact hierarchical display with hints for technical checks
+- **Dual-Column Output**: Clean, compact dual-column layout for better information density
 - **Multi-language Support**: Chinese/English interface with i18n support
 - **Malware Detection**: Lightweight rootkit, crypto miner, and webshell scanning
+- **Comprehensive User Guide**: Detailed documentation for every detection item with fix instructions
 
 ## Supported Systems
 
@@ -148,24 +149,23 @@ sudo ./vpssec audit --include=ssh,ufw,malware
 
 ## Output Format
 
-vpssec uses a tree-style output for compact, readable results:
+vpssec uses a clean dual-column layout for compact, readable results:
 
 ```
-├─ Access Control
-│  ├─ User Security
-│  │  ├─ ✓ No extra UID 0 accounts
-│  │  └─ ✗ Empty password users detected
-│  │     ↳ Users without passwords can login without authentication
-│  └─ SSH Security
-│     ├─ ✓ Password authentication disabled
-│     ├─ ✓ Root login disabled
-│     └─ ● MaxAuthTries too high
-├─ Security Scanning
-│  └─ Malware Detection
-│     ├─ ✓ No hidden processes
-│     ├─ ✓ No crypto miners found
-│     └─ ✗ Processes with deleted binaries
-│        ↳ Program file was deleted but still running - malware often deletes itself
+─── Access Control ──────────────────────────────────────────────
+
+  User Security                          │  SSH Security
+    ✓ No extra UID 0 accounts            │    ✓ Password auth disabled
+    ✗ Empty password users detected      │    ✓ Root login disabled
+    ✓ System accounts secured            │    ● MaxAuthTries too high
+
+─── Security Scanning ───────────────────────────────────────────
+
+  Malware Detection
+    ✓ No hidden processes
+    ✓ No crypto miners found
+    ✗ Processes with deleted binaries
+
 ────────────────────────────────────────────────────────
   Score: 72/100
 
@@ -177,7 +177,8 @@ vpssec uses a tree-style output for compact, readable results:
 - `✗` Red: High severity issue
 - `●` Yellow: Medium severity issue
 - `○` Blue: Low severity issue
-- `↳` Hint: Brief explanation for technical checks
+
+For detailed explanations of each check and fix instructions, see the [User Guide](docs/USER_GUIDE.md).
 
 ## Score Categories
 
