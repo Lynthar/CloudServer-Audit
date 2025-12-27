@@ -250,11 +250,136 @@ _get_category_modules() {
     echo "${result[@]}"
 }
 
-# Print detailed test results (before summary) - tree-style organized by category
+# Strip ANSI escape codes for calculating visible width
+_strip_ansi() {
+    echo -e "$1" | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+# Get visible string length (without ANSI codes)
+_visible_len() {
+    local stripped=$(_strip_ansi "$1")
+    echo ${#stripped}
+}
+
+# Render a single module's checks to an array of lines
+# Usage: _render_module_lines <module> <checks_json> <is_last_in_col> <col_width>
+# Output: Lines are stored in REPLY_LINES array
+_render_module_lines() {
+    local module="$1"
+    local checks="$2"
+    local is_last="$3"
+    local col_width="${4:-40}"
+
+    REPLY_LINES=()
+
+    local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+    local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
+
+    # Module header
+    local mod_prefix="├─"
+    local check_line_prefix="│  "
+    if [[ "$is_last" == "1" ]]; then
+        mod_prefix="└─"
+        check_line_prefix="   "
+    fi
+
+    REPLY_LINES+=("${mod_prefix} ${BOLD}${CYAN}${mod_title}${NC}")
+
+    # Get checks
+    local -a check_items=()
+    while IFS= read -r check; do
+        [[ -z "$check" ]] && continue
+        check_items+=("$check")
+    done < <(echo "$mod_checks" | jq -c '.[]')
+
+    local check_count=${#check_items[@]}
+    local check_idx=0
+
+    for check in "${check_items[@]}"; do
+        ((check_idx++)) || true
+
+        local status=$(echo "$check" | jq -r '.status')
+        local severity=$(echo "$check" | jq -r '.severity')
+        local title=$(echo "$check" | jq -r '.title')
+        local check_id=$(echo "$check" | jq -r '.id')
+
+        # Truncate title if too long
+        local max_title_len=$((col_width - 8))
+        local vis_title=$(_strip_ansi "$title")
+        if ((${#vis_title} > max_title_len)); then
+            title="${vis_title:0:$((max_title_len-2))}.."
+        fi
+
+        local check_prefix="${check_line_prefix}├─"
+        local hint_prefix="${check_line_prefix}│  "
+        if ((check_idx == check_count)); then
+            check_prefix="${check_line_prefix}└─"
+            hint_prefix="${check_line_prefix}   "
+        fi
+
+        if [[ "$status" == "passed" ]]; then
+            REPLY_LINES+=("${check_prefix} ${GREEN}✓${NC} ${title}")
+        else
+            case "$severity" in
+                high)   REPLY_LINES+=("${check_prefix} ${RED}✗${NC} ${title}") ;;
+                medium) REPLY_LINES+=("${check_prefix} ${YELLOW}●${NC} ${title}") ;;
+                low)    REPLY_LINES+=("${check_prefix} ${BLUE}○${NC} ${title}") ;;
+            esac
+        fi
+    done
+}
+
+# Print two columns side by side
+_print_dual_columns() {
+    local -n _left_arr=$1
+    local -n _right_arr=$2
+    local col_width="$3"
+    local cat_continued="$4"  # Whether category continues below
+
+    local left_count=${#_left_arr[@]}
+    local right_count=${#_right_arr[@]}
+    local max_count=$((left_count > right_count ? left_count : right_count))
+
+    local prefix="│  "
+    [[ "$cat_continued" != "1" ]] && prefix="   "
+
+    local idx
+    for ((idx=0; idx<max_count; idx++)); do
+        local left_line=""
+        local right_line=""
+
+        if ((idx < left_count)); then
+            left_line="${_left_arr[$idx]}"
+        fi
+        if ((idx < right_count)); then
+            right_line="${_right_arr[$idx]}"
+        fi
+
+        # Pad left column to fixed width
+        local left_visible=$(_strip_ansi "$left_line")
+        local pad_needed=$((col_width - ${#left_visible}))
+        local padding=""
+        ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
+
+        if [[ -n "$right_line" ]]; then
+            echo -e "${prefix}${left_line}${padding}${DIM}│${NC} ${right_line}"
+        else
+            echo -e "${prefix}${left_line}"
+        fi
+    done
+}
+
+# Print detailed test results - dual column layout
 report_print_details() {
     local checks=$(state_get_checks)
     local total_categories=${#VPSSEC_CATEGORY_ORDER[@]}
     local cat_idx=0
+
+    # Get terminal width, default to 100 if not available
+    local term_width=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
+    local col_width=$(( (term_width - 10) / 2 ))
+    ((col_width < 35)) && col_width=35
+    ((col_width > 50)) && col_width=50
 
     print_msg ""
 
@@ -276,94 +401,62 @@ report_print_details() {
         [[ ${#active_modules[@]} -eq 0 ]] && continue
 
         # Category connector
-        local cat_prefix=""
+        local cat_prefix="├─"
+        local cat_continued="1"
         if ((cat_idx == total_categories)); then
             cat_prefix="└─"
-        else
-            cat_prefix="├─"
+            cat_continued="0"
         fi
 
         # Print category header
         print_msg "${BOLD}${MAGENTA}${cat_prefix} ${category_title}${NC}"
 
-        # Print modules in this category
         local mod_count=${#active_modules[@]}
-        local mod_idx=0
 
-        for module in "${active_modules[@]}"; do
-            ((mod_idx++)) || true
-            local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
-            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-
-            # Module connector
-            local mod_prefix
-            local check_line_prefix
-            if ((cat_idx == total_categories)); then
-                if ((mod_idx == mod_count)); then
-                    mod_prefix="   └─"
-                    check_line_prefix="      "
-                else
-                    mod_prefix="   ├─"
-                    check_line_prefix="   │  "
-                fi
-            else
-                if ((mod_idx == mod_count)); then
-                    mod_prefix="│  └─"
-                    check_line_prefix="│     "
-                else
-                    mod_prefix="│  ├─"
-                    check_line_prefix="│  │  "
-                fi
-            fi
-
-            print_msg "${mod_prefix} ${BOLD}${CYAN}${mod_title}${NC}"
-
-            # Get checks for this module and build array
-            local -a check_items=()
-            while IFS= read -r check; do
-                [[ -z "$check" ]] && continue
-                check_items+=("$check")
-            done < <(echo "$mod_checks" | jq -c '.[]')
-
-            local check_count=${#check_items[@]}
-            local check_idx=0
-
-            for check in "${check_items[@]}"; do
-                ((check_idx++)) || true
-
-                local status=$(echo "$check" | jq -r '.status')
-                local severity=$(echo "$check" | jq -r '.severity')
-                local title=$(echo "$check" | jq -r '.title')
-                local check_id=$(echo "$check" | jq -r '.id')
-
-                # Check connector
-                local check_prefix
-                local hint_prefix
-                if ((check_idx == check_count)); then
-                    check_prefix="${check_line_prefix}└─"
-                    hint_prefix="${check_line_prefix}   "
-                else
-                    check_prefix="${check_line_prefix}├─"
-                    hint_prefix="${check_line_prefix}│  "
-                fi
-
-                if [[ "$status" == "passed" ]]; then
-                    echo -e "${check_prefix} ${GREEN}✓${NC} ${title}"
-                else
-                    case "$severity" in
-                        high)   echo -e "${check_prefix} ${RED}✗${NC} ${title}" ;;
-                        medium) echo -e "${check_prefix} ${YELLOW}●${NC} ${title}" ;;
-                        low)    echo -e "${check_prefix} ${BLUE}○${NC} ${title}" ;;
-                    esac
-                    # Try to get hint for this check
-                    local hint_key="${check_id##*.}_hint"
-                    local hint=$(i18n "${module}.${hint_key}" 2>/dev/null || echo "")
-                    if [[ -n "$hint" && "$hint" != "${module}.${hint_key}" ]]; then
-                        echo -e "${hint_prefix}${DIM}↳ ${hint}${NC}"
-                    fi
-                fi
+        if ((mod_count == 1)); then
+            # Single module - simple output
+            local module="${active_modules[0]}"
+            _render_module_lines "$module" "$checks" "1" "$col_width"
+            local prefix="│  "
+            [[ "$cat_continued" != "1" ]] && prefix="   "
+            for line in "${REPLY_LINES[@]}"; do
+                echo -e "${prefix}${line}"
             done
-        done
+        elif ((mod_count == 2)); then
+            # Two modules - side by side
+            _render_module_lines "${active_modules[0]}" "$checks" "1" "$col_width"
+            local -a left_lines=("${REPLY_LINES[@]}")
+
+            _render_module_lines "${active_modules[1]}" "$checks" "1" "$col_width"
+            local -a right_lines=("${REPLY_LINES[@]}")
+
+            _print_dual_columns left_lines right_lines "$col_width" "$cat_continued"
+        else
+            # More than 2 modules - pair them up
+            local i=0
+            while ((i < mod_count)); do
+                local is_last_pair="0"
+                ((i + 2 >= mod_count)) && is_last_pair="1"
+
+                _render_module_lines "${active_modules[$i]}" "$checks" "$is_last_pair" "$col_width"
+                local -a left_lines=("${REPLY_LINES[@]}")
+
+                if ((i + 1 < mod_count)); then
+                    _render_module_lines "${active_modules[$((i+1))]}" "$checks" "$is_last_pair" "$col_width"
+                    local -a right_lines=("${REPLY_LINES[@]}")
+                    _print_dual_columns left_lines right_lines "$col_width" "$cat_continued"
+                else
+                    # Odd module - print alone
+                    local prefix="│  "
+                    [[ "$cat_continued" != "1" ]] && prefix="   "
+                    for line in "${left_lines[@]}"; do
+                        echo -e "${prefix}${line}"
+                    done
+                fi
+
+                ((i += 2))
+            done
+        fi
     done
 
     print_msg ""
