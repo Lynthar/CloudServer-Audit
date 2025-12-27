@@ -1,40 +1,20 @@
 #!/usr/bin/env bash
 # vpssec - VPS Security Check & Hardening Tool
-# Security level definitions and fix safety configuration
+# Fix safety classification and score categories
 # Copyright (c) 2024
-
-# ==============================================================================
-# Security Level Definitions
-# ==============================================================================
-#
-# Three preset security levels:
-#   basic    - Essential checks, no auto-fixes, suitable for first-time users
-#   standard - Balanced security with safe auto-fixes (default)
-#   strict   - Maximum security, comprehensive checks, requires confirmation
-#
-# ==============================================================================
-
-# Available security levels
-declare -a VPSSEC_SECURITY_LEVELS=("basic" "standard" "strict")
-
-# Default security level
-VPSSEC_DEFAULT_LEVEL="standard"
-
-# Current security level (set at runtime)
-VPSSEC_SECURITY_LEVEL="${VPSSEC_SECURITY_LEVEL:-$VPSSEC_DEFAULT_LEVEL}"
 
 # ==============================================================================
 # Fix Safety Classifications
 # ==============================================================================
 #
-# SAFE        - Can be auto-fixed without special confirmation
-# CONFIRM     - Requires user confirmation before fixing
-# RISKY       - Only in strict mode, requires explicit confirmation + safeguards
-# ALERT_ONLY  - No auto-fix available, only alert user
+# FIX_SAFE       - Can be auto-fixed in guide mode
+# FIX_CONFIRM    - Requires user confirmation before fixing
+# FIX_RISKY      - High-risk, requires explicit confirmation + safeguards
+# FIX_ALERT_ONLY - No auto-fix available, only alert user
 #
 # ==============================================================================
 
-# Safe fixes - can be auto-applied in standard/strict modes
+# Safe fixes - can be auto-applied in guide mode
 declare -A FIX_SAFE=(
     # Fail2ban - service management and config
     ["fail2ban.install"]="true"
@@ -57,7 +37,7 @@ declare -A FIX_SAFE=(
     ["logging.enable_auditd"]="true"
     ["logging.setup_audit_rules"]="true"
 
-    # Kernel - sysctl hardening (except network in containers)
+    # Kernel - sysctl hardening
     ["kernel.enable_aslr"]="true"
     ["kernel.harden_kernel"]="true"
     ["kernel.disable_core_dump"]="true"
@@ -127,7 +107,7 @@ declare -A FIX_CONFIRM=(
     ["webapp.nginx_hsts"]="Once enabled, browsers will refuse HTTP"
 )
 
-# Risky fixes - strict mode only, requires safeguards
+# Risky fixes - requires safeguards
 declare -A FIX_RISKY=(
     # Can lock user out of SSH
     ["ssh.disable_password_auth"]="Can lock you out if SSH key not configured properly"
@@ -225,280 +205,14 @@ declare -A FIX_ALERT_ONLY=(
 )
 
 # ==============================================================================
-# Check Level Classification
-# ==============================================================================
-#
-# Defines which checks are included in each security level
-# Format: check_id -> minimum level (basic, standard, strict)
-#
-# ==============================================================================
-
-declare -A CHECK_LEVEL=(
-    # === SSH Module ===
-    # Basic level - core SSH security
-    ["ssh.password_auth_enabled"]="basic"
-    ["ssh.password_auth_disabled"]="basic"
-    ["ssh.root_login_enabled"]="basic"
-    ["ssh.root_login_disabled"]="basic"
-    ["ssh.pubkey_enabled"]="basic"
-    ["ssh.pubkey_disabled"]="basic"
-    ["ssh.admin_user_exists"]="basic"
-    ["ssh.no_admin_user"]="basic"
-    ["ssh.empty_password_allowed"]="basic"
-    ["ssh.empty_password_denied"]="basic"
-
-    # Standard level - additional SSH hardening
-    ["ssh.admin_no_key"]="standard"
-    ["ssh.authkeys_permissions"]="standard"
-    ["ssh.max_auth_tries_ok"]="standard"
-    ["ssh.max_auth_tries_high"]="standard"
-    ["ssh.login_grace_time_ok"]="standard"
-    ["ssh.login_grace_time_long"]="standard"
-    ["ssh.x11_forwarding_disabled"]="standard"
-    ["ssh.x11_forwarding_enabled"]="standard"
-    ["ssh.weak_algorithms"]="standard"
-    ["ssh.algorithms_ok"]="standard"
-
-    # === UFW Module ===
-    ["ufw.not_installed"]="basic"
-    ["ufw.enabled"]="basic"
-    ["ufw.disabled"]="basic"
-    ["ufw.default_deny"]="standard"
-    ["ufw.default_accept"]="standard"
-    ["ufw.ssh_allowed"]="standard"
-    ["ufw.no_ssh_rule"]="standard"
-
-    # === Fail2ban Module ===
-    ["fail2ban.not_installed"]="basic"
-    ["fail2ban.installed"]="basic"
-    ["fail2ban.service_active"]="standard"
-    ["fail2ban.service_inactive"]="standard"
-    ["fail2ban.service_not_enabled"]="standard"
-    ["fail2ban.ssh_jail_enabled"]="standard"
-    ["fail2ban.ssh_jail_disabled"]="standard"
-    ["fail2ban.maxretry_high"]="strict"
-    ["fail2ban.custom_config"]="strict"
-    ["fail2ban.default_config"]="strict"
-
-    # === Update Module ===
-    ["update.apt_available"]="basic"
-    ["update.apt_locked"]="basic"
-    ["update.no_updates"]="basic"
-    ["update.updates_available"]="basic"
-    ["update.unattended_enabled"]="standard"
-    ["update.unattended_disabled"]="standard"
-    ["update.unattended_not_installed"]="standard"
-
-    # === Docker Module ===
-    ["docker.not_installed"]="basic"
-    ["docker.exposed_ports"]="standard"
-    ["docker.no_exposed_ports"]="standard"
-    ["docker.privileged_containers"]="standard"
-    ["docker.no_privileged"]="standard"
-    ["docker.all_root_containers"]="strict"
-    ["docker.some_root_containers"]="strict"
-    ["docker.no_root_containers"]="strict"
-    ["docker.containers_with_caps"]="strict"
-    ["docker.no_extra_caps"]="strict"
-    ["docker.no_live_restore"]="standard"
-    ["docker.no_new_privileges_disabled"]="standard"
-    ["docker.daemon_secure"]="standard"
-
-    # === Nginx Module ===
-    ["nginx.not_installed"]="basic"
-    ["nginx.catchall_exists"]="standard"
-    ["nginx.no_catchall"]="standard"
-
-    # === Baseline Module (MAC: SELinux/AppArmor) ===
-    ["baseline.apparmor_enabled"]="standard"
-    ["baseline.apparmor_disabled"]="standard"
-    ["baseline.apparmor_many_complain"]="strict"
-    ["baseline.selinux_enforcing"]="standard"
-    ["baseline.selinux_permissive"]="standard"
-    ["baseline.selinux_disabled"]="standard"
-    ["baseline.selinux_many_denials"]="strict"
-    ["baseline.no_mac_system"]="standard"
-    ["baseline.unused_services"]="standard"
-    ["baseline.no_unused_services"]="standard"
-
-    # === Logging Module ===
-    ["logging.journald_persistent"]="basic"
-    ["logging.journald_volatile"]="basic"
-    ["logging.logrotate_ok"]="standard"
-    ["logging.logrotate_missing"]="standard"
-    ["logging.logrotate_not_configured"]="standard"
-    ["logging.auditd_configured"]="strict"
-    ["logging.auditd_no_rules"]="strict"
-    ["logging.auditd_inactive"]="strict"
-    ["logging.auditd_not_installed"]="strict"
-    ["logging.ssh_logs_ok"]="basic"
-    ["logging.ssh_many_failures"]="basic"
-    ["logging.ssh_some_failures"]="basic"
-    ["logging.sudo_logging_ok"]="standard"
-    ["logging.sudo_no_events"]="standard"
-
-    # === Cloudflared Module ===
-    ["cloudflared.not_installed"]="basic"
-    ["cloudflared.service_active"]="standard"
-    ["cloudflared.service_inactive"]="standard"
-    ["cloudflared.tunnel_running"]="standard"
-    ["cloudflared.config_ok"]="standard"
-    ["cloudflared.config_issues"]="standard"
-    ["cloudflared.no_config"]="standard"
-    ["cloudflared.tunnels_configured"]="standard"
-    ["cloudflared.no_tunnels"]="standard"
-
-    # === Backup Module ===
-    ["backup.no_tools"]="standard"
-    ["backup.tools_installed"]="standard"
-    ["backup.no_schedule"]="standard"
-    ["backup.scheduled"]="standard"
-    ["backup.critical_paths"]="standard"
-
-    # === Alerts Module ===
-    ["alerts.configured"]="strict"
-    ["alerts.not_configured"]="strict"
-    ["alerts.no_config"]="strict"
-    ["alerts.capabilities_ok"]="strict"
-    ["alerts.no_capabilities"]="strict"
-
-    # === Kernel Module ===
-    ["kernel.aslr_full"]="basic"
-    ["kernel.aslr_partial"]="basic"
-    ["kernel.aslr_disabled"]="basic"
-    ["kernel.aslr_unknown"]="basic"
-    ["kernel.network_params_high"]="standard"
-    ["kernel.network_params_medium"]="standard"
-    ["kernel.network_params_ok"]="standard"
-    ["kernel.kernel_params_ok"]="standard"
-    ["kernel.kernel_params_weak"]="standard"
-    ["kernel.core_dump_ok"]="standard"
-    ["kernel.core_dump_enabled"]="standard"
-    # IPv6 checks
-    ["kernel.ipv6_disabled"]="standard"
-    ["kernel.ipv6_secure"]="standard"
-    ["kernel.ipv6_insecure"]="standard"
-    ["kernel.ipv6_unused_insecure"]="standard"
-    ["kernel.ipv6_enabled_unused"]="standard"
-    ["kernel.ipv6_firewall_missing"]="standard"
-    ["kernel.ipv6_firewall_ok"]="standard"
-
-    # === Filesystem Module ===
-    ["filesystem.suspicious_suid"]="standard"
-    ["filesystem.suid_ok"]="standard"
-    ["filesystem.suspicious_sgid"]="strict"
-    ["filesystem.sgid_ok"]="strict"
-    ["filesystem.world_writable"]="standard"
-    ["filesystem.no_world_writable"]="standard"
-    ["filesystem.no_owner"]="standard"
-    ["filesystem.owner_ok"]="standard"
-    ["filesystem.sensitive_perms_wrong"]="basic"
-    ["filesystem.sensitive_perms_ok"]="basic"
-    ["filesystem.tmp_mount_ok"]="strict"
-    ["filesystem.tmp_not_separate"]="strict"
-    ["filesystem.tmp_mount_missing_opts"]="strict"
-    ["filesystem.umask_ok"]="standard"
-    ["filesystem.umask_default"]="standard"
-    ["filesystem.umask_weak"]="standard"
-
-    # === Cloud Module ===
-    ["cloud.provider_detected"]="basic"
-    ["cloud.provider_unknown"]="basic"
-    ["cloud.agents_found"]="standard"
-    ["cloud.no_known_agents"]="standard"
-    ["cloud.suspicious_agents"]="strict"
-
-    # === Users Module ===
-    ["users.uid0_found"]="basic"
-    ["users.uid0_ok"]="basic"
-    ["users.empty_password"]="basic"
-    ["users.no_empty_password"]="basic"
-    ["users.nopasswd_sudo"]="basic"
-    ["users.system_with_shell"]="standard"
-    ["users.sudo_users"]="standard"
-    ["users.recent_users"]="standard"
-    ["users.ssh_keys_perms"]="standard"
-    ["users.ssh_keys_info"]="standard"
-    ["users.suspicious_names"]="strict"
-    ["users.unusual_home"]="strict"
-
-    # === Timezone Module ===
-    ["timezone.configured"]="basic"
-    ["timezone.not_configured"]="basic"
-    ["timezone.using_utc"]="basic"
-    ["timezone.ntp_synced"]="basic"
-    ["timezone.ntp_not_synced"]="basic"
-    ["timezone.ntp_disabled"]="basic"
-    ["timezone.time_accurate"]="basic"
-    ["timezone.time_drift"]="basic"
-    ["timezone.rtc_local"]="standard"
-    ["timezone.locale_ok"]="basic"
-    ["timezone.locale_not_set"]="basic"
-
-    # === Malware Module ===
-    # Rootkit detection - strict mode only (can have false positives)
-    ["malware.hidden_processes"]="strict"
-    ["malware.hidden_ports"]="strict"
-    ["malware.ld_preload"]="strict"
-    ["malware.ld_so_preload"]="strict"
-    ["malware.suspicious_lkm"]="strict"
-    # Crypto miner detection - standard mode
-    ["malware.crypto_miner"]="standard"
-    ["malware.mining_pool_connection"]="standard"
-    ["malware.cpu_anomaly"]="standard"
-    # WebShell detection - standard mode
-    ["malware.webshell"]="standard"
-    # Suspicious process detection - standard mode
-    ["malware.deleted_binary"]="standard"
-    ["malware.memfd_execution"]="standard"
-    ["malware.suspicious_path"]="standard"
-    # Network anomaly detection - standard mode
-    ["malware.reverse_shell"]="standard"
-    ["malware.c2_connection"]="standard"
-    ["malware.unusual_outbound"]="standard"
-    # Clean status
-    ["malware.clean"]="basic"
-
-    # === Webapp Module ===
-    # Nginx checks
-    ["webapp.nginx_server_tokens"]="standard"
-    ["webapp.nginx_server_tokens_ok"]="standard"
-    ["webapp.nginx_security_headers"]="standard"
-    ["webapp.nginx_security_headers_ok"]="standard"
-    ["webapp.nginx_hsts_missing"]="standard"
-    ["webapp.nginx_directory_listing"]="standard"
-    ["webapp.nginx_weak_ssl"]="basic"
-    ["webapp.nginx_weak_ciphers"]="basic"
-    # Apache checks
-    ["webapp.apache_server_signature"]="standard"
-    ["webapp.apache_server_tokens"]="standard"
-    ["webapp.apache_trace_enabled"]="standard"
-    ["webapp.apache_directory_index"]="standard"
-    ["webapp.apache_dangerous_modules"]="standard"
-    # PHP checks
-    ["webapp.php_security_issues"]="standard"
-    ["webapp.php_dangerous_functions"]="standard"
-    ["webapp.php_session_security"]="standard"
-    ["webapp.php_open_basedir"]="standard"
-    # SSL/TLS checks
-    ["webapp.ssl_cert_expiry"]="basic"
-    # Exposure checks
-    ["webapp.sensitive_files"]="standard"
-    ["webapp.sensitive_files_ok"]="standard"
-    ["webapp.backup_files"]="standard"
-    # Status checks
-    ["webapp.no_webserver"]="basic"
-)
-
-# ==============================================================================
 # Check Score Categories
 # ==============================================================================
 #
 # Defines how each check affects the security score:
 #   required     - Always counts in score (core security)
-#   recommended  - Counts if component is installed, deduct for missing config
+#   recommended  - Counts if component is installed
 #   conditional  - Only counts if the component is installed
-#   optional     - Only counts in strict mode
+#   optional     - Counts with lower weight
 #   info         - Never affects score (informational only)
 #
 # ==============================================================================
@@ -530,10 +244,14 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["ufw.not_installed"]="required"
     ["ufw.enabled"]="required"
     ["ufw.disabled"]="required"
+    ["ufw.firewall_active"]="required"
+    ["ufw.no_firewall"]="required"
     ["ufw.default_deny"]="recommended"
     ["ufw.default_accept"]="recommended"
     ["ufw.ssh_allowed"]="recommended"
     ["ufw.no_ssh_rule"]="recommended"
+    ["ufw.permissive_rules"]="recommended"
+    ["ufw.rules_ok"]="recommended"
 
     # === Fail2ban Module - recommended ===
     ["fail2ban.not_installed"]="recommended"
@@ -746,39 +464,8 @@ declare -A CHECK_SCORE_CATEGORY=(
 )
 
 # ==============================================================================
-# Security Level Helper Functions
+# Fix Safety Helper Functions
 # ==============================================================================
-
-# Check if a security level is valid
-_level_is_valid() {
-    local level="$1"
-    for l in "${VPSSEC_SECURITY_LEVELS[@]}"; do
-        [[ "$l" == "$level" ]] && return 0
-    done
-    return 1
-}
-
-# Get numeric value for security level (for comparison)
-_level_to_num() {
-    local level="$1"
-    case "$level" in
-        basic)    echo 1 ;;
-        standard) echo 2 ;;
-        strict)   echo 3 ;;
-        *)        echo 0 ;;
-    esac
-}
-
-# Check if current level includes a check
-level_includes_check() {
-    local check_id="$1"
-    local check_level="${CHECK_LEVEL[$check_id]:-basic}"
-
-    local current_num=$(_level_to_num "$VPSSEC_SECURITY_LEVEL")
-    local check_num=$(_level_to_num "$check_level")
-
-    [[ $current_num -ge $check_num ]]
-}
 
 # Get fix safety classification
 get_fix_safety() {
@@ -810,158 +497,41 @@ get_fix_warning() {
     fi
 }
 
-# Check if fix can be auto-applied at current level
-can_auto_fix() {
+# Check if fix can be applied (not alert-only)
+can_fix() {
     local fix_id="$1"
-    local safety=$(get_fix_safety "$fix_id")
+    local safety
+    safety=$(get_fix_safety "$fix_id")
 
-    case "$safety" in
-        safe)
-            # Safe fixes allowed in standard and strict modes
-            [[ "$VPSSEC_SECURITY_LEVEL" != "basic" ]]
-            ;;
-        confirm)
-            # Confirm fixes allowed in standard (with confirm) and strict modes
-            [[ "$VPSSEC_SECURITY_LEVEL" != "basic" ]]
-            ;;
-        risky)
-            # Risky fixes only allowed in strict mode
-            [[ "$VPSSEC_SECURITY_LEVEL" == "strict" ]]
-            ;;
-        alert_only|unknown)
-            # Never auto-fix
-            return 1
-            ;;
-    esac
+    [[ "$safety" != "alert_only" && "$safety" != "unknown" ]]
 }
 
 # Check if fix requires confirmation
 fix_requires_confirmation() {
     local fix_id="$1"
-    local safety=$(get_fix_safety "$fix_id")
+    local safety
+    safety=$(get_fix_safety "$fix_id")
 
-    case "$safety" in
-        safe)
-            return 1  # No confirmation needed
-            ;;
-        confirm)
-            # In standard mode, always confirm
-            # In strict mode, only confirm first time
-            [[ "$VPSSEC_SECURITY_LEVEL" != "strict" ]]
-            ;;
-        risky)
-            return 0  # Always confirm risky fixes
-            ;;
-        *)
-            return 0  # Unknown, require confirmation
-            ;;
-    esac
+    [[ "$safety" == "confirm" || "$safety" == "risky" ]]
 }
 
-# Set security level
-set_security_level() {
-    local level="$1"
+# Check if fix is risky (needs extra safeguards)
+fix_is_risky() {
+    local fix_id="$1"
+    local safety
+    safety=$(get_fix_safety "$fix_id")
 
-    if _level_is_valid "$level"; then
-        VPSSEC_SECURITY_LEVEL="$level"
-        export VPSSEC_SECURITY_LEVEL
-        return 0
-    else
-        log_error "Invalid security level: $level"
-        return 1
-    fi
+    [[ "$safety" == "risky" ]]
 }
 
-# Get current security level
-get_security_level() {
-    echo "$VPSSEC_SECURITY_LEVEL"
-}
-
-# Print security level description
-# Takes optional second arg for mode (audit/guide)
-print_security_level_info() {
-    local level="$1"
-    local mode="${2:-${VPSSEC_MODE:-audit}}"
-
-    if [[ "$mode" == "guide" ]]; then
-        # Guide mode - describe fix behavior
-        case "$level" in
-            basic)
-                echo "Basic - Essential security checks, no automatic fixes"
-                echo "  • Core SSH, firewall, and update checks"
-                echo "  • Alert-only mode for all issues"
-                echo "  • Suitable for first-time users"
-                ;;
-            standard)
-                echo "Standard - Balanced security with safe auto-fixes (recommended)"
-                echo "  • Comprehensive security checks"
-                echo "  • Auto-fix for low-risk items"
-                echo "  • Confirmation required for medium-risk changes"
-                ;;
-            strict)
-                echo "Strict - Maximum security for production servers"
-                echo "  • All available security checks"
-                echo "  • More aggressive auto-fixes"
-                echo "  • Includes risky fixes with safeguards"
-                ;;
-        esac
-    else
-        # Audit mode - describe check scope
-        case "$level" in
-            basic)
-                echo "Basic - Core security checks only"
-                echo "  • SSH authentication & root login"
-                echo "  • Firewall status"
-                echo "  • System updates"
-                echo "  • Critical file permissions"
-                ;;
-            standard)
-                echo "Standard - Comprehensive security audit (recommended)"
-                echo "  • All basic checks plus:"
-                echo "  • Service hardening (fail2ban, AppArmor)"
-                echo "  • Docker security (if installed)"
-                echo "  • Kernel parameters"
-                echo "  • Filesystem security"
-                ;;
-            strict)
-                echo "Strict - Full compliance audit"
-                echo "  • All standard checks plus:"
-                echo "  • Audit logging (auditd)"
-                echo "  • Alert configuration"
-                echo "  • SGID binaries"
-                echo "  • /tmp mount options"
-                ;;
-        esac
-    fi
-}
-
-# Count checks at each level
-count_checks_by_level() {
-    local level="$1"
-    local count=0
-
-    for check_id in "${!CHECK_LEVEL[@]}"; do
-        local check_level="${CHECK_LEVEL[$check_id]}"
-        case "$level" in
-            basic)
-                [[ "$check_level" == "basic" ]] && ((count++))
-                ;;
-            standard)
-                [[ "$check_level" == "basic" || "$check_level" == "standard" ]] && ((count++))
-                ;;
-            strict)
-                ((count++))  # All checks
-                ;;
-        esac
-    done
-
-    echo "$count"
-}
+# ==============================================================================
+# Score Category Helper Functions
+# ==============================================================================
 
 # Get score category for a check
 get_check_score_category() {
     local check_id="$1"
-    echo "${CHECK_SCORE_CATEGORY[$check_id]:-required}"
+    echo "${CHECK_SCORE_CATEGORY[$check_id]:-recommended}"
 }
 
 # Check if a check should be included in score
@@ -972,26 +542,13 @@ check_counts_in_score() {
     category=$(get_check_score_category "$check_id")
 
     case "$category" in
-        required|recommended)
-            # Always count
+        required|recommended|conditional|optional)
             return 0
-            ;;
-        conditional)
-            # Only count if parent component is installed
-            # This is determined by checking if we have any non-"not_installed" checks
-            # for the same module. The caller should handle this.
-            return 0
-            ;;
-        optional)
-            # Only count in strict mode
-            [[ "$VPSSEC_SECURITY_LEVEL" == "strict" ]]
             ;;
         info)
-            # Never count
             return 1
             ;;
         *)
-            # Unknown category, include by default
             return 0
             ;;
     esac
