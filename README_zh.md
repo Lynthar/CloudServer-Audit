@@ -1,4 +1,4 @@
-# CloudServer Audit - VPS Security Check & Hardening Tool
+# CloudServer Audit - VPS 安全检查与加固工具
 
 [English](README.md) | 简体中文
 
@@ -8,146 +8,212 @@ VPS 安全检查与加固脚本，为个人与小型运维场景设计的安全�
 
 - **安全审计模式 (audit)**: 只读安全检查，生成 Markdown + JSON + SARIF 报告
 - **交互式加固 (guide)**: 基于审计结果进行模块选择、修复和执行
-- **可回滚**: 所有被修改的文件均有时间戳快照，支持回滚
-- **幂等性**: 重复执行不会引起额外副作用
-- **多语言**: 支持中文 (zh_CN) 和英文 (en_US)
-- **TUI 界面**: 支持 whiptail/dialog，无 TTY 时自动降级为文本模式
-- **CI/CD 集成**: SARIF 格式输出，可集成到 GitHub Security 等平台
-- **告警通知**: 支持 Webhook (Slack/Discord/Telegram) 和邮件告警
+- **模块化选择**: 按类别或单独选择要运行的安全模块
+- **一键回滚 (rollback)**: 修改前自动备份，支持快速恢复
+- **树形输出**: 紧凑的层级显示，技术检查项附带提示说明
+- **多语言支持**: 中英文界面，支持 i18n
+- **恶意软件检测**: 轻量级 rootkit、挖矿程序、webshell 扫描
 
 ## 系统要求
 
-- **操作系统**: Debian 12/13, Ubuntu 22.04/24.04
-- **权限**: 需要 root 权限
-- **依赖**: jq, ss, systemctl, sed, awk, tar, grep
+- Debian 12 / 13
+- Ubuntu 22.04 / 24.04
 
-## 安装
+## 快速开始
 
 ### 一键安装
 
 ```bash
-# 使用安装脚本
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
 ### 手动安装
 
 ```bash
-# 克隆仓库
 git clone https://github.com/Lynthar/CloudServer-Audit.git
 cd CloudServer-Audit
-
-# 添加执行权限
-chmod +x vpssec
-
-# 可选：创建符号链接到 PATH
-sudo ln -s $(pwd)/vpssec /usr/local/bin/vpssec
+sudo ./vpssec audit
 ```
 
-## 快速开始
+## 使用方法
 
-### 安全审计
+### 安全审计（只读）
 
 ```bash
-# 运行完整安全检查
 sudo ./vpssec audit
-
-# 仅输出 JSON 格式
-sudo ./vpssec audit --json-only
-
-# 指定语言
-sudo ./vpssec audit --lang=en_US
 ```
+
+报告生成位置：
+- `reports/summary.md` - Markdown 报告
+- `reports/summary.json` - JSON 格式
+- `reports/summary.sarif` - SARIF 格式（用于 CI/CD 集成）
 
 ### 交互式加固
 
 ```bash
-# 启动加固向导
 sudo ./vpssec guide
-
-# 仅检查 SSH 和 UFW 模块
-sudo ./vpssec guide --include=ssh,ufw
-
-# 排除 Docker 模块
-sudo ./vpssec guide --exclude=docker
-
-# 跳过非关键确认（SSH/UFW 仍需确认）
-sudo ./vpssec guide --yes
 ```
+
+提供交互界面：
+1. 选择要检查的模块（按类别或全选）
+2. 查看检测到的安全问题
+3. 选择要修复的项目
+4. 执行前预览变更
+5. 执行修复并自动创建回滚点
 
 ### 回滚更改
 
 ```bash
-# 交互式选择备份进行回滚
 sudo ./vpssec rollback
-
-# 回滚指定时间戳的备份
-sudo ./vpssec rollback 20241213_120000
 ```
+
+从自动备份中恢复之前的配置。
 
 ### 查看状态
 
 ```bash
-./vpssec status
+sudo ./vpssec status
 ```
 
-## 检查模块
+查看当前安全评分和状态。
 
-### 核心模块（默认启用）
+## 模块分类
+
+vpssec 将安全检查组织为 6 个类别。您可以选择要运行的类别：
+
+| # | 类别 | 模块 | 说明 |
+|---|------|------|------|
+| 0 | 全部 | 所有模块 | 运行全面检查（推荐） |
+| 1 | 访问控制 | `users`, `ssh` | 用户账户、SSH 加固 |
+| 2 | 网络安全 | `ufw`, `fail2ban` | 防火墙、暴力破解防护 |
+| 3 | 系统加固 | `update`, `kernel`, `filesystem`, `baseline` | 更新、内核参数、权限 |
+| 4 | 服务安全 | `docker`, `nginx`, `cloudflared`, `webapp` | 容器、Web 服务器安全 |
+| 5 | 安全扫描 | `malware` | rootkit、挖矿、webshell 检测 |
+| 6 | 运维合规 | `logging`, `backup`, `alerts` | 日志、备份、监控 |
+
+### 交互式模块选择
+
+运行 vpssec 时，您会看到模块选择菜单：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  请选择要检查的模块:                                      │
+│                                                          │
+│  [0] 全部模块（推荐）                                     │
+│  [1] 访问控制           (users,ssh)                      │
+│  [2] 网络安全           (ufw,fail2ban)                   │
+│  [3] 系统加固           (update,kernel,...)              │
+│  [4] 服务安全           (docker,nginx,webapp,...)        │
+│  [5] 安全扫描           (malware)                        │
+│  [6] 运维合规           (logging,backup,alerts)          │
+└──────────────────────────────────────────────────────────┘
+请输入选择（空格分隔，如 1 2 3）[默认: 0] >
+```
+
+或使用命令行直接指定模块：
+```bash
+sudo ./vpssec audit --include=ssh,ufw,malware
+```
+
+## 安全模块
+
+### 核心模块
 
 | 模块 | 说明 |
 |------|------|
-| preflight | 环境预检、网络状态、依赖检查 |
-| cloud | 云厂商检测、监控代理审计 |
-| users | 用户安全审计（UID 0、空密码、可疑账户） |
-| ssh | SSH 加固（密码登录、root 登录、公钥认证） |
-| ufw | UFW 防火墙配置 |
-| fail2ban | Fail2ban 安装与 SSH jail 配置 |
-| update | 系统更新、自动安全更新 |
-| docker | Docker 容器安全检查、daemon 配置 |
-| nginx | Nginx 兜底配置 |
-| baseline | 基线加固（AppArmor、未用服务） |
-| logging | 日志持久化、审计系统 |
-| kernel | 内核加固（ASLR、sysctl 网络/安全参数） |
-| filesystem | 文件系统安全（SUID/SGID、权限、umask） |
+| `preflight` | 环境预检（系统、网络、依赖） |
+| `cloud` | 云厂商检测和监控代理审计 |
+| `timezone` | 时区和 NTP 时间同步 |
+| `users` | 用户安全审计（UID 0、空密码、可疑账户） |
+| `ssh` | SSH 加固（密码认证、root 登录、公钥认证） |
+| `ufw` | 防火墙配置（UFW/firewalld/iptables/nftables） |
+| `fail2ban` | Fail2ban 安装和 SSH jail 配置 |
+| `update` | 系统更新（安全更新、自动更新） |
+| `kernel` | 内核加固（ASLR、sysctl 网络/安全参数、IPv6） |
+| `filesystem` | 文件系统安全（SUID/SGID、权限、umask） |
+| `baseline` | 基线加固（AppArmor/SELinux、未用服务） |
+| `docker` | Docker 安全（特权容器、暴露端口） |
+| `nginx` | Nginx 兜底（防止证书/主机名泄露） |
+| `webapp` | Web 应用安全（Nginx/Apache/PHP 配置、SSL、敏感文件） |
+| `malware` | 恶意软件检测（rootkit、挖矿程序、webshell、反向 shell） |
+| `logging` | 日志与审计（journald、auditd、logrotate） |
 
 ### 可选模块
 
 | 模块 | 说明 |
 |------|------|
-| cloudflared | Cloudflare Tunnel 配置检查 |
-| backup | 备份配置模板生成 (restic/borg) |
-| alerts | 告警通知配置 (Webhook/邮件) |
+| `cloudflared` | Cloudflare Tunnel 配置检查 |
+| `backup` | 备份工具检测和模板生成 |
+| `alerts` | Webhook/邮件告警配置 |
 
-## 安全等级
+## 输出格式
 
-vpssec 支持三种安全等级，控制检查范围和修复行为：
+vpssec 使用树形输出，紧凑易读：
 
-| 等级 | 检查范围 | 修复行为 |
-|------|----------|----------|
-| `basic` | 仅核心安全（SSH、防火墙、更新） | 仅告警，不自动修复 |
-| `standard` | 全面检查（默认） | 安全项自动修复，中风险需确认 |
-| `strict` | 完整合规审计 | 激进修复，带安全护栏 |
-
-使用 `--level=<level>` 设置安全等级：
-```bash
-sudo ./vpssec audit --level=basic      # 快速核心检查
-sudo ./vpssec guide --level=strict     # 最大化加固
 ```
+├─ 访问控制
+│  ├─ 用户安全
+│  │  ├─ ✓ 无额外 UID 0 账户
+│  │  └─ ✗ 检测到空密码用户
+│  │     ↳ 无密码用户可无需认证登录
+│  └─ SSH 安全
+│     ├─ ✓ 已禁用密码认证
+│     ├─ ✓ 已禁用 root 登录
+│     └─ ● MaxAuthTries 过高
+├─ 安全扫描
+│  └─ 恶意软件检测
+│     ├─ ✓ 无隐藏进程
+│     ├─ ✓ 未发现挖矿程序
+│     └─ ✗ 存在已删除二进制文件的进程
+│        ↳ 程序文件已被删除但仍在运行 - 恶意软件常自删除以躲避检测
+────────────────────────────────────────────────────────
+  评分: 72/100
+
+  ● 2 高危  ● 1 中危  ● 12 安全
+```
+
+**图例:**
+- `✓` 绿色: 通过
+- `✗` 红色: 高危问题
+- `●` 黄色: 中危问题
+- `○` 蓝色: 低危问题
+- `↳` 提示: 技术检查项的简要说明
 
 ## 评分分类
 
-检查项按类别计入评分，确保公平评分：
+检查项按类别计入评分，确保公平：
 
 | 类别 | 说明 | 示例 |
 |------|------|------|
 | `required` | 始终计入评分 | SSH 认证、防火墙、内核 ASLR |
 | `recommended` | 相关时计入 | fail2ban、AppArmor |
 | `conditional` | 仅安装时计入 | Docker、Nginx、Cloudflared |
-| `optional` | 仅 strict 模式计入 | auditd、alerts、backup |
+| `optional` | 较低权重 | auditd、alerts、backup |
 | `info` | 不计入评分 | 云厂商检测 |
 
 这样可以避免未使用的组件影响评分。
+
+## 命令行选项
+
+```bash
+vpssec [模式] [选项]
+
+模式:
+  audit       仅安全审计（默认）
+  guide       交互式加固向导
+  rollback    回滚之前的更改
+  status      显示当前安全状态
+
+选项:
+  --lang=LANG       设置语言 (zh_CN, en_US)
+  --include=MODS    仅运行指定模块（逗号分隔）
+  --exclude=MODS    跳过指定模块
+  --yes             自动确认非关键提示
+  --json-only       仅输出 JSON（用于 CI/CD）
+  --no-color        禁用彩色输出
+  -h, --help        显示帮助
+  --version         显示版本
+```
 
 ## 安全评分
 
@@ -158,43 +224,49 @@ sudo ./vpssec guide --level=strict     # 最大化加固
 - 中危问题：每个 -8 分（上限 -40）
 - 低危问题：每个 -3 分（上限 -15）
 
-评分示例：
-| 问题数量 | 得分 | 评级 |
-|----------|------|------|
-| 0 个问题 | 100 | 优秀 |
-| 1 个中危 | 92 | 良好 |
-| 2 个中危 | 84 | 良好 |
-| 1 个高危 | 80 | 中等 |
-| 2 个高危 | 60 | 较差 |
-| 1 高危 + 2 中危 | 64 | 较差 |
-| 3+ 个高危 | ≤40 | 危险 |
-
 评分区间：
 - 90-100：优秀
 - 75-89：良好
 - 50-74：中等
 - 0-49：较差
 
-## 命令行选项
+## 安全护栏
 
-```
-用法: vpssec <命令> [选项]
+- **原子写入**: 改动先写临时文件，验证后再移动
+- **自动备份**: 所有修改的文件都带时间戳备份
+- **SSH 保护**: SSH 配置变更前启用救援端口 (2222)
+- **配置验证**: 应用前执行 `sshd -t` / `nginx -t` 验证
+- **关键确认**: 重要操作需明确确认（不被 `--yes` 跳过）
+- **修复分类**: 修复按安全/确认/风险/仅告警分类
 
-命令:
-  audit     只读安全检查，生成报告
-  guide     交互式安全加固向导
-  rollback  回滚之前的修改
-  status    查看当前安全状态
+## CI/CD 集成
 
-选项:
-  --lang=LANG      设置语言 (zh_CN|en_US)
-  --no-color       禁用彩色输出
-  --json-only      仅输出 JSON 格式
-  --yes            跳过非关键确认
-  --include=MODS   仅运行指定模块
-  --exclude=MODS   排除指定模块
-  --help           显示帮助信息
-  --version        显示版本信息
+### GitHub Actions
+
+```yaml
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # 每周一
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Security Audit
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh -o vpssec-run.sh
+          chmod +x vpssec-run.sh
+          sudo ./vpssec-run.sh --json-only
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: reports/summary.sarif
 ```
 
 ## 目录结构
@@ -204,27 +276,30 @@ vpssec/
 ├── vpssec              # 主入口脚本
 ├── run.sh              # 一键运行脚本
 ├── install.sh          # 安装脚本
-├── core/
+├── core/               # 核心引擎
 │   ├── common.sh       # 公共函数
-│   ├── engine.sh       # 核心引擎
+│   ├── engine.sh       # 模块加载与执行
 │   ├── state.sh        # 状态管理
-│   ├── report.sh       # 报告生成
-│   ├── security_levels.sh  # 安全等级与评分分类定义
-│   ├── ui_tui.sh       # TUI 界面
-│   ├── ui_text.sh      # 文本界面
-│   └── i18n/
-│       ├── zh_CN.json  # 中文
-│       └── en_US.json  # 英文
-├── modules/
+│   ├── report.sh       # 报告生成（树形输出）
+│   ├── security_levels.sh  # 修复安全与评分分类定义
+│   ├── ui_tui.sh       # TUI 界面 (whiptail/dialog)
+│   ├── ui_text.sh      # 文本降级界面
+│   └── i18n/           # 国际化
+│       ├── zh_CN.json
+│       └── en_US.json
+├── modules/            # 安全检查模块
 │   ├── preflight.sh    # 环境预检
 │   ├── cloud.sh        # 云厂商与代理检测
+│   ├── timezone.sh     # 时区与 NTP
 │   ├── users.sh        # 用户安全审计
 │   ├── ssh.sh          # SSH 加固
-│   ├── ufw.sh          # UFW 防火墙
+│   ├── ufw.sh          # 防火墙 (UFW/firewalld/iptables/nftables)
 │   ├── fail2ban.sh     # Fail2ban 配置
 │   ├── update.sh       # 系统更新
 │   ├── docker.sh       # Docker 安全
 │   ├── nginx.sh        # Nginx 兜底
+│   ├── webapp.sh       # Web 应用安全
+│   ├── malware.sh      # 恶意软件检测
 │   ├── baseline.sh     # 基线加固
 │   ├── logging.sh      # 日志与审计
 │   ├── kernel.sh       # 内核加固
@@ -232,78 +307,54 @@ vpssec/
 │   ├── cloudflared.sh  # Cloudflare Tunnel
 │   ├── backup.sh       # 备份配置
 │   └── alerts.sh       # 告警通知
-├── state/              # 状态文件
+├── state/              # 状态文件（运行时）
 ├── reports/            # 生成的报告
 ├── backups/            # 配置备份
 └── logs/               # 日志文件
 ```
 
-## 安全护栏
-
-- **SSH 断连保护**: 变更前自动添加当前 IP 临时白名单，启用救援端口
-- **原子写入**: 所有改动先写临时文件，验证通过后原子替换
-- **配置快照**: 每次执行前对改动文件做 tar 快照
-- **回滚机制**: 支持模块级与全局回滚
-- **配置验证**: SSH/Nginx 等服务修改前自动验证配置
-
-## 报告示例
-
-### 终端输出
-
-```
-───────────────────────────────
-VPS Security Check Summary
-───────────────────────────────
-SSH 加固             🔴 2 高危
-UFW 防火墙           🟡 1 中风险
-系统更新             🟢 安全
-Docker 出口          🟡 暴露端口 8080
-───────────────────────────────
-综合评分：68/100
-报告已保存：reports/summary.md
-───────────────────────────────
-```
-
-### JSON 报告
-
-报告保存在 `reports/summary.json`，包含详细的检查结果和修复建议。
-
-## 开发
+## 扩展 vpssec
 
 ### 添加新模块
 
-1. 在 `modules/` 目录创建新模块文件，如 `mymodule.sh`
-2. 实现 `mymodule_audit()` 和 `mymodule_fix()` 函数
-3. 在 `core/engine.sh` 的 `VPSSEC_MODULE_ORDER` 数组中添加模块名
-4. 在 `core/i18n/*.json` 中添加翻译
-
-### 模块接口
+1. 创建 `modules/mymodule.sh`：
 
 ```bash
-# 审计函数 - 执行只读检查，调用 state_add_check() 添加结果
+#!/usr/bin/env bash
+# vpssec - 自定义模块
+
 mymodule_audit() {
+    print_item "检查某项内容..."
+
     local check=$(create_check_json \
         "mymodule.check_id" \
         "mymodule" \
-        "high" \
+        "medium" \
         "failed" \
         "检查标题" \
         "详细描述" \
-        "修复建议" \
+        "修复方法" \
         "mymodule.fix_id")
     state_add_check "$check"
+    print_severity "medium" "发现问题"
 }
 
-# 修复函数 - 执行修复操作
 mymodule_fix() {
-    local fix_id="$1"
-    case "$fix_id" in
+    case "$1" in
         mymodule.fix_id)
-            # 执行修复
+            print_info "正在修复..."
+            # 修复逻辑
+            print_ok "已修复"
             ;;
     esac
 }
 ```
+
+2. 在 `engine.sh` 的 `VPSSEC_MODULE_ORDER` 中添加模块名
+
+3. 在 `core/i18n/*.json` 中添加翻译
+
+4. 在 `core/security_levels.sh` 中添加修复安全分类
 
 ## 许可证
 

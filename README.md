@@ -8,9 +8,11 @@ A VPS security auditing and hardening script designed for individuals and small-
 
 - **Security Audit Mode (audit)**: Read-only security checks with Markdown + JSON + SARIF report output
 - **Guided Hardening Mode (guide)**: Interactive security hardening wizard with step-by-step guidance
+- **Modular Selection**: Choose which security modules to run by category or individually
 - **One-Click Rollback (rollback)**: Automatic backup before changes with quick recovery capability
+- **Tree-Style Output**: Compact hierarchical display with hints for technical checks
 - **Multi-language Support**: Chinese/English interface with i18n support
-- **Modular Design**: Easily extendable security check modules
+- **Malware Detection**: Lightweight rootkit, crypto miner, and webshell scanning
 
 ## Supported Systems
 
@@ -53,10 +55,11 @@ sudo ./vpssec guide
 ```
 
 Provides an interactive interface to:
-1. Review detected security issues
-2. Select items to fix
-3. Preview changes before applying
-4. Execute fixes with automatic rollback points
+1. Select modules to check (by category or all)
+2. Review detected security issues
+3. Select items to fix
+4. Preview changes before applying
+5. Execute fixes with automatic rollback points
 
 ### Rollback Changes
 
@@ -74,25 +77,66 @@ sudo ./vpssec status
 
 View current security score and status.
 
+## Module Categories
+
+vpssec organizes security checks into 6 categories. You can select which to run:
+
+| # | Category | Modules | Description |
+|---|----------|---------|-------------|
+| 0 | All | All modules | Run comprehensive check (recommended) |
+| 1 | Access Control | `users`, `ssh` | User accounts, SSH hardening |
+| 2 | Network Security | `ufw`, `fail2ban` | Firewall, brute-force protection |
+| 3 | System Hardening | `update`, `kernel`, `filesystem`, `baseline` | Updates, kernel params, permissions |
+| 4 | Service Security | `docker`, `nginx`, `cloudflared`, `webapp` | Container, web server security |
+| 5 | Security Scanning | `malware` | Rootkit, miner, webshell detection |
+| 6 | Operations | `logging`, `backup`, `alerts` | Logging, backup, monitoring |
+
+### Interactive Module Selection
+
+When running vpssec, you'll see a module selection menu:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Select modules to check:                                │
+│                                                          │
+│  [0] All modules (recommended)                           │
+│  [1] Access Control           (users,ssh)                │
+│  [2] Network Security         (ufw,fail2ban)             │
+│  [3] System Hardening         (update,kernel,...)        │
+│  [4] Service Security         (docker,nginx,webapp,...)  │
+│  [5] Security Scanning        (malware)                  │
+│  [6] Operations               (logging,backup,alerts)    │
+└──────────────────────────────────────────────────────────┘
+Enter choices (space-separated, e.g., 1 2 3) [default: 0] >
+```
+
+Or use CLI to specify modules directly:
+```bash
+sudo ./vpssec audit --include=ssh,ufw,malware
+```
+
 ## Security Modules
 
-### Core Modules (Enabled by Default)
+### Core Modules
 
 | Module | Description |
 |--------|-------------|
 | `preflight` | Environment pre-checks (OS, network, dependencies) |
 | `cloud` | Cloud provider detection and monitoring agent audit |
+| `timezone` | Timezone and NTP time synchronization |
 | `users` | User security audit (UID 0, empty passwords, suspicious accounts) |
 | `ssh` | SSH hardening (password auth, root login, key auth) |
-| `ufw` | Firewall configuration (UFW status, rules) |
+| `ufw` | Firewall configuration (UFW/firewalld/iptables/nftables) |
 | `fail2ban` | Fail2ban installation and SSH jail configuration |
 | `update` | System updates (security updates, unattended-upgrades) |
+| `kernel` | Kernel hardening (ASLR, sysctl network/security params, IPv6) |
+| `filesystem` | Filesystem security (SUID/SGID, permissions, umask) |
+| `baseline` | Baseline hardening (AppArmor/SELinux, unused services) |
 | `docker` | Docker security (privileged containers, exposed ports) |
 | `nginx` | Nginx catchall (prevent cert/hostname leakage) |
-| `baseline` | Baseline hardening (AppArmor, unused services) |
+| `webapp` | Web application security (Nginx/Apache/PHP config, SSL, sensitive files) |
+| `malware` | Malware detection (rootkits, crypto miners, webshells, reverse shells) |
 | `logging` | Logging & audit (journald, auditd, logrotate) |
-| `kernel` | Kernel hardening (ASLR, sysctl network/security params) |
-| `filesystem` | Filesystem security (SUID/SGID, permissions, umask) |
 
 ### Optional Modules
 
@@ -102,21 +146,38 @@ View current security score and status.
 | `backup` | Backup tool detection and template generation |
 | `alerts` | Webhook/email alert configuration |
 
-## Security Levels
+## Output Format
 
-vpssec supports three security levels that control check scope and fix behavior:
+vpssec uses a tree-style output for compact, readable results:
 
-| Level | Check Scope | Fix Behavior |
-|-------|-------------|--------------|
-| `basic` | Core security only (SSH, firewall, updates) | Alert only, no auto-fixes |
-| `standard` | Comprehensive checks (default) | Safe auto-fixes, confirm medium-risk |
-| `strict` | Full compliance audit | Aggressive fixes with safeguards |
-
-Use `--level=<level>` to set the security level:
-```bash
-sudo ./vpssec audit --level=basic      # Quick core checks
-sudo ./vpssec guide --level=strict     # Maximum hardening
 ```
+├─ Access Control
+│  ├─ User Security
+│  │  ├─ ✓ No extra UID 0 accounts
+│  │  └─ ✗ Empty password users detected
+│  │     ↳ Users without passwords can login without authentication
+│  └─ SSH Security
+│     ├─ ✓ Password authentication disabled
+│     ├─ ✓ Root login disabled
+│     └─ ● MaxAuthTries too high
+├─ Security Scanning
+│  └─ Malware Detection
+│     ├─ ✓ No hidden processes
+│     ├─ ✓ No crypto miners found
+│     └─ ✗ Processes with deleted binaries
+│        ↳ Program file was deleted but still running - malware often deletes itself
+────────────────────────────────────────────────────────
+  Score: 72/100
+
+  ● 2 High  ● 1 Medium  ● 12 Safe
+```
+
+**Legend:**
+- `✓` Green: Passed
+- `✗` Red: High severity issue
+- `●` Yellow: Medium severity issue
+- `○` Blue: Low severity issue
+- `↳` Hint: Brief explanation for technical checks
 
 ## Score Categories
 
@@ -127,7 +188,7 @@ Checks are categorized to ensure fair scoring:
 | `required` | Always affects score | SSH auth, firewall, kernel ASLR |
 | `recommended` | Counts when relevant | fail2ban, AppArmor |
 | `conditional` | Only if component installed | Docker, Nginx, Cloudflared |
-| `optional` | Only in strict mode | auditd, alerts, backup |
+| `optional` | Lower weight | auditd, alerts, backup |
 | `info` | Never affects score | Cloud provider detection |
 
 This prevents score penalties for components you don't use.
@@ -145,12 +206,11 @@ Modes:
 
 Options:
   --lang=LANG       Set language (zh_CN, en_US)
-  --modules=LIST    Comma-separated module list
-  --skip=LIST       Skip specified modules
+  --include=MODS    Run only specified modules (comma-separated)
+  --exclude=MODS    Skip specified modules
   --yes             Auto-confirm non-critical prompts
   --json-only       Output JSON only (for CI/CD)
   --no-color        Disable colored output
-  -v, --verbose     Verbose output
   -h, --help        Show help
   --version         Show version
 ```
@@ -163,17 +223,6 @@ The security score is calculated based on check results:
 - High/Critical severity failure: -20 points each (max -80)
 - Medium severity failure: -8 points each (max -40)
 - Low severity failure: -3 points each (max -15)
-
-Example outcomes:
-| Issues | Score | Rating |
-|--------|-------|--------|
-| 0 issues | 100 | Excellent |
-| 1 medium | 92 | Good |
-| 2 medium | 84 | Good |
-| 1 high | 80 | Fair |
-| 2 high | 60 | Poor |
-| 1 high + 2 medium | 64 | Poor |
-| 3+ high | ≤40 | Critical |
 
 Score ranges:
 - 90-100: Excellent
@@ -188,6 +237,7 @@ Score ranges:
 - **SSH protection**: Rescue port (2222) enabled before SSH config changes
 - **Config validation**: `sshd -t` / `nginx -t` validation before applying
 - **Critical confirmation**: Important operations require explicit confirmation (not bypassed by `--yes`)
+- **Fix classification**: Fixes categorized as safe/confirm/risky/alert-only
 
 ## CI/CD Integration
 
@@ -230,8 +280,8 @@ vpssec/
 │   ├── common.sh       # Common utilities
 │   ├── engine.sh       # Module loader & executor
 │   ├── state.sh        # State management
-│   ├── report.sh       # Report generation
-│   ├── security_levels.sh  # Security level & score category definitions
+│   ├── report.sh       # Report generation (tree-style output)
+│   ├── security_levels.sh  # Fix safety & score category definitions
 │   ├── ui_tui.sh       # TUI interface (whiptail/dialog)
 │   ├── ui_text.sh      # Text fallback interface
 │   └── i18n/           # Internationalization
@@ -240,13 +290,16 @@ vpssec/
 ├── modules/            # Security check modules
 │   ├── preflight.sh    # Environment pre-checks
 │   ├── cloud.sh        # Cloud provider & agent detection
+│   ├── timezone.sh     # Timezone & NTP
 │   ├── users.sh        # User security audit
 │   ├── ssh.sh          # SSH hardening
-│   ├── ufw.sh          # UFW firewall
+│   ├── ufw.sh          # Firewall (UFW/firewalld/iptables/nftables)
 │   ├── fail2ban.sh     # Fail2ban configuration
 │   ├── update.sh       # System updates
 │   ├── docker.sh       # Docker security
 │   ├── nginx.sh        # Nginx catchall
+│   ├── webapp.sh       # Web application security
+│   ├── malware.sh      # Malware detection
 │   ├── baseline.sh     # Baseline hardening
 │   ├── logging.sh      # Logging & audit
 │   ├── kernel.sh       # Kernel hardening
@@ -300,6 +353,8 @@ mymodule_fix() {
 2. Add module name to `VPSSEC_MODULE_ORDER` in `engine.sh`
 
 3. Add translations to `core/i18n/*.json`
+
+4. Add fix safety classification to `core/security_levels.sh`
 
 ## License
 
