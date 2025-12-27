@@ -260,7 +260,7 @@ report_print_details() {
 
     # Iterate through categories in order
     for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        ((cat_idx++))
+        ((cat_idx++)) || true
         local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
         local category_modules=$(_get_category_modules "$category")
 
@@ -291,7 +291,7 @@ report_print_details() {
         local mod_idx=0
 
         for module in "${active_modules[@]}"; do
-            ((mod_idx++))
+            ((mod_idx++)) || true
             local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
             local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
 
@@ -329,7 +329,7 @@ report_print_details() {
             local check_idx=0
 
             for check in "${check_items[@]}"; do
-                ((check_idx++))
+                ((check_idx++)) || true
 
                 local status=$(echo "$check" | jq -r '.status')
                 local severity=$(echo "$check" | jq -r '.severity')
