@@ -63,6 +63,15 @@ FS_MAX_REPORT_ITEMS=20
 # Filesystem Helper Functions
 # ==============================================================================
 
+# Sanitize count value to ensure it's a single integer
+# Handles cases where grep -c returns multiline output
+_fs_sanitize_count() {
+    local val="$1"
+    val=$(echo "$val" | head -1)
+    val="${val//[^0-9]/}"
+    echo "${val:-0}"
+}
+
 # Check if path is in whitelist (supports glob patterns)
 _fs_is_whitelisted() {
     local path="$1"
@@ -478,7 +487,7 @@ filesystem_audit() {
 _fs_audit_suid() {
     local suid_files
     suid_files=$(_fs_find_suid_files)
-    local count=$(echo "$suid_files" | grep -c . 2>/dev/null || echo "0")
+    local count=$(_fs_sanitize_count "$(echo "$suid_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
         local file_list=$(echo "$suid_files" | head -5 | tr '\n' ' ')
@@ -512,7 +521,7 @@ _fs_audit_suid() {
 _fs_audit_sgid() {
     local sgid_files
     sgid_files=$(_fs_find_sgid_files)
-    local count=$(echo "$sgid_files" | grep -c . 2>/dev/null || echo "0")
+    local count=$(_fs_sanitize_count "$(echo "$sgid_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
         local file_list=$(echo "$sgid_files" | head -5 | tr '\n' ' ')
@@ -545,11 +554,11 @@ _fs_audit_sgid() {
 _fs_audit_world_writable() {
     local ww_files
     ww_files=$(_fs_find_world_writable)
-    local count=$(echo "$ww_files" | grep -c . 2>/dev/null || echo "0")
+    local count=$(_fs_sanitize_count "$(echo "$ww_files" | grep -c . 2>/dev/null)")
 
     local ww_dirs
     ww_dirs=$(_fs_find_world_writable_dirs)
-    local dir_count=$(echo "$ww_dirs" | grep -c . 2>/dev/null || echo "0")
+    local dir_count=$(_fs_sanitize_count "$(echo "$ww_dirs" | grep -c . 2>/dev/null)")
 
     if ((count > 0 || dir_count > 0)); then
         local total=$((count + dir_count))
@@ -583,7 +592,7 @@ _fs_audit_world_writable() {
 _fs_audit_no_owner() {
     local no_owner_files
     no_owner_files=$(_fs_find_no_owner)
-    local count=$(echo "$no_owner_files" | grep -c . 2>/dev/null || echo "0")
+    local count=$(_fs_sanitize_count "$(echo "$no_owner_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
         local file_list=$(echo "$no_owner_files" | head -5 | tr '\n' ' ')
@@ -760,8 +769,8 @@ _fs_audit_caps() {
 
     local caps_files
     caps_files=$(_fs_find_caps_files)
-    local total_count=$(echo "$caps_files" | grep -c . 2>/dev/null || echo "0")
-    local dangerous_count=$(echo "$caps_files" | grep -c "^DANGEROUS:" 2>/dev/null || echo "0")
+    local total_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c . 2>/dev/null)")
+    local dangerous_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c "^DANGEROUS:" 2>/dev/null)")
 
     if ((dangerous_count > 0)); then
         # Extract dangerous files list
@@ -824,7 +833,7 @@ _fs_audit_caps() {
 _fs_audit_cron() {
     local suspicious
     suspicious=$(_fs_find_suspicious_cron)
-    local sus_count=$(echo "$suspicious" | grep -c . 2>/dev/null || echo "0")
+    local sus_count=$(_fs_sanitize_count "$(echo "$suspicious" | grep -c . 2>/dev/null)")
 
     local user_crontabs=$(_fs_count_user_crontabs)
 
