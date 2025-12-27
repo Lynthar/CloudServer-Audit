@@ -799,103 +799,107 @@ select_mode() {
     export VPSSEC_MODE_SET=1
 }
 
-# Security level selection menu
-# Returns: sets VPSSEC_SECURITY_LEVEL global variable
-select_security_level() {
+# Module selection menu
+# Returns: sets VPSSEC_INCLUDE global variable
+select_modules() {
     # Skip if already specified via command line
-    if [[ -n "${VPSSEC_LEVEL_SET:-}" ]]; then
+    if [[ -n "${VPSSEC_INCLUDE:-}" ]]; then
         return 0
     fi
 
     # Check if we can read from terminal
     if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
-        # No terminal available, use default (standard)
-        VPSSEC_SECURITY_LEVEL="standard"
-        export VPSSEC_SECURITY_LEVEL
+        # No terminal available, run all modules
+        VPSSEC_INCLUDE=""
+        export VPSSEC_INCLUDE
         return 0
     fi
 
-    local mode="${VPSSEC_MODE:-audit}"
+    # Module categories with descriptions
+    # Format: category_id:en_name:zh_name:modules
+    local -a categories=(
+        "access:Access Control:访问控制:users,ssh"
+        "network:Network Security:网络安全:ufw,fail2ban"
+        "system:System Hardening:系统加固:update,kernel,filesystem,baseline"
+        "services:Service Security:服务安全:docker,nginx,cloudflared,webapp"
+        "security:Security Scanning:安全扫描:malware"
+        "ops:Operations:运维合规:logging,backup,alerts"
+    )
 
-    # Bilingual level selection - different descriptions for audit vs guide mode
-    local title_en title_zh
-    local basic_en basic_zh standard_en standard_zh strict_en strict_zh
+    local is_en=0
+    [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]] && is_en=1
 
-    if [[ "$mode" == "guide" ]]; then
-        title_en="Select security level"
-        title_zh="选择安全等级"
-        basic_en="Basic - Essential checks, no auto-fixes"
-        basic_zh="基础 - 基本检查，不自动修复"
-        standard_en="Standard - Balanced security (recommended)"
-        standard_zh="标准 - 均衡安全 (推荐)"
-        strict_en="Strict - Maximum security"
-        strict_zh="严格 - 最高安全等级"
+    echo ""
+    if [[ $is_en -eq 1 ]]; then
+        echo "┌──────────────────────────────────────────────────────────┐"
+        echo "│  Select modules to check:                                │"
+        echo "│                                                          │"
+        echo "│  [0] All modules (recommended)                           │"
     else
-        # Audit mode - describe check scope
-        title_en="Select check scope"
-        title_zh="选择检查范围"
-        basic_en="Basic - Core security checks only (fast)"
-        basic_zh="基础 - 仅核心安全检查 (快速)"
-        standard_en="Standard - Comprehensive checks (recommended)"
-        standard_zh="标准 - 全面检查 (推荐)"
-        strict_en="Strict - All checks including compliance"
-        strict_zh="严格 - 全部检查含合规项"
+        echo "┌──────────────────────────────────────────────────────────┐"
+        echo "│  选择要检查的模块:                                       │"
+        echo "│                                                          │"
+        echo "│  [0] 全部模块 (推荐)                                     │"
     fi
 
-    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
-        echo ""
-        echo "┌─────────────────────────────────────────────────────┐"
-        echo "│  ${title_en}:                                    │"
-        echo "│                                                     │"
-        echo "│  [1] ${basic_en}         │"
-        echo "│  [2] ${standard_en}  │"
-        echo "│  [3] ${strict_en}     │"
-        echo "│                                                     │"
-        echo "└─────────────────────────────────────────────────────┘"
-    else
-        echo ""
-        echo "┌─────────────────────────────────────────────────────┐"
-        echo "│  ${title_zh}:                                        │"
-        echo "│                                                     │"
-        echo "│  [1] ${basic_zh}                   │"
-        echo "│  [2] ${standard_zh}                       │"
-        echo "│  [3] ${strict_zh}                  │"
-        echo "│                                                     │"
-        echo "└─────────────────────────────────────────────────────┘"
-    fi
+    local idx=1
+    for cat in "${categories[@]}"; do
+        IFS=':' read -r cat_id en_name zh_name modules <<< "$cat"
+        if [[ $is_en -eq 1 ]]; then
+            printf "│  [%d] %-20s %-34s│\n" "$idx" "$en_name" "($modules)"
+        else
+            printf "│  [%d] %-18s %-36s│\n" "$idx" "$zh_name" "($modules)"
+        fi
+        ((idx++))
+    done
+
+    echo "│                                                          │"
+    echo "└──────────────────────────────────────────────────────────┘"
     echo ""
 
-    local choice
-    local prompt_en="Enter choice [1-3] (default: 2) > "
-    local prompt_zh="输入选择 [1-3] (默认: 2) > "
+    local prompt_en="Enter choices (space-separated, e.g., 1 2 3) [default: 0] > "
+    local prompt_zh="输入选择 (空格分隔，如 1 2 3) [默认: 0] > "
 
-    # Always print prompt first
-    if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
+    if [[ $is_en -eq 1 ]]; then
         echo -n "$prompt_en"
     else
         echo -n "$prompt_zh"
     fi
 
-    # Read from /dev/tty, fall back to default if read fails
+    local choice
     if ! read -r choice </dev/tty 2>/dev/null; then
         echo ""
-        choice="2"  # Default to standard
+        choice="0"
     fi
 
-    case "${choice:-2}" in
-        1)
-            VPSSEC_SECURITY_LEVEL="basic"
-            ;;
-        3)
-            VPSSEC_SECURITY_LEVEL="strict"
-            ;;
-        2|*)
-            VPSSEC_SECURITY_LEVEL="standard"
-            ;;
-    esac
+    # Default to all modules
+    if [[ -z "$choice" || "$choice" == "0" ]]; then
+        VPSSEC_INCLUDE=""
+        export VPSSEC_INCLUDE
+        return 0
+    fi
 
-    export VPSSEC_SECURITY_LEVEL
-    export VPSSEC_LEVEL_SET=1
+    # Parse selected categories and build module list
+    local selected_modules=""
+    for num in $choice; do
+        if [[ "$num" =~ ^[1-6]$ ]]; then
+            local cat_idx=$((num - 1))
+            IFS=':' read -r _ _ _ modules <<< "${categories[$cat_idx]}"
+            if [[ -n "$selected_modules" ]]; then
+                selected_modules="${selected_modules},${modules}"
+            else
+                selected_modules="$modules"
+            fi
+        fi
+    done
+
+    # Always include preflight, cloud, timezone for context
+    if [[ -n "$selected_modules" ]]; then
+        selected_modules="preflight,cloud,timezone,${selected_modules}"
+    fi
+
+    VPSSEC_INCLUDE="$selected_modules"
+    export VPSSEC_INCLUDE
 }
 
 vpssec_init() {
