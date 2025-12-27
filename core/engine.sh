@@ -137,7 +137,9 @@ module_available() {
     # Check module-specific dependencies
     case "$module" in
         ufw)
-            check_command ufw || return 1
+            # UFW module should always run - it detects all firewall types
+            # (ufw, firewalld, nftables, iptables) not just UFW
+            return 0
             ;;
         docker)
             check_command docker || return 1
@@ -161,8 +163,8 @@ module_available() {
             return 0
             ;;
         webapp)
-            # Available if nginx or apache is installed
-            (check_command nginx || check_command apache2 || check_command httpd) || return 1
+            # Always available - will report "no webserver" if none installed
+            return 0
             ;;
         malware)
             # Always available - uses built-in Linux tools
