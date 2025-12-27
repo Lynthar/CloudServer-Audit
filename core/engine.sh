@@ -351,37 +351,19 @@ get_available_fixes() {
             local fix_id=$(echo "$fix" | jq -r '.fix_id')
             local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
             local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
-            local can_fix=$(can_auto_fix "$fix_id" 2>/dev/null && echo "true" || echo "false")
+            local can_fix_result=$(can_fix "$fix_id" 2>/dev/null && echo "true" || echo "false")
 
             # Add safety info to fix
-            local enriched=$(echo "$fix" | jq --arg safety "$safety" --arg warning "$warning" --arg can_fix "$can_fix" \
+            local enriched=$(echo "$fix" | jq --arg safety "$safety" --arg warning "$warning" --arg can_fix "$can_fix_result" \
                 '. + {safety: $safety, safety_warning: $warning, can_auto_fix: ($can_fix == "true")}')
 
             enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
         done < <(echo "$fixes" | jq -c '.[]')
 
-        # Filter based on security level (unless show_all is true)
+        # Filter out alert_only items from selection (unless show_all is true)
         if [[ "$show_all" != "true" ]]; then
-            # In basic mode, show all but mark as non-fixable
-            # In standard mode, hide alert_only
-            # In strict mode, show all
-            case "$VPSSEC_SECURITY_LEVEL" in
-                basic)
-                    # Show all, they will all be marked as not auto-fixable
-                    echo "$enriched_fixes"
-                    ;;
-                standard)
-                    # Hide alert_only items from selection
-                    echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only" or .can_auto_fix == true)]'
-                    ;;
-                strict)
-                    # Show all fixes
-                    echo "$enriched_fixes"
-                    ;;
-                *)
-                    echo "$enriched_fixes"
-                    ;;
-            esac
+            # Hide alert_only items - they can't be auto-fixed
+            echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only")]'
         else
             echo "$enriched_fixes"
         fi
@@ -430,27 +412,8 @@ execute_fix() {
                 print_warn "$(i18n 'fix.alert_only' 2>/dev/null || echo "Alert only"): $warning"
                 return 1
                 ;;
-            risky)
-                if [[ "$VPSSEC_SECURITY_LEVEL" != "strict" ]]; then
-                    local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "Risky operation")
-                    print_warn "$(i18n 'fix.risky_skipped' 2>/dev/null || echo "Risky fix skipped"): $warning"
-                    print_info "Use --level strict to enable risky fixes"
-                    return 1
-                fi
-                ;;
-            confirm)
-                if [[ "$VPSSEC_SECURITY_LEVEL" == "basic" ]]; then
-                    local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "Fix requires confirmation")
-                    print_warn "$(i18n 'fix.confirm_skipped' 2>/dev/null || echo "Fix skipped in basic mode"): $warning"
-                    return 1
-                fi
-                ;;
-            safe)
-                if [[ "$VPSSEC_SECURITY_LEVEL" == "basic" ]]; then
-                    print_info "Fix skipped in basic mode (audit only)"
-                    return 1
-                fi
-                ;;
+            # risky, confirm, safe - all allowed in guide mode
+            # Confirmation is handled elsewhere in guide_mode
         esac
     fi
 

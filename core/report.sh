@@ -19,7 +19,7 @@ report_generate_json() {
     local hostname=$(hostname)
     local virt=$(detect_virtualization)
 
-    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
+    local modules_checked="${VPSSEC_INCLUDE:-all}"
 
     cat > "$output_file" <<EOF
 {
@@ -31,7 +31,7 @@ report_generate_json() {
     "hostname": "${hostname}",
     "virtualization": "${virt}",
     "lang": "${VPSSEC_LANG}",
-    "security_level": "${security_level}"
+    "modules": "${modules_checked}"
   },
   "score": ${score},
   "stats": ${stats},
@@ -58,16 +58,7 @@ report_generate_markdown() {
     local os=$(detect_os)
     local os_version=$(detect_os_version)
     local hostname=$(hostname)
-    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
-
-    # Get localized level name
-    local level_name
-    case "$security_level" in
-        basic)    level_name=$(i18n 'level.basic' 2>/dev/null || echo "Basic") ;;
-        standard) level_name=$(i18n 'level.standard' 2>/dev/null || echo "Standard") ;;
-        strict)   level_name=$(i18n 'level.strict' 2>/dev/null || echo "Strict") ;;
-        *)        level_name="$security_level" ;;
-    esac
+    local modules_checked="${VPSSEC_INCLUDE:-all}"
 
     cat > "$output_file" <<EOF
 # $(i18n 'report.title')
@@ -80,7 +71,7 @@ report_generate_markdown() {
 | OS | ${os} ${os_version} |
 | Date | $(date '+%Y-%m-%d %H:%M:%S') |
 | vpssec Version | ${VPSSEC_VERSION} |
-| Security Level | ${level_name} |
+| Modules | ${modules_checked} |
 
 ---
 
@@ -259,58 +250,117 @@ _get_category_modules() {
     echo "${result[@]}"
 }
 
-# Print detailed test results (before summary) - organized by category
+# Print detailed test results (before summary) - tree-style organized by category
 report_print_details() {
     local checks=$(state_get_checks)
+    local total_categories=${#VPSSEC_CATEGORY_ORDER[@]}
+    local cat_idx=0
+
+    print_msg ""
 
     # Iterate through categories in order
     for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
+        ((cat_idx++))
         local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
         local category_modules=$(_get_category_modules "$category")
 
-        # Check if any modules in this category have results
-        local has_results=0
+        # Collect modules with results
+        local -a active_modules=()
         for module in $category_modules; do
             local mod_check_count=$(echo "$checks" | jq --arg m "$module" '[.[] | select(.module == $m)] | length')
             if ((mod_check_count > 0)); then
-                has_results=1
-                break
+                active_modules+=("$module")
             fi
         done
 
-        [[ "$has_results" == "0" ]] && continue
+        [[ ${#active_modules[@]} -eq 0 ]] && continue
+
+        # Category connector
+        local cat_prefix=""
+        if ((cat_idx == total_categories)); then
+            cat_prefix="└─"
+        else
+            cat_prefix="├─"
+        fi
 
         # Print category header
-        print_msg ""
-        print_msg "${BOLD}${MAGENTA}━━━ ${category_title} ━━━${NC}"
+        print_msg "${BOLD}${MAGENTA}${cat_prefix} ${category_title}${NC}"
 
         # Print modules in this category
-        for module in $category_modules; do
+        local mod_count=${#active_modules[@]}
+        local mod_idx=0
+
+        for module in "${active_modules[@]}"; do
+            ((mod_idx++))
             local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
-            local mod_check_count=$(echo "$mod_checks" | jq 'length')
-
-            [[ "$mod_check_count" == "0" ]] && continue
-
             local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-            print_msg ""
-            print_msg "${BOLD}${CYAN}▶ ${mod_title}${NC}"
 
-            # Get checks for this module
-            echo "$mod_checks" | jq -c '.[]' | while IFS= read -r check; do
+            # Module connector
+            local mod_prefix
+            local check_line_prefix
+            if ((cat_idx == total_categories)); then
+                if ((mod_idx == mod_count)); then
+                    mod_prefix="   └─"
+                    check_line_prefix="      "
+                else
+                    mod_prefix="   ├─"
+                    check_line_prefix="   │  "
+                fi
+            else
+                if ((mod_idx == mod_count)); then
+                    mod_prefix="│  └─"
+                    check_line_prefix="│     "
+                else
+                    mod_prefix="│  ├─"
+                    check_line_prefix="│  │  "
+                fi
+            fi
+
+            print_msg "${mod_prefix} ${BOLD}${CYAN}${mod_title}${NC}"
+
+            # Get checks for this module and build array
+            local -a check_items=()
+            while IFS= read -r check; do
                 [[ -z "$check" ]] && continue
+                check_items+=("$check")
+            done < <(echo "$mod_checks" | jq -c '.[]')
+
+            local check_count=${#check_items[@]}
+            local check_idx=0
+
+            for check in "${check_items[@]}"; do
+                ((check_idx++))
 
                 local status=$(echo "$check" | jq -r '.status')
                 local severity=$(echo "$check" | jq -r '.severity')
                 local title=$(echo "$check" | jq -r '.title')
+                local check_id=$(echo "$check" | jq -r '.id')
+
+                # Check connector
+                local check_prefix
+                local hint_prefix
+                if ((check_idx == check_count)); then
+                    check_prefix="${check_line_prefix}└─"
+                    hint_prefix="${check_line_prefix}   "
+                else
+                    check_prefix="${check_line_prefix}├─"
+                    hint_prefix="${check_line_prefix}│  "
+                fi
 
                 if [[ "$status" == "passed" ]]; then
-                    echo -e "  ${GREEN}✓${NC} ${title}"
+                    echo -e "${check_prefix} ${GREEN}✓${NC} ${title}"
                 else
                     case "$severity" in
-                        high)   echo -e "  ${RED}✗${NC} ${title}" ;;
-                        medium) echo -e "  ${YELLOW}●${NC} ${title}" ;;
-                        low)    echo -e "  ${BLUE}○${NC} ${title}" ;;
+                        high)   echo -e "${check_prefix} ${RED}✗${NC} ${title}" ;;
+                        medium) echo -e "${check_prefix} ${YELLOW}●${NC} ${title}" ;;
+                        low)    echo -e "${check_prefix} ${BLUE}○${NC} ${title}" ;;
                     esac
+                    # Try to get hint for this check
+                    local hint_key="${check_id##*.}_hint"
+                    local hint=$(i18n "${module}.${hint_key}" 2>/dev/null || echo "")
+                    if [[ -n "$hint" && "$hint" != "${module}.${hint_key}" ]]; then
+                        echo -e "${hint_prefix}${DIM}↳ ${hint}${NC}"
+                    fi
                 fi
             done
         done
@@ -319,7 +369,7 @@ report_print_details() {
     print_msg ""
 }
 
-# Print terminal summary - organized by category
+# Print terminal summary - compact format
 report_print_summary() {
     local checks=$(state_get_checks)
     local score=$(calculate_score)
@@ -329,19 +379,6 @@ report_print_summary() {
     local medium=$(echo "$stats" | jq '.medium')
     local low=$(echo "$stats" | jq '.low')
     local passed=$(echo "$stats" | jq '.passed')
-
-    local security_level="${VPSSEC_SECURITY_LEVEL:-standard}"
-
-    # Get localized level name
-    local level_name
-    case "$security_level" in
-        basic)    level_name=$(i18n 'level.basic' 2>/dev/null || echo "Basic") ;;
-        standard) level_name=$(i18n 'level.standard' 2>/dev/null || echo "Standard") ;;
-        strict)   level_name=$(i18n 'level.strict' 2>/dev/null || echo "Strict") ;;
-        *)        level_name="$security_level" ;;
-    esac
-
-    print_header "$(i18n 'report.summary')"
 
     # Score bar
     local score_color
@@ -353,80 +390,25 @@ report_print_summary() {
         score_color="${RED}"
     fi
 
+    print_msg "────────────────────────────────────────────────────────"
     print_msg ""
-    print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${score}/100${NC}  ${DIM}(${level_name})${NC}"
+    print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${BOLD}${score}/100${NC}"
     print_msg ""
 
-    # Category and module summary - organized by category
-    for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
-        local category_modules=$(_get_category_modules "$category")
-
-        # Check if any modules in this category have results
-        local has_results=0
-        for module in $category_modules; do
-            local mod_check_count=$(echo "$checks" | jq --arg m "$module" '[.[] | select(.module == $m)] | length')
-            if ((mod_check_count > 0)); then
-                has_results=1
-                break
-            fi
-        done
-
-        [[ "$has_results" == "0" ]] && continue
-
-        # Print category header (subtle)
-        print_msg "  ${DIM}── ${category_title} ──${NC}"
-
-        # Print modules in this category
-        for module in $category_modules; do
-            local mod_checks=$(echo "$checks" | jq --arg m "$module" '[.[] | select(.module == $m)]')
-            local mod_check_count=$(echo "$mod_checks" | jq 'length')
-
-            [[ "$mod_check_count" == "0" ]] && continue
-
-            local mod_high=$(echo "$mod_checks" | jq '[.[] | select(.status == "failed" and .severity == "high")] | length')
-            local mod_medium=$(echo "$mod_checks" | jq '[.[] | select(.status == "failed" and .severity == "medium")] | length')
-            local mod_low=$(echo "$mod_checks" | jq '[.[] | select(.status == "failed" and .severity == "low")] | length')
-            local mod_passed=$(echo "$mod_checks" | jq '[.[] | select(.status == "passed")] | length')
-
-            local status_icon
-            local status_color
-            if ((mod_high > 0)); then
-                status_icon="🔴"
-                status_color="${RED}"
-            elif ((mod_medium > 0)); then
-                status_icon="🟡"
-                status_color="${YELLOW}"
-            elif ((mod_low > 0)); then
-                status_icon="🔵"
-                status_color="${BLUE}"
-            else
-                status_icon="🟢"
-                status_color="${GREEN}"
-            fi
-
-            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-            local mod_status=""
-
-            if ((mod_high > 0)); then
-                mod_status+="${mod_high} $(i18n 'common.high') "
-            fi
-            if ((mod_medium > 0)); then
-                mod_status+="${mod_medium} $(i18n 'common.medium') "
-            fi
-            if ((mod_low > 0)); then
-                mod_status+="${mod_low} $(i18n 'common.low') "
-            fi
-            if [[ -z "$mod_status" ]]; then
-                mod_status="$(i18n 'common.safe')"
-            fi
-
-            printf "    %-18s %s " "${mod_title}" "${status_icon}"
-            echo -e "${status_color}${mod_status}${NC}"
-        done
-
-        print_msg ""
-    done
+    # Compact stats line
+    local stats_line="  "
+    if ((high > 0)); then
+        stats_line+="${RED}●${NC} ${high} $(i18n 'common.high')  "
+    fi
+    if ((medium > 0)); then
+        stats_line+="${YELLOW}●${NC} ${medium} $(i18n 'common.medium')  "
+    fi
+    if ((low > 0)); then
+        stats_line+="${BLUE}●${NC} ${low} $(i18n 'common.low')  "
+    fi
+    stats_line+="${GREEN}●${NC} ${passed} $(i18n 'common.safe')"
+    echo -e "$stats_line"
+    print_msg ""
 }
 
 # Generate SARIF report (for CI/CD integration)

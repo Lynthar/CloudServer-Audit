@@ -46,7 +46,6 @@ $(i18n 'cli.commands')
 
 $(i18n 'cli.options')
   $(i18n 'cli.opt_lang')
-  $(i18n 'cli.opt_level')
   $(i18n 'cli.opt_no_color')
   $(i18n 'cli.opt_json_only')
   $(i18n 'cli.opt_yes')
@@ -56,11 +55,10 @@ $(i18n 'cli.options')
   $(i18n 'cli.opt_version')
 
 Examples:
-  vpssec audit                     # Run security audit
+  vpssec audit                     # Run security audit (all modules)
   vpssec audit --json-only         # Output JSON only
+  vpssec audit --include=ssh,ufw   # Only SSH and UFW modules
   vpssec guide                     # Interactive hardening
-  vpssec guide --level=strict      # Maximum security level
-  vpssec guide --include=ssh,ufw   # Only SSH and UFW modules
   vpssec rollback                  # Rollback last changes
 
 EOF
@@ -85,12 +83,6 @@ parse_args() {
                 VPSSEC_LANG="${1#*=}"
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
-                shift
-                ;;
-            --level=*)
-                VPSSEC_SECURITY_LEVEL="${1#*=}"
-                VPSSEC_LEVEL_SET=1
-                export VPSSEC_SECURITY_LEVEL VPSSEC_LEVEL_SET
                 shift
                 ;;
             --no-color)
@@ -140,8 +132,10 @@ parse_args() {
     # Use VPSSEC_MODE if set by menu, otherwise default to audit
     command="${command:-${VPSSEC_MODE:-audit}}"
 
-    # Export for use in other functions
-    export VPSSEC_INCLUDE="$include"
+    # Merge CLI include with menu selection
+    if [[ -n "$include" ]]; then
+        export VPSSEC_INCLUDE="$include"
+    fi
     export VPSSEC_EXCLUDE="$exclude"
 
     echo "$command"
@@ -152,7 +146,7 @@ parse_args() {
 # ==============================================================================
 
 main() {
-    # Handle --version, --help, --lang, --level and detect command before interactive menus
+    # Handle --version, --help, --lang, --include and detect command before interactive menus
     for arg in "$@"; do
         case "$arg" in
             --version|-v)
@@ -171,11 +165,10 @@ main() {
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
                 ;;
-            --level=*)
-                # Mark level as set so we skip selection menu
-                VPSSEC_SECURITY_LEVEL="${arg#*=}"
-                VPSSEC_LEVEL_SET=1
-                export VPSSEC_SECURITY_LEVEL VPSSEC_LEVEL_SET
+            --include=*)
+                # Mark modules as set so we skip selection menu
+                VPSSEC_INCLUDE="${arg#*=}"
+                export VPSSEC_INCLUDE
                 ;;
             audit|guide|rollback|status)
                 # Mark mode as set so we skip selection menu
@@ -192,8 +185,8 @@ main() {
     # Show mode selection if not specified (only for audit/guide, not rollback/status)
     select_mode
 
-    # Show security level selection if in guide mode and not specified
-    select_security_level
+    # Show module selection if not specified via CLI
+    select_modules
 
     # Parse command line arguments (will use VPSSEC_MODE if set)
     local command=$(parse_args "$@")
@@ -242,7 +235,9 @@ main() {
             print_msg "Version: ${VPSSEC_VERSION}"
             print_msg "Date: $(date '+%Y-%m-%d %H:%M:%S')"
             print_msg "OS: $(detect_os) $(detect_os_version)"
-            print_msg "Security Level: ${VPSSEC_SECURITY_LEVEL:-standard}"
+            if [[ -n "${VPSSEC_INCLUDE:-}" ]]; then
+                print_msg "Modules: ${VPSSEC_INCLUDE}"
+            fi
             audit_all
             ;;
         guide)
