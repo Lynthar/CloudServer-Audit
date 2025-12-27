@@ -261,29 +261,21 @@ _visible_len() {
     echo ${#stripped}
 }
 
-# Render a single module's checks to an array of lines
-# Usage: _render_module_lines <module> <checks_json> <is_last_in_col> <col_width>
+# Render a single module's checks to an array of lines (clean style, no tree connectors)
+# Usage: _render_module_clean <module> <checks_json> <col_width>
 # Output: Lines are stored in REPLY_LINES array
-_render_module_lines() {
+_render_module_clean() {
     local module="$1"
     local checks="$2"
-    local is_last="$3"
-    local col_width="${4:-40}"
+    local col_width="${3:-40}"
 
     REPLY_LINES=()
 
     local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
     local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
 
-    # Module header
-    local mod_prefix="├─"
-    local check_line_prefix="│  "
-    if [[ "$is_last" == "1" ]]; then
-        mod_prefix="└─"
-        check_line_prefix="   "
-    fi
-
-    REPLY_LINES+=("${mod_prefix} ${BOLD}${CYAN}${mod_title}${NC}")
+    # Module header - bold cyan, simple style
+    REPLY_LINES+=("${BOLD}${CYAN}${mod_title}${NC}")
 
     # Get checks
     local -a check_items=()
@@ -292,56 +284,40 @@ _render_module_lines() {
         check_items+=("$check")
     done < <(echo "$mod_checks" | jq -c '.[]')
 
-    local check_count=${#check_items[@]}
-    local check_idx=0
-
     for check in "${check_items[@]}"; do
-        ((check_idx++)) || true
-
         local status=$(echo "$check" | jq -r '.status')
         local severity=$(echo "$check" | jq -r '.severity')
         local title=$(echo "$check" | jq -r '.title')
-        local check_id=$(echo "$check" | jq -r '.id')
 
         # Truncate title if too long
-        local max_title_len=$((col_width - 8))
+        local max_title_len=$((col_width - 6))
         local vis_title=$(_strip_ansi "$title")
         if ((${#vis_title} > max_title_len)); then
             title="${vis_title:0:$((max_title_len-2))}.."
         fi
 
-        local check_prefix="${check_line_prefix}├─"
-        local hint_prefix="${check_line_prefix}│  "
-        if ((check_idx == check_count)); then
-            check_prefix="${check_line_prefix}└─"
-            hint_prefix="${check_line_prefix}   "
-        fi
-
+        # Simple indentation with status icon
         if [[ "$status" == "passed" ]]; then
-            REPLY_LINES+=("${check_prefix} ${GREEN}✓${NC} ${title}")
+            REPLY_LINES+=("  ${GREEN}✓${NC} ${title}")
         else
             case "$severity" in
-                high)   REPLY_LINES+=("${check_prefix} ${RED}✗${NC} ${title}") ;;
-                medium) REPLY_LINES+=("${check_prefix} ${YELLOW}●${NC} ${title}") ;;
-                low)    REPLY_LINES+=("${check_prefix} ${BLUE}○${NC} ${title}") ;;
+                high)   REPLY_LINES+=("  ${RED}✗${NC} ${title}") ;;
+                medium) REPLY_LINES+=("  ${YELLOW}●${NC} ${title}") ;;
+                low)    REPLY_LINES+=("  ${BLUE}○${NC} ${title}") ;;
             esac
         fi
     done
 }
 
-# Print two columns side by side
-_print_dual_columns() {
+# Print two columns side by side (clean style)
+_print_columns_clean() {
     local -n _left_arr=$1
     local -n _right_arr=$2
     local col_width="$3"
-    local cat_continued="$4"  # Whether category continues below
 
     local left_count=${#_left_arr[@]}
     local right_count=${#_right_arr[@]}
     local max_count=$((left_count > right_count ? left_count : right_count))
-
-    local prefix="│  "
-    [[ "$cat_continued" != "1" ]] && prefix="   "
 
     local idx
     for ((idx=0; idx<max_count; idx++)); do
@@ -362,30 +338,45 @@ _print_dual_columns() {
         ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
 
         if [[ -n "$right_line" ]]; then
-            echo -e "${prefix}${left_line}${padding}${DIM}│${NC} ${right_line}"
+            echo -e "  ${left_line}${padding}  ${DIM}│${NC}  ${right_line}"
         else
-            echo -e "${prefix}${left_line}"
+            echo -e "  ${left_line}"
         fi
     done
 }
 
-# Print detailed test results - dual column layout
+# Generate a horizontal line header for a category
+_print_category_header() {
+    local title="$1"
+    local total_width="${2:-70}"
+
+    # Calculate line lengths: ─── Title ───────────────
+    local title_len=${#title}
+    local prefix_len=3
+    local suffix_len=$((total_width - prefix_len - title_len - 2))
+    ((suffix_len < 3)) && suffix_len=3
+
+    local prefix_line=$(printf '─%.0s' $(seq 1 $prefix_len))
+    local suffix_line=$(printf '─%.0s' $(seq 1 $suffix_len))
+
+    echo -e "\n${BOLD}${MAGENTA}${prefix_line} ${title} ${suffix_line}${NC}\n"
+}
+
+# Print detailed test results - dual column layout (clean style)
 report_print_details() {
     local checks=$(state_get_checks)
-    local total_categories=${#VPSSEC_CATEGORY_ORDER[@]}
-    local cat_idx=0
 
     # Get terminal width, default to 100 if not available
     local term_width=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
-    local col_width=$(( (term_width - 10) / 2 ))
+    local col_width=$(( (term_width - 12) / 2 ))
     ((col_width < 35)) && col_width=35
     ((col_width > 50)) && col_width=50
 
-    print_msg ""
+    local header_width=$((col_width * 2 + 8))
+    ((header_width > term_width - 4)) && header_width=$((term_width - 4))
 
     # Iterate through categories in order
     for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        ((cat_idx++)) || true
         local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
         local category_modules=$(_get_category_modules "$category")
 
@@ -400,66 +391,55 @@ report_print_details() {
 
         [[ ${#active_modules[@]} -eq 0 ]] && continue
 
-        # Category connector
-        local cat_prefix="├─"
-        local cat_continued="1"
-        if ((cat_idx == total_categories)); then
-            cat_prefix="└─"
-            cat_continued="0"
-        fi
-
-        # Print category header
-        print_msg "${BOLD}${MAGENTA}${cat_prefix} ${category_title}${NC}"
+        # Print category header with horizontal line
+        _print_category_header "$category_title" "$header_width"
 
         local mod_count=${#active_modules[@]}
 
         if ((mod_count == 1)); then
             # Single module - simple output
             local module="${active_modules[0]}"
-            _render_module_lines "$module" "$checks" "1" "$col_width"
-            local prefix="│  "
-            [[ "$cat_continued" != "1" ]] && prefix="   "
+            _render_module_clean "$module" "$checks" "$col_width"
             for line in "${REPLY_LINES[@]}"; do
-                echo -e "${prefix}${line}"
+                echo -e "  ${line}"
             done
+            echo ""
         elif ((mod_count == 2)); then
             # Two modules - side by side
-            _render_module_lines "${active_modules[0]}" "$checks" "1" "$col_width"
+            _render_module_clean "${active_modules[0]}" "$checks" "$col_width"
             local -a left_lines=("${REPLY_LINES[@]}")
 
-            _render_module_lines "${active_modules[1]}" "$checks" "1" "$col_width"
+            _render_module_clean "${active_modules[1]}" "$checks" "$col_width"
             local -a right_lines=("${REPLY_LINES[@]}")
 
-            _print_dual_columns left_lines right_lines "$col_width" "$cat_continued"
+            _print_columns_clean left_lines right_lines "$col_width"
+            echo ""
         else
             # More than 2 modules - pair them up
             local i=0
             while ((i < mod_count)); do
-                local is_last_pair="0"
-                ((i + 2 >= mod_count)) && is_last_pair="1"
-
-                _render_module_lines "${active_modules[$i]}" "$checks" "$is_last_pair" "$col_width"
+                _render_module_clean "${active_modules[$i]}" "$checks" "$col_width"
                 local -a left_lines=("${REPLY_LINES[@]}")
 
                 if ((i + 1 < mod_count)); then
-                    _render_module_lines "${active_modules[$((i+1))]}" "$checks" "$is_last_pair" "$col_width"
+                    _render_module_clean "${active_modules[$((i+1))]}" "$checks" "$col_width"
                     local -a right_lines=("${REPLY_LINES[@]}")
-                    _print_dual_columns left_lines right_lines "$col_width" "$cat_continued"
+                    _print_columns_clean left_lines right_lines "$col_width"
                 else
                     # Odd module - print alone
-                    local prefix="│  "
-                    [[ "$cat_continued" != "1" ]] && prefix="   "
                     for line in "${left_lines[@]}"; do
-                        echo -e "${prefix}${line}"
+                        echo -e "  ${line}"
                     done
                 fi
 
+                # Add spacing between module pairs
+                echo ""
                 ((i += 2))
             done
         fi
     done
 
-    print_msg ""
+    echo ""
 }
 
 # Print terminal summary - compact format
