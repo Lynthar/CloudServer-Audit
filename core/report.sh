@@ -309,7 +309,7 @@ _render_module_clean() {
     done
 }
 
-# Print two columns side by side (clean style)
+# Print two columns side by side (compact style)
 _print_columns_clean() {
     local -n _left_arr=$1
     local -n _right_arr=$2
@@ -338,41 +338,43 @@ _print_columns_clean() {
         ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
 
         if [[ -n "$right_line" ]]; then
-            echo -e "  ${left_line}${padding}  ${DIM}│${NC}  ${right_line}"
+            echo -e " ${left_line}${padding} ${DIM}│${NC} ${right_line}"
         else
-            echo -e "  ${left_line}"
+            echo -e " ${left_line}"
         fi
     done
 }
 
-# Generate a horizontal line header for a category
+# Generate a horizontal line header for a category (compact style)
 _print_category_header() {
     local title="$1"
     local total_width="${2:-70}"
 
-    # Calculate line lengths: ─── Title ───────────────
+    # Calculate line lengths: ── Title ────────────────
     local title_len=${#title}
-    local prefix_len=3
+    local prefix_len=2
     local suffix_len=$((total_width - prefix_len - title_len - 2))
     ((suffix_len < 3)) && suffix_len=3
 
     local prefix_line=$(printf '─%.0s' $(seq 1 $prefix_len))
     local suffix_line=$(printf '─%.0s' $(seq 1 $suffix_len))
 
-    echo -e "\n${BOLD}${MAGENTA}${prefix_line} ${title} ${suffix_line}${NC}\n"
+    # Only one blank line before header, none after
+    echo ""
+    echo -e "${DIM}${prefix_line}${NC} ${BOLD}${MAGENTA}${title}${NC} ${DIM}${suffix_line}${NC}"
 }
 
-# Print detailed test results - dual column layout (clean style)
+# Print detailed test results - dual column layout (compact style)
 report_print_details() {
     local checks=$(state_get_checks)
 
     # Get terminal width, default to 100 if not available
     local term_width=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
-    local col_width=$(( (term_width - 12) / 2 ))
+    local col_width=$(( (term_width - 10) / 2 ))
     ((col_width < 35)) && col_width=35
     ((col_width > 50)) && col_width=50
 
-    local header_width=$((col_width * 2 + 8))
+    local header_width=$((col_width * 2 + 6))
     ((header_width > term_width - 4)) && header_width=$((term_width - 4))
 
     # Iterate through categories in order
@@ -401,9 +403,8 @@ report_print_details() {
             local module="${active_modules[0]}"
             _render_module_clean "$module" "$checks" "$col_width"
             for line in "${REPLY_LINES[@]}"; do
-                echo -e "  ${line}"
+                echo -e " ${line}"
             done
-            echo ""
         elif ((mod_count == 2)); then
             # Two modules - side by side
             _render_module_clean "${active_modules[0]}" "$checks" "$col_width"
@@ -413,11 +414,13 @@ report_print_details() {
             local -a right_lines=("${REPLY_LINES[@]}")
 
             _print_columns_clean left_lines right_lines "$col_width"
-            echo ""
         else
             # More than 2 modules - pair them up
             local i=0
             while ((i < mod_count)); do
+                # Add blank line between module pairs (not before first pair)
+                ((i > 0)) && echo ""
+
                 _render_module_clean "${active_modules[$i]}" "$checks" "$col_width"
                 local -a left_lines=("${REPLY_LINES[@]}")
 
@@ -428,12 +431,10 @@ report_print_details() {
                 else
                     # Odd module - print alone
                     for line in "${left_lines[@]}"; do
-                        echo -e "  ${line}"
+                        echo -e " ${line}"
                     done
                 fi
 
-                # Add spacing between module pairs
-                echo ""
                 ((i += 2))
             done
         fi
