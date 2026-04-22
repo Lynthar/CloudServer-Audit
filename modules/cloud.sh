@@ -275,7 +275,7 @@ _find_suspicious_agents() {
                 local cmdline=""
                 local user=""
                 if [[ -n "$pid" ]]; then
-                    cmdline=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | head -c 200)
+                    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | head -c 200)
                     user=$(ps -o user= -p "$pid" 2>/dev/null)
                 fi
                 suspicious+=("$proc|$pid|$user|$cmdline")

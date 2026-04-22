@@ -1,0 +1,79 @@
+# Project-wide ShellCheck configuration for vpssec.
+#
+# Every disable below has a specific justification recorded here. Before
+# adding a new rule to the list, prefer a per-site `# shellcheck disable=SCxxxx`
+# directive with a one-line comment — global disables only for rules that
+# fire many times across the project or represent structural choices.
+#
+# Tested against ShellCheck 0.11.0 (pinned in .github/workflows/shellcheck.yml).
+
+# Resolve `source` targets when they are statically analyzable.
+external-sources=true
+
+disable=SC1091,SC2005,SC2016,SC2034,SC2053,SC2064,SC2076,SC2128,SC2129,SC2155,SC2178,SC2183,SC2235,SC2001,SC2010,SC2012
+
+# -----------------------------------------------------------------------------
+# Justifications
+# -----------------------------------------------------------------------------
+# SC1091 — "source target not found". Modules are sourced via dynamic paths
+#          such as "${VPSSEC_CORE}/common.sh"; shellcheck cannot resolve the
+#          interpolation at analysis time.
+#
+# SC2005 — "useless echo $(...)". Cosmetic; rewriting 5 call sites offers no
+#          functional gain.
+#
+# SC2016 — "expressions in single quotes won't expand". Used intentionally when
+#          the project generates systemd units / nginx configs / audit rules
+#          where expansion must happen at runtime, not at template-build time.
+#
+# SC2034 — "unused variable". Globals like RED, GREEN, SYM_OK, SEV_HIGH are
+#          defined in core/common.sh and consumed by sourced modules;
+#          shellcheck's per-file view cannot see that cross-file usage.
+#
+# SC2053 — "quote right-hand side of == to prevent glob matching". Used
+#          deliberately in filesystem.sh whitelist matching where glob
+#          semantics are the goal (see comment at the call site).
+#
+# SC2064 — "use single quotes for trap to defer expansion". The one site
+#          (core/engine.sh) traps a path from mktemp that will not change
+#          between trap-set and trap-fire, so both forms are equivalent.
+#
+# SC2076 — "remove quotes from regex RHS of =~". The one site (ufw.sh) uses
+#          a space-padded literal-substring match pattern; dropping quotes
+#          would change the semantics to regex, which is not what the author
+#          wants.
+#
+# SC2128 — "expanding array without index". Pairs with SC2178 below — both
+#          are false positives caused by shellcheck conflating an array
+#          inside a helper function with a same-named string local in the
+#          caller's scope.
+#
+# SC2129 — "combine multiple >> redirects". Cosmetic.
+#
+# SC2155 — "declare and assign separately". Fires 670+ times across the
+#          project where `local foo=$(cmd)` is the established idiom.
+#          Changing every site would dwarf this PR and carries real
+#          regression risk; the underlying concern (masked return codes)
+#          is already handled where it matters by `set -e` + explicit
+#          `|| true` / fallback patterns.
+#
+# SC2178 — see SC2128.
+#
+# SC2183 — "printf has N variables but M arguments". False positive on
+#          printf '%*s' where the `*` is a width-from-argument specifier,
+#          not a second variable.
+#
+# SC2235 — "use { ..; } instead of (..) subshell". The one site
+#          (webapp.sh _webapp_apache_installed) uses parentheses for
+#          short-circuit grouping; subshell cost here is immaterial.
+#
+# SC2001 — "use ${var//pat/rep} instead of sed". Cosmetic.
+#
+# SC2010 — "don't use ls | grep". The one site reads /proc/<pid>/fd,
+#          where filenames are kernel-generated integers and the output
+#          format is fixed; the generic concern about unusual filenames
+#          does not apply.
+#
+# SC2012 — "use find instead of ls". The two sites list timestamp-formatted
+#          backup dirs (YYYYMMDD_HHMMSS) and /var/spool/cron/crontabs, both
+#          of which hold well-formed names.

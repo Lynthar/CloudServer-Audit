@@ -1,0 +1,19 @@
+# Enforce LF line endings on files that must run on Linux.
+# Without this, Windows contributors with `core.autocrlf=true` can commit
+# CRLF and silently break the shell scripts on the target systems.
+
+*.sh           text eol=lf
+*.json         text eol=lf
+*.md           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+
+# Extensionless executables
+vpssec         text eol=lf
+
+# Binary (do not touch)
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.ico          binary

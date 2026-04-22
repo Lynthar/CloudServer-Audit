@@ -281,7 +281,7 @@ backup_restore() {
 
     # Find all backed up files and restore them
     while IFS= read -r -d '' backup_file; do
-        local relative_path="${backup_file#$backup_dir/}"
+        local relative_path="${backup_file#"$backup_dir"/}"
         local original_path="/${relative_path}"
         local original_dir=$(dirname "$original_path")
 
@@ -311,7 +311,7 @@ backup_list_contents() {
 
     if [[ -d "$backup_dir" ]]; then
         find "$backup_dir" -type f | while read -r f; do
-            echo "${f#$backup_dir}"
+            echo "${f#"$backup_dir"}"
         done
     fi
 }
