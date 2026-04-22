@@ -919,6 +919,10 @@ _kernel_fix_ipv6() {
         fi
     done
 
+    # Reload once after the batch; _kernel_write_sysctl no longer reloads
+    # per-call (previously: N params = N reloads).
+    ((fixed > 0)) && _kernel_reload_sysctl_dropin
+
     if [[ "$fixed" -gt 0 ]]; then
         print_ok "$(i18n 'kernel.ipv6_hardened' "count=$fixed")"
         return 0
@@ -936,6 +940,7 @@ _kernel_fix_aslr() {
 
     # Make persistent
     _kernel_write_sysctl "kernel.randomize_va_space" "2"
+    _kernel_reload_sysctl_dropin
 
     if [[ "$(_kernel_check_aslr)" == "full" ]]; then
         print_ok "$(i18n 'kernel.aslr_enabled')"
@@ -987,6 +992,8 @@ _kernel_fix_network_params() {
         _kernel_write_sysctl "$param" "$value"
     done
 
+    _kernel_reload_sysctl_dropin
+
     print_ok "$(i18n 'kernel.network_hardened' "count=${#params_to_set[@]}")"
     return 0
 }
@@ -1027,6 +1034,8 @@ _kernel_fix_kernel_params() {
         _kernel_write_sysctl "$param" "$value"
     done
 
+    _kernel_reload_sysctl_dropin
+
     print_ok "$(i18n 'kernel.kernel_hardened' "count=${#params_to_set[@]}")"
     return 0
 }
@@ -1037,6 +1046,7 @@ _kernel_fix_core_dump() {
     # Disable via sysctl
     sysctl -w fs.suid_dumpable=0 2>/dev/null
     _kernel_write_sysctl "fs.suid_dumpable" "0"
+    _kernel_reload_sysctl_dropin
 
     # Add limits.conf entry
     if [[ -f /etc/security/limits.conf ]]; then
@@ -1075,10 +1085,12 @@ _kernel_fix_all() {
 #     the header into `existing` on every call, producing N copies of
 #     the header after N parameters);
 #   - the existing entry for $param is replaced, not duplicated; the
-#     param name is regex-escaped so dots match literally;
-#   - after writing, the drop-in is explicitly loaded so the setting
-#     takes effect at the same priority it will have after reboot
-#     (the earlier `sysctl -w` in the caller only touches runtime).
+#     param name is regex-escaped so dots match literally.
+#
+# Does NOT reload the drop-in. Callers that write N parameters in a
+# loop should call _kernel_reload_sysctl_dropin once after the loop
+# instead of paying for N reloads; single-parameter callers just call
+# the reload immediately after.
 _kernel_write_sysctl() {
     local param="$1"
     local value="$2"
@@ -1106,9 +1118,12 @@ _kernel_write_sysctl() {
     } > "$VPSSEC_SYSCTL_CONF"
 
     chmod 644 "$VPSSEC_SYSCTL_CONF"
+}
 
-    # Reload just our drop-in so the persisted value is effective now.
-    # Fails silently in containers where /proc/sys is read-only; runtime
-    # was already set by the caller's `sysctl -w` in that case.
+# Reload the vpssec sysctl drop-in so the persisted values are effective
+# now, at the same priority they will have after reboot. Fails silently
+# in containers where /proc/sys is read-only; runtime was already set by
+# the caller's `sysctl -w` in that case.
+_kernel_reload_sysctl_dropin() {
     sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
 }

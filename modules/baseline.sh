@@ -346,8 +346,8 @@ _baseline_audit_unused_services() {
             "low" \
             "failed" \
             "$(i18n 'baseline.unused_services' "count=$count")" \
-            "Services: $unused" \
-            "Disable unused services" \
+            "$(i18n 'baseline.unused_services_desc' "services=$unused")" \
+            "$(i18n 'baseline.review_unused_services')" \
             "baseline.disable_unused")
         state_add_check "$check"
         print_severity "low" "$(i18n 'baseline.unused_services' "count=$count"): $unused"

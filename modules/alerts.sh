@@ -170,6 +170,13 @@ _alerts_fix_setup_config() {
 
     mkdir -p "$(dirname "$ALERTS_CONFIG_FILE")"
 
+    # alerts.json holds webhook URLs and tokens; create it 0600 so it
+    # retains its restrictive mode even if someone `cp`s it elsewhere.
+    # The parent state dir is 700 (state_init), but don't rely on that.
+    local _prev_umask
+    _prev_umask=$(umask)
+    umask 077
+
     # Interactive setup or generate template
     if [[ -t 0 ]]; then
         local webhook_url=""
@@ -215,6 +222,11 @@ EOF
         print_ok "$(i18n 'alerts.template_created' "path=$ALERTS_CONFIG_FILE")"
         print_info "$(i18n 'alerts.edit_template')"
     fi
+
+    umask "$_prev_umask"
+    # Belt-and-braces in case an existing file pre-dated this patch and
+    # already has a permissive mode. chmod is idempotent.
+    chmod 600 "$ALERTS_CONFIG_FILE" 2>/dev/null || true
 
     # Generate monitoring scripts
     _alerts_fix_generate_templates
@@ -291,11 +303,15 @@ vpssec_alert_email() {
 
     local hostname=$(hostname)
 
+    # Use printf with a literal format so backslash sequences in $body
+    # (e.g. "\n" from command output, or an attacker-controlled message
+    # field) are not re-interpreted by echo -e.
     if command -v mail &>/dev/null; then
-        echo -e "$body\n\nHost: $hostname\nTime: $(date)" | \
+        printf '%s\n\nHost: %s\nTime: %s\n' "$body" "$hostname" "$(date)" | \
             mail -s "[vpssec] $subject" "$ALERT_EMAIL"
     elif command -v msmtp &>/dev/null; then
-        echo -e "Subject: [vpssec] $subject\n\n$body\n\nHost: $hostname\nTime: $(date)" | \
+        printf 'Subject: [vpssec] %s\n\n%s\n\nHost: %s\nTime: %s\n' \
+            "$subject" "$body" "$hostname" "$(date)" | \
             msmtp "$ALERT_EMAIL"
     fi
 }
@@ -536,9 +552,10 @@ EOF
             -d "$payload" "$webhook" &>/dev/null &
     fi
 
-    # Send email
+    # Send email (printf so backslash sequences inside $message aren't
+    # re-interpreted, matching the template library's behaviour).
     if [[ -n "$email" ]] && _alerts_check_mail_configured; then
-        echo -e "$message\n\nHost: $(hostname)\nTime: $(date)" | \
+        printf '%s\n\nHost: %s\nTime: %s\n' "$message" "$(hostname)" "$(date)" | \
             mail -s "[vpssec] $title" "$email" 2>/dev/null &
     fi
 }

@@ -16,5 +16,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Claude Code local workspace
+# Claude Code local workspace and session working docs
 .claude/
+CLAUDE.md
+REVIEW_FINDINGS.md
+MANUAL_TEST_PLAN.md
