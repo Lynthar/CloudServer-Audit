@@ -15,3 +15,6 @@ Thumbs.db
 *~
 .vscode/
 .idea/
+
+# Claude Code local workspace
+.claude/

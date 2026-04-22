@@ -28,7 +28,7 @@ _ssh_get_config() {
     if command -v sshd &>/dev/null; then
         # sshd -T outputs all effective settings in lowercase
         local key_lower="${key,,}"
-        value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{print $2}')
+        value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
         if [[ -n "$value" ]]; then
             echo "$value"
             return
@@ -38,7 +38,7 @@ _ssh_get_config() {
     # Method 2: Fallback to file parsing (less accurate but works without root)
     # Check drop-ins first (higher priority, sorted by name)
     if [[ -d "$SSH_DROPIN_DIR" ]]; then
-        value=$(grep -h "^${key}[[:space:]]" "$SSH_DROPIN_DIR"/*.conf 2>/dev/null | tail -1 | awk '{print $2}')
+        value=$(grep -h "^${key}[[:space:]]" "$SSH_DROPIN_DIR"/*.conf 2>/dev/null | tail -1 | awk '{sub(/^[^[:space:]]+[[:space:]]+/, ""); print}')
         if [[ -n "$value" ]]; then
             echo "$value"
             return
@@ -46,7 +46,7 @@ _ssh_get_config() {
     fi
 
     # Check main config
-    value=$(grep "^${key}[[:space:]]" "$SSH_CONFIG" 2>/dev/null | tail -1 | awk '{print $2}')
+    value=$(grep "^${key}[[:space:]]" "$SSH_CONFIG" 2>/dev/null | tail -1 | awk '{sub(/^[^[:space:]]+[[:space:]]+/, ""); print}')
     if [[ -n "$value" ]]; then
         echo "$value"
         return
@@ -798,8 +798,12 @@ _ssh_write_hardening_config() {
         echo "$content"
     } > "$temp_file"
 
-    # Validate config by testing with the actual sshd_config
-    if sshd -t -f /dev/null -o "Include=$temp_file" 2>/dev/null; then
+    # Validate the drop-in by having sshd parse it as a standalone config.
+    # Directives in our drop-in are all valid top-level sshd_config directives;
+    # any directive not present is silently defaulted, so this catches syntax
+    # errors without needing the real sshd_config on disk. The full-context
+    # validation (main config + all drop-ins) is done by _ssh_reload_safe.
+    if sshd -t -f "$temp_file" 2>/dev/null; then
         chmod 644 "$temp_file"
         if mv "$temp_file" "$SSH_HARDENING_DROPIN"; then
             print_ok "$(i18n 'ssh.dropin_created' "path=$SSH_HARDENING_DROPIN")"
@@ -874,7 +878,7 @@ _ssh_fix_disable_password_auth() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PasswordAuthentication") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^PasswordAuthentication") || true
     fi
 
     # Write config
@@ -919,7 +923,7 @@ _ssh_fix_disable_root_login() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PermitRootLogin") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^PermitRootLogin") || true
     fi
 
     # Write config
@@ -944,7 +948,7 @@ _ssh_fix_enable_pubkey() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PubkeyAuthentication") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^PubkeyAuthentication") || true
     fi
 
     # Write config
@@ -965,7 +969,7 @@ _ssh_fix_disable_empty_password() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^PermitEmptyPasswords") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^PermitEmptyPasswords") || true
     fi
 
     # Write config
@@ -986,7 +990,7 @@ _ssh_fix_set_max_auth_tries() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^MaxAuthTries") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^MaxAuthTries") || true
     fi
 
     # Write config
@@ -1007,7 +1011,7 @@ _ssh_fix_set_login_grace_time() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^LoginGraceTime") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^LoginGraceTime") || true
     fi
 
     # Write config
@@ -1028,7 +1032,7 @@ _ssh_fix_disable_x11_forwarding() {
     # Read existing hardening config
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -v "^X11Forwarding") || true
+        existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | grep -iv "^X11Forwarding") || true
     fi
 
     # Write config
@@ -1052,9 +1056,9 @@ _ssh_fix_harden_algorithms() {
     local existing=""
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
         existing=$(grep -v "^#" "$SSH_HARDENING_DROPIN" | \
-            grep -v "^Ciphers" | \
-            grep -v "^MACs" | \
-            grep -v "^KexAlgorithms") || true
+            grep -iv "^Ciphers" | \
+            grep -iv "^MACs" | \
+            grep -iv "^KexAlgorithms") || true
     fi
 
     # Recommended secure algorithms (modern OpenSSH)
