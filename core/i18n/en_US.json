@@ -302,7 +302,13 @@
     "template_location": "Template location: {path}",
     "configuring_daemon": "Configuring Docker daemon: {setting} = {value}",
     "daemon_updated": "Docker daemon configuration updated",
-    "restart_docker": "Restart Docker to apply changes: systemctl restart docker"
+    "restart_docker": "Restart Docker to apply changes: systemctl restart docker",
+    "daemon_invalid_json": "Refusing to edit {path}: existing file is not valid JSON. Fix it manually first.",
+    "daemon_update_failed": "Failed to update Docker daemon configuration; original file left unchanged",
+    "confirm_restart": "Restart the Docker daemon now so the change takes effect? All running containers will pause briefly.",
+    "restarted": "Docker restarted",
+    "restart_failed": "Failed to restart Docker; check 'systemctl status docker' and 'journalctl -u docker'",
+    "restart_skipped": "Docker NOT restarted; new setting takes effect on next restart"
   },
   "nginx": {
     "title": "Nginx Catchall",

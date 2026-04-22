@@ -444,22 +444,65 @@ EOF
 _docker_fix_enable_daemon_setting() {
     local setting="$1"
     local value="$2"
+    local tmp_file="${DOCKER_DAEMON_JSON}.tmp"
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
     # Create or update daemon.json
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
+        # Refuse to edit if the existing file is not valid JSON. Without
+        # this guard, a failed jq on malformed input used to write an
+        # empty tmp file that then clobbered the user's daemon.json.
+        if ! jq empty "$DOCKER_DAEMON_JSON" 2>/dev/null; then
+            print_error "$(i18n 'docker.daemon_invalid_json' "path=$DOCKER_DAEMON_JSON")"
+            return 1
+        fi
+
         backup_file "$DOCKER_DAEMON_JSON"
-        local current=$(cat "$DOCKER_DAEMON_JSON")
-        echo "$current" | jq --arg key "$setting" --argjson val "$value" '.[$key] = $val' > "${DOCKER_DAEMON_JSON}.tmp"
-        mv "${DOCKER_DAEMON_JSON}.tmp" "$DOCKER_DAEMON_JSON"
+
+        if ! jq --arg key "$setting" --argjson val "$value" '.[$key] = $val' \
+               "$DOCKER_DAEMON_JSON" > "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            print_error "$(i18n 'docker.daemon_update_failed')"
+            return 1
+        fi
+
+        # Double-check the produced file is non-empty valid JSON before
+        # overwriting the original.
+        if [[ ! -s "$tmp_file" ]] || ! jq empty "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            print_error "$(i18n 'docker.daemon_update_failed')"
+            return 1
+        fi
+
+        mv "$tmp_file" "$DOCKER_DAEMON_JSON"
     else
         mkdir -p /etc/docker
-        echo "{\"$setting\": $value}" | jq '.' > "$DOCKER_DAEMON_JSON"
+        if ! jq -n --arg key "$setting" --argjson val "$value" \
+               '{($key): $val}' > "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            print_error "$(i18n 'docker.daemon_update_failed')"
+            return 1
+        fi
+        mv "$tmp_file" "$DOCKER_DAEMON_JSON"
     fi
 
     print_ok "$(i18n 'docker.daemon_updated')"
-    print_warn "$(i18n 'docker.restart_docker')"
+
+    # Docker does not auto-reload daemon.json; the change only takes
+    # effect on daemon restart. Ask before restarting since it briefly
+    # pauses every running container. confirm_critical intentionally
+    # ignores --yes so automated runs cannot restart silently.
+    if confirm_critical "$(i18n 'docker.confirm_restart')"; then
+        if systemctl restart docker 2>/dev/null; then
+            print_ok "$(i18n 'docker.restarted')"
+        else
+            print_error "$(i18n 'docker.restart_failed')"
+            return 1
+        fi
+    else
+        print_warn "$(i18n 'docker.restart_skipped')"
+    fi
 
     return 0
 }

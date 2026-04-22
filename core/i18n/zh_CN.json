@@ -302,7 +302,13 @@
     "template_location": "模板位置: {path}",
     "configuring_daemon": "正在配置 Docker daemon: {setting} = {value}",
     "daemon_updated": "Docker daemon 配置已更新",
-    "restart_docker": "重启 Docker 以应用更改: systemctl restart docker"
+    "restart_docker": "重启 Docker 以应用更改: systemctl restart docker",
+    "daemon_invalid_json": "拒绝修改 {path}：现有文件不是合法 JSON，请先手动修复",
+    "daemon_update_failed": "更新 Docker daemon 配置失败；原文件未被修改",
+    "confirm_restart": "是否立即重启 Docker 使改动生效？所有运行中的容器会短暂暂停。",
+    "restarted": "Docker 已重启",
+    "restart_failed": "重启 Docker 失败，请检查 'systemctl status docker' 和 'journalctl -u docker'",
+    "restart_skipped": "未重启 Docker，新配置将在下次重启后生效"
   },
   "nginx": {
     "title": "Nginx 默认拦截",

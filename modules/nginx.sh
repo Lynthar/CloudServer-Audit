@@ -21,7 +21,20 @@ _nginx_installed() {
 }
 
 _nginx_has_catchall() {
-    # Check if there's a default_server with return 444
+    # Prefer the effective config dump, which follows every `include`
+    # directive (conf.d, sites-enabled, modules-enabled, any custom
+    # path). The previous directory-scan approach silently missed
+    # catchalls defined outside the two hard-coded locations and then
+    # the fix path would add a duplicate.
+    local effective
+    if effective=$(nginx -T 2>/dev/null) && [[ -n "$effective" ]]; then
+        echo "$effective" | grep -qE "^[[:space:]]*listen.*default_server" && \
+        echo "$effective" | grep -qE "^[[:space:]]*return[[:space:]]+444"
+        return $?
+    fi
+
+    # Fallback: scan standard directories when nginx -T is unavailable
+    # or the current config fails to parse.
     grep -rE "default_server.*;" "$NGINX_SITES_ENABLED" 2>/dev/null | grep -q "return 444" || \
     grep -rE "listen.*default_server" "$NGINX_CONF_DIR" 2>/dev/null | head -1 | xargs -I{} grep -l "return 444" 2>/dev/null
 }

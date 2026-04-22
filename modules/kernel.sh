@@ -1067,17 +1067,31 @@ _kernel_fix_all() {
     _kernel_fix_core_dump
 }
 
-# Helper: Write sysctl setting to persistent config
+# Helper: Write sysctl setting to persistent config.
+#
+# Called once per parameter. Each call rewrites the full drop-in file
+# so that:
+#   - the header appears exactly once (previous versions re-appended
+#     the header into `existing` on every call, producing N copies of
+#     the header after N parameters);
+#   - the existing entry for $param is replaced, not duplicated; the
+#     param name is regex-escaped so dots match literally;
+#   - after writing, the drop-in is explicitly loaded so the setting
+#     takes effect at the same priority it will have after reboot
+#     (the earlier `sysctl -w` in the caller only touches runtime).
 _kernel_write_sysctl() {
     local param="$1"
     local value="$2"
 
     mkdir -p "$SYSCTL_D"
 
-    # Read existing config or create new
+    # Strip previous header/blank lines AND any existing entry for this
+    # param, leaving only clean `key = value` lines to replay.
     local existing=""
     if [[ -f "$VPSSEC_SYSCTL_CONF" ]]; then
-        existing=$(grep -v "^$param\s*=" "$VPSSEC_SYSCTL_CONF" 2>/dev/null || true)
+        local param_re="${param//./\\.}"
+        existing=$(grep -vE '^[[:space:]]*(#|$)' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \
+                   | grep -vE "^${param_re}[[:space:]]*=" || true)
     fi
 
     # Write config
@@ -1092,4 +1106,9 @@ _kernel_write_sysctl() {
     } > "$VPSSEC_SYSCTL_CONF"
 
     chmod 644 "$VPSSEC_SYSCTL_CONF"
+
+    # Reload just our drop-in so the persisted value is effective now.
+    # Fails silently in containers where /proc/sys is read-only; runtime
+    # was already set by the caller's `sysctl -w` in that case.
+    sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
 }
