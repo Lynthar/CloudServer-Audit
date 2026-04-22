@@ -216,7 +216,14 @@ export RESTIC_REPOSITORY="s3:s3.amazonaws.com/your-bucket/restic"
 # Or for B2: export RESTIC_REPOSITORY="b2:bucket-name:restic"
 
 export RESTIC_PASSWORD_FILE="/root/.restic-password"
-# Or use: export RESTIC_PASSWORD="your-password"
+# Before running: create that file with your passphrase and lock it
+# down — any user who can read this file can decrypt every backup:
+#   umask 077
+#   printf '%s\n' 'your-passphrase' > /root/.restic-password
+#   chmod 600 /root/.restic-password
+# Do NOT replace RESTIC_PASSWORD_FILE with RESTIC_PASSWORD="..."
+# inline: if this script ever loses its 600 mode the password leaks
+# with it.
 
 # AWS credentials (if using S3)
 # export AWS_ACCESS_KEY_ID="your-key"
@@ -290,7 +297,10 @@ fi
 log "Backup completed successfully"
 EOF
 
-    chmod +x "${BACKUP_TEMPLATES_DIR}/restic-backup.sh"
+    # 700 rather than +x (which yields 755): the backup script holds
+    # credentials (repo URL, possibly S3 keys inline if the user adds
+    # them) and is not something other users need to read or execute.
+    chmod 700 "${BACKUP_TEMPLATES_DIR}/restic-backup.sh"
     print_item "$(i18n 'backup.template_created' "name=restic-backup.sh")"
 }
 
@@ -380,7 +390,8 @@ borg compact "$BORG_REPO" 2>&1 | tee -a "$LOG_FILE"
 log "Backup completed successfully"
 EOF
 
-    chmod +x "${BACKUP_TEMPLATES_DIR}/borg-backup.sh"
+    # See restic template above for rationale on 700 vs +x.
+    chmod 700 "${BACKUP_TEMPLATES_DIR}/borg-backup.sh"
     print_item "$(i18n 'backup.template_created' "name=borg-backup.sh")"
 }
 

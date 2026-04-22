@@ -408,7 +408,8 @@
     "auditd_start_failed": "Failed to start auditd",
     "configuring_audit_rules": "Configuring audit rules...",
     "audit_rules_configured": "Audit rules configured",
-    "audit_rules_failed": "Failed to configure audit rules"
+    "audit_rules_failed": "Failed to configure audit rules",
+    "audit_immutable_hint": "For compliance / forensic integrity, consider uncommenting '-e 2' in /etc/audit/rules.d/99-vpssec.rules and rebooting; once applied, audit rules cannot be modified without another reboot."
   },
   "cloudflared": {
     "title": "Cloudflare Tunnel",

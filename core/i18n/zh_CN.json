@@ -408,7 +408,8 @@
     "auditd_start_failed": "auditd 启动失败",
     "configuring_audit_rules": "正在配置审计规则...",
     "audit_rules_configured": "审计规则已配置",
-    "audit_rules_failed": "审计规则配置失败"
+    "audit_rules_failed": "审计规则配置失败",
+    "audit_immutable_hint": "合规/法证场景建议取消 /etc/audit/rules.d/99-vpssec.rules 里 '-e 2' 的注释并重启；启用后审计规则直到下次重启前不可被修改。"
   },
   "cloudflared": {
     "title": "Cloudflare Tunnel",

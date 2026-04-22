@@ -308,8 +308,16 @@ vpssec_alert() {
 
     vpssec_alert_load_config
 
-    # Check throttling
-    local throttle_file="/tmp/vpssec-alert-$(echo "$title" | md5sum | cut -d' ' -f1)"
+    # Throttle state lives in a protected directory rather than /tmp.
+    # Under /tmp the filename was md5(title) — deterministic and world-
+    # writable — which let any local user pre-create the file with a
+    # future timestamp to silence specific alerts (e.g. "SSH login",
+    # "High CPU"). A 700-mode directory under /var/lib prevents that.
+    local throttle_dir="/var/lib/vpssec/state/alerts/throttle"
+    mkdir -p "$throttle_dir" 2>/dev/null
+    chmod 700 "$throttle_dir" 2>/dev/null
+
+    local throttle_file="${throttle_dir}/$(echo "$title" | md5sum | cut -d' ' -f1)"
     if [[ -f "$throttle_file" ]]; then
         local last_alert=$(cat "$throttle_file")
         local now=$(date +%s)

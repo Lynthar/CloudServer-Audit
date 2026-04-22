@@ -482,7 +482,12 @@ _logging_fix_setup_audit_rules() {
 -w /sbin/rmmod -p x -k modules
 -w /sbin/modprobe -p x -k modules
 
-# Make configuration immutable (uncomment for production)
+# Lock the audit configuration (RECOMMENDED for production / compliance).
+# With -e 2 the rules cannot be modified until the next reboot, which
+# prevents an attacker with root from running `auditctl -D` to erase
+# the forensic trail before tampering. Trade-off: editing /etc/audit
+# rules will also require a reboot. Uncomment this line if your
+# environment can accept that operational cost.
 # -e 2
 EOF
 
@@ -491,6 +496,7 @@ EOF
 
     if _logging_check_audit_rules; then
         print_ok "$(i18n 'logging.audit_rules_configured')"
+        print_info "$(i18n 'logging.audit_immutable_hint')"
         return 0
     else
         print_error "$(i18n 'logging.audit_rules_failed')"
