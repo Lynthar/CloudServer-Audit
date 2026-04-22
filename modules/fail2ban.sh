@@ -85,6 +85,30 @@ _f2b_detect_backend() {
     echo "auto"
 }
 
+# Detect the banaction that matches the host's active firewall.
+# The previous hard-coded `iptables-multiport` value silently no-ops on
+# nftables-based systems (Debian 12, Ubuntu 24.04 default): fail2ban
+# loads the jail and reports it active, but every ban attempt fails
+# because the iptables-multiport action shells out to iptables which
+# isn't the packet filter in use.
+_f2b_detect_banaction() {
+    # Prefer ufw when it's the active manager — its action handles
+    # both IPv4 and IPv6 and respects the user's ruleset.
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        echo "ufw"
+        return
+    fi
+
+    # Native nftables (no UFW wrapper) has its own multiport action.
+    if command -v nft &>/dev/null && [[ -n "$(nft list tables 2>/dev/null)" ]]; then
+        echo "nftables-multiport"
+        return
+    fi
+
+    # Fall back to the legacy iptables action.
+    echo "iptables-multiport"
+}
+
 # Check if SSH jail is enabled
 _f2b_ssh_jail_enabled() {
     if ! _f2b_installed || ! _f2b_service_active; then
@@ -155,34 +179,47 @@ _f2b_has_custom_config() {
     [[ -d "$F2B_JAIL_D" && -n "$(ls -A "$F2B_JAIL_D"/*.conf 2>/dev/null)" ]]
 }
 
-# Get maxretry setting for SSH jail
+# Get maxretry setting for SSH jail.
+# The previous `tail -1` across the whole file ignored INI section
+# semantics: a [DEFAULT] value appearing after [sshd] would be reported
+# as the effective value even though fail2ban applies the [sshd]-local
+# setting. Prefer fail2ban-client which returns the actual runtime
+# value; fall back to tail -1 only when the service is down or the
+# client is unavailable.
 _f2b_get_maxretry() {
     local maxretry=""
 
-    # Check jail.local first
-    if [[ -f "$F2B_JAIL_LOCAL" ]]; then
-        maxretry=$(grep -E "^\s*maxretry\s*=" "$F2B_JAIL_LOCAL" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+    if systemctl is-active --quiet fail2ban 2>/dev/null && command -v fail2ban-client &>/dev/null; then
+        maxretry=$(fail2ban-client get sshd maxretry 2>/dev/null)
     fi
 
-    # Check jail.d directory
-    if [[ -z "$maxretry" && -d "$F2B_JAIL_D" ]]; then
-        maxretry=$(grep -rh "^\s*maxretry\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+    if [[ -z "$maxretry" ]]; then
+        if [[ -f "$F2B_JAIL_LOCAL" ]]; then
+            maxretry=$(grep -E "^\s*maxretry\s*=" "$F2B_JAIL_LOCAL" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+        fi
+        if [[ -z "$maxretry" && -d "$F2B_JAIL_D" ]]; then
+            maxretry=$(grep -rh "^\s*maxretry\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+        fi
     fi
 
-    # Default value
     echo "${maxretry:-5}"
 }
 
-# Get bantime setting
+# Get bantime setting. See _f2b_get_maxretry for the rationale.
 _f2b_get_bantime() {
     local bantime=""
 
-    if [[ -f "$F2B_JAIL_LOCAL" ]]; then
-        bantime=$(grep -E "^\s*bantime\s*=" "$F2B_JAIL_LOCAL" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+    if systemctl is-active --quiet fail2ban 2>/dev/null && command -v fail2ban-client &>/dev/null; then
+        bantime=$(fail2ban-client get sshd bantime 2>/dev/null)
     fi
 
-    if [[ -z "$bantime" && -d "$F2B_JAIL_D" ]]; then
-        bantime=$(grep -rh "^\s*bantime\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+    if [[ -z "$bantime" ]]; then
+        if [[ -f "$F2B_JAIL_LOCAL" ]]; then
+            bantime=$(grep -E "^\s*bantime\s*=" "$F2B_JAIL_LOCAL" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+        fi
+        if [[ -z "$bantime" && -d "$F2B_JAIL_D" ]]; then
+            bantime=$(grep -rh "^\s*bantime\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+        fi
     fi
 
     echo "${bantime:-10m}"
@@ -425,13 +462,23 @@ _f2b_fix_configure_ssh_jail() {
         backup_file "$F2B_JAIL_LOCAL"
     fi
 
-    # Get SSH port and detect log path/backend
+    # Get SSH port and detect log path/backend/banaction
     local ssh_port=$(get_ssh_port)
     local ssh_logpath=$(_f2b_detect_ssh_logpath)
     local f2b_backend=$(_f2b_detect_backend)
+    local f2b_banaction=$(_f2b_detect_banaction)
+    # The "-allports" variant for banaction_allports uses the same base
+    # name except for `ufw` which has a single action handling both.
+    local f2b_banaction_allports
+    case "$f2b_banaction" in
+        ufw) f2b_banaction_allports="ufw" ;;
+        nftables-multiport) f2b_banaction_allports="nftables-allports" ;;
+        *) f2b_banaction_allports="iptables-allports" ;;
+    esac
 
     print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
+    print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
 
     # Create jail.local with SSH configuration
     cat > "$F2B_JAIL_LOCAL" <<EOF
@@ -453,9 +500,9 @@ maxretry = 3
 # Backend for log monitoring
 backend = $f2b_backend
 
-# Action: ban IP using iptables/nftables
-banaction = iptables-multiport
-banaction_allports = iptables-allports
+# Action: ban IP using the host's active firewall (selected at runtime)
+banaction = $f2b_banaction
+banaction_allports = $f2b_banaction_allports
 
 # Email notifications (optional)
 # destemail = admin@example.com

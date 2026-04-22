@@ -97,32 +97,49 @@ _ssh_empty_password_allowed() {
     [[ "${value,,}" == "yes" ]]
 }
 
-# Check for non-root sudo users
+# Check for non-root sudo users.
+# This feeds the safety gate in _ssh_fix_disable_root_login — an empty
+# result blocks root-login disable and asks the user to create an admin
+# first. Previously this looked only at the sudo/wheel groups, missing
+# users granted sudo via /etc/sudoers or /etc/sudoers.d/* (a common
+# Ansible/Terraform setup), which wrongly blocked a safe hardening fix.
 _ssh_get_admin_users() {
-    # Get users who can sudo (excluding root)
     local admin_users=()
 
-    # Check sudo group members
-    if getent group sudo &>/dev/null; then
-        while IFS=: read -r _ _ _ members; do
-            for user in ${members//,/ }; do
-                if [[ "$user" != "root" ]]; then
-                    admin_users+=("$user")
-                fi
-            done
-        done < <(getent group sudo)
-    fi
+    # Group-based grants: members of `sudo` and `wheel`.
+    local grp
+    for grp in sudo wheel; do
+        if getent group "$grp" &>/dev/null; then
+            while IFS=: read -r _ _ _ members; do
+                for user in ${members//,/ }; do
+                    [[ -n "$user" && "$user" != "root" ]] && admin_users+=("$user")
+                done
+            done < <(getent group "$grp")
+        fi
+    done
 
-    # Check wheel group members (some systems)
-    if getent group wheel &>/dev/null; then
-        while IFS=: read -r _ _ _ members; do
-            for user in ${members//,/ }; do
-                if [[ "$user" != "root" ]]; then
-                    admin_users+=("$user")
-                fi
-            done
-        done < <(getent group wheel)
+    # File-based grants: direct `user ALL=...` entries in /etc/sudoers
+    # and /etc/sudoers.d/*. We intentionally skip `%group` entries —
+    # those require resolving group membership which we already cover
+    # via the sudo/wheel scan above for the two common cases, and
+    # enumerating every referenced group is out of scope for a simple
+    # safety check.
+    local sudoers_files=("/etc/sudoers")
+    local f
+    if [[ -d /etc/sudoers.d ]]; then
+        for f in /etc/sudoers.d/*; do
+            [[ -f "$f" ]] && sudoers_files+=("$f")
+        done
     fi
+    for f in "${sudoers_files[@]}"; do
+        [[ -r "$f" ]] || continue
+        # Match lines like `alice ALL=(ALL) NOPASSWD: ALL` — username
+        # at column 0, whitespace, then ALL=. Skip #includes and
+        # comments.
+        while IFS= read -r user; do
+            [[ -n "$user" && "$user" != "root" ]] && admin_users+=("$user")
+        done < <(grep -E '^[a-zA-Z_][a-zA-Z0-9_-]*[[:space:]]+ALL=' "$f" 2>/dev/null | awk '{print $1}')
+    done
 
     # Remove duplicates
     printf '%s\n' "${admin_users[@]}" | sort -u

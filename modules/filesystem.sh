@@ -85,7 +85,15 @@ _fs_is_whitelisted() {
     return 1
 }
 
-# Find SUID files (excluding whitelisted)
+# Find SUID files (excluding whitelisted).
+# `find / -xdev` keeps us on the root filesystem, which correctly skips
+# NFS mounts and Docker overlay storage (those are independent
+# filesystems). It does NOT, however, skip files that live *inside*
+# /var/lib/docker/overlay2/<layer>/diff/ when that tree is on the root
+# filesystem — and Docker images routinely ship SUID binaries that are
+# harmless inside the container but would get flagged as host-level
+# SUID anomalies. The -path exclusions below avoid that scan on common
+# container storage locations.
 _fs_find_suid_files() {
     local count=0
     local results=()
@@ -99,7 +107,11 @@ _fs_find_suid_files() {
                 break
             fi
         fi
-    done < <(find / -xdev -type f -perm -4000 -print0 2>/dev/null)
+    done < <(find / -xdev \
+        -path /var/lib/docker -prune -o \
+        -path /var/lib/containerd -prune -o \
+        -path /var/lib/containers -prune -o \
+        -type f -perm -4000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
 }
@@ -134,7 +146,11 @@ _fs_find_sgid_files() {
                 break
             fi
         fi
-    done < <(find / -xdev -type f -perm -2000 -print0 2>/dev/null)
+    done < <(find / -xdev \
+        -path /var/lib/docker -prune -o \
+        -path /var/lib/containerd -prune -o \
+        -path /var/lib/containers -prune -o \
+        -type f -perm -2000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
 }

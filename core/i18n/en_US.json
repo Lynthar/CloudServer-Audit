@@ -554,6 +554,7 @@
     "configuring_ssh_jail": "Configuring SSH jail...",
     "detected_logpath": "Detected log path: {path}",
     "detected_backend": "Detected backend: {backend}",
+    "detected_banaction": "Detected banaction: {banaction}",
     "ssh_jail_configured": "SSH jail configured successfully",
     "ssh_jail_config_failed": "Failed to configure SSH jail"
   },

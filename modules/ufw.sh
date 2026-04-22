@@ -66,10 +66,13 @@ _ufw_get_default_outgoing() {
     ufw status verbose 2>/dev/null | grep "Default:" | grep -oP 'outgoing\s+\K\w+'
 }
 
-# Check if SSH port is allowed
+# Check if SSH port is allowed.
+# UFW emits a separate "22/tcp (v6) ALLOW ..." line for the IPv6 rule;
+# the pattern has to accept an optional " (v6)" segment between the
+# port spec and ALLOW or the v6-only case reports a false negative.
 _ufw_ssh_allowed() {
     local ssh_port=$(get_ssh_port)
-    ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?\s+ALLOW"
+    ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+ALLOW"
 }
 
 # Get current UFW rules
