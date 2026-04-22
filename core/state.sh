@@ -32,7 +32,13 @@ state_init() {
         fi
     ) 200>"$lock_file"
 
-    # Initialize checks.json (always start fresh for each run)
+    # Initialize checks.json (always start fresh for each run).
+    # Preserve the previous run's checks as .prev so partial results
+    # from an interrupted run (Ctrl+C, OOM kill, module crash) can be
+    # inspected post-mortem instead of being wiped silently.
+    if [[ -f "$STATE_CHECKS_FILE" ]]; then
+        cp -p "$STATE_CHECKS_FILE" "${STATE_CHECKS_FILE}.prev" 2>/dev/null || true
+    fi
     echo '[]' > "$STATE_CHECKS_FILE"
 }
 

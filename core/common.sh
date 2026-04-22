@@ -484,6 +484,15 @@ write_file_atomic() {
     # Set secure permissions initially
     chmod 600 "$temp_file"
 
+    # Refuse empty content: typically indicates an upstream command
+    # substitution that failed silently and would otherwise clobber
+    # the target file with nothing.
+    if [[ -z "$content" ]]; then
+        rm -f "$temp_file"
+        log_error "write_file_atomic: refusing empty content for $target"
+        return 1
+    fi
+
     # Write content
     if ! printf '%s' "$content" > "$temp_file"; then
         rm -f "$temp_file"
@@ -593,7 +602,13 @@ json_escape() {
     echo "$text"
 }
 
-# Create a check result JSON
+# Create a check result JSON.
+# Uses jq (already a hard dependency) to serialise, so every JSON control
+# character including \r, \b, \f and the full U+0000..U+001F range is
+# escaped correctly. Replaces the previous hand-rolled json_escape path
+# which only handled \\, ", \n and \t and would emit invalid JSON when
+# any other control character appeared in a title / desc (common with
+# outputs from journalctl, dmesg or systemctl show).
 create_check_json() {
     local id="$1"
     local module="$2"
@@ -604,18 +619,17 @@ create_check_json() {
     local suggestion="${7:-}"
     local fix_id="${8:-}"
 
-    cat <<EOF
-{
-  "id": "$(json_escape "$id")",
-  "module": "$(json_escape "$module")",
-  "severity": "$(json_escape "$severity")",
-  "status": "$(json_escape "$status")",
-  "title": "$(json_escape "$title")",
-  "desc": "$(json_escape "$desc")",
-  "suggestion": "$(json_escape "$suggestion")",
-  "fix_id": "$(json_escape "$fix_id")"
-}
-EOF
+    jq -n \
+        --arg id        "$id" \
+        --arg module    "$module" \
+        --arg severity  "$severity" \
+        --arg status    "$status" \
+        --arg title     "$title" \
+        --arg desc      "$desc" \
+        --arg suggestion "$suggestion" \
+        --arg fix_id    "$fix_id" \
+        '{id: $id, module: $module, severity: $severity, status: $status,
+          title: $title, desc: $desc, suggestion: $suggestion, fix_id: $fix_id}'
 }
 
 # ==============================================================================
