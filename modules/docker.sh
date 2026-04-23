@@ -58,7 +58,39 @@ _docker_get_containers_with_caps() {
 }
 
 _docker_check_userns() {
-    docker info 2>/dev/null | grep -q "userns"
+    # Only consider userns-remap actually active — docker info prints
+    # warnings containing "userns" when the feature is NOT configured,
+    # so a bare `grep -q userns` was misleading. The authoritative
+    # signal is the SecurityOptions list which includes `name=userns`
+    # only when the daemon is running with userns-remap.
+    docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
+}
+
+# Return the numeric mode (e.g. "660") of /var/run/docker.sock if it
+# exists; empty string otherwise.
+_docker_sock_mode() {
+    local sock=/var/run/docker.sock
+    [[ -S "$sock" ]] || return 0
+    stat -c '%a' "$sock" 2>/dev/null
+}
+
+# Return names of running containers that were started with
+# --security-opt seccomp=unconfined (or equivalent), one per line.
+_docker_seccomp_unconfined_containers() {
+    local unconfined=()
+    local container
+    for container in $(docker ps -q 2>/dev/null); do
+        # HostConfig.SecurityOpt is a list of strings like
+        # "seccomp=unconfined" or "apparmor:unconfined". jq -e
+        # returns non-zero if the filter produces no matches.
+        if docker inspect "$container" 2>/dev/null \
+            | jq -e '.[0].HostConfig.SecurityOpt // [] | any(. == "seccomp=unconfined")' &>/dev/null; then
+            local name
+            name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            [[ -n "$name" ]] && unconfined+=("$name")
+        fi
+    done
+    printf '%s\n' "${unconfined[@]}"
 }
 
 _docker_check_live_restore() {
@@ -121,6 +153,19 @@ docker_audit() {
     # Check daemon security settings
     print_item "$(i18n 'docker.check_daemon_security')"
     _docker_audit_daemon_settings
+
+    # Check /var/run/docker.sock permissions (world-writable socket =
+    # effective root for any local user).
+    print_item "$(i18n 'docker.check_sock_perms')"
+    _docker_audit_sock_perms
+
+    # Check for containers running with seccomp=unconfined.
+    print_item "$(i18n 'docker.check_seccomp')"
+    _docker_audit_seccomp_unconfined
+
+    # Check whether userns-remap is actually active (not just available).
+    print_item "$(i18n 'docker.check_userns_remap')"
+    _docker_audit_userns_remap
 }
 
 _docker_audit_exposed_ports() {
@@ -310,6 +355,133 @@ _docker_audit_daemon_settings() {
             "")
         state_add_check "$check"
         print_ok "$(i18n 'docker.daemon_secure')"
+    fi
+}
+
+# /var/run/docker.sock exposes the Docker API over UNIX domain socket.
+# Any process that can write to it can spawn privileged containers and
+# thereby escalate to host root. Default distro packaging ships it 660
+# root:docker. Mode 666 (world-writable) is a common misconfiguration
+# when tutorials tell users to `chmod a+rw /var/run/docker.sock` to
+# "fix permission denied" — we flag this as high severity.
+_docker_audit_sock_perms() {
+    local mode
+    mode=$(_docker_sock_mode)
+
+    if [[ -z "$mode" ]]; then
+        # Socket not present — likely rootless Docker or daemon using
+        # a non-default socket path. Nothing to report.
+        return
+    fi
+
+    # Extract the "others" octal digit (last char of mode).
+    local others="${mode: -1}"
+
+    # Any non-zero bits in the others octet mean non-owner/non-group
+    # processes can interact with the socket. 2 (write) and 6 (read+write)
+    # are the clearly dangerous cases; 4 (read-only) leaks daemon state
+    # but isn't immediate RCE.
+    if [[ "$others" =~ ^[2367]$ ]]; then
+        local check=$(create_check_json \
+            "docker.sock_perms_loose" \
+            "docker" \
+            "high" \
+            "failed" \
+            "$(i18n 'docker.sock_perms_loose' "mode=$mode")" \
+            "$(i18n 'docker.sock_perms_loose_desc' "mode=$mode")" \
+            "$(i18n 'docker.sock_perms_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'docker.sock_perms_loose' "mode=$mode")"
+    else
+        local check=$(create_check_json \
+            "docker.sock_perms_ok" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.sock_perms_ok' "mode=$mode")" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.sock_perms_ok' "mode=$mode")"
+    fi
+}
+
+# seccomp is the kernel-level syscall filter Docker applies by default
+# to reduce the attack surface from inside containers. Running a
+# container with `--security-opt seccomp=unconfined` disables that
+# filter entirely, which is almost always a sign of either a debugging
+# workaround that was never reverted or a poorly understood workload.
+_docker_audit_seccomp_unconfined() {
+    local containers
+    containers=$(_docker_seccomp_unconfined_containers)
+    local count
+    count=$(echo "$containers" | grep -c . 2>/dev/null || echo "0")
+    # Guard against the "empty input" edge case where `grep -c .` on
+    # an empty string returns 0 but an empty var becomes "1" if not
+    # piped; same idiom the neighbouring helpers use.
+    [[ -z "$containers" ]] && count=0
+
+    if ((count > 0)); then
+        local list
+        list=$(echo "$containers" | tr '\n' ' ')
+        local check=$(create_check_json \
+            "docker.seccomp_unconfined" \
+            "docker" \
+            "high" \
+            "failed" \
+            "$(i18n 'docker.seccomp_unconfined' "count=$count")" \
+            "$(i18n 'docker.seccomp_unconfined_desc' "containers=$list")" \
+            "$(i18n 'docker.seccomp_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'docker.seccomp_unconfined' "count=$count"): $list"
+    else
+        local check=$(create_check_json \
+            "docker.no_seccomp_unconfined" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.no_seccomp_unconfined')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.no_seccomp_unconfined')"
+    fi
+}
+
+# userns-remap maps container UID 0 to a non-root host UID, so a
+# container-root compromise does NOT give host-root. The feature is
+# compiled into every modern Docker build, but is only effective when
+# the daemon is actually started with it (dockerd-level setting, not
+# per-container). This check distinguishes "available" from "active".
+_docker_audit_userns_remap() {
+    if _docker_check_userns; then
+        local check=$(create_check_json \
+            "docker.userns_enabled" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.userns_enabled')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.userns_enabled')"
+    else
+        local check=$(create_check_json \
+            "docker.userns_not_enabled" \
+            "docker" \
+            "medium" \
+            "failed" \
+            "$(i18n 'docker.userns_not_enabled')" \
+            "$(i18n 'docker.userns_not_enabled_desc')" \
+            "$(i18n 'docker.userns_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "medium" "$(i18n 'docker.userns_not_enabled')"
     fi
 }
 

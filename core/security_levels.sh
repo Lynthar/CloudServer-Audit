@@ -128,6 +128,9 @@ declare -A FIX_ALERT_ONLY=(
     ["docker.all_root_containers"]="Container user requires Dockerfile changes"
     ["docker.some_root_containers"]="Container user requires Dockerfile changes"
     ["docker.containers_with_caps"]="Container capabilities require manual review"
+    ["docker.sock_perms_loose"]="Changing socket perms can break running tooling; review users in the docker group first"
+    ["docker.seccomp_unconfined"]="Reverting seccomp=unconfined requires understanding why it was set"
+    ["docker.userns_not_enabled"]="Enabling userns-remap changes storage paths and breaks some tooling"
 
     # Filesystem - require manual review
     ["filesystem.suspicious_suid"]="Review and remove SUID bit if not needed"
@@ -288,6 +291,12 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["docker.no_live_restore"]="conditional"
     ["docker.no_new_privileges_disabled"]="conditional"
     ["docker.daemon_secure"]="conditional"
+    ["docker.sock_perms_loose"]="conditional"
+    ["docker.sock_perms_ok"]="conditional"
+    ["docker.seccomp_unconfined"]="conditional"
+    ["docker.no_seccomp_unconfined"]="conditional"
+    ["docker.userns_enabled"]="conditional"
+    ["docker.userns_not_enabled"]="conditional"
 
     # === Nginx Module - conditional (only if Nginx installed) ===
     ["nginx.not_installed"]="info"

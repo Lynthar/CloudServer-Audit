@@ -16,14 +16,19 @@
 
 set -euo pipefail
 
-# Get script directory
-VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# VPSSEC_ROOT is computed in core/common.sh (relative to common.sh's
+# own path) immediately after the first source below. We previously
+# also computed it here in the entrypoint; both paths produced the
+# same value for the standard layout, but that was a silent
+# coincidence — any future relocation of either file would have made
+# the two definitions drift. The entrypoint-side computation has been
+# removed; we bootstrap the first source via BASH_SOURCE directly.
 
 # ==============================================================================
 # Source Core Modules
 # ==============================================================================
 
-source "${VPSSEC_ROOT}/core/common.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core/common.sh"
 source "${VPSSEC_ROOT}/core/state.sh"
 source "${VPSSEC_ROOT}/core/report.sh"
 source "${VPSSEC_ROOT}/core/ui_tui.sh"

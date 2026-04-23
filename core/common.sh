@@ -893,7 +893,10 @@ select_modules() {
         return 0
     fi
 
-    # Parse selected categories and build module list
+    # Parse selected categories and build module list. Warn on any
+    # token outside the valid 1-6 range so users who typed a typo
+    # (e.g. "1 9 2") know their input was partially discarded rather
+    # than silently dropped.
     local selected_modules=""
     for num in $choice; do
         if [[ "$num" =~ ^[1-6]$ ]]; then
@@ -903,6 +906,12 @@ select_modules() {
                 selected_modules="${selected_modules},${modules}"
             else
                 selected_modules="$modules"
+            fi
+        else
+            if [[ $is_en -eq 1 ]]; then
+                echo "  [WARN] Ignoring invalid selection: ${num}" >&2
+            else
+                echo "  [警告] 忽略无效选项：${num}" >&2
             fi
         fi
     done

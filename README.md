@@ -28,6 +28,11 @@ A VPS security auditing and hardening script designed for individuals and small-
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
+> **Note**: `curl | sudo bash` downloads the tarball over TLS but does not
+> verify a signature or checksum. If you need stronger supply-chain
+> assurance, use the manual installation below or download `run.sh`
+> separately, review it, and run it locally.
+
 ### Manual Installation
 
 ```bash
@@ -242,7 +247,14 @@ Score ranges:
 
 ## CI/CD Integration
 
-### GitHub Actions
+vpssec is designed to audit a live server. Running it on a throwaway
+GitHub Actions runner will technically work, but the report will mostly
+reflect the runner image rather than your infrastructure — use the
+workflow below as a template for auditing **your own servers**, for
+example via SSH-based remote execution or a self-hosted runner, not as
+a meaningful check on `ubuntu-latest`.
+
+### GitHub Actions (self-hosted runner example)
 
 ```yaml
 name: Security Audit
@@ -254,15 +266,14 @@ on:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    # Replace with a self-hosted runner label pointing at the
+    # production server you want to audit.
+    runs-on: [self-hosted, my-production-host]
     steps:
       - uses: actions/checkout@v4
 
       - name: Run Security Audit
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh -o vpssec-run.sh
-          chmod +x vpssec-run.sh
-          sudo ./vpssec-run.sh --json-only
+        run: sudo ./vpssec audit --json-only
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2

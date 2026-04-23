@@ -171,7 +171,18 @@ _find_system_users_with_shells() {
     printf '%s\n' "${suspicious[@]}"
 }
 
-# Get all users in sudo/wheel groups
+# Get all users with sudo / privileged access.
+#
+# Covers:
+#   - Members of the `sudo` group (Debian/Ubuntu default)
+#   - Members of the `wheel` group (RHEL/CentOS default)
+#   - User entries in /etc/sudoers and /etc/sudoers.d/*
+#   - Group entries (`%group ALL=...`) in those files, expanded to members
+#
+# The previous version only handled direct user entries in sudoers.d
+# and missed the common Ansible/Terraform pattern of granting sudo via
+# a `%admins` group — guide mode would then insist the user create a
+# new admin account even though one existed via the group rule.
 _find_sudo_users() {
     local sudo_users=()
 
@@ -188,19 +199,51 @@ _find_sudo_users() {
         sudo_users+=("${wheel_arr[@]}")
     fi
 
-    # Check /etc/sudoers.d/ for additional users
+    # Scan sudoers files for direct user rules AND %group rules.
+    local sudoers_files=()
+    [[ -r /etc/sudoers ]] && sudoers_files+=(/etc/sudoers)
     if [[ -d /etc/sudoers.d ]]; then
         for f in /etc/sudoers.d/*; do
-            [[ -f "$f" ]] || continue
-            local sudoer_users=$(grep -oP '^\s*\K[a-zA-Z_][a-zA-Z0-9_-]*(?=\s+ALL)' "$f" 2>/dev/null)
-            while read -r u; do
-                [[ -n "$u" ]] && sudo_users+=("$u")
-            done <<< "$sudoer_users"
+            [[ -f "$f" && -r "$f" ]] || continue
+            [[ "$f" =~ ~$ || "$f" =~ \.bak$ ]] && continue
+            sudoers_files+=("$f")
         done
     fi
 
-    # Deduplicate
-    printf '%s\n' "${sudo_users[@]}" | sort -u
+    local f
+    for f in "${sudoers_files[@]}"; do
+        while IFS= read -r line; do
+            # Skip comments, blank lines, and sudoers keyword directives
+            # (we only want rule lines).
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+            [[ "$line" =~ ^[[:space:]]*(Defaults|Cmnd_Alias|Host_Alias|User_Alias|Runas_Alias) ]] && continue
+
+            # Match the leading token of a rule line. Token can start
+            # with `%` (group) or an alphanumeric identifier (user).
+            # Require whitespace + another token + `=` somewhere so we
+            # don't misread #include / @include directives.
+            if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]+[^=]+= ]]; then
+                local token="${BASH_REMATCH[1]}"
+                if [[ "$token" == %* ]]; then
+                    # Group rule — expand members via getent.
+                    local group_name="${token#%}"
+                    local group_members
+                    group_members=$(getent group "$group_name" 2>/dev/null | cut -d: -f4)
+                    if [[ -n "$group_members" ]]; then
+                        local -a members_arr=()
+                        IFS=',' read -ra members_arr <<< "$group_members"
+                        sudo_users+=("${members_arr[@]}")
+                    fi
+                else
+                    sudo_users+=("$token")
+                fi
+            fi
+        done < "$f"
+    done
+
+    # Deduplicate and drop empty entries.
+    printf '%s\n' "${sudo_users[@]}" | grep -v '^$' | sort -u
 }
 
 # Find NOPASSWD sudo entries - HIGH RISK

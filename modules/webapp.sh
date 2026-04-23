@@ -148,7 +148,12 @@ _webapp_php_installed() {
     command -v php &>/dev/null
 }
 
-# Get all Nginx configuration files
+# Get all Nginx configuration files (legacy fallback).
+#
+# Kept as a fallback for environments where `nginx -T` fails — e.g.
+# nginx installed but syntax-broken so -T aborts. Detection helpers
+# prefer _webapp_nginx_dump below because it reflects the real effective
+# configuration (Includes, Match blocks and all).
 _webapp_get_nginx_configs() {
     local configs=()
 
@@ -171,6 +176,48 @@ _webapp_get_nginx_configs() {
     printf '%s\n' "${configs[@]}"
 }
 
+# Dump the resolved nginx configuration.
+#
+# Previously detection helpers grepped a hardcoded list of file paths
+# and missed any config pulled in via `include` from a non-standard
+# directory (commonly `/etc/nginx/snippets/*.conf` or a custom
+# `conf.d/security.conf`). This caused duplicate-fix scenarios:
+# server_tokens / security headers / HSTS already configured in an
+# included snippet would be reported as missing, and the fix would
+# write them a second time.
+#
+# Uses `nginx -T` (test + dump resolved config) which is the
+# authoritative source. Cached in a shell variable so we fork nginx
+# at most once per audit. Falls back to concatenating the file list
+# if -T fails — a broken config makes the audit less precise but not
+# blind.
+_WEBAPP_NGINX_DUMP_CACHED=0
+_WEBAPP_NGINX_DUMP=""
+_webapp_nginx_dump() {
+    if (( _WEBAPP_NGINX_DUMP_CACHED )); then
+        printf '%s\n' "$_WEBAPP_NGINX_DUMP"
+        return 0
+    fi
+
+    local dump=""
+    if command -v nginx &>/dev/null; then
+        dump=$(nginx -T 2>/dev/null)
+    fi
+
+    if [[ -z "$dump" ]]; then
+        # Fallback: concatenate the hardcoded file list.
+        local f
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            [[ -f "$f" ]] && dump+="$(cat "$f" 2>/dev/null)"$'\n'
+        done < <(_webapp_get_nginx_configs)
+    fi
+
+    _WEBAPP_NGINX_DUMP="$dump"
+    _WEBAPP_NGINX_DUMP_CACHED=1
+    printf '%s\n' "$_WEBAPP_NGINX_DUMP"
+}
+
 # Get PHP configuration
 _webapp_get_php_config() {
     local key="$1"
@@ -188,24 +235,15 @@ _webapp_get_php_ini() {
 
 # Check server_tokens setting
 _webapp_nginx_server_tokens() {
+    local dump
+    dump=$(_webapp_nginx_dump)
     local findings=()
 
-    for config in $(_webapp_get_nginx_configs); do
-        if grep -q "server_tokens\s*on" "$config" 2>/dev/null; then
-            findings+=("$config: server_tokens on (exposes version)")
-        fi
-    done
+    if echo "$dump" | grep -qE '^[[:space:]]*server_tokens[[:space:]]+on\b'; then
+        findings+=("server_tokens set to 'on' (exposes version)")
+    fi
 
-    # Check if server_tokens is not explicitly set to off
-    local has_off=false
-    for config in $(_webapp_get_nginx_configs); do
-        if grep -q "server_tokens\s*off" "$config" 2>/dev/null; then
-            has_off=true
-            break
-        fi
-    done
-
-    if [[ "$has_off" == "false" ]]; then
+    if ! echo "$dump" | grep -qE '^[[:space:]]*server_tokens[[:space:]]+off\b'; then
         findings+=("server_tokens not explicitly disabled")
     fi
 
@@ -214,19 +252,12 @@ _webapp_nginx_server_tokens() {
 
 # Check security headers
 _webapp_nginx_security_headers() {
+    local dump
+    dump=$(_webapp_nginx_dump)
     local missing_headers=()
 
     for header in "${!NGINX_SECURITY_HEADERS[@]}"; do
-        local found=false
-
-        for config in $(_webapp_get_nginx_configs); do
-            if grep -qi "add_header\s*$header" "$config" 2>/dev/null; then
-                found=true
-                break
-            fi
-        done
-
-        if [[ "$found" == "false" ]]; then
+        if ! echo "$dump" | grep -qiE "add_header[[:space:]]+${header}\b"; then
             missing_headers+=("$header")
         fi
     done
@@ -236,63 +267,67 @@ _webapp_nginx_security_headers() {
 
 # Check HSTS configuration
 _webapp_nginx_hsts() {
-    local has_hsts=false
+    local dump
+    dump=$(_webapp_nginx_dump)
 
-    for config in $(_webapp_get_nginx_configs); do
-        if grep -qi "Strict-Transport-Security" "$config" 2>/dev/null; then
-            has_hsts=true
-            break
-        fi
-    done
-
-    [[ "$has_hsts" == "true" ]] && echo "configured" || echo "missing"
+    if echo "$dump" | grep -qi "Strict-Transport-Security"; then
+        echo "configured"
+    else
+        echo "missing"
+    fi
 }
 
 # Check directory listing
 _webapp_nginx_directory_listing() {
+    local dump
+    dump=$(_webapp_nginx_dump)
     local findings=()
 
-    for config in $(_webapp_get_nginx_configs); do
-        if grep -q "autoindex\s*on" "$config" 2>/dev/null; then
-            findings+=("$config: autoindex on")
-        fi
-    done
+    if echo "$dump" | grep -qE '^[[:space:]]*autoindex[[:space:]]+on\b'; then
+        findings+=("autoindex on")
+    fi
 
     printf '%s\n' "${findings[@]}"
 }
 
 # Check SSL protocols
 _webapp_nginx_ssl_protocols() {
+    local dump
+    dump=$(_webapp_nginx_dump)
     local weak=()
 
-    for config in $(_webapp_get_nginx_configs); do
-        local protocols=$(grep -oP 'ssl_protocols\s+\K[^;]+' "$config" 2>/dev/null)
+    local protocols
+    # `ssl_protocols` can appear multiple times (per server{}). Collect
+    # every occurrence and scan for weak entries.
+    while IFS= read -r protocols; do
         [[ -z "$protocols" ]] && continue
-
+        local weak_proto
         for weak_proto in "${WEAK_SSL_PROTOCOLS[@]}"; do
             if echo "$protocols" | grep -qi "$weak_proto"; then
-                weak+=("$config: $weak_proto enabled")
+                weak+=("$weak_proto enabled")
             fi
         done
-    done
+    done < <(echo "$dump" | grep -oP 'ssl_protocols\s+\K[^;]+')
 
-    printf '%s\n' "${weak[@]}"
+    printf '%s\n' "${weak[@]}" | sort -u
 }
 
 # Check SSL ciphers
 _webapp_nginx_ssl_ciphers() {
+    local dump
+    dump=$(_webapp_nginx_dump)
     local weak=()
 
-    for config in $(_webapp_get_nginx_configs); do
-        local ciphers=$(grep -oP 'ssl_ciphers\s+["\047]?\K[^"\047;]+' "$config" 2>/dev/null)
+    local ciphers
+    while IFS= read -r ciphers; do
         [[ -z "$ciphers" ]] && continue
-
+        local weak_cipher
         for weak_cipher in "${WEAK_CIPHER_PATTERNS[@]}"; do
             if echo "$ciphers" | grep -qi "$weak_cipher"; then
                 weak+=("$weak_cipher")
             fi
         done
-    done
+    done < <(echo "$dump" | grep -oP 'ssl_ciphers\s+["\047]?\K[^"\047;]+')
 
     printf '%s\n' "${weak[@]}" | sort -u
 }

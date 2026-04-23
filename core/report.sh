@@ -212,10 +212,26 @@ EOF
 EOF
 
     if ((high > 0)); then
+        # Derive the --include= hint from the actual set of modules
+        # that produced high-severity failed checks. The previous
+        # literal `--include=ssh,ufw` was misleading when the high
+        # severity items were elsewhere (kernel, webapp, docker, etc.)
+        # and encouraged the user to skip the modules that actually
+        # needed attention.
+        local high_modules
+        high_modules=$(state_get_checks \
+            | jq -r '[.[] | select(.status == "failed" and (.severity == "high" or .severity == "critical")) | .module] | unique | join(",")')
+        # Fallback to a generic hint if the query returned nothing
+        # (shouldn't happen when high > 0, but the caller's stats and
+        # the JQ reality could theoretically disagree — be defensive).
+        if [[ -z "$high_modules" ]]; then
+            high_modules=""
+        fi
+
         cat >> "$output_file" <<EOF
 1. **$(i18n 'common.high')**: $(i18n 'guide.select_fixes')
    \`\`\`bash
-   vpssec guide --include=ssh,ufw
+   vpssec guide${high_modules:+ --include=$high_modules}
    \`\`\`
 
 EOF
