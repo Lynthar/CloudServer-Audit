@@ -323,7 +323,7 @@ cloud_audit() {
 
     # 2. Find known cloud agents
     local known_agents=$(_find_known_agents)
-    local agent_count=$(echo "$known_agents" | grep -c '|' 2>/dev/null || echo 0)
+    local agent_count=$(count_lines "$known_agents" '|')
 
     if [[ -n "$known_agents" && "$agent_count" -gt 0 ]]; then
         # Build agent list for display
@@ -378,7 +378,7 @@ cloud_audit() {
 
     # 3. Find suspicious agent-like processes (strict level only)
     local suspicious=$(_find_suspicious_agents)
-    local suspicious_count=$(echo "$suspicious" | grep -c '|' 2>/dev/null || echo 0)
+    local suspicious_count=$(count_lines "$suspicious" '|')
 
     if [[ -n "$suspicious" && "$suspicious_count" -gt 0 ]]; then
         local proc_list=""

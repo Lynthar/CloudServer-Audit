@@ -138,7 +138,13 @@ print_error() {
 print_header() {
     local title="$1"
     local width="${2:-60}"
-    local line=$(printf '%*s' "$width" | tr ' ' '─')
+    # Use printf's repeat trick rather than `tr ' ' '─'`. `tr` is
+    # byte-oriented and on some GNU coreutils versions (Debian 13's
+    # included) replacing a single-byte space with a multi-byte UTF-8
+    # char produces mojibake (users saw strings of `㣢`). The format
+    # `─%.0s` prints `─` once per positional argument.
+    local line
+    line=$(printf '─%.0s' $(seq 1 "$width"))
     print_msg ""
     print_msg "${BOLD}${line}${NC}"
     print_msg "${BOLD}  $title${NC}"
@@ -597,6 +603,31 @@ get_listening_ports() {
 check_port_open() {
     local port="$1"
     ss -tln | grep -q ":${port}\s"
+}
+
+# ==============================================================================
+# Counting helpers
+# ==============================================================================
+
+# Count lines in $1, or lines matching pattern $2 if given.
+#
+# Replaces the repeated idiom
+#     n=$(echo "$x" | grep -c . 2>/dev/null || echo 0)
+# which was broken for empty input: `grep -c .` prints "0" and exits 1
+# when there are zero matches, so the `|| echo 0` fallback ran too and
+# appended a SECOND "0", yielding the literal two-line string "0\n0".
+# Bash arithmetic (`(( n > 0 ))`) then aborted with "syntax error in
+# expression" and, under `set -e`, killed the audit mid-scan.
+count_lines() {
+    local input="$1"
+    local pattern="${2:-.}"
+    [[ -z "$input" ]] && { echo 0; return 0; }
+    local n
+    n=$(printf '%s\n' "$input" | grep -c -- "$pattern" 2>/dev/null) || n=0
+    # grep -c always prints an integer, but be defensive in case the
+    # pipeline above fails for an unrelated reason.
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    echo "$n"
 }
 
 # ==============================================================================

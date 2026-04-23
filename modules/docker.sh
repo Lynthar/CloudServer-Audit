@@ -170,7 +170,7 @@ docker_audit() {
 
 _docker_audit_exposed_ports() {
     local ports=$(_docker_get_exposed_ports)
-    local count=$(echo "$ports" | grep -c . 2>/dev/null || echo "0")
+    local count=$(count_lines "$ports")
 
     if ((count > 0)); then
         local port_list=$(echo "$ports" | tr '\n' ' ')
@@ -202,7 +202,7 @@ _docker_audit_exposed_ports() {
 
 _docker_audit_privileged() {
     local containers=$(_docker_get_privileged_containers)
-    local count=$(echo "$containers" | grep -c . 2>/dev/null || echo "0")
+    local count=$(count_lines "$containers")
 
     if ((count > 0)); then
         local container_list=$(echo "$containers" | tr '\n' ' ')
@@ -234,7 +234,7 @@ _docker_audit_privileged() {
 
 _docker_audit_root_containers() {
     local containers=$(_docker_get_root_containers)
-    local count=$(echo "$containers" | grep -c . 2>/dev/null || echo "0")
+    local count=$(count_lines "$containers")
     local total=$(docker ps -q 2>/dev/null | wc -l)
 
     if ((count > 0 && count == total)); then
@@ -278,7 +278,7 @@ _docker_audit_root_containers() {
 
 _docker_audit_capabilities() {
     local containers=$(_docker_get_containers_with_caps)
-    local count=$(echo "$containers" | grep -c . 2>/dev/null || echo "0")
+    local count=$(count_lines "$containers")
 
     if ((count > 0)); then
         local container_list=$(echo "$containers" | tr '\n' ' ')
@@ -417,7 +417,7 @@ _docker_audit_seccomp_unconfined() {
     local containers
     containers=$(_docker_seccomp_unconfined_containers)
     local count
-    count=$(echo "$containers" | grep -c . 2>/dev/null || echo "0")
+    count=$(count_lines "$containers")
     # Guard against the "empty input" edge case where `grep -c .` on
     # an empty string returns 0 but an empty var becomes "1" if not
     # piped; same idiom the neighbouring helpers use.

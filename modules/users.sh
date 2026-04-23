@@ -536,7 +536,7 @@ users_audit() {
 
     # 1. Check for UID 0 users (besides root) - CRITICAL
     local uid0_users=$(_find_uid0_users)
-    local uid0_count=$(echo "$uid0_users" | grep -c . 2>/dev/null || echo 0)
+    local uid0_count=$(count_lines "$uid0_users")
 
     if [[ -n "$uid0_users" && "$uid0_count" -gt 0 ]]; then
         check_json=$(create_check_json \
@@ -563,7 +563,7 @@ users_audit() {
 
     # 2. Check for empty password users - CRITICAL
     local empty_pass=$(_find_empty_password_users)
-    local empty_count=$(echo "$empty_pass" | grep -c . 2>/dev/null || echo 0)
+    local empty_count=$(count_lines "$empty_pass")
 
     if [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then
         check_json=$(create_check_json \
@@ -590,7 +590,7 @@ users_audit() {
 
     # 3. Check system users with shells - MEDIUM
     local sys_shells=$(_find_system_users_with_shells)
-    local sys_shell_count=$(echo "$sys_shells" | grep -c '|' 2>/dev/null || echo 0)
+    local sys_shell_count=$(count_lines "$sys_shells" '|')
 
     if [[ -n "$sys_shells" && "$sys_shell_count" -gt 0 ]]; then
         local user_list=""
@@ -614,7 +614,7 @@ users_audit() {
 
     # 4. List sudo/privileged users - INFO
     local sudo_users=$(_find_sudo_users)
-    local sudo_count=$(echo "$sudo_users" | grep -c . 2>/dev/null || echo 0)
+    local sudo_count=$(count_lines "$sudo_users")
 
     if [[ -n "$sudo_users" && "$sudo_count" -gt 0 ]]; then
         check_json=$(create_check_json \
@@ -631,7 +631,7 @@ users_audit() {
 
     # 4.5 Check for NOPASSWD sudo - HIGH RISK
     local nopasswd=$(_find_nopasswd_sudo)
-    local nopasswd_count=$(echo "$nopasswd" | grep -c . 2>/dev/null || echo 0)
+    local nopasswd_count=$(count_lines "$nopasswd")
 
     if [[ -n "$nopasswd" && "$nopasswd_count" -gt 0 ]]; then
         local nopasswd_list=""
@@ -655,7 +655,7 @@ users_audit() {
 
     # 5. Check recently created users - INFO/LOW
     local recent=$(_find_recent_users)
-    local recent_count=$(echo "$recent" | grep -c '|' 2>/dev/null || echo 0)
+    local recent_count=$(count_lines "$recent" '|')
 
     if [[ -n "$recent" && "$recent_count" -gt 0 ]]; then
         local recent_list=""
@@ -718,7 +718,7 @@ users_audit() {
 
     # 7. Check for suspicious usernames - LOW (strict only)
     local suspicious=$(_find_suspicious_users)
-    local sus_count=$(echo "$suspicious" | grep -c '|' 2>/dev/null || echo 0)
+    local sus_count=$(count_lines "$suspicious" '|')
 
     if [[ -n "$suspicious" && "$sus_count" -gt 0 ]]; then
         local sus_list=""
@@ -742,7 +742,7 @@ users_audit() {
 
     # 8. Check for unusual home directories - LOW (strict only)
     local unusual=$(_find_unusual_home)
-    local unusual_count=$(echo "$unusual" | grep -c '|' 2>/dev/null || echo 0)
+    local unusual_count=$(count_lines "$unusual" '|')
 
     if [[ -n "$unusual" && "$unusual_count" -gt 0 ]]; then
         local unusual_list=""
@@ -766,7 +766,7 @@ users_audit() {
 
     # 9. Check password policy in login.defs - MEDIUM
     local policy_issues=$(_check_password_policy)
-    local policy_count=$(echo "$policy_issues" | grep -c . 2>/dev/null || echo 0)
+    local policy_count=$(count_lines "$policy_issues")
 
     if [[ -n "$policy_issues" && "$policy_count" -gt 0 ]]; then
         local policy_list=""
@@ -801,7 +801,7 @@ users_audit() {
 
     # 10. Check password quality settings - LOW
     local pwquality_issues=$(_check_pwquality)
-    local pwquality_count=$(echo "$pwquality_issues" | grep -c . 2>/dev/null || echo 0)
+    local pwquality_count=$(count_lines "$pwquality_issues")
 
     if [[ -n "$pwquality_issues" && "$pwquality_count" -gt 0 ]]; then
         local pwq_list=""
@@ -825,7 +825,7 @@ users_audit() {
 
     # 11. Check bash history security - LOW
     local history_issues=$(_check_history_security)
-    local history_count=$(echo "$history_issues" | grep -c . 2>/dev/null || echo 0)
+    local history_count=$(count_lines "$history_issues")
 
     if [[ -n "$history_issues" && "$history_count" -gt 0 ]]; then
         local hist_list=""

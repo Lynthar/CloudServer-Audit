@@ -941,7 +941,7 @@ webapp_audit() {
 
     # 18. Certificate expiry
     local expiring=$(_webapp_ssl_cert_expiry)
-    local expiring_count=$(echo "$expiring" | grep -c '|' 2>/dev/null || echo 0)
+    local expiring_count=$(count_lines "$expiring" '|')
 
     if [[ -n "$expiring" && "$expiring_count" -gt 0 ]]; then
         local expired_list=""

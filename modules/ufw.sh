@@ -364,7 +364,7 @@ _ufw_audit_ssh_rule() {
 _ufw_audit_permissive_rules() {
     local issues
     issues=$(_ufw_find_permissive_rules)
-    local issue_count=$(echo "$issues" | grep -c . 2>/dev/null || echo 0)
+    local issue_count=$(count_lines "$issues")
 
     if [[ -n "$issues" && "$issue_count" -gt 0 ]]; then
         local issue_list=""
