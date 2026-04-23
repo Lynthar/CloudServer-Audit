@@ -177,6 +177,17 @@ print_progress() {
     local current="$1"
     local total="$2"
     local width="${3:-40}"
+
+    # Defensive: every real caller passes a positive total (audit_all
+    # always includes the preflight/cloud/timezone context modules, so
+    # total >= 3), but a future caller or a pathological --include=
+    # value could land here with total=0. Without this guard the
+    # `current * 100 / total` arithmetic aborts under `set -e` and
+    # kills the whole run.
+    if (( total <= 0 )); then
+        return 0
+    fi
+
     local percent=$((current * 100 / total))
     local filled=$((current * width / total))
     local empty=$((width - filled))
@@ -592,23 +603,14 @@ check_port_open() {
 # JSON Utilities
 # ==============================================================================
 
-json_escape() {
-    local text="$1"
-    # Escape special characters for JSON
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\n'/\\n}"
-    text="${text//$'\t'/\\t}"
-    echo "$text"
-}
-
 # Create a check result JSON.
+#
 # Uses jq (already a hard dependency) to serialise, so every JSON control
 # character including \r, \b, \f and the full U+0000..U+001F range is
-# escaped correctly. Replaces the previous hand-rolled json_escape path
-# which only handled \\, ", \n and \t and would emit invalid JSON when
-# any other control character appeared in a title / desc (common with
-# outputs from journalctl, dmesg or systemctl show).
+# escaped correctly. A hand-rolled `json_escape` helper used to live here
+# too, but after JSON-R1 migrated every producer to this function and
+# `jq -n --arg`, it had zero callers — removed to avoid re-introducing a
+# weaker escape path by accident.
 create_check_json() {
     local id="$1"
     local module="$2"

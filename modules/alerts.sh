@@ -177,7 +177,12 @@ _alerts_fix_setup_config() {
     _prev_umask=$(umask)
     umask 077
 
-    # Interactive setup or generate template
+    # Interactive setup or generate template.
+    #
+    # Build the JSON with `jq -n --arg` rather than heredoc-interpolating
+    # `$webhook_url` / `$email` directly — a URL or address containing
+    # `"` or `\` would otherwise produce malformed JSON and break
+    # downstream `jq -r '.webhook_url'` reads in _alerts_get_webhook_url.
     if [[ -t 0 ]]; then
         local webhook_url=""
         local email=""
@@ -189,36 +194,35 @@ _alerts_fix_setup_config() {
         read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url </dev/tty
         read -rp "Email address (leave empty to skip): " email </dev/tty
 
-        cat > "$ALERTS_CONFIG_FILE" <<EOF
-{
-  "webhook_url": "${webhook_url}",
-  "email": "${email}",
-  "events": {
-    "ssh_login_failure": true,
-    "firewall_change": true,
-    "service_restart": true,
-    "security_audit": true
-  },
-  "throttle_minutes": 5
-}
-EOF
+        jq -n \
+            --arg webhook "$webhook_url" \
+            --arg email   "$email" \
+            '{
+                webhook_url: $webhook,
+                email: $email,
+                events: {
+                    ssh_login_failure: true,
+                    firewall_change: true,
+                    service_restart: true,
+                    security_audit: true
+                },
+                throttle_minutes: 5
+            }' > "$ALERTS_CONFIG_FILE"
 
         print_ok "$(i18n 'alerts.config_saved')"
     else
-        # Non-interactive: generate template
-        cat > "$ALERTS_CONFIG_FILE" <<'EOF'
-{
-  "webhook_url": "",
-  "email": "",
-  "events": {
-    "ssh_login_failure": true,
-    "firewall_change": true,
-    "service_restart": true,
-    "security_audit": true
-  },
-  "throttle_minutes": 5
-}
-EOF
+        # Non-interactive: generate template with empty defaults.
+        jq -n '{
+            webhook_url: "",
+            email: "",
+            events: {
+                ssh_login_failure: true,
+                firewall_change: true,
+                service_restart: true,
+                security_audit: true
+            },
+            throttle_minutes: 5
+        }' > "$ALERTS_CONFIG_FILE"
         print_ok "$(i18n 'alerts.template_created' "path=$ALERTS_CONFIG_FILE")"
         print_info "$(i18n 'alerts.edit_template')"
     fi
