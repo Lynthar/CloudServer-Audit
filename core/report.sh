@@ -277,6 +277,48 @@ _visible_len() {
     echo ${#stripped}
 }
 
+# Get DISPLAY column width (terminal cells) of a string after stripping
+# ANSI codes. CJK Han / Hiragana / Katakana / fullwidth forms render as
+# 2 cells each; bash `${#str}` counts code points, so a string like
+# "✓ 操作系统支持" (8 code points) actually renders as 14 cells. Using
+# the wrong count for column padding made the right-hand `│` separator
+# zigzag whenever rows mixed ASCII-heavy and CJK-heavy content.
+#
+# Strategy: prefer python3's unicodedata.east_asian_width (accurate,
+# handles fullwidth / wide / ambiguous / emoji); fall back to a pure
+# UTF-8 byte heuristic otherwise.
+#   - 1-byte (ASCII)            : 1 cell
+#   - 2-byte (Latin-ext / Greek): 1 cell
+#   - 3-byte starting with E2   : 1 cell  (Dingbats ✓, Geometric Shapes ●,
+#                                          General Punctuation, etc. — all narrow)
+#   - 3-byte starting with E3-E9: 2 cells (CJK Unified, kana, fullwidth)
+#   - 4-byte (CJK Ext B+, emoji): 2 cells
+# This heuristic is correct for the strings vpssec actually emits in
+# zh_CN / en_US (no Indic, no Tibetan, no rare scripts). Off by one
+# only for unusual symbols outside the project's vocabulary.
+_display_width() {
+    local s
+    s=$(_strip_ansi "$1")
+    [[ -z "$s" ]] && { echo 0; return; }
+
+    if command -v python3 &>/dev/null; then
+        python3 - "$s" <<'PYEOF' 2>/dev/null && return
+import sys, unicodedata
+s = sys.argv[1]
+print(sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s))
+PYEOF
+    fi
+
+    # Pure-bash fallback (no python3): walk the UTF-8 byte stream.
+    local n_total n_cjk n_e2 n_2byte
+    n_total=$(printf '%s' "$s" | wc -c)
+    n_cjk=$(printf '%s' "$s" | LC_ALL=C grep -oE $'[\xe3-\xe9]' | wc -l)
+    n_e2=$(printf '%s' "$s" | LC_ALL=C grep -oE $'\xe2[\x80-\xbf][\x80-\xbf]' | wc -l)
+    n_2byte=$(printf '%s' "$s" | LC_ALL=C grep -oE $'[\xc2-\xdf][\x80-\xbf]' | wc -l)
+    # cells = bytes − (1 saved per E3-E9 wide) − (2 saved per E2 narrow-multibyte) − (1 saved per 2-byte char)
+    echo $(( n_total - n_cjk - 2 * n_e2 - n_2byte ))
+}
+
 # Render a single module's checks to an array of lines (clean style, no tree connectors)
 # Usage: _render_module_clean <module> <checks_json> <col_width>
 # Output: Lines are stored in REPLY_LINES array
@@ -305,11 +347,28 @@ _render_module_clean() {
         local severity=$(echo "$check" | jq -r '.severity')
         local title=$(echo "$check" | jq -r '.title')
 
-        # Truncate title if too long
+        # Truncate title if too long. Compare against DISPLAY cells so
+        # CJK titles (where each char is 2 cells but bash counts 1
+        # code point) get truncated correctly instead of overflowing
+        # the column. Slice in a loop because bash string slicing is
+        # code-point-based, not cell-based.
         local max_title_len=$((col_width - 6))
-        local vis_title=$(_strip_ansi "$title")
-        if ((${#vis_title} > max_title_len)); then
-            title="${vis_title:0:$((max_title_len-2))}.."
+        local vis_title
+        vis_title=$(_strip_ansi "$title")
+        local vis_w
+        vis_w=$(_display_width "$vis_title")
+        if (( vis_w > max_title_len )); then
+            local target=$(( max_title_len - 2 ))
+            (( target < 0 )) && target=0
+            local trial="$vis_title"
+            # Shrink until it fits. For pure-ASCII titles this hits
+            # the right length in one or two iterations; for CJK
+            # titles each shrink saves 2 cells.
+            while (( $(_display_width "$trial") > target )); do
+                trial="${trial:0:-1}"
+                [[ -z "$trial" ]] && break
+            done
+            title="${trial}.."
         fi
 
         # Simple indentation with status icon
@@ -347,9 +406,11 @@ _print_columns_clean() {
             right_line="${_right_arr[$idx]}"
         fi
 
-        # Pad left column to fixed width
-        local left_visible=$(_strip_ansi "$left_line")
-        local pad_needed=$((col_width - ${#left_visible}))
+        # Pad left column to fixed width using DISPLAY cells, not code
+        # points. ${#left_visible} undercounts CJK characters (1 code
+        # point but 2 display cells), which made the ` │` separator
+        # drift right on CJK-heavy rows.
+        local pad_needed=$(( col_width - $(_display_width "$left_line") ))
         local padding=""
         ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
 
@@ -367,7 +428,10 @@ _print_category_header() {
     local total_width="${2:-70}"
 
     # Calculate line lengths: ── Title ────────────────
-    local title_len=${#title}
+    # Use display cells (not code points) so CJK titles like "系统基础"
+    # (4 code points / 8 cells) get the right number of trailing dashes.
+    local title_len
+    title_len=$(_display_width "$title")
     local prefix_len=2
     local suffix_len=$((total_width - prefix_len - title_len - 2))
     ((suffix_len < 3)) && suffix_len=3
