@@ -23,7 +23,6 @@ declare -a KNOWN_CLOUD_AGENTS=(
     "AliYunDunUpdate|aegis|阿里云|安骑士更新|yes"
     "aliyun-service|aliyun|阿里云|阿里云服务|yes"
     "cloudmonitor|cloudmonitor|阿里云|云监控插件|yes"
-    "China China China China China China China China China China China China China China China China China China China China China China China China China China China China|China China China China China China China China China China China China China China China China China China China China China China China China China China China China|阿里云|China China China China China China China China China China China China China China China China China China China China China China China China China China China China|yes"
 
     # Tencent Cloud
     "YDService|YDService|腾讯云|云镜主机安全|yes"

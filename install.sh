@@ -1,6 +1,6 @@
 #!/bin/bash
 # vpssec installer script
-# Usage: curl -fsSL https://raw.githubusercontent.com/repo/vpssec/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | bash
 
 set -euo pipefail
 
@@ -8,7 +8,7 @@ set -euo pipefail
 VPSSEC_VERSION="${VPSSEC_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vpssec}"
 BIN_LINK="/usr/local/bin/vpssec"
-GITHUB_REPO="${GITHUB_REPO:-Lynthar/server-audit}"
+GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"
 
 # Colors
 RED='\033[0;31m'
@@ -107,20 +107,24 @@ install_vpssec() {
                 git clone "https://github.com/${GITHUB_REPO}.git" "$INSTALL_DIR"
             fi
         else
-            # Download as tarball
+            # Download as tarball. GitHub tarballs extract to "<repo>-<branch>",
+            # so the top-level dir here must match the repo name, not a stale
+            # pre-rename guess.
             local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz"
+            local repo_name="${GITHUB_REPO##*/}"
             print_info "Downloading from $tarball_url"
             curl -fsSL "$tarball_url" | tar -xz -C /tmp
             safe_remove_install_dir
-            mv /tmp/server-audit-main "$INSTALL_DIR"
+            mv "/tmp/${repo_name}-main" "$INSTALL_DIR"
         fi
     else
         # Download specific version
         local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/tags/v${VPSSEC_VERSION}.tar.gz"
+        local repo_name="${GITHUB_REPO##*/}"
         print_info "Downloading version $VPSSEC_VERSION..."
         curl -fsSL "$tarball_url" | tar -xz -C /tmp
         safe_remove_install_dir
-        mv "/tmp/server-audit-${VPSSEC_VERSION}" "$INSTALL_DIR"
+        mv "/tmp/${repo_name}-${VPSSEC_VERSION}" "$INSTALL_DIR"
     fi
 
     # Make executable

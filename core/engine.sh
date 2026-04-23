@@ -483,8 +483,18 @@ execute_plan() {
                         if execute_fix "$fix_id"; then
                             print_ok "$(i18n 'common.success')"
                             completed+=("$fix_id")
-                            # Remove from failed
-                            failed=("${failed[@]/$fix_id}")
+                            # Remove from failed. Bash `${arr[@]/pat}`
+                            # replaces pat with empty — it does NOT
+                            # delete the element, so the previous
+                            # version left a zero-length slot and made
+                            # ${#failed[@]} overcount. Rebuild the
+                            # array instead.
+                            local _kept=()
+                            local _f
+                            for _f in "${failed[@]}"; do
+                                [[ "$_f" != "$fix_id" ]] && _kept+=("$_f")
+                            done
+                            failed=("${_kept[@]}")
                         fi
                         ;;
                     3)
@@ -810,7 +820,7 @@ rollback_mode() {
 # ==============================================================================
 
 status_mode() {
-    print_header "vpssec $(i18n 'cmd_status')"
+    print_header "vpssec $(i18n 'cli.cmd_status')"
 
     # Last run info
     local ok_state="${STATE_OK_FILE}"

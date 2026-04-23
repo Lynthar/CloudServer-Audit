@@ -338,8 +338,12 @@ backup_cleanup() {
         ((count++)) || true
         if ((count > keep)); then
             local backup_path="${VPSSEC_BACKUPS}/${timestamp}"
-            # Safety: validate path is under backup directory
-            if [[ -n "$timestamp" ]] && [[ "$backup_path" =~ ^${VPSSEC_BACKUPS}/[0-9]{8}-[0-9]{6}$ ]] && [[ -d "$backup_path" ]]; then
+            # Safety: validate path is under backup directory.
+            # backup_create_session formats timestamps as YYYYMMDD_HHMMSS
+            # (underscore). The regex used to check for a hyphen, which
+            # never matched, so backup_cleanup was a no-op and old
+            # backups accumulated indefinitely.
+            if [[ -n "$timestamp" ]] && [[ "$backup_path" =~ ^${VPSSEC_BACKUPS}/[0-9]{8}_[0-9]{6}$ ]] && [[ -d "$backup_path" ]]; then
                 rm -rf "$backup_path"
                 log_info "Removed old backup: $timestamp"
             fi

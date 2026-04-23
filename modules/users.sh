@@ -130,9 +130,12 @@ _find_empty_password_users() {
     # Check /etc/shadow for empty password field
     if [[ -r /etc/shadow ]]; then
         while IFS=: read -r user pass rest; do
-            # Empty password or single character (! or * means locked)
-            if [[ -z "$pass" || "$pass" == "" ]]; then
-                # Check if user has a login shell
+            # Only flag truly empty password hashes. `!` / `!!` / `*`
+            # indicate a locked account (cannot log in), which is safe;
+            # any real hash is obviously non-empty. The previous
+            # `[[ -z "$pass" || "$pass" == "" ]]` was redundant (both
+            # clauses match the same strings).
+            if [[ -z "$pass" ]]; then
                 local shell=$(getent passwd "$user" 2>/dev/null | cut -d: -f7)
                 if _has_login_shell "$shell"; then
                     users+=("$user")

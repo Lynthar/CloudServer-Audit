@@ -514,35 +514,40 @@ report_generate_sarif() {
             *)      level="none" ;;
         esac
 
-        # Only include failed checks
+        # Only include failed checks. Build the JSON with `jq -n` so
+        # characters in any interpolated field (`"`, `\`, newline, CR,
+        # control chars) are escaped correctly; the previous heredoc
+        # path produced invalid JSON whenever a title contained a
+        # quote or a command-output snippet contained CR.
         if [[ "$status" == "failed" ]]; then
-            local result=$(cat <<EOF
-{
-  "ruleId": "$id",
-  "level": "$level",
-  "message": {
-    "text": "$title. $desc"
-  },
-  "locations": [{
-    "physicalLocation": {
-      "artifactLocation": {
-        "uri": "$hostname",
-        "uriBaseId": "ROOTPATH"
-      }
-    },
-    "logicalLocations": [{
-      "name": "$module",
-      "kind": "module"
-    }]
-  }],
-  "fixes": [{
-    "description": {
-      "text": "$suggestion"
-    }
-  }]
-}
-EOF
-)
+            local result
+            result=$(jq -n \
+                --arg id         "$id" \
+                --arg level      "$level" \
+                --arg message    "$title. $desc" \
+                --arg host       "$hostname" \
+                --arg module     "$module" \
+                --arg suggestion "$suggestion" \
+                '{
+                    ruleId: $id,
+                    level: $level,
+                    message: { text: $message },
+                    locations: [{
+                        physicalLocation: {
+                            artifactLocation: {
+                                uri: $host,
+                                uriBaseId: "ROOTPATH"
+                            }
+                        },
+                        logicalLocations: [{
+                            name: $module,
+                            kind: "module"
+                        }]
+                    }],
+                    fixes: [{
+                        description: { text: $suggestion }
+                    }]
+                }')
             results=$(echo "$results" | jq --argjson r "$result" '. += [$r]')
         fi
     done < <(echo "$checks" | jq -c '.[]')
@@ -563,25 +568,31 @@ EOF
             *)      level="none" ;;
         esac
 
-        local rule=$(cat <<EOF
-{
-  "id": "$id",
-  "name": "$title",
-  "shortDescription": {
-    "text": "$title"
-  },
-  "fullDescription": {
-    "text": "$desc"
-  },
-  "defaultConfiguration": {
-    "level": "$level"
-  },
-  "properties": {
-    "security-severity": "$(case $severity in high) echo "8.0";; medium) echo "5.0";; low) echo "2.0";; *) echo "0.0";; esac)"
-  }
-}
-EOF
-)
+        # Same JSON-escaping concern as the results block above — use
+        # `jq -n` instead of a heredoc so special characters in title
+        # or desc don't break the SARIF document.
+        local sec_sev
+        case "$severity" in
+            high)   sec_sev="8.0" ;;
+            medium) sec_sev="5.0" ;;
+            low)    sec_sev="2.0" ;;
+            *)      sec_sev="0.0" ;;
+        esac
+        local rule
+        rule=$(jq -n \
+            --arg id      "$id" \
+            --arg name    "$title" \
+            --arg desc    "$desc" \
+            --arg level   "$level" \
+            --arg sec_sev "$sec_sev" \
+            '{
+                id: $id,
+                name: $name,
+                shortDescription: { text: $name },
+                fullDescription:  { text: $desc },
+                defaultConfiguration: { level: $level },
+                properties: { "security-severity": $sec_sev }
+            }')
         # Check if rule already exists
         if ! echo "$rules" | jq -e --arg id "$id" '.[] | select(.id == $id)' &>/dev/null; then
             rules=$(echo "$rules" | jq --argjson r "$rule" '. += [$r]')
@@ -598,7 +609,7 @@ EOF
       "driver": {
         "name": "vpssec",
         "version": "${VPSSEC_VERSION}",
-        "informationUri": "https://github.com/vpssec/vpssec",
+        "informationUri": "https://github.com/Lynthar/CloudServer-Audit",
         "rules": ${rules}
       }
     },

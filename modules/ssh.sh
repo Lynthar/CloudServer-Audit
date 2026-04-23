@@ -762,18 +762,32 @@ Port $SSH_RESCUE_PORT
 Include /etc/ssh/sshd_config
 EOF
 
-    # Start rescue sshd
+    # Start rescue sshd. sshd daemonises after parsing the config, so
+    # the parent process returns before the child has called bind().
+    # Give the child a short retry window to open the listening socket
+    # before declaring failure.
     /usr/sbin/sshd -f "$rescue_config" 2>/dev/null
 
-    if check_port_open "$SSH_RESCUE_PORT"; then
-        print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
-        print_warn "$(i18n 'ssh.rescue_port_test' "port=$SSH_RESCUE_PORT")"
-        return 0
-    else
-        print_error "$(i18n 'ssh.rescue_port_failed')"
-        rm -f "$rescue_config"
-        return 1
-    fi
+    local _wait_attempts=20  # 20 * 0.1s = 2s total
+    local _i
+    for ((_i=0; _i<_wait_attempts; _i++)); do
+        if check_port_open "$SSH_RESCUE_PORT"; then
+            print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
+            print_warn "$(i18n 'ssh.rescue_port_test' "port=$SSH_RESCUE_PORT")"
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    # Bind never succeeded within the wait window. If the child
+    # eventually does bind after we return, _ssh_close_rescue_port
+    # (called by the caller below) will still find it via `ss -tlnp`,
+    # so we invoke it here as defensive cleanup even on the failure
+    # path rather than leaving a potential zombie rescue sshd.
+    print_error "$(i18n 'ssh.rescue_port_failed')"
+    _ssh_close_rescue_port
+    rm -f "$rescue_config"
+    return 1
 }
 
 # Close rescue port
@@ -791,6 +805,13 @@ _ssh_close_rescue_port() {
     fi
 }
 
+# Track the backup path of the drop-in that was overwritten by the most
+# recent _ssh_write_hardening_config call, so that _ssh_reload_safe can
+# roll back on a full-context `sshd -t` failure. "NEW" means no prior
+# drop-in existed (rollback means deleting the new file); empty means
+# no call has run yet.
+SSH_LAST_DROPIN_BACKUP=""
+
 # Write SSH hardening config
 _ssh_write_hardening_config() {
     local content="$1"
@@ -798,9 +819,15 @@ _ssh_write_hardening_config() {
 
     mkdir -p "$SSH_DROPIN_DIR"
 
-    # Backup existing
+    # Backup existing drop-in (if any) so we can restore it if the
+    # post-write full-context sshd -t run fails. The previous version
+    # created a backup but never used it, leaving a potentially broken
+    # drop-in on disk that would block sshd on the next service
+    # restart/reboot.
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        backup_file "$SSH_HARDENING_DROPIN"
+        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN" 2>/dev/null) || SSH_LAST_DROPIN_BACKUP=""
+    else
+        SSH_LAST_DROPIN_BACKUP="NEW"
     fi
 
     # Write to temp file first with secure permissions
@@ -837,7 +864,49 @@ _ssh_write_hardening_config() {
     fi
 }
 
-# Reload SSH service safely
+# Restore the drop-in to whatever state it was in before the most
+# recent _ssh_write_hardening_config call. Used by _ssh_reload_safe on
+# full-context validation failure so we don't leave a drop-in that
+# looks syntactically fine in isolation but conflicts with the rest of
+# sshd_config.
+_ssh_rollback_dropin() {
+    local backup="${SSH_LAST_DROPIN_BACKUP:-}"
+
+    if [[ "$backup" == "NEW" ]]; then
+        # No prior drop-in: delete the new one we just wrote.
+        if [[ -f "$SSH_HARDENING_DROPIN" ]] && rm -f "$SSH_HARDENING_DROPIN"; then
+            print_warn "$(i18n 'ssh.dropin_rolled_back_deleted' 2>/dev/null || echo 'Removed newly written SSH drop-in after validation failed')"
+        fi
+    elif [[ -n "$backup" && -f "$backup" ]]; then
+        # Restore prior content. Use cp -p to preserve mode/ownership
+        # (backup_file already chmodded the backup 600, but the live
+        # drop-in is 644; let chmod --reference restore that).
+        if cp -p "$backup" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
+            chmod 644 "$SSH_HARDENING_DROPIN" 2>/dev/null || true
+            print_warn "$(i18n 'ssh.dropin_rolled_back_restored' 2>/dev/null || echo 'Restored previous SSH drop-in from backup after validation failed')"
+        else
+            print_error "$(i18n 'ssh.dropin_rollback_failed' 2>/dev/null || echo 'Failed to restore previous SSH drop-in; manual review required')"
+        fi
+    else
+        # Backup path unset or backup file missing (very unusual).
+        print_error "$(i18n 'ssh.dropin_rollback_missing' 2>/dev/null || echo 'No SSH drop-in backup available for rollback')"
+    fi
+
+    # Reset so a later reload cannot "rollback" stale state.
+    SSH_LAST_DROPIN_BACKUP=""
+}
+
+# Reload SSH service safely.
+#
+# The pre-write `sshd -t -f temp_file` in _ssh_write_hardening_config
+# only validates the drop-in in isolation. The full-context `sshd -t`
+# below pulls in the main sshd_config and every other drop-in and can
+# fail even when our file is individually fine (e.g. a duplicate
+# directive in another drop-in, a mismatched algorithm list, or a
+# Match block interaction). On that failure we MUST roll back — a bad
+# drop-in left on disk will prevent sshd from starting on the next
+# service restart or reboot, which is exactly the lockout scenario
+# the rescue port is supposed to prevent.
 _ssh_reload_safe() {
     # Test config first
     if sshd -t 2>/dev/null; then
@@ -852,6 +921,7 @@ _ssh_reload_safe() {
         fi
     else
         print_error "$(i18n 'ssh.sshd_test_fail')"
+        _ssh_rollback_dropin
         return 1
     fi
 }

@@ -25,11 +25,19 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 print_banner() {
+    # Inner width = 63 chars. Content is centred inside via printf so
+    # expanding ${VPSSEC_REPO} doesn't blow past the right border (the
+    # previous literal padding was tuned for a shorter repo name and
+    # left the URL line ~15 chars over).
+    local title="vpssec - VPS Security Check & Hardening"
+    local url="https://github.com/${VPSSEC_REPO}"
+    local width=63
+
     echo -e "${BOLD}"
-    echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║           vpssec - VPS Security Check & Hardening             ║"
-    echo "║                     https://github.com/${VPSSEC_REPO}             ║"
-    echo "╚═══════════════════════════════════════════════════════════════╝"
+    printf '╔%s╗\n' "$(printf '═%.0s' $(seq 1 "$width"))"
+    printf '║%*s%s%*s║\n' $(( (width - ${#title}) / 2 )) "" "$title" $(( width - ${#title} - (width - ${#title}) / 2 )) ""
+    printf '║%*s%s%*s║\n' $(( (width - ${#url}) / 2 )) "" "$url" $(( width - ${#url} - (width - ${#url}) / 2 )) ""
+    printf '╚%s╝\n' "$(printf '═%.0s' $(seq 1 "$width"))"
     echo -e "${NC}"
 }
 

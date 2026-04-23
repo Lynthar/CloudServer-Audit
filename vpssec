@@ -78,6 +78,15 @@ parse_args() {
             audit|guide|rollback|status)
                 command="$1"
                 shift
+                # For `rollback`, accept an optional positional timestamp
+                # immediately after the sub-command so the loop doesn't
+                # reject it as an unknown option. We only consume it
+                # here; the parent already captured the value in the
+                # pre-parse loop, because variables set inside this
+                # function (called via $(...)) do not propagate back.
+                if [[ "$command" == "rollback" && $# -gt 0 && "$1" != -* ]]; then
+                    shift
+                fi
                 ;;
             --lang=*)
                 VPSSEC_LANG="${1#*=}"
@@ -146,8 +155,16 @@ parse_args() {
 # ==============================================================================
 
 main() {
-    # Handle --version, --help, --lang, --include and detect command before interactive menus
-    for arg in "$@"; do
+    # Handle --version, --help, --lang, --include and detect command before
+    # interactive menus. Index-based iteration so we can do one-step
+    # lookahead after `rollback` to capture its optional timestamp.
+    # Variables set inside parse_args (via $(...)) don't propagate back,
+    # so anything that needs to survive must be set here.
+    local _argc=$#
+    local _argv=("$@")
+    local _i
+    for ((_i=0; _i<_argc; _i++)); do
+        local arg="${_argv[$_i]}"
         case "$arg" in
             --version|-v)
                 show_version
@@ -158,6 +175,18 @@ main() {
                 i18n_load "${VPSSEC_LANG}"
                 show_help
                 exit 0
+                ;;
+            --no-color)
+                # common.sh initialised colour escape codes at source
+                # time based on VPSSEC_COLOR and isatty. `--no-color`
+                # was only handled later in parse_args, which runs in
+                # a command-substitution subshell and can't propagate
+                # variable changes back — so the language/mode/module
+                # menus still printed in colour. Reset here before
+                # any menu runs.
+                VPSSEC_COLOR=0
+                RED='' GREEN='' YELLOW='' BLUE='' MAGENTA='' CYAN='' WHITE='' BOLD='' DIM='' NC=''
+                SEV_HIGH='●' SEV_MEDIUM='●' SEV_LOW='●' SEV_SAFE='●'
                 ;;
             --lang=*)
                 # Mark language as set so we skip selection menu
@@ -175,15 +204,53 @@ main() {
                 VPSSEC_MODE="$arg"
                 VPSSEC_MODE_SET=1
                 export VPSSEC_MODE VPSSEC_MODE_SET
+                # For `rollback`, the next positional (if any, and not a
+                # flag) is the backup timestamp. Previously the dispatch
+                # code read "${2:-}" from main()'s args which is option-
+                # order sensitive — `vpssec --yes rollback TS` would see
+                # $2=rollback, not TS.
+                if [[ "$arg" == "rollback" ]]; then
+                    local _next_i=$((_i + 1))
+                    if (( _next_i < _argc )); then
+                        local _next="${_argv[$_next_i]}"
+                        if [[ -n "$_next" && "$_next" != -* ]]; then
+                            VPSSEC_ROLLBACK_TIMESTAMP="$_next"
+                            export VPSSEC_ROLLBACK_TIMESTAMP
+                        fi
+                    fi
+                fi
                 ;;
         esac
     done
+
+    # If the user passed a non-status command on the CLI, fail fast on
+    # missing root before we walk any menus. Previously the check
+    # happened after language/mode/module selection, so a non-root
+    # user went through the entire interactive flow and only then saw
+    # "root required". The second check below handles the fully
+    # interactive path where the command is only known after select_mode.
+    if [[ -n "${VPSSEC_MODE:-}" && "$VPSSEC_MODE" != "status" ]] && ! check_root; then
+        i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
+        print_error "$(i18n 'error.root_required' 2>/dev/null || echo 'This operation requires root privileges')"
+        echo "Please run with: sudo vpssec $VPSSEC_MODE"
+        exit 1
+    fi
 
     # Show language selection if not specified
     select_language
 
     # Show mode selection if not specified (only for audit/guide, not rollback/status)
     select_mode
+
+    # Interactive path: the command is now known — enforce root before
+    # we display the module menu so the user doesn't pick modules only
+    # to be rejected.
+    if [[ "${VPSSEC_MODE:-}" != "status" ]] && ! check_root; then
+        i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
+        print_error "$(i18n 'error.root_required' 2>/dev/null || echo 'This operation requires root privileges')"
+        echo "Please run with: sudo vpssec ${VPSSEC_MODE:-}"
+        exit 1
+    fi
 
     # Show module selection if not specified via CLI
     select_modules
@@ -194,7 +261,9 @@ main() {
     # Initialize vpssec
     vpssec_init
 
-    # Check for root (required for most operations)
+    # Defence in depth: re-check in case the command evolved after
+    # parse_args (e.g. defaulted from VPSSEC_MODE). check_root is a
+    # cheap syscall so the redundancy is fine.
     if [[ "$command" != "status" ]] && ! check_root; then
         print_error "$(i18n 'error.root_required')"
         echo "Please run with: sudo vpssec $command"
@@ -244,7 +313,7 @@ main() {
             guide_mode
             ;;
         rollback)
-            rollback_mode "${2:-}"
+            rollback_mode "${VPSSEC_ROLLBACK_TIMESTAMP:-}"
             ;;
         status)
             status_mode

@@ -290,7 +290,10 @@ _kernel_ipv6_firewall_check() {
     # Check if ip6tables has rules
     elif check_command ip6tables; then
         local rule_count
-        rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" | head -1 || echo "0")
+        # grep -c already emits a single integer, so the previous
+        # `| head -1` was dead; kept the defensive regex strip below
+        # for robustness.
+        rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" || echo "0")
         rule_count="${rule_count//[^0-9]/}"
         [[ -z "$rule_count" ]] && rule_count=0
         if [[ "$rule_count" -gt 0 ]]; then
