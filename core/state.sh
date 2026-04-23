@@ -483,38 +483,51 @@ calculate_score() {
         fi
     done <<< "$(echo "$checks" | jq -c '.[]')"
 
-    # Score calculation:
-    # Start at 100, deduct for failures
+    # Score calculation (pass-rate based, with severity penalty on top).
     #
-    # Deduction per issue:
-    #   Critical/High: -20 points each
-    #   Medium: -8 points each
-    #   Low: -3 points each
+    # The previous additive/capped model (start 100, per-severity caps
+    # at -80/-40/-15) hit its combined cap of -135 quickly on any real
+    # server: 3 high + 11 medium + 10 low saturated every cap and
+    # produced score 0, identical to a catastrophically compromised
+    # system. There was no differentiation between "needs hardening"
+    # and "rooted".
     #
-    # Caps (to prevent going too negative):
-    #   High: max -80 points (4+ high issues = very poor)
-    #   Medium: max -40 points (5+ medium issues = significant concern)
-    #   Low: max -15 points (5+ low issues = notable)
+    # New formula:
+    #     base    = 100 × passed / scored_total   (the pass rate, 0..100)
+    #     penalty = 8×high + 2×medium + 0.5×low   (additive, severity-weighted)
+    #     score   = clamp(0, 100, base − penalty)
     #
-    # Expected outcomes:
-    #   0 issues         → 100 (Excellent)
-    #   1 medium         → 92  (Good)
-    #   2 medium         → 84  (Good)
-    #   1 high           → 80  (Fair)
-    #   2 high           → 60  (Poor)
-    #   3 high           → 40  (Critical)
-    #   1 high + 2 medium→ 64  (Poor)
+    # info-category checks (see security_levels.sh) are excluded from
+    # `scored_total`, so they don't dilute the pass rate in either
+    # direction — a clean way to carry advisory findings in the report
+    # without them distorting the number.
+    #
+    # Expected outcomes (all on a 50-check scored total):
+    #   0 failures                   → 100 (Excellent)
+    #   1 medium only                → 96  (Excellent)
+    #   1 high only                  → 90  (Good)
+    #   3 high only                  → 70  (Needs work)
+    #   3 high + 6 medium + 3 low    → 38  (Poor)
+    #   10 high + 20 medium + 30 low → 0   (Broken)
 
-    local score=100
-    local high_deduct=$((high_fail * 20))
-    ((high_deduct > 80)) && high_deduct=80
-    local medium_deduct=$((medium_fail * 8))
-    ((medium_deduct > 40)) && medium_deduct=40
-    local low_deduct=$((low_fail * 3))
-    ((low_deduct > 15)) && low_deduct=15
+    if (( scored_total == 0 )); then
+        echo 100
+        return
+    fi
 
-    score=$((score - high_deduct - medium_deduct - low_deduct))
-    ((score < 0)) && score=0
+    local passed_count=$(( scored_total - high_fail - medium_fail - low_fail ))
+    (( passed_count < 0 )) && passed_count=0
+
+    local base=$(( 100 * passed_count / scored_total ))
+
+    # Penalty in 2× space so we don't lose the 0.5 weight on low.
+    # penalty*2 = 16*high + 4*medium + 1*low
+    local penalty_2x=$(( 16 * high_fail + 4 * medium_fail + low_fail ))
+    local penalty=$(( penalty_2x / 2 ))
+
+    local score=$(( base - penalty ))
+    (( score < 0 )) && score=0
+    (( score > 100 )) && score=100
 
     echo "$score"
 }

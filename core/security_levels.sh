@@ -234,12 +234,12 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["ssh.empty_password_denied"]="required"
     ["ssh.admin_no_key"]="recommended"
     ["ssh.authkeys_permissions"]="recommended"
-    ["ssh.max_auth_tries_ok"]="recommended"
-    ["ssh.max_auth_tries_high"]="recommended"
-    ["ssh.login_grace_time_ok"]="recommended"
-    ["ssh.login_grace_time_long"]="recommended"
-    ["ssh.x11_forwarding_disabled"]="recommended"
-    ["ssh.x11_forwarding_enabled"]="recommended"
+    ["ssh.max_auth_tries_ok"]="info"
+    ["ssh.max_auth_tries_high"]="info"
+    ["ssh.login_grace_time_ok"]="info"
+    ["ssh.login_grace_time_long"]="info"
+    ["ssh.x11_forwarding_disabled"]="info"
+    ["ssh.x11_forwarding_enabled"]="info"
     ["ssh.weak_algorithms"]="optional"
     ["ssh.algorithms_ok"]="optional"
 
@@ -288,15 +288,15 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["docker.no_root_containers"]="conditional"
     ["docker.containers_with_caps"]="conditional"
     ["docker.no_extra_caps"]="conditional"
-    ["docker.no_live_restore"]="conditional"
+    ["docker.no_live_restore"]="info"
     ["docker.no_new_privileges_disabled"]="conditional"
     ["docker.daemon_secure"]="conditional"
     ["docker.sock_perms_loose"]="conditional"
     ["docker.sock_perms_ok"]="conditional"
     ["docker.seccomp_unconfined"]="conditional"
     ["docker.no_seccomp_unconfined"]="conditional"
-    ["docker.userns_enabled"]="conditional"
-    ["docker.userns_not_enabled"]="conditional"
+    ["docker.userns_enabled"]="info"
+    ["docker.userns_not_enabled"]="info"
 
     # === Nginx Module - conditional (only if Nginx installed) ===
     ["nginx.not_installed"]="info"
@@ -306,7 +306,7 @@ declare -A CHECK_SCORE_CATEGORY=(
     # === Baseline Module - recommended (MAC: SELinux/AppArmor) ===
     ["baseline.apparmor_enabled"]="recommended"
     ["baseline.apparmor_disabled"]="recommended"
-    ["baseline.apparmor_many_complain"]="recommended"
+    ["baseline.apparmor_many_complain"]="info"
     ["baseline.selinux_enforcing"]="recommended"
     ["baseline.selinux_permissive"]="recommended"
     ["baseline.selinux_disabled"]="recommended"
@@ -321,10 +321,10 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["logging.logrotate_ok"]="recommended"
     ["logging.logrotate_missing"]="recommended"
     ["logging.logrotate_not_configured"]="recommended"
-    ["logging.auditd_configured"]="optional"
-    ["logging.auditd_no_rules"]="optional"
-    ["logging.auditd_inactive"]="optional"
-    ["logging.auditd_not_installed"]="optional"
+    ["logging.auditd_configured"]="info"
+    ["logging.auditd_no_rules"]="info"
+    ["logging.auditd_inactive"]="info"
+    ["logging.auditd_not_installed"]="info"
     ["logging.ssh_logs_ok"]="info"
     ["logging.ssh_many_failures"]="info"
     ["logging.ssh_some_failures"]="info"
@@ -343,18 +343,18 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["cloudflared.no_tunnels"]="conditional"
 
     # === Backup Module - optional ===
-    ["backup.no_tools"]="optional"
-    ["backup.tools_installed"]="optional"
-    ["backup.no_schedule"]="optional"
-    ["backup.scheduled"]="optional"
-    ["backup.critical_paths"]="optional"
+    ["backup.no_tools"]="info"
+    ["backup.tools_installed"]="info"
+    ["backup.no_schedule"]="info"
+    ["backup.scheduled"]="info"
+    ["backup.critical_paths"]="info"
 
     # === Alerts Module - optional ===
-    ["alerts.configured"]="optional"
-    ["alerts.not_configured"]="optional"
-    ["alerts.no_config"]="optional"
-    ["alerts.capabilities_ok"]="optional"
-    ["alerts.no_capabilities"]="optional"
+    ["alerts.configured"]="info"
+    ["alerts.not_configured"]="info"
+    ["alerts.no_config"]="info"
+    ["alerts.capabilities_ok"]="info"
+    ["alerts.no_capabilities"]="info"
 
     # === Kernel Module - required/recommended ===
     ["kernel.aslr_full"]="required"
@@ -388,11 +388,11 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["filesystem.owner_ok"]="recommended"
     ["filesystem.sensitive_perms_wrong"]="required"
     ["filesystem.sensitive_perms_ok"]="required"
-    ["filesystem.tmp_mount_ok"]="optional"
-    ["filesystem.tmp_not_separate"]="optional"
-    ["filesystem.tmp_mount_missing_opts"]="optional"
-    ["filesystem.umask_ok"]="recommended"
-    ["filesystem.umask_default"]="recommended"
+    ["filesystem.tmp_mount_ok"]="info"
+    ["filesystem.tmp_not_separate"]="info"
+    ["filesystem.tmp_mount_missing_opts"]="info"
+    ["filesystem.umask_ok"]="info"
+    ["filesystem.umask_default"]="info"
     ["filesystem.umask_weak"]="recommended"
 
     # === Cloud Module - info only ===
@@ -415,6 +415,14 @@ declare -A CHECK_SCORE_CATEGORY=(
     ["users.ssh_keys_info"]="info"
     ["users.suspicious_names"]="recommended"
     ["users.unusual_home"]="recommended"
+    # pwquality not installed / bash history protection are operator
+    # preferences (pam_pwquality is not Debian-default; HISTCONTROL is
+    # audit convenience), not security baseline items — explicitly
+    # scored as info so a default-configured host isn't penalised.
+    # These checks are emitted only on the "weak/insecure" path; there
+    # is no corresponding "ok" check_id to classify.
+    ["users.pwquality_weak"]="info"
+    ["users.history_insecure"]="info"
 
     # === Timezone Module ===
     ["timezone.configured"]="info"
