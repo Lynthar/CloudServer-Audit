@@ -300,31 +300,25 @@ cloud_audit() {
 
     local check_json
     if [[ "$provider" != "unknown" ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "cloud.provider_detected",
-    "check_id": "cloud.provider_detected",
-    "module": "cloud",
-    "title": "$(i18n 'cloud.provider_detected' 2>/dev/null || echo 'Cloud Provider Detected'): $provider_name",
-    "desc": "$(i18n 'cloud.provider_info' 2>/dev/null || echo 'Running on cloud infrastructure')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "cloud.provider_detected" \
+            "cloud" \
+            "info" \
+            "passed" \
+            "$(i18n 'cloud.provider_detected' 2>/dev/null || echo 'Cloud Provider Detected'): $provider_name" \
+            "$(i18n 'cloud.provider_info' 2>/dev/null || echo 'Running on cloud infrastructure')" \
+            "" \
+            "")
     else
-        check_json=$(cat <<EOF
-{
-    "id": "cloud.provider_unknown",
-    "check_id": "cloud.provider_unknown",
-    "module": "cloud",
-    "title": "$(i18n 'cloud.provider_unknown' 2>/dev/null || echo 'Cloud Provider Unknown')",
-    "desc": "$(i18n 'cloud.provider_unknown_desc' 2>/dev/null || echo 'Could not detect cloud provider, may be bare metal or unrecognized VPS')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "cloud.provider_unknown" \
+            "cloud" \
+            "info" \
+            "passed" \
+            "$(i18n 'cloud.provider_unknown' 2>/dev/null || echo 'Cloud Provider Unknown')" \
+            "$(i18n 'cloud.provider_unknown_desc' 2>/dev/null || echo 'Could not detect cloud provider, may be bare metal or unrecognized VPS')" \
+            "" \
+            "")
     fi
     state_add_check "$check_json"
 
@@ -361,33 +355,25 @@ EOF
             [[ "$all_from_provider" == "true" ]] && severity="low"
         fi
 
-        check_json=$(cat <<EOF
-{
-    "id": "cloud.agents_found",
-    "check_id": "cloud.agents_found",
-    "module": "cloud",
-    "title": "$(i18n 'cloud.agents_found' 2>/dev/null || echo 'Cloud Monitoring Agents Found'): $agent_count",
-    "desc": "$agent_list",
-    "status": "failed",
-    "severity": "$severity",
-    "suggestion": "$(i18n 'cloud.review_agents' 2>/dev/null || echo 'Review if these agents are needed, disable if not required')",
-    "fix_id": "cloud.agents_found"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "cloud.agents_found" \
+            "cloud" \
+            "$severity" \
+            "failed" \
+            "$(i18n 'cloud.agents_found' 2>/dev/null || echo 'Cloud Monitoring Agents Found'): $agent_count" \
+            "$agent_list" \
+            "$(i18n 'cloud.review_agents' 2>/dev/null || echo 'Review if these agents are needed, disable if not required')" \
+            "cloud.agents_found")
     else
-        check_json=$(cat <<EOF
-{
-    "id": "cloud.no_known_agents",
-    "check_id": "cloud.no_known_agents",
-    "module": "cloud",
-    "title": "$(i18n 'cloud.no_known_agents' 2>/dev/null || echo 'No Known Cloud Agents')",
-    "desc": "$(i18n 'cloud.no_known_agents_desc' 2>/dev/null || echo 'No known cloud vendor monitoring agents detected')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "cloud.no_known_agents" \
+            "cloud" \
+            "info" \
+            "passed" \
+            "$(i18n 'cloud.no_known_agents' 2>/dev/null || echo 'No Known Cloud Agents')" \
+            "$(i18n 'cloud.no_known_agents_desc' 2>/dev/null || echo 'No known cloud vendor monitoring agents detected')" \
+            "" \
+            "")
     fi
     state_add_check "$check_json"
 
@@ -403,20 +389,15 @@ EOF
         done <<< "$suspicious"
         proc_list="${proc_list%, }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "cloud.suspicious_agents",
-    "check_id": "cloud.suspicious_agents",
-    "module": "cloud",
-    "title": "$(i18n 'cloud.suspicious_agents' 2>/dev/null || echo 'Suspicious Agent Processes'): $suspicious_count",
-    "desc": "$proc_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'cloud.review_suspicious' 2>/dev/null || echo 'Review these processes - may be legitimate monitoring or unwanted software')",
-    "fix_id": "cloud.suspicious_agents"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "cloud.suspicious_agents" \
+            "cloud" \
+            "low" \
+            "failed" \
+            "$(i18n 'cloud.suspicious_agents' 2>/dev/null || echo 'Suspicious Agent Processes'): $suspicious_count" \
+            "$proc_list" \
+            "$(i18n 'cloud.review_suspicious' 2>/dev/null || echo 'Review these processes - may be legitimate monitoring or unwanted software')" \
+            "cloud.suspicious_agents")
         state_add_check "$check_json"
     fi
 

@@ -47,9 +47,30 @@ state_init() {
 # ==============================================================================
 
 # Add a check result to state (thread-safe with file locking).
+#
+# Defence in depth: if a module produced invalid JSON (historically the
+# hand-written heredocs in cloud/malware/users/webapp did this whenever
+# an interpolated $var contained a quote, newline or CR), swap it for a
+# synthetic "malformed check" record so the breakage is visible in the
+# report instead of silently disappearing. The downstream jq append
+# would have dropped it anyway; this path adds diagnostics.
 state_add_check() {
     local check_json="$1"
     local lock_file="${VPSSEC_STATE}/.checks.lock"
+
+    if ! printf '%s' "$check_json" | jq empty 2>/dev/null; then
+        log_error "state_add_check received malformed JSON (first 200 bytes): ${check_json:0:200}"
+        local raw_preview="${check_json:0:500}"
+        check_json=$(create_check_json \
+            "_internal.malformed_check" \
+            "_internal" \
+            "medium" \
+            "failed" \
+            "Malformed check JSON dropped" \
+            "A module emitted invalid JSON for a check. Raw payload (first 500 bytes): ${raw_preview}" \
+            "Please report to vpssec maintainers with the relevant logs/vpssec.log entry" \
+            "")
+    fi
 
     (
         flock -x 200  # Exclusive lock for write operation
@@ -343,17 +364,17 @@ _detect_installed_components() {
     local cloudflared_installed="false"
 
     # Docker: installed if we have any docker.* check that is NOT docker.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("docker.")) | select(.check_id != "docker.not_installed")] | length > 0' >/dev/null 2>&1; then
+    if echo "$checks" | jq -e '[.[] | select(.id | startswith("docker.")) | select(.id != "docker.not_installed")] | length > 0' >/dev/null 2>&1; then
         docker_installed="true"
     fi
 
     # Nginx: installed if we have any nginx.* check that is NOT nginx.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("nginx.")) | select(.check_id != "nginx.not_installed")] | length > 0' >/dev/null 2>&1; then
+    if echo "$checks" | jq -e '[.[] | select(.id | startswith("nginx.")) | select(.id != "nginx.not_installed")] | length > 0' >/dev/null 2>&1; then
         nginx_installed="true"
     fi
 
     # Cloudflared: installed if we have any cloudflared.* check that is NOT cloudflared.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.check_id | startswith("cloudflared.")) | select(.check_id != "cloudflared.not_installed")] | length > 0' >/dev/null 2>&1; then
+    if echo "$checks" | jq -e '[.[] | select(.id | startswith("cloudflared.")) | select(.id != "cloudflared.not_installed")] | length > 0' >/dev/null 2>&1; then
         cloudflared_installed="true"
     fi
 
@@ -430,7 +451,7 @@ calculate_score() {
         [[ -z "$check_json" ]] && continue
 
         local check_id status severity
-        check_id=$(echo "$check_json" | jq -r '.check_id // empty')
+        check_id=$(echo "$check_json" | jq -r '.id // empty')
         status=$(echo "$check_json" | jq -r '.status // empty')
         severity=$(echo "$check_json" | jq -r '.severity // "low"')
 
@@ -509,7 +530,7 @@ get_check_stats() {
         [[ -z "$check_json" ]] && continue
 
         local check_id status severity
-        check_id=$(echo "$check_json" | jq -r '.check_id // empty')
+        check_id=$(echo "$check_json" | jq -r '.id // empty')
         status=$(echo "$check_json" | jq -r '.status // empty')
         severity=$(echo "$check_json" | jq -r '.severity // "low"')
 

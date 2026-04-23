@@ -493,33 +493,25 @@ users_audit() {
     local uid0_count=$(echo "$uid0_users" | grep -c . 2>/dev/null || echo 0)
 
     if [[ -n "$uid0_users" && "$uid0_count" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "users.uid0_found",
-    "check_id": "users.uid0_found",
-    "module": "users",
-    "title": "$(i18n 'users.uid0_found' 2>/dev/null || echo 'UID 0 Users Found (Besides root)'): $uid0_count",
-    "desc": "$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'users.uid0_review' 2>/dev/null || echo 'Review these accounts - may be backdoors')",
-    "fix_id": "users.uid0_found"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.uid0_found" \
+            "users" \
+            "high" \
+            "failed" \
+            "$(i18n 'users.uid0_found' 2>/dev/null || echo 'UID 0 Users Found (Besides root)'): $uid0_count" \
+            "$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')" \
+            "$(i18n 'users.uid0_review' 2>/dev/null || echo 'Review these accounts - may be backdoors')" \
+            "users.uid0_found")
     else
-        check_json=$(cat <<EOF
-{
-    "id": "users.uid0_ok",
-    "check_id": "users.uid0_ok",
-    "module": "users",
-    "title": "$(i18n 'users.uid0_ok' 2>/dev/null || echo 'No Extra UID 0 Users')",
-    "desc": "$(i18n 'users.uid0_ok_desc' 2>/dev/null || echo 'Only root has UID 0')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.uid0_ok" \
+            "users" \
+            "info" \
+            "passed" \
+            "$(i18n 'users.uid0_ok' 2>/dev/null || echo 'No Extra UID 0 Users')" \
+            "$(i18n 'users.uid0_ok_desc' 2>/dev/null || echo 'Only root has UID 0')" \
+            "" \
+            "")
     fi
     state_add_check "$check_json"
 
@@ -528,33 +520,25 @@ EOF
     local empty_count=$(echo "$empty_pass" | grep -c . 2>/dev/null || echo 0)
 
     if [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "users.empty_password",
-    "check_id": "users.empty_password",
-    "module": "users",
-    "title": "$(i18n 'users.empty_password' 2>/dev/null || echo 'Empty Password Users'): $empty_count",
-    "desc": "$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'users.set_password' 2>/dev/null || echo 'Set passwords or lock these accounts')",
-    "fix_id": "users.empty_password"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.empty_password" \
+            "users" \
+            "high" \
+            "failed" \
+            "$(i18n 'users.empty_password' 2>/dev/null || echo 'Empty Password Users'): $empty_count" \
+            "$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')" \
+            "$(i18n 'users.set_password' 2>/dev/null || echo 'Set passwords or lock these accounts')" \
+            "users.empty_password")
     else
-        check_json=$(cat <<EOF
-{
-    "id": "users.no_empty_password",
-    "check_id": "users.no_empty_password",
-    "module": "users",
-    "title": "$(i18n 'users.no_empty_password' 2>/dev/null || echo 'No Empty Password Users')",
-    "desc": "$(i18n 'users.no_empty_password_desc' 2>/dev/null || echo 'All users with shells have passwords')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.no_empty_password" \
+            "users" \
+            "info" \
+            "passed" \
+            "$(i18n 'users.no_empty_password' 2>/dev/null || echo 'No Empty Password Users')" \
+            "$(i18n 'users.no_empty_password_desc' 2>/dev/null || echo 'All users with shells have passwords')" \
+            "" \
+            "")
     fi
     state_add_check "$check_json"
 
@@ -570,20 +554,15 @@ EOF
         done <<< "$sys_shells"
         user_list="${user_list%, }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.system_with_shell",
-    "check_id": "users.system_with_shell",
-    "module": "users",
-    "title": "$(i18n 'users.system_with_shell' 2>/dev/null || echo 'System Users with Login Shells'): $sys_shell_count",
-    "desc": "$user_list",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'users.change_shell' 2>/dev/null || echo 'Change shell to /usr/sbin/nologin if not needed')",
-    "fix_id": "users.system_with_shell"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.system_with_shell" \
+            "users" \
+            "medium" \
+            "failed" \
+            "$(i18n 'users.system_with_shell' 2>/dev/null || echo 'System Users with Login Shells'): $sys_shell_count" \
+            "$user_list" \
+            "$(i18n 'users.change_shell' 2>/dev/null || echo 'Change shell to /usr/sbin/nologin if not needed')" \
+            "users.system_with_shell")
         state_add_check "$check_json"
     fi
 
@@ -592,19 +571,15 @@ EOF
     local sudo_count=$(echo "$sudo_users" | grep -c . 2>/dev/null || echo 0)
 
     if [[ -n "$sudo_users" && "$sudo_count" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "users.sudo_users",
-    "check_id": "users.sudo_users",
-    "module": "users",
-    "title": "$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users'): $sudo_count",
-    "desc": "$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "passed",
-    "severity": "info",
-    "suggestion": "$(i18n 'users.review_sudo' 2>/dev/null || echo 'Review if all these users need sudo access')"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.sudo_users" \
+            "users" \
+            "info" \
+            "passed" \
+            "$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users'): $sudo_count" \
+            "$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')" \
+            "$(i18n 'users.review_sudo' 2>/dev/null || echo 'Review if all these users need sudo access')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -620,20 +595,15 @@ EOF
         done <<< "$nopasswd"
         nopasswd_list="${nopasswd_list%; }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.nopasswd_sudo",
-    "check_id": "users.nopasswd_sudo",
-    "module": "users",
-    "title": "$(i18n 'users.nopasswd_sudo' 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count",
-    "desc": "$nopasswd_list",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'users.review_nopasswd' 2>/dev/null || echo 'NOPASSWD allows privilege escalation without password - review if necessary')",
-    "fix_id": "users.nopasswd_sudo"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.nopasswd_sudo" \
+            "users" \
+            "high" \
+            "failed" \
+            "$(i18n 'users.nopasswd_sudo' 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count" \
+            "$nopasswd_list" \
+            "$(i18n 'users.review_nopasswd' 2>/dev/null || echo 'NOPASSWD allows privilege escalation without password - review if necessary')" \
+            "users.nopasswd_sudo")
         state_add_check "$check_json"
     fi
 
@@ -649,20 +619,15 @@ EOF
         done <<< "$recent"
         recent_list="${recent_list%, }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.recent_users",
-    "check_id": "users.recent_users",
-    "module": "users",
-    "title": "$(i18n 'users.recent_users' 2>/dev/null || echo 'Recently Created Users'): $recent_count",
-    "desc": "$recent_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'users.verify_recent' 2>/dev/null || echo 'Verify these users were intentionally created')",
-    "fix_id": "users.recent_users"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.recent_users" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.recent_users' 2>/dev/null || echo 'Recently Created Users'): $recent_count" \
+            "$recent_list" \
+            "$(i18n 'users.verify_recent' 2>/dev/null || echo 'Verify these users were intentionally created')" \
+            "users.recent_users")
         state_add_check "$check_json"
     fi
 
@@ -680,36 +645,28 @@ EOF
     done <<< "$ssh_keys"
 
     if [[ "$bad_perms" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "users.ssh_keys_perms",
-    "check_id": "users.ssh_keys_perms",
-    "module": "users",
-    "title": "$(i18n 'users.ssh_keys_perms' 2>/dev/null || echo 'SSH authorized_keys Permission Issues'): $bad_perms",
-    "desc": "$(i18n 'users.ssh_keys_perms_desc' 2>/dev/null || echo 'Some authorized_keys files have weak permissions')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'users.fix_key_perms' 2>/dev/null || echo 'Set permissions to 600: chmod 600 ~/.ssh/authorized_keys')",
-    "fix_id": "users.ssh_keys_perms"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.ssh_keys_perms" \
+            "users" \
+            "medium" \
+            "failed" \
+            "$(i18n 'users.ssh_keys_perms' 2>/dev/null || echo 'SSH authorized_keys Permission Issues'): $bad_perms" \
+            "$(i18n 'users.ssh_keys_perms_desc' 2>/dev/null || echo 'Some authorized_keys files have weak permissions')" \
+            "$(i18n 'users.fix_key_perms' 2>/dev/null || echo 'Set permissions to 600: chmod 600 ~/.ssh/authorized_keys')" \
+            "users.ssh_keys_perms")
         state_add_check "$check_json"
     fi
 
     if [[ "$users_with_keys" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "users.ssh_keys_info",
-    "check_id": "users.ssh_keys_info",
-    "module": "users",
-    "title": "$(i18n 'users.ssh_keys_info' 2>/dev/null || echo 'Users with SSH Keys'): $users_with_keys",
-    "desc": "$(i18n 'users.ssh_keys_info_desc' 2>/dev/null || echo 'Users configured with SSH public key authentication')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.ssh_keys_info" \
+            "users" \
+            "info" \
+            "passed" \
+            "$(i18n 'users.ssh_keys_info' 2>/dev/null || echo 'Users with SSH Keys'): $users_with_keys" \
+            "$(i18n 'users.ssh_keys_info_desc' 2>/dev/null || echo 'Users configured with SSH public key authentication')" \
+            "" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -725,20 +682,15 @@ EOF
         done <<< "$suspicious"
         sus_list="${sus_list%, }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.suspicious_names",
-    "check_id": "users.suspicious_names",
-    "module": "users",
-    "title": "$(i18n 'users.suspicious_names' 2>/dev/null || echo 'Suspicious Usernames'): $sus_count",
-    "desc": "$sus_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'users.review_names' 2>/dev/null || echo 'Review these usernames - may be test accounts')",
-    "fix_id": "users.suspicious_names"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.suspicious_names" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.suspicious_names' 2>/dev/null || echo 'Suspicious Usernames'): $sus_count" \
+            "$sus_list" \
+            "$(i18n 'users.review_names' 2>/dev/null || echo 'Review these usernames - may be test accounts')" \
+            "users.suspicious_names")
         state_add_check "$check_json"
     fi
 
@@ -754,20 +706,15 @@ EOF
         done <<< "$unusual"
         unusual_list="${unusual_list%, }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.unusual_home",
-    "check_id": "users.unusual_home",
-    "module": "users",
-    "title": "$(i18n 'users.unusual_home' 2>/dev/null || echo 'Unusual Home Directories'): $unusual_count",
-    "desc": "$unusual_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'users.review_home' 2>/dev/null || echo 'Review these home directory locations')",
-    "fix_id": "users.unusual_home"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.unusual_home" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.unusual_home' 2>/dev/null || echo 'Unusual Home Directories'): $unusual_count" \
+            "$unusual_list" \
+            "$(i18n 'users.review_home' 2>/dev/null || echo 'Review these home directory locations')" \
+            "users.unusual_home")
         state_add_check "$check_json"
     fi
 
@@ -783,34 +730,26 @@ EOF
         done <<< "$policy_issues"
         policy_list="${policy_list%; }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.password_policy_weak",
-    "check_id": "users.password_policy_weak",
-    "module": "users",
-    "title": "$(i18n 'users.password_policy_weak' 2>/dev/null || echo 'Weak Password Policy'): $policy_count issues",
-    "desc": "$policy_list",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'users.fix_password_policy' 2>/dev/null || echo 'Configure password aging in /etc/login.defs')",
-    "fix_id": "users.password_policy"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.password_policy_weak" \
+            "users" \
+            "medium" \
+            "failed" \
+            "$(i18n 'users.password_policy_weak' 2>/dev/null || echo 'Weak Password Policy'): $policy_count issues" \
+            "$policy_list" \
+            "$(i18n 'users.fix_password_policy' 2>/dev/null || echo 'Configure password aging in /etc/login.defs')" \
+            "users.password_policy")
         state_add_check "$check_json"
     else
-        check_json=$(cat <<EOF
-{
-    "id": "users.password_policy_ok",
-    "check_id": "users.password_policy_ok",
-    "module": "users",
-    "title": "$(i18n 'users.password_policy_ok' 2>/dev/null || echo 'Password Policy Configured')",
-    "desc": "$(i18n 'users.password_policy_ok_desc' 2>/dev/null || echo 'Password aging and length policies are set')",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.password_policy_ok" \
+            "users" \
+            "info" \
+            "passed" \
+            "$(i18n 'users.password_policy_ok' 2>/dev/null || echo 'Password Policy Configured')" \
+            "$(i18n 'users.password_policy_ok_desc' 2>/dev/null || echo 'Password aging and length policies are set')" \
+            "" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -826,20 +765,15 @@ EOF
         done <<< "$pwquality_issues"
         pwq_list="${pwq_list%; }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.pwquality_weak",
-    "check_id": "users.pwquality_weak",
-    "module": "users",
-    "title": "$(i18n 'users.pwquality_weak' 2>/dev/null || echo 'Password Quality Not Enforced'): $pwquality_count issues",
-    "desc": "$pwq_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'users.fix_pwquality' 2>/dev/null || echo 'Configure pam_pwquality or pam_cracklib for password complexity')",
-    "fix_id": "users.pwquality"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.pwquality_weak" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.pwquality_weak' 2>/dev/null || echo 'Password Quality Not Enforced'): $pwquality_count issues" \
+            "$pwq_list" \
+            "$(i18n 'users.fix_pwquality' 2>/dev/null || echo 'Configure pam_pwquality or pam_cracklib for password complexity')" \
+            "users.pwquality")
         state_add_check "$check_json"
     fi
 
@@ -855,20 +789,15 @@ EOF
         done <<< "$history_issues"
         hist_list="${hist_list%; }"
 
-        check_json=$(cat <<EOF
-{
-    "id": "users.history_insecure",
-    "check_id": "users.history_insecure",
-    "module": "users",
-    "title": "$(i18n 'users.history_insecure' 2>/dev/null || echo 'Bash History Security'): $history_count issues",
-    "desc": "$hist_list",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'users.fix_history' 2>/dev/null || echo 'Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile')",
-    "fix_id": "users.history"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "users.history_insecure" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.history_insecure' 2>/dev/null || echo 'Bash History Security'): $history_count issues" \
+            "$hist_list" \
+            "$(i18n 'users.fix_history' 2>/dev/null || echo 'Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile')" \
+            "users.history")
         state_add_check "$check_json"
     fi
 

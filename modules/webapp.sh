@@ -611,34 +611,26 @@ webapp_audit() {
         local tokens_count=$(echo "$server_tokens" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$server_tokens" && "$tokens_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_server_tokens",
-    "check_id": "webapp.nginx_server_tokens",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.nginx_version_exposed' 2>/dev/null || echo 'Nginx Version Exposed')",
-    "desc": "server_tokens not disabled - exposes Nginx version",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.add_server_tokens_off' 2>/dev/null || echo 'Add server_tokens off; to nginx.conf')",
-    "fix_id": "webapp.nginx_server_tokens"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_server_tokens" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.nginx_version_exposed' 2>/dev/null || echo 'Nginx Version Exposed')" \
+                "server_tokens not disabled - exposes Nginx version" \
+                "$(i18n 'webapp.add_server_tokens_off' 2>/dev/null || echo 'Add server_tokens off; to nginx.conf')" \
+                "webapp.nginx_server_tokens")
             state_add_check "$check_json"
         else
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_server_tokens_ok",
-    "check_id": "webapp.nginx_server_tokens_ok",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.nginx_version_hidden' 2>/dev/null || echo 'Nginx Version Hidden')",
-    "desc": "server_tokens is disabled",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_server_tokens_ok" \
+                "webapp" \
+                "info" \
+                "passed" \
+                "$(i18n 'webapp.nginx_version_hidden' 2>/dev/null || echo 'Nginx Version Hidden')" \
+                "server_tokens is disabled" \
+                "" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -647,54 +639,41 @@ EOF
         local missing_count=$(echo "$missing_headers" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$missing_headers" && "$missing_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_security_headers",
-    "check_id": "webapp.nginx_security_headers",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.missing_security_headers' 2>/dev/null || echo 'Missing Security Headers'): $missing_count",
-    "desc": "$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.add_security_headers' 2>/dev/null || echo 'Add security headers to Nginx configuration')",
-    "fix_id": "webapp.nginx_security_headers"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_security_headers" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.missing_security_headers' 2>/dev/null || echo 'Missing Security Headers'): $missing_count" \
+                "$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
+                "$(i18n 'webapp.add_security_headers' 2>/dev/null || echo 'Add security headers to Nginx configuration')" \
+                "webapp.nginx_security_headers")
             state_add_check "$check_json"
         else
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_security_headers_ok",
-    "check_id": "webapp.nginx_security_headers_ok",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.security_headers_ok' 2>/dev/null || echo 'Security Headers Configured')",
-    "desc": "All recommended security headers present",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_security_headers_ok" \
+                "webapp" \
+                "info" \
+                "passed" \
+                "$(i18n 'webapp.security_headers_ok' 2>/dev/null || echo 'Security Headers Configured')" \
+                "All recommended security headers present" \
+                "" \
+                "")
             state_add_check "$check_json"
         fi
 
         # 3. HSTS
         local hsts=$(_webapp_nginx_hsts)
         if [[ "$hsts" == "missing" ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_hsts_missing",
-    "check_id": "webapp.nginx_hsts_missing",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')",
-    "desc": "Strict-Transport-Security header not found",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.add_hsts' 2>/dev/null || echo 'Add HSTS header for HTTPS enforcement')",
-    "fix_id": "webapp.nginx_hsts"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_hsts_missing" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')" \
+                "Strict-Transport-Security header not found" \
+                "$(i18n 'webapp.add_hsts' 2>/dev/null || echo 'Add HSTS header for HTTPS enforcement')" \
+                "webapp.nginx_hsts")
             state_add_check "$check_json"
         fi
 
@@ -703,20 +682,15 @@ EOF
         local dir_count=$(echo "$dir_listing" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$dir_listing" && "$dir_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_directory_listing",
-    "check_id": "webapp.nginx_directory_listing",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.directory_listing_on' 2>/dev/null || echo 'Directory Listing Enabled')",
-    "desc": "$(echo "$dir_listing" | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.disable_autoindex' 2>/dev/null || echo 'Set autoindex off; in Nginx configuration')",
-    "fix_id": "webapp.nginx_directory_listing"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_directory_listing" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.directory_listing_on' 2>/dev/null || echo 'Directory Listing Enabled')" \
+                "$(echo "$dir_listing" | tr '\n' '; ' | sed 's/;$//')" \
+                "$(i18n 'webapp.disable_autoindex' 2>/dev/null || echo 'Set autoindex off; in Nginx configuration')" \
+                "webapp.nginx_directory_listing")
             state_add_check "$check_json"
         fi
 
@@ -725,20 +699,15 @@ EOF
         local weak_ssl_count=$(echo "$weak_ssl" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$weak_ssl" && "$weak_ssl_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_weak_ssl",
-    "check_id": "webapp.nginx_weak_ssl",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.weak_ssl_protocols' 2>/dev/null || echo 'Weak SSL/TLS Protocols Enabled'): $weak_ssl_count",
-    "desc": "$(echo "$weak_ssl" | head -3 | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'webapp.disable_weak_ssl' 2>/dev/null || echo 'Use only TLSv1.2 and TLSv1.3')",
-    "fix_id": "webapp.nginx_ssl_protocols"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_weak_ssl" \
+                "webapp" \
+                "high" \
+                "failed" \
+                "$(i18n 'webapp.weak_ssl_protocols' 2>/dev/null || echo 'Weak SSL/TLS Protocols Enabled'): $weak_ssl_count" \
+                "$(echo "$weak_ssl" | head -3 | tr '\n' '; ' | sed 's/;$//')" \
+                "$(i18n 'webapp.disable_weak_ssl' 2>/dev/null || echo 'Use only TLSv1.2 and TLSv1.3')" \
+                "webapp.nginx_ssl_protocols")
             state_add_check "$check_json"
         fi
 
@@ -747,20 +716,15 @@ EOF
         local weak_cipher_count=$(echo "$weak_ciphers" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$weak_ciphers" && "$weak_cipher_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.nginx_weak_ciphers",
-    "check_id": "webapp.nginx_weak_ciphers",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.weak_ciphers' 2>/dev/null || echo 'Weak SSL Ciphers Detected'): $weak_cipher_count",
-    "desc": "$(echo "$weak_ciphers" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'webapp.update_ciphers' 2>/dev/null || echo 'Update ssl_ciphers to use only strong ciphers')",
-    "fix_id": "webapp.nginx_ssl_ciphers"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.nginx_weak_ciphers" \
+                "webapp" \
+                "high" \
+                "failed" \
+                "$(i18n 'webapp.weak_ciphers' 2>/dev/null || echo 'Weak SSL Ciphers Detected'): $weak_cipher_count" \
+                "$(echo "$weak_ciphers" | tr '\n' ', ' | sed 's/,$//')" \
+                "$(i18n 'webapp.update_ciphers' 2>/dev/null || echo 'Update ssl_ciphers to use only strong ciphers')" \
+                "webapp.nginx_ssl_ciphers")
             state_add_check "$check_json"
         fi
     fi
@@ -773,60 +737,45 @@ EOF
         # 7. ServerSignature
         local sig=$(_webapp_apache_server_signature)
         if [[ "$sig" != "off" ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.apache_server_signature",
-    "check_id": "webapp.apache_server_signature",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.apache_signature_on' 2>/dev/null || echo 'Apache ServerSignature Enabled')",
-    "desc": "ServerSignature exposes Apache version in error pages",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.set_signature_off' 2>/dev/null || echo 'Set ServerSignature Off in apache2.conf')",
-    "fix_id": "webapp.apache_server_signature"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.apache_server_signature" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.apache_signature_on' 2>/dev/null || echo 'Apache ServerSignature Enabled')" \
+                "ServerSignature exposes Apache version in error pages" \
+                "$(i18n 'webapp.set_signature_off' 2>/dev/null || echo 'Set ServerSignature Off in apache2.conf')" \
+                "webapp.apache_server_signature")
             state_add_check "$check_json"
         fi
 
         # 8. ServerTokens
         local tokens=$(_webapp_apache_server_tokens)
         if [[ "$tokens" != "Prod" && "$tokens" != "ProductOnly" ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.apache_server_tokens",
-    "check_id": "webapp.apache_server_tokens",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.apache_tokens_verbose' 2>/dev/null || echo 'Apache ServerTokens Verbose')",
-    "desc": "ServerTokens is $tokens - exposes too much information",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.set_tokens_prod' 2>/dev/null || echo 'Set ServerTokens Prod in apache2.conf')",
-    "fix_id": "webapp.apache_server_tokens"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.apache_server_tokens" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.apache_tokens_verbose' 2>/dev/null || echo 'Apache ServerTokens Verbose')" \
+                "ServerTokens is $tokens - exposes too much information" \
+                "$(i18n 'webapp.set_tokens_prod' 2>/dev/null || echo 'Set ServerTokens Prod in apache2.conf')" \
+                "webapp.apache_server_tokens")
             state_add_check "$check_json"
         fi
 
         # 9. TraceEnable
         local trace=$(_webapp_apache_trace)
         if [[ "$trace" != "off" ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.apache_trace_enabled",
-    "check_id": "webapp.apache_trace_enabled",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.apache_trace_on' 2>/dev/null || echo 'Apache TRACE Method Enabled')",
-    "desc": "TRACE method can be used for XST attacks",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.disable_trace' 2>/dev/null || echo 'Set TraceEnable Off in apache2.conf')",
-    "fix_id": "webapp.apache_trace"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.apache_trace_enabled" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.apache_trace_on' 2>/dev/null || echo 'Apache TRACE Method Enabled')" \
+                "TRACE method can be used for XST attacks" \
+                "$(i18n 'webapp.disable_trace' 2>/dev/null || echo 'Set TraceEnable Off in apache2.conf')" \
+                "webapp.apache_trace")
             state_add_check "$check_json"
         fi
 
@@ -835,20 +784,15 @@ EOF
         local dir_idx_count=$(echo "$dir_idx" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$dir_idx" && "$dir_idx_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.apache_directory_index",
-    "check_id": "webapp.apache_directory_index",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.apache_indexes_on' 2>/dev/null || echo 'Apache Directory Indexing Enabled')",
-    "desc": "$(echo "$dir_idx" | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.disable_indexes' 2>/dev/null || echo 'Use Options -Indexes in configuration')",
-    "fix_id": "webapp.apache_directory_index"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.apache_directory_index" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.apache_indexes_on' 2>/dev/null || echo 'Apache Directory Indexing Enabled')" \
+                "$(echo "$dir_idx" | tr '\n' '; ' | sed 's/;$//')" \
+                "$(i18n 'webapp.disable_indexes' 2>/dev/null || echo 'Use Options -Indexes in configuration')" \
+                "webapp.apache_directory_index")
             state_add_check "$check_json"
         fi
 
@@ -857,20 +801,15 @@ EOF
         local danger_count=$(echo "$danger_mods" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$danger_mods" && "$danger_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.apache_dangerous_modules",
-    "check_id": "webapp.apache_dangerous_modules",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.dangerous_modules' 2>/dev/null || echo 'Potentially Dangerous Apache Modules'): $danger_count",
-    "desc": "$(echo "$danger_mods" | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.review_modules' 2>/dev/null || echo 'Review and disable unnecessary modules')",
-    "fix_id": "webapp.apache_modules"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.apache_dangerous_modules" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.dangerous_modules' 2>/dev/null || echo 'Potentially Dangerous Apache Modules'): $danger_count" \
+                "$(echo "$danger_mods" | tr '\n' ', ' | sed 's/,$//')" \
+                "$(i18n 'webapp.review_modules' 2>/dev/null || echo 'Review and disable unnecessary modules')" \
+                "webapp.apache_modules")
             state_add_check "$check_json"
         fi
     fi
@@ -900,20 +839,15 @@ EOF
         fi
 
         if [[ ${#php_issues[@]} -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.php_security_issues",
-    "check_id": "webapp.php_security_issues",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.php_security_issues' 2>/dev/null || echo 'PHP Security Issues'): ${#php_issues[@]}",
-    "desc": "$(printf '%s, ' "${php_issues[@]}" | sed 's/, $//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.fix_php_settings' 2>/dev/null || echo 'Update php.ini with secure settings')",
-    "fix_id": "webapp.php_security"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.php_security_issues" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.php_security_issues' 2>/dev/null || echo 'PHP Security Issues'): ${#php_issues[@]}" \
+                "$(printf '%s, ' "${php_issues[@]}" | sed 's/, $//')" \
+                "$(i18n 'webapp.fix_php_settings' 2>/dev/null || echo 'Update php.ini with secure settings')" \
+                "webapp.php_security")
             state_add_check "$check_json"
         fi
 
@@ -922,20 +856,15 @@ EOF
         local not_disabled_count=$(echo "$not_disabled" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$not_disabled" && "$not_disabled_count" -gt 3 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.php_dangerous_functions",
-    "check_id": "webapp.php_dangerous_functions",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.dangerous_functions' 2>/dev/null || echo 'Dangerous PHP Functions Enabled'): $not_disabled_count",
-    "desc": "$(echo "$not_disabled" | head -5 | tr '\n' ', ' | sed 's/,$//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.disable_functions' 2>/dev/null || echo 'Add dangerous functions to disable_functions in php.ini')",
-    "fix_id": "webapp.php_disable_functions"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.php_dangerous_functions" \
+                "webapp" \
+                "medium" \
+                "failed" \
+                "$(i18n 'webapp.dangerous_functions' 2>/dev/null || echo 'Dangerous PHP Functions Enabled'): $not_disabled_count" \
+                "$(echo "$not_disabled" | head -5 | tr '\n' ', ' | sed 's/,$//')" \
+                "$(i18n 'webapp.disable_functions' 2>/dev/null || echo 'Add dangerous functions to disable_functions in php.ini')" \
+                "webapp.php_disable_functions")
             state_add_check "$check_json"
         fi
 
@@ -944,40 +873,30 @@ EOF
         local session_count=$(echo "$session_issues" | grep -c '.' 2>/dev/null || echo 0)
 
         if [[ -n "$session_issues" && "$session_count" -gt 0 ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.php_session_security",
-    "check_id": "webapp.php_session_security",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.session_security' 2>/dev/null || echo 'PHP Session Security Issues'): $session_count",
-    "desc": "$(echo "$session_issues" | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.fix_session_settings' 2>/dev/null || echo 'Update session settings in php.ini')",
-    "fix_id": "webapp.php_session"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.php_session_security" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.session_security' 2>/dev/null || echo 'PHP Session Security Issues'): $session_count" \
+                "$(echo "$session_issues" | tr '\n' '; ' | sed 's/;$//')" \
+                "$(i18n 'webapp.fix_session_settings' 2>/dev/null || echo 'Update session settings in php.ini')" \
+                "webapp.php_session")
             state_add_check "$check_json"
         fi
 
         # 17. open_basedir
         local basedir=$(_webapp_php_open_basedir)
         if [[ "$basedir" == "none" || -z "$basedir" ]]; then
-            check_json=$(cat <<EOF
-{
-    "id": "webapp.php_open_basedir",
-    "check_id": "webapp.php_open_basedir",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.open_basedir_not_set' 2>/dev/null || echo 'PHP open_basedir Not Configured')",
-    "desc": "No directory restriction for PHP file access",
-    "status": "failed",
-    "severity": "low",
-    "suggestion": "$(i18n 'webapp.set_open_basedir' 2>/dev/null || echo 'Set open_basedir to restrict PHP file access')",
-    "fix_id": "webapp.php_open_basedir"
-}
-EOF
-)
+            check_json=$(create_check_json \
+                "webapp.php_open_basedir" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.open_basedir_not_set' 2>/dev/null || echo 'PHP open_basedir Not Configured')" \
+                "No directory restriction for PHP file access" \
+                "$(i18n 'webapp.set_open_basedir' 2>/dev/null || echo 'Set open_basedir to restrict PHP file access')" \
+                "webapp.php_open_basedir")
             state_add_check "$check_json"
         fi
     fi
@@ -999,20 +918,15 @@ EOF
         local severity="medium"
         echo "$expiring" | grep -q "expired" && severity="high"
 
-        check_json=$(cat <<EOF
-{
-    "id": "webapp.ssl_cert_expiry",
-    "check_id": "webapp.ssl_cert_expiry",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.cert_expiring' 2>/dev/null || echo 'SSL Certificates Expiring/Expired'): $expiring_count",
-    "desc": "${expired_list%;*}",
-    "status": "failed",
-    "severity": "$severity",
-    "suggestion": "$(i18n 'webapp.renew_certs' 2>/dev/null || echo 'Renew SSL certificates before expiry')",
-    "fix_id": "webapp.ssl_cert_expiry"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "webapp.ssl_cert_expiry" \
+            "webapp" \
+            "$severity" \
+            "failed" \
+            "$(i18n 'webapp.cert_expiring' 2>/dev/null || echo 'SSL Certificates Expiring/Expired'): $expiring_count" \
+            "${expired_list%;*}" \
+            "$(i18n 'webapp.renew_certs' 2>/dev/null || echo 'Renew SSL certificates before expiry')" \
+            "webapp.ssl_cert_expiry")
         state_add_check "$check_json"
     fi
 
@@ -1024,34 +938,26 @@ EOF
     local sensitive_count=$(echo "$sensitive" | grep -c '.' 2>/dev/null || echo 0)
 
     if [[ -n "$sensitive" && "$sensitive_count" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "webapp.sensitive_files",
-    "check_id": "webapp.sensitive_files",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.sensitive_files_found' 2>/dev/null || echo 'Sensitive Files in Web Root'): $sensitive_count",
-    "desc": "$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "high",
-    "suggestion": "$(i18n 'webapp.remove_sensitive' 2>/dev/null || echo 'Remove or restrict access to sensitive files')",
-    "fix_id": "webapp.sensitive_files"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "webapp.sensitive_files" \
+            "webapp" \
+            "high" \
+            "failed" \
+            "$(i18n 'webapp.sensitive_files_found' 2>/dev/null || echo 'Sensitive Files in Web Root'): $sensitive_count" \
+            "$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
+            "$(i18n 'webapp.remove_sensitive' 2>/dev/null || echo 'Remove or restrict access to sensitive files')" \
+            "webapp.sensitive_files")
         state_add_check "$check_json"
     else
-        check_json=$(cat <<EOF
-{
-    "id": "webapp.sensitive_files_ok",
-    "check_id": "webapp.sensitive_files_ok",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.no_sensitive_files' 2>/dev/null || echo 'No Sensitive Files Exposed')",
-    "desc": "No common sensitive files found in web roots",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "webapp.sensitive_files_ok" \
+            "webapp" \
+            "info" \
+            "passed" \
+            "$(i18n 'webapp.no_sensitive_files' 2>/dev/null || echo 'No Sensitive Files Exposed')" \
+            "No common sensitive files found in web roots" \
+            "" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1060,37 +966,29 @@ EOF
     local backup_count=$(echo "$backups" | grep -c '.' 2>/dev/null || echo 0)
 
     if [[ -n "$backups" && "$backup_count" -gt 0 ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "webapp.backup_files",
-    "check_id": "webapp.backup_files",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.backup_files_found' 2>/dev/null || echo 'Backup Files in Web Root'): $backup_count",
-    "desc": "$(echo "$backups" | head -5 | tr '\n' '; ' | sed 's/;$//')",
-    "status": "failed",
-    "severity": "medium",
-    "suggestion": "$(i18n 'webapp.remove_backups' 2>/dev/null || echo 'Remove backup files from web-accessible directories')",
-    "fix_id": "webapp.backup_files"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "webapp.backup_files" \
+            "webapp" \
+            "medium" \
+            "failed" \
+            "$(i18n 'webapp.backup_files_found' 2>/dev/null || echo 'Backup Files in Web Root'): $backup_count" \
+            "$(echo "$backups" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
+            "$(i18n 'webapp.remove_backups' 2>/dev/null || echo 'Remove backup files from web-accessible directories')" \
+            "webapp.backup_files")
         state_add_check "$check_json"
     fi
 
     # Summary if no webserver found
     if [[ "$has_webserver" == "false" ]]; then
-        check_json=$(cat <<EOF
-{
-    "id": "webapp.no_webserver",
-    "check_id": "webapp.no_webserver",
-    "module": "webapp",
-    "title": "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')",
-    "desc": "Neither Nginx nor Apache detected - skipping web server checks",
-    "status": "passed",
-    "severity": "info"
-}
-EOF
-)
+        check_json=$(create_check_json \
+            "webapp.no_webserver" \
+            "webapp" \
+            "info" \
+            "passed" \
+            "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')" \
+            "Neither Nginx nor Apache detected - skipping web server checks" \
+            "" \
+            "")
         state_add_check "$check_json"
     fi
 
