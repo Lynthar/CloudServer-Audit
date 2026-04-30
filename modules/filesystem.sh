@@ -59,9 +59,97 @@ declare -A FS_SENSITIVE_FILES=(
 # Maximum number of items to report (to prevent huge output)
 FS_MAX_REPORT_ITEMS=20
 
+# Paths to prune from filesystem-walk scans.
+#
+# `find -xdev` already skips anything not on the root filesystem, so
+# kernel/proc/sys/run/snap-squashfs mounts are handled automatically.
+# This list is for trees that DO live on the root filesystem but would
+# either swamp the audit with container-image content or take so long
+# to traverse that the run hangs:
+#   - /var/lib/docker        : overlay2/<sha>/diff/* contains thousands
+#                              of files inherited from Docker images,
+#                              including legitimate-inside-the-image
+#                              SUID binaries that would be flagged as
+#                              host-level anomalies
+#   - /var/lib/containerd    : same as above, for containerd
+#   - /var/lib/containers    : podman / buildah image storage
+#   - /var/lib/lxd           : LXD container rootfs cache
+#   - /var/lib/lxcfs         : LXC fuse layer
+#   - /var/lib/snapd         : snap state + image cache (huge)
+#   - /snap                  : snap mount point (squashfs is on its
+#                              own fs and -xdev skips, but if root is
+#                              a single fs the directory entries
+#                              themselves can confuse find on some
+#                              kernels — prune defensively)
+declare -ga _FS_PRUNE_PATHS=(
+    /var/lib/docker
+    /var/lib/containerd
+    /var/lib/containers
+    /var/lib/lxd
+    /var/lib/lxcfs
+    /var/lib/snapd
+    /snap
+)
+
+# Hard timeout for any single filesystem walk. Defaults to 60 seconds;
+# operators with very large filesystems can override at audit time:
+#     VPSSEC_FS_TIMEOUT=300 sudo ./vpssec audit
+# A scan that hits the timeout returns whatever output it has gathered
+# so far; the audit continues and a warning is logged. Better to
+# report partial findings than to hang an audit indefinitely.
+_FS_FIND_TIMEOUT="${VPSSEC_FS_TIMEOUT:-60}"
+
 # ==============================================================================
 # Filesystem Helper Functions
 # ==============================================================================
+
+# Build the prune-args portion of a find expression from
+# _FS_PRUNE_PATHS. Each path becomes `-path P -prune -o`. Caller
+# concatenates the result before its `-type ... -print0` portion:
+#
+#     local prune_args=()
+#     _fs_build_prune_args prune_args
+#     find / -xdev "${prune_args[@]}" -type f -perm -4000 -print0 ...
+#
+# The single source of truth (the array above) keeps the five scans
+# from drifting out of sync — three of them used to omit container
+# prunes entirely, so world-writable / no-owner scans flagged Docker
+# image content as host findings.
+_fs_build_prune_args() {
+    local -n _out=$1
+    _out=()
+    local p
+    for p in "${_FS_PRUNE_PATHS[@]}"; do
+        _out+=( -path "$p" -prune -o )
+    done
+}
+
+# Run a find invocation under a hard timeout. Output is forwarded to
+# stdout (so callers can wire it into a process substitution feeding
+# `while read`). On timeout (exit 124) we log a warning but return 0
+# so the audit doesn't bail; partial output already reached the
+# consumer. Caller is responsible for the rest of the find arguments.
+#
+# `timeout` is part of GNU coreutils, present by default on every
+# supported distro (Debian/Ubuntu/RHEL/Rocky/Alma). The graceful
+# fallback below is for niche environments — minimal containers,
+# macOS dev shells running tests — where coreutils may be absent;
+# the audit still runs, just without the safety net.
+_fs_run_find() {
+    local label="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$_FS_FIND_TIMEOUT" "$@"
+        local rc=$?
+        if (( rc == 124 )); then
+            log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend."
+        fi
+    else
+        log_debug "timeout(1) unavailable; running '${label}' scan without time bound"
+        "$@"
+    fi
+    return 0
+}
 
 # Sanitize count value to ensure it's a single integer
 # Handles cases where grep -c returns multiline output
@@ -86,17 +174,18 @@ _fs_is_whitelisted() {
 }
 
 # Find SUID files (excluding whitelisted).
-# `find / -xdev` keeps us on the root filesystem, which correctly skips
-# NFS mounts and Docker overlay storage (those are independent
-# filesystems). It does NOT, however, skip files that live *inside*
-# /var/lib/docker/overlay2/<layer>/diff/ when that tree is on the root
-# filesystem — and Docker images routinely ship SUID binaries that are
-# harmless inside the container but would get flagged as host-level
-# SUID anomalies. The -path exclusions below avoid that scan on common
-# container storage locations.
+#
+# `find / -xdev` already skips anything not on the root filesystem
+# (NFS, separate /home, snap squashfs, tmpfs etc.). The prune list
+# below additionally skips container-image storage that lives *on*
+# the root filesystem — Docker overlay diffs ship legitimate SUID
+# binaries that would get flagged as host-level anomalies otherwise.
 _fs_find_suid_files() {
     local count=0
     local results=()
+
+    local prune_args=()
+    _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
         if ! _fs_is_whitelisted "$file"; then
@@ -107,10 +196,8 @@ _fs_find_suid_files() {
                 break
             fi
         fi
-    done < <(find / -xdev \
-        -path /var/lib/docker -prune -o \
-        -path /var/lib/containerd -prune -o \
-        -path /var/lib/containers -prune -o \
+    done < <(_fs_run_find "suid" \
+        find / -xdev "${prune_args[@]}" \
         -type f -perm -4000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
@@ -130,6 +217,9 @@ _fs_find_sgid_files() {
         "/usr/sbin/unix_chkpwd"
     )
 
+    local prune_args=()
+    _fs_build_prune_args prune_args
+
     while IFS= read -r -d '' file; do
         local skip=0
         for pattern in "${sgid_whitelist[@]}"; do
@@ -146,19 +236,23 @@ _fs_find_sgid_files() {
                 break
             fi
         fi
-    done < <(find / -xdev \
-        -path /var/lib/docker -prune -o \
-        -path /var/lib/containerd -prune -o \
-        -path /var/lib/containers -prune -o \
+    done < <(_fs_run_find "sgid" \
+        find / -xdev "${prune_args[@]}" \
         -type f -perm -2000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
 }
 
-# Find world-writable files (excluding /tmp, /var/tmp, /dev)
+# Find world-writable files. Excludes ephemeral/volatile mounts AND
+# container storage — the latter were missing from the original
+# implementation, so a busy Docker host saw image-internal files
+# flagged as host-level world-writable issues.
 _fs_find_world_writable() {
     local count=0
     local results=()
+
+    local prune_args=()
+    _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
         results+=("$file")
@@ -166,7 +260,9 @@ _fs_find_world_writable() {
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
-    done < <(find / -xdev -type f -perm -0002 \
+    done < <(_fs_run_find "world-writable" \
+        find / -xdev "${prune_args[@]}" \
+        -type f -perm -0002 \
         ! -path "/tmp/*" \
         ! -path "/var/tmp/*" \
         ! -path "/dev/*" \
@@ -178,10 +274,14 @@ _fs_find_world_writable() {
     printf '%s\n' "${results[@]}"
 }
 
-# Find world-writable directories without sticky bit
+# Find world-writable directories without sticky bit. Same prune
+# fix as world-writable files.
 _fs_find_world_writable_dirs() {
     local count=0
     local results=()
+
+    local prune_args=()
+    _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' dir; do
         results+=("$dir")
@@ -189,7 +289,9 @@ _fs_find_world_writable_dirs() {
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
-    done < <(find / -xdev -type d -perm -0002 ! -perm -1000 \
+    done < <(_fs_run_find "world-writable-dirs" \
+        find / -xdev "${prune_args[@]}" \
+        -type d -perm -0002 ! -perm -1000 \
         ! -path "/tmp" \
         ! -path "/var/tmp" \
         ! -path "/dev/*" \
@@ -201,10 +303,15 @@ _fs_find_world_writable_dirs() {
     printf '%s\n' "${results[@]}"
 }
 
-# Find files with no owner
+# Find files with no owner. Same container-prune fix: a host that
+# pulls images often accumulates orphan-uid files inside Docker
+# overlays that aren't host-level orphans.
 _fs_find_no_owner() {
     local count=0
     local results=()
+
+    local prune_args=()
+    _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
         results+=("$file")
@@ -212,7 +319,9 @@ _fs_find_no_owner() {
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
-    done < <(find / -xdev \( -nouser -o -nogroup \) \
+    done < <(_fs_run_find "no-owner" \
+        find / -xdev "${prune_args[@]}" \
+        \( -nouser -o -nogroup \) \
         ! -path "/proc/*" \
         ! -path "/sys/*" \
         -print0 2>/dev/null)

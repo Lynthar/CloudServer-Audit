@@ -55,6 +55,7 @@
     "cmd_guide": "guide    Interactive security hardening wizard",
     "cmd_rollback": "rollback Rollback previous changes",
     "cmd_status": "status   View current security status",
+    "cmd_help": "help     Show per-module audit and fix details (use 'help <module>')",
     "options": "Options:",
     "opt_lang": "--lang=LANG      Set language (zh_CN|en_US)",
     "opt_no_color": "--no-color       Disable colored output",
@@ -825,6 +826,21 @@
     "safe": "Safe fix",
     "confirm": "Requires confirmation",
     "risky": "Risky operation"
+  },
+  "help": {
+    "modules_by_category": "Modules by category",
+    "see_module_detail": "Use 'vpssec help <module>' for per-module audit and fix detail.",
+    "see_cli_options": "Use 'vpssec --help' for command-line options.",
+    "unknown_module": "Unknown module: {name}",
+    "available_modules": "Available modules",
+    "category": "Category",
+    "module_id": "Module ID",
+    "audit_only_module": "This module is audit-only — no fixes available.",
+    "available_fixes": "Available fixes ({count})",
+    "class_safe": "Safe (auto-applied in guide mode)",
+    "class_confirm": "Requires confirmation",
+    "class_risky": "Risky (extra safeguards)",
+    "class_alert_only": "Alert-only (no auto-fix; manual review required)"
   },
   "level": {
     "basic": "Basic",

@@ -55,6 +55,7 @@
     "cmd_guide": "guide    交互式安全加固向导",
     "cmd_rollback": "rollback 回滚之前的修改",
     "cmd_status": "status   查看当前安全状态",
+    "cmd_help": "help     查看每个模块的审计与修复细节（用 'help <模块名>'）",
     "options": "选项:",
     "opt_lang": "--lang=LANG      设置语言 (zh_CN|en_US)",
     "opt_no_color": "--no-color       禁用彩色输出",
@@ -825,6 +826,21 @@
     "safe": "安全修复",
     "confirm": "需要确认",
     "risky": "高风险操作"
+  },
+  "help": {
+    "modules_by_category": "按类别列出的模块",
+    "see_module_detail": "运行 'vpssec help <模块名>' 查看该模块的审计与修复细节。",
+    "see_cli_options": "运行 'vpssec --help' 查看命令行选项。",
+    "unknown_module": "未知模块：{name}",
+    "available_modules": "可用模块",
+    "category": "类别",
+    "module_id": "模块 ID",
+    "audit_only_module": "本模块仅用于审计——没有可执行的修复项。",
+    "available_fixes": "可用修复项（共 {count} 项）",
+    "class_safe": "安全（向导模式下自动应用）",
+    "class_confirm": "需要确认",
+    "class_risky": "高风险（需要额外保护）",
+    "class_alert_only": "仅告警（无自动修复；请手动处理）"
   },
   "level": {
     "basic": "基础",

@@ -98,3 +98,28 @@ jobs:
           done
 
           exit "$fail"
+
+  manifest-freshness:
+    name: integrity manifest up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate and diff manifest.sha256
+        # The manifest is consumed by install.sh's verify_integrity
+        # step. It MUST stay in sync with every runtime-critical
+        # file the installer ships, otherwise users get either a
+        # spurious "tampered" abort or a silent skip. We regenerate
+        # here and fail if anything diverges from the committed copy.
+        # Devs run `bash tools/gen-manifest.sh` locally and commit
+        # the result alongside their changes.
+        run: |
+          set -euo pipefail
+          bash tools/gen-manifest.sh
+          if ! git diff --exit-code manifest.sha256; then
+              echo
+              echo "::error::manifest.sha256 is out of date."
+              echo "Run 'bash tools/gen-manifest.sh' and commit the result."
+              exit 1
+          fi
+          echo "OK: manifest.sha256 matches the committed checksum."

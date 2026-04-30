@@ -280,10 +280,39 @@ backup_file_to_session() {
     fi
 }
 
-# Restore from a specific backup
+# Restore from a specific backup.
+#
+# Defense-in-depth path checks (none of these block a known live
+# attack today, but they make backup_restore *not* a "write to any
+# host path" primitive even if backup contents are partially
+# tampered or the timestamp argument is malformed):
+#
+#   1. timestamp must match the YYYYMMDD_HHMMSS format that
+#      backup_create_session emits. This refuses things like
+#      `vpssec rollback ../../etc` or selecting a hand-placed
+#      `evil/` directory under backups/.
+#   2. Each entry under backup_dir must be a *regular* file, not
+#      a symlink. find -type f normally excludes symlinks, but a
+#      directory symlink along the path can let find traverse
+#      out of backup_dir; we cross-check that the resolved file
+#      stays inside backup_dir.
+#   3. Each restore destination must be a regular file (or absent)
+#      and its parent must be a real directory, not a symlink. A
+#      symlink-replaced parent could redirect cp into an
+#      attacker-chosen location. This is a TOCTOU window between
+#      backup time and restore time; treating any symlink in the
+#      destination path as "abort and skip" is the cheap mitigation.
 backup_restore() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
+
+    # Check 1: timestamp shape. The same regex backup_cleanup uses,
+    # extracted here so a typo'd or attacker-chosen argument can't
+    # become a write primitive via a hand-placed sibling directory.
+    if [[ ! "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+        log_error "Refusing to restore: timestamp '$timestamp' does not match YYYYMMDD_HHMMSS"
+        return 1
+    fi
 
     if [[ ! -d "$backup_dir" ]]; then
         log_error "Backup not found: $timestamp"
@@ -292,16 +321,77 @@ backup_restore() {
 
     log_info "Restoring from backup: $timestamp"
 
+    # Resolve backup_dir once for symlink-escape detection on each
+    # found file. realpath handles the "is this still under
+    # backup_dir after symlink resolution" question.
+    local backup_dir_real
+    backup_dir_real=$(realpath "$backup_dir" 2>/dev/null) || {
+        log_error "Cannot resolve backup directory: $backup_dir"
+        return 1
+    }
+
+    local skipped=0
+    local restored=0
+
     # Find all backed up files and restore them
     while IFS= read -r -d '' backup_file; do
+        # Check 2a: source must not itself be a symlink. find -type f
+        # follows symlinks during the test, which means a symlink
+        # pointing at an arbitrary host file would be matched.
+        if [[ -L "$backup_file" ]]; then
+            log_warn "Skipping symlinked backup entry: $backup_file"
+            ((skipped++)) || true
+            continue
+        fi
+
+        # Check 2b: source must still resolve to under backup_dir.
+        # This catches a directory symlink farther up the path.
+        local backup_file_real
+        backup_file_real=$(realpath "$backup_file" 2>/dev/null) || {
+            log_warn "Cannot resolve backup file, skipping: $backup_file"
+            ((skipped++)) || true
+            continue
+        }
+        if [[ "$backup_file_real" != "$backup_dir_real"/* ]]; then
+            log_warn "Skipping backup entry that escapes backup_dir via symlink: $backup_file -> $backup_file_real"
+            ((skipped++)) || true
+            continue
+        fi
+
         local relative_path="${backup_file#"$backup_dir"/}"
         local original_path="/${relative_path}"
-        local original_dir=$(dirname "$original_path")
+        local original_dir
+        original_dir=$(dirname "$original_path")
+
+        # Check 3a: destination directory must not be a symlink. A
+        # TOCTOU swap between backup and restore could swing
+        # /etc/ssh into an attacker-controlled tree; refusing to
+        # write through symlinks closes that window.
+        if [[ -L "$original_dir" ]]; then
+            log_warn "Skipping restore: parent directory is a symlink: $original_dir"
+            ((skipped++)) || true
+            continue
+        fi
+
+        # Check 3b: existing destination must not be a symlink.
+        # cp -p would dereference and write through it.
+        if [[ -L "$original_path" ]]; then
+            log_warn "Skipping restore: target path is a symlink: $original_path"
+            ((skipped++)) || true
+            continue
+        fi
 
         mkdir -p "$original_dir"
         cp -p "$backup_file" "$original_path"
         log_info "Restored: $backup_file -> $original_path"
+        ((restored++)) || true
     done < <(find "$backup_dir" -type f -print0)
+
+    if (( skipped > 0 )); then
+        log_warn "Restore complete with skips: ${restored} restored, ${skipped} skipped (see logs/vpssec.log)"
+    else
+        log_info "Restore complete: ${restored} files"
+    fi
 
     return 0
 }

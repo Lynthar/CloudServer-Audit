@@ -34,6 +34,7 @@ source "${VPSSEC_ROOT}/core/report.sh"
 source "${VPSSEC_ROOT}/core/ui_tui.sh"
 source "${VPSSEC_ROOT}/core/ui_text.sh"
 source "${VPSSEC_ROOT}/core/engine.sh"
+source "${VPSSEC_ROOT}/core/help.sh"
 
 # ==============================================================================
 # CLI Argument Parsing
@@ -48,6 +49,7 @@ $(i18n 'cli.commands')
   $(i18n 'cli.cmd_guide')
   $(i18n 'cli.cmd_rollback')
   $(i18n 'cli.cmd_status')
+  $(i18n 'cli.cmd_help')
 
 $(i18n 'cli.options')
   $(i18n 'cli.opt_lang')
@@ -160,26 +162,35 @@ parse_args() {
 # ==============================================================================
 
 main() {
-    # Handle --version, --help, --lang, --include and detect command before
-    # interactive menus. Index-based iteration so we can do one-step
-    # lookahead after `rollback` to capture its optional timestamp.
-    # Variables set inside parse_args (via $(...)) don't propagate back,
-    # so anything that needs to survive must be set here.
+    # Two-pass argument processing.
+    #
+    # Pass 1 collects flags that affect *display* (language, colour,
+    # include filter) and the chosen command/topic. Pass 2 dispatches
+    # terminal subcommands (--help, --version, help) and validates
+    # the result. Splitting it this way fixes a long-standing
+    # order-sensitivity bug: previously a single forward pass exited
+    # on `--help` / `help` *before* a later `--lang=` was seen, so
+    # `vpssec help --lang=en_US` printed Chinese. Now flag order
+    # doesn't matter.
+    #
+    # Variables set inside parse_args (via $(...)) don't propagate
+    # back, so anything that needs to survive must be set here.
     local _argc=$#
     local _argv=("$@")
     local _i
+
+    # ---- Pass 1: collect display flags + detect mode/topic ----
+    local _help_topic=""
+    local _help_requested=0
+    local _version_requested=0
     for ((_i=0; _i<_argc; _i++)); do
         local arg="${_argv[$_i]}"
         case "$arg" in
             --version|-v)
-                show_version
-                exit 0
+                _version_requested=1
                 ;;
             --help|-h)
-                # Only load i18n for help, skip full init (which requires root)
-                i18n_load "${VPSSEC_LANG}"
-                show_help
-                exit 0
+                _help_requested=1
                 ;;
             --no-color)
                 # common.sh initialised colour escape codes at source
@@ -194,26 +205,22 @@ main() {
                 SEV_HIGH='●' SEV_MEDIUM='●' SEV_LOW='●' SEV_SAFE='●'
                 ;;
             --lang=*)
-                # Mark language as set so we skip selection menu
                 VPSSEC_LANG="${arg#*=}"
                 VPSSEC_LANG_SET=1
                 export VPSSEC_LANG VPSSEC_LANG_SET
                 ;;
             --include=*)
-                # Mark modules as set so we skip selection menu
                 VPSSEC_INCLUDE="${arg#*=}"
                 export VPSSEC_INCLUDE
                 ;;
             audit|guide|rollback|status)
-                # Mark mode as set so we skip selection menu
                 VPSSEC_MODE="$arg"
                 VPSSEC_MODE_SET=1
                 export VPSSEC_MODE VPSSEC_MODE_SET
                 # For `rollback`, the next positional (if any, and not a
-                # flag) is the backup timestamp. Previously the dispatch
-                # code read "${2:-}" from main()'s args which is option-
-                # order sensitive — `vpssec --yes rollback TS` would see
-                # $2=rollback, not TS.
+                # flag) is the backup timestamp. Capturing it here (not
+                # in parse_args) is order-insensitive: `vpssec --yes
+                # rollback TS` works.
                 if [[ "$arg" == "rollback" ]]; then
                     local _next_i=$((_i + 1))
                     if (( _next_i < _argc )); then
@@ -225,8 +232,51 @@ main() {
                     fi
                 fi
                 ;;
+            help)
+                _help_requested=1
+                # Capture optional positional <module> as the topic.
+                # Same one-step lookahead as `rollback`'s timestamp.
+                local _next_i=$((_i + 1))
+                if (( _next_i < _argc )); then
+                    local _next="${_argv[$_next_i]}"
+                    if [[ -n "$_next" && "$_next" != -* ]]; then
+                        _help_topic="$_next"
+                    fi
+                fi
+                ;;
         esac
     done
+
+    # ---- Pass 2: dispatch terminal sub-commands ----
+    # `--version` is information-only; goes first because it doesn't
+    # need i18n. `help` and `--help` BOTH route through the help
+    # path; the only difference is `_help_topic` (empty for `--help`).
+    if (( _version_requested )); then
+        show_version
+        exit 0
+    fi
+    if (( _help_requested )); then
+        i18n_load "${VPSSEC_LANG}"
+        if [[ -n "$_help_topic" ]]; then
+            vpssec_help_dispatch "$_help_topic"
+            exit $?
+        else
+            # `vpssec help` (no module) and `vpssec --help` deliberately
+            # render different things: --help is the CLI option summary
+            # users expect from any UNIX tool, while `help` is the
+            # module/fix overview. Disambiguate by which arg arrived.
+            local saw_help_subcommand=0
+            for ((_i=0; _i<_argc; _i++)); do
+                [[ "${_argv[$_i]}" == "help" ]] && { saw_help_subcommand=1; break; }
+            done
+            if (( saw_help_subcommand )); then
+                vpssec_help_dispatch ""
+            else
+                show_help
+            fi
+            exit 0
+        fi
+    fi
 
     # If the user passed a non-status command on the CLI, fail fast on
     # missing root before we walk any menus. Previously the check

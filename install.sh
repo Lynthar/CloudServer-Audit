@@ -166,6 +166,50 @@ EOF
     chmod +x "$INSTALL_DIR/uninstall.sh"
 }
 
+# Verify the integrity of every runtime-critical file against the
+# checked-in manifest. The manifest covers entry script, core/,
+# modules/, and the install/run scripts; tests, docs, README and
+# friends are excluded.
+#
+# Threat model: this is defense-in-depth, NOT a substitute for
+# release signing. TLS-protected GitHub clone/tarball + a manifest
+# that ships in the same archive only catches partial or corrupted
+# extraction, not deliberate compromise of the upstream repository
+# (an attacker who can rewrite repo files can also rewrite the
+# manifest). Real supply-chain assurance requires verifying the
+# manifest itself against a signed release tag — that's a separate
+# effort.
+#
+# Behaviour:
+#   - manifest absent  → log a warning and continue (tolerates
+#                        installs from older revisions before this
+#                        infrastructure existed, and `git clone`
+#                        from a fork or branch that hasn't run the
+#                        manifest generator).
+#   - manifest present and verifies → log OK, continue.
+#   - manifest present but mismatch → abort install with exit 1.
+verify_integrity() {
+    local manifest="$INSTALL_DIR/manifest.sha256"
+
+    if [[ ! -f "$manifest" ]]; then
+        print_warn "Integrity manifest not present at $manifest; skipping check"
+        return 0
+    fi
+
+    # `sha256sum -c` reads paths relative to the current directory.
+    # cd into the install root so the manifest's "modules/foo.sh"
+    # resolves correctly. --quiet suppresses the per-file "OK"
+    # spam on success but still prints failed lines.
+    print_info "Verifying file integrity against manifest.sha256..."
+    if ( cd "$INSTALL_DIR" && sha256sum --quiet -c manifest.sha256 ); then
+        print_ok "Integrity check passed (manifest matches)"
+    else
+        print_error "Integrity check FAILED — installation may be corrupted or tampered with"
+        print_error "If you trust this source, re-run after deleting $INSTALL_DIR; otherwise inspect the failed files above"
+        exit 1
+    fi
+}
+
 # Post-install setup
 post_install() {
     print_info "Running post-install setup..."
@@ -218,6 +262,7 @@ main() {
     check_root
     check_system
     install_vpssec
+    verify_integrity
     create_uninstaller
     post_install
     print_usage
