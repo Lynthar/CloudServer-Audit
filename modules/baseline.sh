@@ -86,11 +86,15 @@ _baseline_selinux_get_policy() {
 }
 
 _baseline_selinux_denials_count() {
-    # Count recent SELinux denials (last 24h)
+    # Count recent SELinux denials (last 24h). awk replaces the legacy
+    # `grep -c PAT FILE 2>/dev/null || echo "0"` idiom: when grep finds
+    # zero matches it prints "0" and exits 1, so the `|| echo "0"`
+    # fallback ran too and emitted a literal "0\n0" — caller arithmetic
+    # then died under set -e. awk's `c+0` always yields one integer.
     if check_command ausearch; then
-        ausearch -m avc -ts today 2>/dev/null | grep -c "type=AVC" || echo "0"
+        ausearch -m avc -ts today 2>/dev/null | awk '/type=AVC/ {c++} END {print c+0}'
     elif [[ -f /var/log/audit/audit.log ]]; then
-        grep -c "type=AVC.*denied" /var/log/audit/audit.log 2>/dev/null || echo "0"
+        awk '/type=AVC.*denied/ {c++} END {print c+0}' /var/log/audit/audit.log 2>/dev/null
     else
         echo "unknown"
     fi

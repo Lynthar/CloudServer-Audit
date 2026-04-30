@@ -27,10 +27,14 @@ VPSSEC_YES="${VPSSEC_YES:-0}"
 VPSSEC_DEBUG="${VPSSEC_DEBUG:-0}"
 VPSSEC_QUIET_SCAN="${VPSSEC_QUIET_SCAN:-0}"  # Suppress detailed output during scanning
 
-# Runtime state
-declare -A VPSSEC_I18N=()
-declare -a VPSSEC_CHECKS=()
-declare -a VPSSEC_FIXES=()
+# Runtime state. Use `declare -g` so these arrays stay global even when
+# common.sh is sourced from inside a function (e.g. from a bats test
+# helper); without -g, bash's default "declare-inside-function = local"
+# rule would hide them from any caller. In the production load path
+# (vpssec entry script sources common.sh at top level) -g is a no-op.
+declare -gA VPSSEC_I18N=()
+declare -ga VPSSEC_CHECKS=()
+declare -ga VPSSEC_FIXES=()
 
 # ==============================================================================
 # Color and Formatting
@@ -972,6 +976,36 @@ vpssec_init() {
 
     # Load i18n
     i18n_load "${VPSSEC_LANG}"
+
+    # Acquire a single-instance lock for any mutating command. Two
+    # concurrent `vpssec audit` runs would race on state/checks.json
+    # (state_init truncates it at the start of each run), and
+    # `vpssec guide` running alongside could apply fixes from a stale
+    # plan. `status` is read-only and is allowed to coexist.
+    #
+    # The lock is held by fd 200 for the lifetime of the shell; the
+    # OS releases it automatically when this process exits, so there
+    # is no stale-lock cleanup to worry about. The lock file's
+    # contents (the holder PID) are advisory — used only to make the
+    # collision message actionable.
+    if [[ "${VPSSEC_MODE:-}" != "status" ]]; then
+        local _run_lock="${VPSSEC_STATE}/.run.lock"
+        # shellcheck disable=SC2093
+        exec 200>"$_run_lock"
+        if ! flock -n 200; then
+            local _other_pid
+            _other_pid=$(cat "$_run_lock" 2>/dev/null || true)
+            if [[ -n "$_other_pid" ]]; then
+                print_error "Another vpssec instance is already running (PID ${_other_pid})."
+            else
+                print_error "Another vpssec instance is already running."
+            fi
+            print_msg "If this is wrong (e.g. a previous run was killed), remove ${_run_lock} and retry."
+            exit 1
+        fi
+        # Record our PID for the next caller's diagnostics.
+        echo $$ >&200
+    fi
 
     log_info "vpssec initialized (version: ${VPSSEC_VERSION}, lang: ${VPSSEC_LANG})"
 }

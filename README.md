@@ -172,7 +172,7 @@ vpssec uses a clean dual-column layout for compact, readable results:
     ✗ Processes with deleted binaries
 
 ────────────────────────────────────────────────────────
-  Score: 72/100
+  Score: 62/100
 
   ● 2 High  ● 1 Medium  ● 12 Safe
 ```
@@ -223,12 +223,31 @@ Options:
 
 ## Security Score
 
-The security score is calculated based on check results:
+The score combines a pass-rate base with a severity-weighted penalty
+(see `calculate_score` in `core/state.sh`):
 
-- Base score: 100
-- High/Critical severity failure: -20 points each (max -80)
-- Medium severity failure: -8 points each (max -40)
-- Low severity failure: -3 points each (max -15)
+```
+base    = 100 × passed / scored_total
+penalty = 8 × high + 2 × medium + 0.5 × low
+score   = clamp(0, 100, base − penalty)
+```
+
+`scored_total` only counts checks classified as `required`,
+`recommended`, `conditional` (when the parent component is installed),
+or `optional`. `info` checks are advisory and excluded from both
+numerator and denominator, so e.g. cloud-provider detection or
+"Docker not installed" do not move the score.
+
+Indicative outcomes (on a host with ~50 scored checks):
+
+| Failures                       | Score | Band         |
+|--------------------------------|-------|--------------|
+| 0                              | 100   | Excellent    |
+| 1 medium                       | 96    | Excellent    |
+| 1 high                         | 90    | Good         |
+| 3 high                         | 70    | Needs work   |
+| 3 high + 6 medium + 3 low      | 38    | Poor         |
+| 10 high + 20 medium + 30 low   | 0     | Broken       |
 
 Score ranges:
 - 90-100: Excellent
@@ -292,7 +311,7 @@ vpssec/
 │   ├── common.sh       # Common utilities
 │   ├── engine.sh       # Module loader & executor
 │   ├── state.sh        # State management
-│   ├── report.sh       # Report generation (tree-style output)
+│   ├── report.sh       # Report generation (dual-column output)
 │   ├── security_levels.sh  # Fix safety & score category definitions
 │   ├── ui_tui.sh       # TUI interface (whiptail/dialog)
 │   ├── ui_text.sh      # Text fallback interface

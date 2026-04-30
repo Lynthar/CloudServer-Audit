@@ -27,7 +27,7 @@ fi
 #   5. Service Security: docker, nginx, cloudflared, webapp
 #   6. Security Scanning: malware
 #   7. Operations & Compliance: logging, backup, alerts
-declare -a VPSSEC_MODULE_ORDER=(
+declare -ga VPSSEC_MODULE_ORDER=(
     # System Basics
     "preflight"
     "cloud"
@@ -57,7 +57,7 @@ declare -a VPSSEC_MODULE_ORDER=(
 )
 
 # Module category definitions for grouped reporting
-declare -A VPSSEC_MODULE_CATEGORY=(
+declare -gA VPSSEC_MODULE_CATEGORY=(
     ["preflight"]="basics"
     ["cloud"]="basics"
     ["timezone"]="basics"
@@ -80,7 +80,7 @@ declare -A VPSSEC_MODULE_CATEGORY=(
 )
 
 # Category order for reporting (basic to advanced)
-declare -a VPSSEC_CATEGORY_ORDER=(
+declare -ga VPSSEC_CATEGORY_ORDER=(
     "basics"
     "access"
     "network"
@@ -90,10 +90,11 @@ declare -a VPSSEC_CATEGORY_ORDER=(
     "operations"
 )
 
-# Module metadata
-declare -A VPSSEC_MODULE_ENABLED=()
-declare -A VPSSEC_MODULE_LOADED=()
-declare -A VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
+# Module metadata. -g keeps these visible across function boundaries
+# (matters for bats tests that source engine.sh from a setup helper).
+declare -gA VPSSEC_MODULE_ENABLED=()
+declare -gA VPSSEC_MODULE_LOADED=()
+declare -gA VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
 
 # Load a module
 module_load() {
@@ -180,6 +181,16 @@ module_load_all() {
     local include="${1:-}"
     local exclude="${2:-}"
 
+    # Validate filter tokens against known module names.
+    # Rationale: previously a typo like `--include=ssg` silently
+    # produced an empty audit (no module name matched), which the
+    # caller could mistake for "everything passed". Fail loud on
+    # unknown include tokens; warn-only on unknown exclude tokens
+    # because a wrong exclude is at worst conservative (you ran an
+    # extra module you didn't want to skip).
+    _module_validate_filter "$include" "include" "fatal"
+    _module_validate_filter "$exclude" "exclude" "warn"
+
     for module in "${VPSSEC_MODULE_ORDER[@]}"; do
         # Check include filter
         if [[ -n "$include" ]]; then
@@ -212,6 +223,53 @@ module_load_all() {
             VPSSEC_MODULE_ENABLED[$module]=0
         fi
     done
+}
+
+# Validate a comma-separated list of module names.
+#
+# Args: <list> <flag-name> <severity>
+#   list      — comma-separated, possibly empty
+#   flag-name — "include" or "exclude" (only used in messages)
+#   severity  — "fatal" exits with code 2 on any unknown token;
+#               "warn" prints a warning and lets the run continue
+_module_validate_filter() {
+    local list="$1"
+    local flag="$2"
+    local severity="$3"
+
+    [[ -z "$list" ]] && return 0
+
+    local invalid=()
+    local IFS=','
+    local token
+    for token in $list; do
+        # Trim incidental whitespace so `--include="ssh, ufw"` is
+        # forgiving. We deliberately do not silently *correct* the
+        # value; we just normalise before lookup.
+        token="${token#"${token%%[![:space:]]*}"}"
+        token="${token%"${token##*[![:space:]]}"}"
+        [[ -z "$token" ]] && continue
+
+        local known=0
+        local known_mod
+        for known_mod in "${VPSSEC_MODULE_ORDER[@]}"; do
+            if [[ "$token" == "$known_mod" ]]; then
+                known=1
+                break
+            fi
+        done
+        (( known == 0 )) && invalid+=("$token")
+    done
+
+    (( ${#invalid[@]} == 0 )) && return 0
+
+    if [[ "$severity" == "fatal" ]]; then
+        print_error "Unknown module(s) in --${flag}: ${invalid[*]}"
+        print_msg "Available modules: ${VPSSEC_MODULE_ORDER[*]}"
+        exit 2
+    else
+        print_warn "Unknown module(s) in --${flag} (ignored): ${invalid[*]}"
+    fi
 }
 
 # Get list of enabled modules
@@ -515,6 +573,14 @@ execute_plan() {
     # Clear progress
     state_clear_progress
 
+    # Prune old backup sessions. Each guide run creates a new
+    # timestamped directory under backups/, so without cleanup the
+    # directory grows unbounded. 30 sessions is a generous retention
+    # window for an interactive tool — easily covers months of
+    # occasional hardening work — and rollback works against any of
+    # them as long as the timestamp dir survives.
+    backup_cleanup 30 || true
+
     # Print summary
     print_msg ""
     if [[ ${#failed[@]} -eq 0 ]]; then
@@ -531,8 +597,120 @@ execute_plan() {
     return 0
 }
 
+# Resume the previously-interrupted plan.
+#
+# Strategy: load state/last_plan.json (the full plan the user
+# approved), filter out fix_ids already in state/progress.json's
+# `.completed` array, and feed the remainder to execute_plan.
+#
+# What this DOES re-run: the fix that was in flight when the
+# interrupt happened (progress.current_fix). vpssec's fix functions
+# are idempotent (backup + atomic write + validate), so re-applying
+# a half-applied change converges to the intended end state. What
+# this does NOT do: cope with system changes made *between*
+# interruption and resume by other actors. The user is asked to
+# opt into resume explicitly; if they suspect the system has moved
+# on, they should pick "discard" instead.
+_guide_resume() {
+    local plan plan_count
+    plan=$(state_load_plan)
+    plan_count=$(echo "$plan" | jq '.fixes | length')
+
+    if (( plan_count == 0 )); then
+        print_error "$(i18n 'guide.resume_empty_plan')"
+        state_clear_progress
+        return 1
+    fi
+
+    local progress completed remaining_fixes remaining_count
+    progress=$(state_load_progress)
+    completed=$(echo "$progress" | jq -c '.completed // []')
+
+    # Single jq pass: drop every fix whose fix_id is already in the
+    # completed array. progress.current_fix is intentionally NOT in
+    # completed (it's only moved there after execute_fix returns
+    # success) so a mid-fix interrupt re-runs that fix on resume.
+    remaining_fixes=$(echo "$plan" | jq --argjson done "$completed" \
+        '.fixes | map(select(.fix_id as $id | ($done | index($id)) | not))')
+    remaining_count=$(echo "$remaining_fixes" | jq 'length')
+
+    if (( remaining_count == 0 )); then
+        print_ok "$(i18n 'guide.resume_already_done')"
+        state_clear_progress
+        return 0
+    fi
+
+    print_header "$(i18n 'guide.resume_executing' "count=$remaining_count" "total=$plan_count")"
+    print_msg ""
+
+    # Replace the on-disk plan with only the remaining fixes;
+    # execute_plan re-creates progress.json against this trimmed
+    # plan so a *second* interrupt-then-resume composes correctly.
+    # A fresh backup session is created inside execute_plan; the
+    # backup directory from the original (interrupted) run remains
+    # rollback-able by its timestamp.
+    local resume_plan
+    resume_plan=$(echo "$plan" | jq --argjson fixes "$remaining_fixes" \
+        '.fixes = $fixes')
+    state_save_plan "$resume_plan"
+
+    execute_plan
+
+    # Deliberately don't re-audit + re-render the report here:
+    # auditing 19 modules takes ~10s and the user can trigger it
+    # with `vpssec audit` if they want a current view. Match the
+    # existing post-execute_plan flow which also doesn't re-audit.
+    print_msg ""
+    print_info "$(i18n 'guide.resume_complete_hint')"
+}
+
 # Guide mode main flow
 guide_mode() {
+    # Resume gate. If state/progress.json exists, the previous plan
+    # was killed mid-execution. Ask before re-auditing — saves the
+    # user from waiting through a fresh ~10s scan they might not
+    # want, and lets them decide to either continue applying fixes
+    # they already approved, or wipe progress and start over.
+    if state_has_progress; then
+        local _progress _current _total _completed_count _ts
+        _progress=$(state_load_progress)
+        _current=$(echo "$_progress" | jq -r '.current_fix')
+        _total=$(echo "$_progress" | jq -r '.total_fixes')
+        _completed_count=$(echo "$_progress" | jq -r '.completed | length')
+        _ts=$(echo "$_progress" | jq -r '.timestamp')
+
+        print_warn "$(i18n 'guide.interrupted_detected' \
+            "step=$((_completed_count + 1))" \
+            "total=$_total" \
+            "current=$_current" \
+            "ts=$_ts")"
+        print_msg ""
+        print_msg "  1) $(i18n 'guide.resume_option')"
+        print_msg "  2) $(i18n 'guide.discard_option')"
+        print_msg "  3) $(i18n 'guide.cancel_option')"
+        echo -n "  > "
+
+        local _choice
+        if ! read -r _choice </dev/tty 2>/dev/null; then
+            _choice=3
+        fi
+
+        case "$_choice" in
+            1)
+                _guide_resume
+                return 0
+                ;;
+            2)
+                state_clear_progress
+                # Fall through to the fresh-audit flow below.
+                ;;
+            *)
+                print_msg "$(i18n 'common.cancel')"
+                return 0
+                ;;
+        esac
+    fi
+
     # First run audit
     print_header "$(i18n 'guide.welcome')"
     print_msg ""
@@ -838,12 +1016,17 @@ status_mode() {
         print_msg "  Latest backup: $latest_backup"
     fi
 
-    # Progress info
+    # Progress info. We only persist progress.json during plan
+    # execution and clear it on completion or rollback, so its
+    # presence here means the previous run was killed mid-fix.
+    # Resumption is not implemented — be honest about that and steer
+    # the user to the two productive next steps.
     if state_has_progress; then
         local progress=$(state_load_progress)
         local current=$(echo "$progress" | jq -r '.current_fix')
         local total=$(echo "$progress" | jq -r '.total_fixes')
-        print_warn "  Interrupted operation detected: $current ($total total)"
+        print_warn "  $(i18n 'status.interrupted' "current=$current" "total=$total")"
+        print_msg "    $(i18n 'status.interrupted_hint')"
     fi
 
     print_msg ""

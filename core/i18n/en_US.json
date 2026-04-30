@@ -808,7 +808,15 @@
     "all_failed": "All fixes failed",
     "rollback_available": "Use 'vpssec rollback' to revert changes",
     "enter_numbers": "Enter numbers separated by spaces, or 'all'",
-    "no_fixes_needed": "No fixes needed, system security is good"
+    "no_fixes_needed": "No fixes needed, system security is good",
+    "interrupted_detected": "Previous plan interrupted at step {step}/{total}: {current} (saved {ts})",
+    "resume_option": "Resume: re-apply the remaining fixes from the saved plan",
+    "discard_option": "Discard: clear progress and start a fresh audit",
+    "cancel_option": "Cancel: do nothing, keep progress for later",
+    "resume_empty_plan": "Saved plan is empty or missing; cannot resume.",
+    "resume_already_done": "All fixes from the saved plan are already complete.",
+    "resume_executing": "Resuming: {count} fix(es) remaining out of {total}",
+    "resume_complete_hint": "Run 'vpssec audit' to see the updated state."
   },
   "fix": {
     "alert_only": "Alert only - manual fix required",
@@ -833,7 +841,8 @@
     "last_run": "Last run: {time}",
     "completed_fixes": "Completed fixes: {count}",
     "latest_backup": "Latest backup: {time}",
-    "interrupted": "Interrupted operation detected: {current} ({total} total)",
+    "interrupted": "Previous plan interrupted at fix {current} of {total}.",
+    "interrupted_hint": "Run 'vpssec guide' to resume the saved plan, or 'vpssec rollback' to undo partial changes.",
     "reloading_services": "Reloading services..."
   },
   "timezone": {

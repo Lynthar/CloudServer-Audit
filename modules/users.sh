@@ -326,8 +326,15 @@ _analyze_ssh_keys() {
         local authkeys="$home/.ssh/authorized_keys"
         [[ -f "$authkeys" ]] || continue
 
-        # Count keys
-        local key_count=$(grep -c '^ssh-' "$authkeys" 2>/dev/null || echo 0)
+        # Count keys. Using awk because the legacy idiom
+        #   grep -c '^ssh-' file 2>/dev/null || echo 0
+        # produces the literal "0\n0" when the file has zero matches
+        # (grep -c prints "0" *and* exits 1, so the fallback runs and
+        # appends a second "0"); bash arithmetic on that two-line
+        # string then aborts the audit under set -e. awk's `c+0`
+        # always yields a single integer and never exits non-zero.
+        local key_count
+        key_count=$(awk '/^ssh-/ {c++} END {print c+0}' "$authkeys" 2>/dev/null) || key_count=0
         [[ "$key_count" -eq 0 ]] && continue
 
         # Check permissions

@@ -15,7 +15,7 @@
 # ==============================================================================
 
 # Safe fixes - can be auto-applied in guide mode
-declare -A FIX_SAFE=(
+declare -gA FIX_SAFE=(
     # Fail2ban - service management and config
     ["fail2ban.install"]="true"
     ["fail2ban.enable_service"]="true"
@@ -82,7 +82,7 @@ declare -A FIX_SAFE=(
 )
 
 # Fixes requiring confirmation - medium risk
-declare -A FIX_CONFIRM=(
+declare -gA FIX_CONFIRM=(
     # Network params may conflict with Docker/containers
     ["kernel.harden_network"]="May affect container networking if Docker/LXC is in use"
 
@@ -108,7 +108,7 @@ declare -A FIX_CONFIRM=(
 )
 
 # Risky fixes - requires safeguards
-declare -A FIX_RISKY=(
+declare -gA FIX_RISKY=(
     # Can lock user out of SSH
     ["ssh.disable_password_auth"]="Can lock you out if SSH key not configured properly"
     ["ssh.disable_root_login"]="Can lock you out if no admin user exists"
@@ -121,7 +121,7 @@ declare -A FIX_RISKY=(
 )
 
 # Alert-only - no auto-fix available
-declare -A FIX_ALERT_ONLY=(
+declare -gA FIX_ALERT_ONLY=(
     # Require manual review and decision
     ["docker.privileged_containers"]="Container configuration requires manual review"
     ["docker.exposed_ports"]="Port exposure is an architecture decision"
@@ -220,7 +220,7 @@ declare -A FIX_ALERT_ONLY=(
 #
 # ==============================================================================
 
-declare -A CHECK_SCORE_CATEGORY=(
+declare -gA CHECK_SCORE_CATEGORY=(
     # === SSH Module - required (core security) ===
     ["ssh.password_auth_enabled"]="required"
     ["ssh.password_auth_disabled"]="required"
@@ -484,32 +484,43 @@ declare -A CHECK_SCORE_CATEGORY=(
 # Fix Safety Helper Functions
 # ==============================================================================
 
-# Get fix safety classification
+# Get fix safety classification.
+#
+# Implementation note: every map access uses `${MAP[$key]:-}` rather
+# than `${MAP[$key]}`. Under `set -u` (enabled by common.sh), reading
+# a missing associative-array key raises "unbound variable" and aborts
+# the function; the previous version was silently masked in production
+# by callers' `... 2>/dev/null || echo "unknown"` fallback, which
+# meant *every non-SAFE fix* was misclassified as "unknown" — the
+# whole safety badge / risky-confirmation system was bypassed
+# unnoticed. The `:-` default is the canonical fix.
 get_fix_safety() {
     local fix_id="$1"
 
-    if [[ -n "${FIX_SAFE[$fix_id]}" ]]; then
+    if [[ -n "${FIX_SAFE[$fix_id]:-}" ]]; then
         echo "safe"
-    elif [[ -n "${FIX_CONFIRM[$fix_id]}" ]]; then
+    elif [[ -n "${FIX_CONFIRM[$fix_id]:-}" ]]; then
         echo "confirm"
-    elif [[ -n "${FIX_RISKY[$fix_id]}" ]]; then
+    elif [[ -n "${FIX_RISKY[$fix_id]:-}" ]]; then
         echo "risky"
-    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]}" ]]; then
+    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]:-}" ]]; then
         echo "alert_only"
     else
         echo "unknown"
     fi
 }
 
-# Get fix warning message
+# Get fix warning message. Same `${MAP[$key]:-}` discipline as
+# get_fix_safety: missing-key access under `set -u` would otherwise
+# abort the function and let the caller's `2>/dev/null` swallow it.
 get_fix_warning() {
     local fix_id="$1"
 
-    if [[ -n "${FIX_CONFIRM[$fix_id]}" ]]; then
+    if [[ -n "${FIX_CONFIRM[$fix_id]:-}" ]]; then
         echo "${FIX_CONFIRM[$fix_id]}"
-    elif [[ -n "${FIX_RISKY[$fix_id]}" ]]; then
+    elif [[ -n "${FIX_RISKY[$fix_id]:-}" ]]; then
         echo "${FIX_RISKY[$fix_id]}"
-    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]}" ]]; then
+    elif [[ -n "${FIX_ALERT_ONLY[$fix_id]:-}" ]]; then
         echo "${FIX_ALERT_ONLY[$fix_id]}"
     fi
 }

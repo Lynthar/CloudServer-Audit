@@ -1,0 +1,100 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bats:
+    name: bats unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          set -euo pipefail
+          # Pin to a specific tag rather than `apt install bats` so the
+          # CI behaviour doesn't drift with Ubuntu's package archive.
+          BATS_VERSION=v1.11.0
+          tmp=$(mktemp -d)
+          git clone --depth 1 --branch "$BATS_VERSION" \
+              https://github.com/bats-core/bats-core.git "$tmp/bats"
+          sudo "$tmp/bats/install.sh" /usr/local
+          bats --version
+
+      - name: Run bats tests
+        run: bats tests/
+
+  i18n-parity:
+    name: i18n key parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare i18n key sets
+        # Both language files MUST contain exactly the same set of
+        # dotted-key paths. A missing key falls back to printing the
+        # raw key in the UI (`i18n` helper in core/common.sh) — easy
+        # to overlook in code review, easy to catch here.
+        run: |
+          set -euo pipefail
+          en=$(jq -r 'paths(scalars) | join(".")' core/i18n/en_US.json | sort)
+          zh=$(jq -r 'paths(scalars) | join(".")' core/i18n/zh_CN.json | sort)
+
+          if diff -u <(echo "$en") <(echo "$zh"); then
+              echo "OK: i18n keys are identical between en_US and zh_CN."
+          else
+              echo
+              echo "ERROR: i18n key sets diverge between en_US and zh_CN."
+              echo "Add the missing keys (or remove the orphan ones) before merging."
+              exit 1
+          fi
+
+  module-contract:
+    name: module function contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify each registered module exports _audit and _fix
+        # Pins the contract documented in CLAUDE.md so a half-done
+        # module addition (forgot _fix, forgot to register, etc.) is
+        # caught at PR time instead of at audit time.
+        run: |
+          set -euo pipefail
+          # Source engine.sh just to read VPSSEC_MODULE_ORDER. We
+          # stub VPSSEC_CORE/MODULES because engine.sh's top sources
+          # security_levels via that path; we only need the array.
+          export VPSSEC_CORE="$PWD/core"
+          export VPSSEC_MODULES="$PWD/modules"
+          # shellcheck source=/dev/null
+          source core/engine.sh
+
+          fail=0
+          for module in "${VPSSEC_MODULE_ORDER[@]}"; do
+              file="modules/${module}.sh"
+              if [[ ! -f "$file" ]]; then
+                  echo "::error::Module ${module} listed in VPSSEC_MODULE_ORDER but ${file} missing"
+                  fail=1
+                  continue
+              fi
+              if ! grep -qE "^${module}_audit\s*\(\s*\)\s*\{" "$file"; then
+                  echo "::error::${file} does not export ${module}_audit()"
+                  fail=1
+              fi
+              if ! grep -qE "^${module}_fix\s*\(\s*\)\s*\{" "$file"; then
+                  echo "::error::${file} does not export ${module}_fix()"
+                  fail=1
+              fi
+              if [[ -z "${VPSSEC_MODULE_CATEGORY[$module]:-}" ]]; then
+                  echo "::error::Module ${module} not classified in VPSSEC_MODULE_CATEGORY"
+                  fail=1
+              fi
+          done
+
+          exit "$fail"

@@ -643,7 +643,7 @@ webapp_audit() {
 
         # 1. Server tokens
         local server_tokens=$(_webapp_nginx_server_tokens)
-        local tokens_count=$(echo "$server_tokens" | grep -c '.' 2>/dev/null || echo 0)
+        local tokens_count=$(count_lines "$server_tokens")
 
         if [[ -n "$server_tokens" && "$tokens_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -671,7 +671,7 @@ webapp_audit() {
 
         # 2. Security headers
         local missing_headers=$(_webapp_nginx_security_headers)
-        local missing_count=$(echo "$missing_headers" | grep -c '.' 2>/dev/null || echo 0)
+        local missing_count=$(count_lines "$missing_headers")
 
         if [[ -n "$missing_headers" && "$missing_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -714,7 +714,7 @@ webapp_audit() {
 
         # 4. Directory listing
         local dir_listing=$(_webapp_nginx_directory_listing)
-        local dir_count=$(echo "$dir_listing" | grep -c '.' 2>/dev/null || echo 0)
+        local dir_count=$(count_lines "$dir_listing")
 
         if [[ -n "$dir_listing" && "$dir_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -731,7 +731,7 @@ webapp_audit() {
 
         # 5. SSL protocols
         local weak_ssl=$(_webapp_nginx_ssl_protocols)
-        local weak_ssl_count=$(echo "$weak_ssl" | grep -c '.' 2>/dev/null || echo 0)
+        local weak_ssl_count=$(count_lines "$weak_ssl")
 
         if [[ -n "$weak_ssl" && "$weak_ssl_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -748,7 +748,7 @@ webapp_audit() {
 
         # 6. SSL ciphers
         local weak_ciphers=$(_webapp_nginx_ssl_ciphers)
-        local weak_cipher_count=$(echo "$weak_ciphers" | grep -c '.' 2>/dev/null || echo 0)
+        local weak_cipher_count=$(count_lines "$weak_ciphers")
 
         if [[ -n "$weak_ciphers" && "$weak_cipher_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -816,7 +816,7 @@ webapp_audit() {
 
         # 10. Directory indexing
         local dir_idx=$(_webapp_apache_directory_index)
-        local dir_idx_count=$(echo "$dir_idx" | grep -c '.' 2>/dev/null || echo 0)
+        local dir_idx_count=$(count_lines "$dir_idx")
 
         if [[ -n "$dir_idx" && "$dir_idx_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -833,7 +833,7 @@ webapp_audit() {
 
         # 11. Dangerous modules
         local danger_mods=$(_webapp_apache_modules)
-        local danger_count=$(echo "$danger_mods" | grep -c '.' 2>/dev/null || echo 0)
+        local danger_count=$(count_lines "$danger_mods")
 
         if [[ -n "$danger_mods" && "$danger_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -888,7 +888,7 @@ webapp_audit() {
 
         # 15. Dangerous functions not disabled
         local not_disabled=$(_webapp_php_disable_functions)
-        local not_disabled_count=$(echo "$not_disabled" | grep -c '.' 2>/dev/null || echo 0)
+        local not_disabled_count=$(count_lines "$not_disabled")
 
         if [[ -n "$not_disabled" && "$not_disabled_count" -gt 3 ]]; then
             check_json=$(create_check_json \
@@ -905,7 +905,7 @@ webapp_audit() {
 
         # 16. Session security
         local session_issues=$(_webapp_php_session_security)
-        local session_count=$(echo "$session_issues" | grep -c '.' 2>/dev/null || echo 0)
+        local session_count=$(count_lines "$session_issues")
 
         if [[ -n "$session_issues" && "$session_count" -gt 0 ]]; then
             check_json=$(create_check_json \
@@ -970,7 +970,7 @@ webapp_audit() {
 
     # 19. Sensitive files
     local sensitive=$(_webapp_sensitive_files)
-    local sensitive_count=$(echo "$sensitive" | grep -c '.' 2>/dev/null || echo 0)
+    local sensitive_count=$(count_lines "$sensitive")
 
     if [[ -n "$sensitive" && "$sensitive_count" -gt 0 ]]; then
         check_json=$(create_check_json \
@@ -998,7 +998,7 @@ webapp_audit() {
 
     # 20. Backup files
     local backups=$(_webapp_backup_files)
-    local backup_count=$(echo "$backups" | grep -c '.' 2>/dev/null || echo 0)
+    local backup_count=$(count_lines "$backups")
 
     if [[ -n "$backups" && "$backup_count" -gt 0 ]]; then
         check_json=$(create_check_json \

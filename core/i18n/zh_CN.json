@@ -808,7 +808,15 @@
     "all_failed": "所有修复项均失败",
     "rollback_available": "可使用 'vpssec rollback' 回滚更改",
     "enter_numbers": "输入编号 (空格分隔) 或 'all'",
-    "no_fixes_needed": "无需修复，系统安全状态良好"
+    "no_fixes_needed": "无需修复，系统安全状态良好",
+    "interrupted_detected": "上一个加固计划在第 {step}/{total} 步被中断：{current}（保存于 {ts}）",
+    "resume_option": "续跑：重新应用计划中剩余的修复项",
+    "discard_option": "放弃：清除进度并重新审计",
+    "cancel_option": "取消：什么都不做，保留进度供以后处理",
+    "resume_empty_plan": "保存的计划为空或文件缺失，无法续跑。",
+    "resume_already_done": "保存计划中的所有修复均已完成。",
+    "resume_executing": "正在续跑：剩余 {count} 项 (共 {total} 项)",
+    "resume_complete_hint": "运行 'vpssec audit' 查看更新后的状态。"
   },
   "fix": {
     "alert_only": "仅告警 - 需要手动修复",
@@ -833,7 +841,8 @@
     "last_run": "上次运行: {time}",
     "completed_fixes": "已完成修复: {count}",
     "latest_backup": "最新备份: {time}",
-    "interrupted": "检测到中断的操作: {current} (共 {total})",
+    "interrupted": "上一个加固计划在第 {current} 步（共 {total} 步）被中断。",
+    "interrupted_hint": "运行 'vpssec guide' 续跑保存的计划，或运行 'vpssec rollback' 撤销已应用的部分变更。",
     "reloading_services": "正在重载服务..."
   },
   "timezone": {

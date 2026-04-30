@@ -4,6 +4,13 @@
 
 ---
 
+> **覆盖范围说明**：本指南覆盖最常触发问题与修复的核心模块——
+> users、ssh、kernel、filesystem、ufw、fail2ban、docker、malware。
+> 其余模块（cloud、timezone、update、baseline、nginx、webapp、
+> cloudflared、logging、backup、alerts）的检测项标题与建议会在审计
+> 报告（`reports/summary.md`）和终端输出中以 i18n 方式直接给出，本指
+> 南暂未对每一项展开，欢迎通过 PR 补充。
+
 ## 目录
 
 1. [结果图标说明](#结果图标说明)
@@ -122,9 +129,12 @@ visudo
 
 **检测内容**: 检查 SSH 服务是否使用默认的 22 端口
 
-**为什么重要**: 默认端口更容易受到自动化扫描和暴力破解攻击
+**为什么重要**: 默认端口会持续承受自动化扫描和暴力破解流量；改用非默
+认端口可显著降低噪声，但**不是真正的安全防线**——配合密钥登录、
+fail2ban、防火墙才是关键。
 
-**通过条件**: SSH 使用非 22 的端口
+**评估方式**: 这是一个建议性（低危/info）提示，使用默认 22 端口本身
+不会被判为高危失败。修改端口属于操作偏好，不是合规硬性要求。
 
 **修复方法**:
 ```bash
@@ -886,17 +896,19 @@ A: 这是常见问题，预防措施：
 
 ### Q: 某些检测项不适用于我的环境怎么办？
 
-A: 脚本支持模块选择。运行时可以选择跳过不适用的模块：
+A: 脚本支持模块选择。可以用 `--include=` 仅运行指定模块，或用
+`--exclude=` 跳过不适用的模块：
 ```bash
-./vpssec.sh --modules users,ssh,ufw
+sudo ./vpssec audit --include=users,ssh,ufw
+sudo ./vpssec audit --exclude=docker,cloudflared
 ```
 
 ### Q: 如何定期运行检测？
 
-A: 可以设置 cron 任务：
+A: 可以设置 cron 任务，配合 `--json-only` 让输出适合采集：
 ```bash
-# 每周日凌晨 3 点运行检测
-0 3 * * 0 /path/to/vpssec.sh --report > /var/log/security-audit.log 2>&1
+# 每周日凌晨 3 点运行检测，JSON 报告写入 reports/summary.json
+0 3 * * 0 cd /path/to/CloudServer-Audit && sudo ./vpssec audit --json-only > /var/log/vpssec-audit.log 2>&1
 ```
 
 ### Q: 检测到恶意软件该怎么办？
@@ -916,10 +928,10 @@ A: 建议步骤：
 
 如果在使用过程中遇到问题：
 
-1. 查看脚本帮助：`./vpssec.sh --help`
-2. 查看详细日志：检查 `/var/log/vpssec/` 目录
-3. 提交 Issue：[GitHub Issues](https://github.com/your-repo/CloudServer-Audit/issues)
+1. 查看脚本帮助：`sudo ./vpssec --help`
+2. 查看详细日志：项目根目录下的 `logs/vpssec.log`（追加 `--debug` 可获得更详细的输出）
+3. 提交 Issue：[GitHub Issues](https://github.com/Lynthar/CloudServer-Audit/issues)
 
 ---
 
-*本指南将随脚本更新持续完善。最后更新: 2024年*
+*本指南将随脚本更新持续完善。*
