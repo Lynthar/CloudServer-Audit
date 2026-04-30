@@ -630,8 +630,14 @@ _guide_resume() {
     # completed array. progress.current_fix is intentionally NOT in
     # completed (it's only moved there after execute_fix returns
     # success) so a mid-fix interrupt re-runs that fix on resume.
-    remaining_fixes=$(echo "$plan" | jq --argjson done "$completed" \
-        '.fixes | map(select(.fix_id as $id | ($done | index($id)) | not))')
+    #
+    # NB: the jq variable is `$completed_ids`, not `$done`. The bash
+    # keyword `done` inside a single-quoted jq filter triggers
+    # ShellCheck SC1010 even though it's syntactically opaque to bash.
+    # Renaming the jq variable is the cheapest way to keep the linter
+    # quiet without rewriting the filter.
+    remaining_fixes=$(echo "$plan" | jq --argjson completed_ids "$completed" \
+        '.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))')
     remaining_count=$(echo "$remaining_fixes" | jq 'length')
 
     if (( remaining_count == 0 )); then

@@ -17,14 +17,16 @@ setup() {
 
 # Reproduce the same jq filter that lives inside _guide_resume.
 # Kept in sync manually; if the production filter changes, update
-# the corresponding line here too.
+# the corresponding line here too. (jq variable name is
+# `$completed_ids`, not `$done`, to dodge a ShellCheck false-
+# positive — see the note next to the production version.)
 _filter_remaining() {
     local plan="$1"
     local progress="$2"
     local completed
     completed=$(echo "$progress" | jq -c '.completed // []')
-    echo "$plan" | jq --argjson done "$completed" \
-        '.fixes | map(select(.fix_id as $id | ($done | index($id)) | not))'
+    echo "$plan" | jq --argjson completed_ids "$completed" \
+        '.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))'
 }
 
 @test "resume filter: drops fixes already in completed[]" {
