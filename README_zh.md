@@ -204,10 +204,12 @@ vpssec 使用简洁的双列布局输出，紧凑易读：
 vpssec [模式] [选项]
 
 模式:
-  audit       仅安全审计（默认）
-  guide       交互式加固向导
-  rollback    回滚之前的更改
-  status      显示当前安全状态
+  audit             仅安全审计（默认）
+  guide             交互式加固向导
+  rollback [TS]     回滚到指定时间戳的备份（不带参数则交互选择）
+  status            显示当前安全状态
+  help [MODULE]     列出所有模块和 fix_id；带 MODULE 参数则展示该
+                    模块的审计/修复细节（无需 root，无副作用）
 
 选项:
   --lang=LANG       设置语言 (zh_CN, en_US)
@@ -218,6 +220,11 @@ vpssec [模式] [选项]
   --no-color        禁用彩色输出
   -h, --help        显示帮助
   --version         显示版本
+
+环境变量覆盖:
+  VPSSEC_FS_TIMEOUT=N   单次文件系统扫描的超时秒数（默认 60），
+                        作用于 SUID/SGID/world-writable/no-owner
+                        等扫描
 ```
 
 ## 安全评分
@@ -301,19 +308,23 @@ jobs:
 vpssec/
 ├── vpssec              # 主入口脚本
 ├── run.sh              # 一键运行脚本
-├── install.sh          # 安装脚本
+├── install.sh          # 安装脚本（会校验 manifest.sha256）
+├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；
+│                       # 由 install.sh 的 verify_integrity 校验
 ├── core/               # 核心引擎
-│   ├── common.sh       # 公共函数
-│   ├── engine.sh       # 模块加载与执行
-│   ├── state.sh        # 状态管理
+│   ├── common.sh       # 公共函数（日志、i18n、校验、原子写、
+│   │                   # 单实例运行锁）
+│   ├── engine.sh       # 模块加载、audit/guide 调度、计划续跑
+│   ├── state.sh        # checks/plan/progress 状态、备份、评分
 │   ├── report.sh       # 报告生成（双列布局输出）
 │   ├── security_levels.sh  # 修复安全与评分分类定义
+│   ├── help.sh         # `vpssec help [module]` 调度器
 │   ├── ui_tui.sh       # TUI 界面 (whiptail/dialog)
 │   ├── ui_text.sh      # 文本降级界面
 │   └── i18n/           # 国际化
 │       ├── zh_CN.json
 │       └── en_US.json
-├── modules/            # 安全检查模块
+├── modules/            # 安全检查模块（共 19 个）
 │   ├── preflight.sh    # 环境预检
 │   ├── cloud.sh        # 云厂商与代理检测
 │   ├── timezone.sh     # 时区与 NTP
@@ -333,6 +344,11 @@ vpssec/
 │   ├── cloudflared.sh  # Cloudflare Tunnel
 │   ├── backup.sh       # 备份配置
 │   └── alerts.sh       # 告警通知
+├── tests/              # bats 单元测试（用 `bats tests/` 运行）
+├── tools/              # 开发者工具
+│   └── gen-manifest.sh # 重新生成 manifest.sha256（任何 runtime
+│                       # 关键文件改动后提交前都要跑一次）
+├── docs/               # 用户文档
 ├── state/              # 状态文件（运行时）
 ├── reports/            # 生成的报告
 ├── backups/            # 配置备份
@@ -376,11 +392,36 @@ mymodule_fix() {
 }
 ```
 
-2. 在 `engine.sh` 的 `VPSSEC_MODULE_ORDER` 中添加模块名
+2. 在 `core/engine.sh` 的 `VPSSEC_MODULE_ORDER` 中添加模块名，
+   并在 `VPSSEC_MODULE_CATEGORY` 中给它选好类别
 
-3. 在 `core/i18n/*.json` 中添加翻译
+3. **同时**在 `core/i18n/en_US.json` 与 `core/i18n/zh_CN.json` 中
+   添加翻译——CI 的 `i18n-parity` 任务会拒绝 key 集合不一致的 PR
 
-4. 在 `core/security_levels.sh` 中添加修复安全分类
+4. 在 `core/security_levels.sh` 中给每个 `fix_id` 选定分类
+   （`FIX_SAFE` / `FIX_CONFIRM` / `FIX_RISKY` / `FIX_ALERT_ONLY`
+   之一）
+
+5. 运行 `bash tools/gen-manifest.sh` 并提交更新后的
+   `manifest.sha256`——CI 的 `manifest-freshness` 任务会拒绝过时
+   的 manifest
+
+CI 中的 `module-contract` 任务会校验：每个 `VPSSEC_MODULE_ORDER`
+里的模块都必须有对应的 `modules/<name>.sh` 并导出
+`<name>_audit()` 与 `<name>_fix()`，且必须在
+`VPSSEC_MODULE_CATEGORY` 中归类。
+
+### 测试
+
+```bash
+bats tests/                 # 运行完整测试套件（约 80 用例）
+bats tests/test_score.bats  # 单个测试文件
+```
+
+覆盖纯函数：`count_lines`、`validate_*`、`calculate_score`、
+修复分类、计划续跑过滤器、help 调度、备份恢复路径安全。
+每个测试用例独立隔离（各自的 `state/` / `backups/` / `logs/`
+都在 `BATS_TEST_TMPDIR` 下），不会污染本地系统状态。
 
 ## 许可证
 

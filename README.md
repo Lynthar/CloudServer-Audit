@@ -205,10 +205,12 @@ This prevents score penalties for components you don't use.
 vpssec [mode] [options]
 
 Modes:
-  audit       Security audit only (default)
-  guide       Interactive hardening wizard
-  rollback    Rollback previous changes
-  status      Show current security status
+  audit             Security audit only (default)
+  guide             Interactive hardening wizard
+  rollback [TS]     Rollback to backup TS (interactive picker if omitted)
+  status            Show current security status
+  help [MODULE]     List modules and fix_ids; with MODULE, show that
+                    module's audit/fix detail (no root, no side effects)
 
 Options:
   --lang=LANG       Set language (zh_CN, en_US)
@@ -219,6 +221,10 @@ Options:
   --no-color        Disable colored output
   -h, --help        Show help
   --version         Show version
+
+Environment overrides:
+  VPSSEC_FS_TIMEOUT=N   Per-find-walk timeout in seconds (default 60)
+                        for SUID/SGID/world-writable/no-owner scans
 ```
 
 ## Security Score
@@ -306,19 +312,25 @@ jobs:
 vpssec/
 ├── vpssec              # Main entry script
 ├── run.sh              # One-line runner script
-├── install.sh          # Installation script
+├── install.sh          # Installation script (verifies manifest.sha256)
+├── manifest.sha256     # SHA-256 of every runtime-critical file;
+│                       # checked by install.sh's verify_integrity
 ├── core/               # Core engine
-│   ├── common.sh       # Common utilities
-│   ├── engine.sh       # Module loader & executor
-│   ├── state.sh        # State management
+│   ├── common.sh       # Common utilities (logging, i18n, validation,
+│   │                   # atomic writes, single-instance run-lock)
+│   ├── engine.sh       # Module loader, audit/guide dispatch,
+│   │                   # plan resumption
+│   ├── state.sh        # checks/plan/progress JSON state, backups,
+│   │                   # score calculation
 │   ├── report.sh       # Report generation (dual-column output)
 │   ├── security_levels.sh  # Fix safety & score category definitions
+│   ├── help.sh         # `vpssec help [module]` dispatcher
 │   ├── ui_tui.sh       # TUI interface (whiptail/dialog)
 │   ├── ui_text.sh      # Text fallback interface
 │   └── i18n/           # Internationalization
 │       ├── zh_CN.json
 │       └── en_US.json
-├── modules/            # Security check modules
+├── modules/            # Security check modules (19 total)
 │   ├── preflight.sh    # Environment pre-checks
 │   ├── cloud.sh        # Cloud provider & agent detection
 │   ├── timezone.sh     # Timezone & NTP
@@ -338,6 +350,11 @@ vpssec/
 │   ├── cloudflared.sh  # Cloudflare Tunnel
 │   ├── backup.sh       # Backup configuration
 │   └── alerts.sh       # Alert notifications
+├── tests/              # bats unit tests (run via `bats tests/`)
+├── tools/              # Developer utilities
+│   └── gen-manifest.sh # Regenerate manifest.sha256 (run before commit
+│                       # if any runtime-critical file changes)
+├── docs/               # User-facing documentation
 ├── state/              # State files (runtime)
 ├── reports/            # Generated reports
 ├── backups/            # Configuration backups
@@ -381,11 +398,37 @@ mymodule_fix() {
 }
 ```
 
-2. Add module name to `VPSSEC_MODULE_ORDER` in `engine.sh`
+2. Add module name to `VPSSEC_MODULE_ORDER` and category mapping in
+   `VPSSEC_MODULE_CATEGORY` in `core/engine.sh`
 
-3. Add translations to `core/i18n/*.json`
+3. Add translations to **both** `core/i18n/en_US.json` and
+   `core/i18n/zh_CN.json` — the `tests` workflow's `i18n-parity`
+   job fails the PR if key sets diverge
 
-4. Add fix safety classification to `core/security_levels.sh`
+4. Classify each `fix_id` in `core/security_levels.sh` (one of
+   `FIX_SAFE`, `FIX_CONFIRM`, `FIX_RISKY`, `FIX_ALERT_ONLY`)
+
+5. Run `bash tools/gen-manifest.sh` and commit the updated
+   `manifest.sha256` — the `manifest-freshness` CI job will
+   otherwise reject the PR
+
+The `module-contract` CI job verifies that every name in
+`VPSSEC_MODULE_ORDER` has a corresponding `modules/<name>.sh`
+exporting `<name>_audit()` and `<name>_fix()`, and that the
+module is classified in `VPSSEC_MODULE_CATEGORY`.
+
+### Tests
+
+```bash
+bats tests/                 # Run the full bats suite (~80 cases)
+bats tests/test_score.bats  # Single test file
+```
+
+Pure-function coverage: `count_lines`, `validate_*`,
+`calculate_score`, fix classification, plan-resume filter,
+help dispatch, backup-restore path safety. Tests are isolated
+per-test (each gets its own `state/`, `backups/`, `logs/` under
+`BATS_TEST_TMPDIR`); no live system state is touched.
 
 ## License
 
