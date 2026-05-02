@@ -123,9 +123,16 @@ _timezone_check_ntp() {
         fi
     fi
 
-    # Check for chronyd
-    if [[ "$ntp_status" == "unknown" ]] && systemctl is-active chronyd &>/dev/null; then
-        ntp_service="chronyd"
+    # Check for chrony / chronyd. Debian/Ubuntu name the unit
+    # `chrony.service`; RHEL/Fedora and some derivatives use
+    # `chronyd.service`. Probing only `chronyd` silently misclassified
+    # synced Debian hosts as "NTP disabled" — every Debian/Ubuntu
+    # install with chrony fell through to the openntpd branch and
+    # then the no-NTP-found case.
+    if [[ "$ntp_status" == "unknown" ]] && \
+        ( systemctl is-active chrony &>/dev/null || \
+          systemctl is-active chronyd &>/dev/null ); then
+        ntp_service="chrony"
         if chronyc tracking &>/dev/null; then
             local leap=$(chronyc tracking 2>/dev/null | grep -i "Leap status" | grep -i "Normal")
             if [[ -n "$leap" ]]; then
@@ -137,8 +144,14 @@ _timezone_check_ntp() {
         fi
     fi
 
-    # Check for ntpd
-    if [[ "$ntp_status" == "unknown" ]] && systemctl is-active ntp &>/dev/null; then
+    # Check for ntpd / ntpsec. Debian 12+ replaced the legacy `ntp`
+    # package with `ntpsec` (unit: `ntpsec.service`); the original
+    # `ntp.service` form only exists on older Debian / non-Debian
+    # distros. `ntpd.service` is a systemd alias on some images.
+    if [[ "$ntp_status" == "unknown" ]] && \
+        ( systemctl is-active ntpsec &>/dev/null || \
+          systemctl is-active ntp &>/dev/null || \
+          systemctl is-active ntpd &>/dev/null ); then
         ntp_service="ntpd"
         if ntpq -p &>/dev/null 2>&1; then
             is_synced=1
@@ -454,8 +467,11 @@ _timezone_fix_enable_ntp() {
 _timezone_fix_sync_time() {
     print_info "$(i18n 'timezone.syncing_time')"
 
-    # Try chronyd
-    if command -v chronyc &>/dev/null && systemctl is-active chronyd &>/dev/null; then
+    # Try chrony / chronyd (see _timezone_check_ntp for the unit-name
+    # rationale: Debian uses chrony.service, RHEL uses chronyd.service).
+    if command -v chronyc &>/dev/null && \
+        ( systemctl is-active chrony &>/dev/null || \
+          systemctl is-active chronyd &>/dev/null ); then
         chronyc makestep &>/dev/null
         print_ok "$(i18n 'timezone.time_synced')"
         return 0

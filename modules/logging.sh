@@ -70,11 +70,21 @@ _logging_check_audit_rules() {
 }
 
 _logging_get_failed_logins() {
-    # Get recent failed login attempts
-    # Note: grep -c outputs "0" AND exits with code 1 when no matches
-    # Using || true prevents double output from || echo "0"
+    # Get recent failed login attempts.
+    #
+    # Filter by `_COMM=sshd` (the binary name as recorded by the
+    # kernel), not `_SYSTEMD_UNIT=sshd.service`. The latter is the
+    # canonical RHEL/CentOS unit name; on Debian/Ubuntu — every OS
+    # this project targets — the unit is `ssh.service` and
+    # `sshd.service` is only a systemd alias that may not match
+    # journal-recorded metadata. With the wrong filter this query
+    # silently returned zero on every Debian/Ubuntu host, hiding
+    # active brute-force activity.
+    #
+    # Note: grep -c outputs "0" AND exits with code 1 when no matches.
+    # Using || true prevents double output from || echo "0".
     local count
-    count=$(journalctl _SYSTEMD_UNIT=sshd.service --since "24 hours ago" 2>/dev/null | \
+    count=$(journalctl _COMM=sshd --since "24 hours ago" 2>/dev/null | \
         grep -c "Failed password\|authentication failure" 2>/dev/null) || true
     echo "${count:-0}"
 }

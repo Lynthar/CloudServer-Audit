@@ -94,6 +94,18 @@ _docker_seccomp_unconfined_containers() {
 }
 
 _docker_check_live_restore() {
+    # Prefer `docker info` — it reports the daemon's *effective*
+    # state, which honours both daemon.json and any systemd drop-in
+    # under /etc/systemd/system/docker.service.d/*.conf or
+    # /etc/default/docker. Reading daemon.json alone missed the
+    # common "I set X in daemon.json but a systemd ExecStart override
+    # re-specified it" failure mode (the Docker analogue of the
+    # sshd_config.d drop-in bug).
+    if docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null | grep -qi '^true$'; then
+        return 0
+    fi
+    # Fallback when the daemon is not running: at least surface the
+    # user's stated intent in daemon.json.
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
         jq -e '.["live-restore"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null
     else
@@ -101,12 +113,29 @@ _docker_check_live_restore() {
     fi
 }
 
+# `no-new-privileges` daemon-level default has no dedicated `docker
+# info` field, so cross-check three sources: daemon.json, any
+# `--no-new-privileges` flag in the systemd ExecStart drop-ins, and
+# the legacy /etc/default/docker DOCKER_OPTS. Any of them enabling
+# counts. systemctl cat returns the merged unit (main file + every
+# drop-in), giving us full coverage without re-implementing the
+# systemd merge order.
 _docker_check_no_new_privileges() {
-    if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
-        jq -e '.["no-new-privileges"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null
-    else
-        return 1
+    if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
+        jq -e '.["no-new-privileges"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null; then
+        return 0
     fi
+    if command -v systemctl &>/dev/null && \
+        systemctl cat docker.service 2>/dev/null | \
+        grep -E '^ExecStart=' | grep -q -- '--no-new-privileges'; then
+        return 0
+    fi
+    if [[ -r /etc/default/docker ]] && \
+        grep -E '^[[:space:]]*DOCKER_OPTS=' /etc/default/docker 2>/dev/null | \
+        grep -q -- '--no-new-privileges'; then
+        return 0
+    fi
+    return 1
 }
 
 # ==============================================================================

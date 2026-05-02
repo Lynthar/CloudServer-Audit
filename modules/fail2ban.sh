@@ -173,10 +173,37 @@ _f2b_get_total_banned() {
         awk '{print $NF}'
 }
 
-# Check jail.local exists with reasonable settings
+# Detect operator-supplied tuning beyond the package default.
+#
+# The Debian/Ubuntu fail2ban package SHIPS `/etc/fail2ban/jail.d/
+# defaults-debian.conf` (only `[sshd] enabled = true`, no real
+# tuning). The original test "any file in jail.d/ counts as custom"
+# therefore reported every fresh install as having a custom config —
+# users got a passing check while still running the stock 5-retry,
+# 10-minute-ban defaults that fail2ban tunings exist to override.
+#
+# Now: jail.local must exist with at least one non-comment, non-empty
+# line, OR jail.d/ must contain a file other than defaults-debian.conf.
 _f2b_has_custom_config() {
-    [[ -f "$F2B_JAIL_LOCAL" ]] || \
-    [[ -d "$F2B_JAIL_D" && -n "$(ls -A "$F2B_JAIL_D"/*.conf 2>/dev/null)" ]]
+    if [[ -f "$F2B_JAIL_LOCAL" ]]; then
+        # Skip files that are entirely whitespace/comments.
+        if grep -qE '^[[:space:]]*[^#[:space:]]' "$F2B_JAIL_LOCAL" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    if [[ -d "$F2B_JAIL_D" ]]; then
+        local f
+        for f in "$F2B_JAIL_D"/*.conf; do
+            [[ -f "$f" ]] || continue
+            # Ignore the Debian/Ubuntu shipped default; it is part of
+            # the package, not operator configuration.
+            [[ "$(basename "$f")" == "defaults-debian.conf" ]] && continue
+            return 0
+        done
+    fi
+
+    return 1
 }
 
 # Get maxretry setting for SSH jail.

@@ -143,9 +143,59 @@ _webapp_apache_installed() {
     ([[ -f "$APACHE_CONF" ]] || [[ -f "$APACHE_CONF_ALT" ]])
 }
 
-# Check if PHP is installed
+# Check if PHP is installed (CLI or FPM).
+#
+# Production PHP on Debian/Ubuntu typically ships only `php-fpm`
+# without the CLI binary. The original `command -v php` test missed
+# every such host, so the entire PHP security audit was silently
+# skipped on the deployments where it matters most.
 _webapp_php_installed() {
-    command -v php &>/dev/null
+    command -v php &>/dev/null && return 0
+    command -v php-fpm &>/dev/null && return 0
+    # PHP versioned binaries: php-fpm8.2, php-fpm7.4, etc.
+    compgen -G '/usr/sbin/php-fpm*' >/dev/null 2>&1 && return 0
+    # FPM ini files exist whenever any php<ver>-fpm package is installed.
+    compgen -G '/etc/php/*/fpm/php.ini' >/dev/null 2>&1 && return 0
+    return 1
+}
+
+# Enumerate FPM php.ini files (one per installed PHP version).
+# Returns absolute paths, one per line. Empty output if no FPM install.
+_webapp_list_fpm_inis() {
+    local ini
+    for ini in /etc/php/*/fpm/php.ini; do
+        [[ -f "$ini" ]] && printf '%s\n' "$ini"
+    done
+}
+
+# Read a single php.ini directive from the file plus its conf.d/.
+# Mirrors PHP's last-occurrence-wins semantics for repeated entries.
+# `key` is the directive name (e.g. `display_errors`, `disable_functions`);
+# `ini_file` is the main php.ini to anchor the lookup.
+_webapp_read_ini_directive() {
+    local key="$1"
+    local ini_file="$2"
+    local conf_d="${ini_file%/*}/conf.d"
+    grep -hE "^[[:space:]]*${key}[[:space:]]*=" \
+        "$ini_file" "$conf_d"/*.ini 2>/dev/null | \
+        tail -1 | \
+        sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
+}
+
+# Read FPM pool overrides for a directive. Pools can set
+# `php_admin_value[key] = ...` (force) or `php_value[key] = ...`
+# (allow override at runtime). We surface the *last* observed value
+# across all pools, which mirrors what an audit cares about: if any
+# pool weakens the directive, the user is exposed.
+_webapp_read_pool_directive() {
+    local key="$1"
+    local fpm_ini="$2"
+    local pool_d="${fpm_ini%/*}/pool.d"
+    [[ -d "$pool_d" ]] || return 0
+    grep -hE "^[[:space:]]*php_(admin_)?value\[${key}\][[:space:]]*=" \
+        "$pool_d"/*.conf 2>/dev/null | \
+        tail -1 | \
+        sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
 }
 
 # Get all Nginx configuration files (legacy fallback).
@@ -218,15 +268,62 @@ _webapp_nginx_dump() {
     printf '%s\n' "$_WEBAPP_NGINX_DUMP"
 }
 
-# Get PHP configuration
+# Get effective PHP configuration value for a directive.
+#
+# The original implementation invoked bare `php -i`, which loads
+# `/etc/php/<ver>/cli/php.ini` — the CLI SAPI's config, totally
+# independent of the FPM SAPI that actually serves web requests.
+# A site running with `display_errors=On` in FPM passed this audit
+# because CLI said "Off". This is the PHP-side analogue of the
+# sshd_config.d drop-in blindness bug.
+#
+# Strategy: when FPM is installed, inspect every FPM php.ini (one per
+# version), apply conf.d overrides, then apply pool.d overrides. Return
+# the most recently observed value, which under the audit lens means
+# "the value an exposed pool is currently using". When FPM is NOT
+# installed (only CLI), fall back to the original `php -i` behaviour
+# so non-FPM-served PHP hosts are still covered.
 _webapp_get_php_config() {
     local key="$1"
-    php -i 2>/dev/null | grep -i "^$key" | head -1 | awk -F'=>' '{print $2}' | tr -d ' '
+    local result=""
+    local found_fpm=0
+
+    local ini
+    while IFS= read -r ini; do
+        [[ -z "$ini" ]] && continue
+        found_fpm=1
+        local v
+        # Base value from php.ini + conf.d.
+        v=$(_webapp_read_ini_directive "$key" "$ini")
+        [[ -n "$v" ]] && result="$v"
+        # Pool overrides (php_admin_value / php_value) win over base.
+        local pool_v
+        pool_v=$(_webapp_read_pool_directive "$key" "$ini")
+        [[ -n "$pool_v" ]] && result="$pool_v"
+    done < <(_webapp_list_fpm_inis)
+
+    # Fallback: only when no FPM install was detected. We deliberately
+    # do NOT mix CLI output with FPM output — that would let CLI
+    # settings mask FPM weaknesses on hosts where both exist.
+    if (( found_fpm == 0 )) && command -v php &>/dev/null; then
+        result=$(php -i 2>/dev/null | grep -i "^$key" | head -1 | \
+            awk -F'=>' '{print $2}' | tr -d ' ')
+    fi
+
+    echo "$result"
 }
 
-# Get PHP ini path
+# Get the PHP ini path most relevant for this host. FPM first (it's
+# what serves users); CLI as the legacy fallback.
 _webapp_get_php_ini() {
-    php -i 2>/dev/null | grep "Loaded Configuration File" | awk -F'=>' '{print $2}' | tr -d ' '
+    local ini
+    while IFS= read -r ini; do
+        [[ -n "$ini" ]] && { echo "$ini"; return; }
+    done < <(_webapp_list_fpm_inis)
+    if command -v php &>/dev/null; then
+        php -i 2>/dev/null | grep "Loaded Configuration File" | \
+            awk -F'=>' '{print $2}' | tr -d ' '
+    fi
 }
 
 # ==============================================================================
@@ -265,15 +362,46 @@ _webapp_nginx_security_headers() {
     printf '%s\n' "${missing_headers[@]}"
 }
 
-# Check HSTS configuration
+# Check HSTS configuration.
+#
+# Original test was `grep -qi "Strict-Transport-Security"` against the
+# entire merged config. That accepted:
+#   - commented lines (the vpssec fix function itself writes a
+#     COMMENTED template — so a fresh fix-then-audit cycle marked the
+#     header as "configured" while sending nothing on the wire);
+#   - mentions inside comments or other contexts that were not actual
+#     `add_header` directives.
+# It also did not require the `always` token, so HSTS would be
+# omitted on 4xx/5xx responses — a known leak vector.
+#
+# Now: require an uncommented `add_header Strict-Transport-Security`
+# directive, and surface whether `always` was present so the caller
+# can degrade the finding rather than reporting a hard pass on a
+# subtly-broken config.
 _webapp_nginx_hsts() {
     local dump
     dump=$(_webapp_nginx_dump)
 
-    if echo "$dump" | grep -qi "Strict-Transport-Security"; then
+    # Strip comments first. Use awk to remove `# ...` from each line —
+    # a quoted `#` inside a header value is rare and not present in
+    # any standard HSTS directive, so this stays safe.
+    local stripped
+    stripped=$(printf '%s\n' "$dump" | awk '{ sub(/#.*/, ""); print }')
+
+    if ! echo "$stripped" | \
+        grep -qiE '^[[:space:]]*add_header[[:space:]]+Strict-Transport-Security'; then
+        echo "missing"
+        return
+    fi
+
+    # `always` ensures the header is sent on every response code,
+    # not just 200/201/204/206/301/302/303/304/307/308 (nginx's
+    # implicit add_header response-code list).
+    if echo "$stripped" | \
+        grep -qiE '^[[:space:]]*add_header[[:space:]]+Strict-Transport-Security.*[[:space:]]always[[:space:]]*;'; then
         echo "configured"
     else
-        echo "missing"
+        echo "weak"
     fi
 }
 
@@ -468,13 +596,27 @@ _webapp_php_open_basedir() {
     echo "${val:-none}"
 }
 
-# Check disable_functions
+# Check disable_functions for missing entries.
+#
+# The original `grep -qi "$func"` did substring matching, so checking
+# for `popen` reported success whenever the configured list contained
+# `proc_open` (ditto `exec` ↔ `mb_exec_dir`). Hosts that disabled only
+# the harder-to-name `proc_open` were therefore reported as also
+# disabling `popen`, masking real exposures.
+#
+# Use a comma-separated, whitespace-tolerant token match anchored on
+# the boundaries PHP itself uses for this directive. PHP_DANGEROUS_*
+# values are simple identifiers, so plain string anchoring is enough
+# (no need to regex-escape).
 _webapp_php_disable_functions() {
     local disabled=$(_webapp_get_php_config "disable_functions")
     local not_disabled=()
 
     for func in "${PHP_DANGEROUS_FUNCTIONS[@]}"; do
-        if ! echo "$disabled" | grep -qi "$func"; then
+        # Match `func` as a whole token: at start-of-string OR after a
+        # comma (with optional surrounding whitespace), and at
+        # end-of-string OR before another comma/whitespace.
+        if ! echo "$disabled" | grep -qiE "(^|,)[[:space:]]*${func}[[:space:]]*(,|$)"; then
             not_disabled+=("$func")
         fi
     done
@@ -697,7 +839,7 @@ webapp_audit() {
             state_add_check "$check_json"
         fi
 
-        # 3. HSTS
+        # 3. HSTS — three-way: missing / weak (no `always`) / configured.
         local hsts=$(_webapp_nginx_hsts)
         if [[ "$hsts" == "missing" ]]; then
             check_json=$(create_check_json \
@@ -708,6 +850,21 @@ webapp_audit() {
                 "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')" \
                 "Strict-Transport-Security header not found" \
                 "$(i18n 'webapp.add_hsts' 2>/dev/null || echo 'Add HSTS header for HTTPS enforcement')" \
+                "webapp.nginx_hsts")
+            state_add_check "$check_json"
+        elif [[ "$hsts" == "weak" ]]; then
+            # Header exists but lacks the `always` token, so it is
+            # only sent on the small set of response codes nginx
+            # implicitly applies add_header to. Error responses still
+            # leak.
+            check_json=$(create_check_json \
+                "webapp.nginx_hsts_missing" \
+                "webapp" \
+                "low" \
+                "failed" \
+                "$(i18n 'webapp.hsts_weak' 2>/dev/null || echo 'HSTS missing always token')" \
+                "add_header Strict-Transport-Security ... lacks 'always' — header skipped on error responses" \
+                "$(i18n 'webapp.fix_hsts_always' 2>/dev/null || echo 'Append the always parameter to add_header')" \
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
         fi

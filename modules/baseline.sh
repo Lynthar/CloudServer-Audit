@@ -44,6 +44,20 @@ _baseline_apparmor_get_status() {
 # ------------------------------------------------------------------------------
 
 _baseline_selinux_installed() {
+    # Gate on the kernel-level LSM, not just userspace tooling.
+    #
+    # On Debian/Ubuntu, installing the `selinux-utils` package (which
+    # an unrelated user or another module's dependency can pull in)
+    # puts `getenforce` and `sestatus` on PATH while the running
+    # kernel has no SELinux support. The original `command -v` check
+    # then reported "SELinux installed but disabled" and offered a
+    # fix that told the user to edit /etc/selinux/config — a file
+    # that doesn't exist on Debian. Active misdirection.
+    #
+    # /sys/fs/selinux/enforce only exists when the kernel was built
+    # with CONFIG_SECURITY_SELINUX=y AND the LSM is loaded; that is
+    # the canonical "SELinux is real on this host" signal.
+    [[ -e /sys/fs/selinux/enforce ]] || return 1
     check_command getenforce || check_command sestatus
 }
 

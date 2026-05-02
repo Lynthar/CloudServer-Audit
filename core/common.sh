@@ -596,7 +596,28 @@ get_current_ssh_ip() {
 }
 
 get_ssh_port() {
-    local port=$(grep -E "^Port\s+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+    # Effective SSH port. Prefer `sshd -T` because it resolves both
+    # Include directives and the /etc/ssh/sshd_config.d/ drop-in
+    # directory the way sshd actually loads them; on Debian 12+ a
+    # cloud-init drop-in commonly overrides Port=, and grepping only
+    # the main sshd_config produces a stale answer (downstream callers
+    # in fail2ban / ufw then whitelist the wrong port).
+    local port=""
+    if command -v sshd &>/dev/null; then
+        # sshd -T outputs lowercase directives, one per line.
+        port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+    fi
+    if [[ -z "$port" ]]; then
+        # Fallback when sshd -T is unavailable (no openssh-server, or
+        # config syntax error): scan main file plus drop-ins, taking
+        # the last occurrence (sshd uses first-wins across the merged
+        # file, but for the fallback we accept the simpler last-wins
+        # since the common case is a single Port= line anywhere).
+        port=$(grep -hE "^[[:space:]]*Port[[:space:]]+" \
+            /etc/ssh/sshd_config \
+            /etc/ssh/sshd_config.d/*.conf 2>/dev/null | \
+            tail -1 | awk '{print $2}')
+    fi
     echo "${port:-22}"
 }
 

@@ -345,13 +345,22 @@ _fs_check_sensitive_file() {
         return 1
     fi
 
-    # Check if permissions are too permissive
-    # Convert to octal numbers for comparison
+    # Check if permissions are too permissive (bitmask comparison).
+    #
+    # The previous arithmetic test `((actual_num > expected_num))` was
+    # WRONG: 0604 < 0640 numerically, but 0604 grants world-read where
+    # 0640 does not, so /etc/shadow at mode 604 silently passed this
+    # audit. Likewise 0046 (38) < 0640 (416) but 0046 grants world-
+    # write. The correct test is: does `actual` set any bit that
+    # `expected` does not? — `actual & ~expected`. Mask to the low 12
+    # bits so setuid/setgid/sticky in `actual` still flag (they are
+    # legitimately surprising on these files), without false-flagging
+    # ad-hoc high bits if stat ever printed them.
     local actual_num=$((8#$actual))
     local expected_num=$((8#$expected))
+    local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
 
-    # If actual permissions are more permissive than expected
-    if ((actual_num > expected_num)); then
+    if (( extra_bits != 0 )); then
         echo "$file:$actual:$expected"
         return 1
     fi
@@ -759,6 +768,27 @@ _fs_audit_sensitive_perms() {
         fi
     done
 
+    # Drop-in directories. The static FS_SENSITIVE_FILES list cannot
+    # use globs, so files dropped into /etc/sudoers.d/ or
+    # /etc/ssh/sshd_config.d/ at install time (cloud-init, Ansible,
+    # kubeadm, etc.) were not audited. A 666 file in /etc/sudoers.d/
+    # is a direct privilege-escalation primitive yet was passing
+    # cleanly. Same drop-in blindness pattern as the sshd_config.d
+    # bug this whole audit pass was seeded by.
+    local _drop
+    for _drop in /etc/sudoers.d/*; do
+        [[ -f "$_drop" ]] || continue
+        local result
+        result=$(_fs_check_sensitive_file "$_drop" "440")
+        [[ -n "$result" ]] && issues+=("$result")
+    done
+    for _drop in /etc/ssh/sshd_config.d/*; do
+        [[ -f "$_drop" ]] || continue
+        local result
+        result=$(_fs_check_sensitive_file "$_drop" "644")
+        [[ -n "$result" ]] && issues+=("$result")
+    done
+
     if [[ ${#issues[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues[@]}" | head -5 | tr '\n' ' ')
         local check=$(create_check_json \
@@ -1024,19 +1054,28 @@ _fs_fix_sensitive_perms() {
     local fixed=0
     local failed=0
 
-    for file in "${!FS_SENSITIVE_FILES[@]}"; do
-        local expected="${FS_SENSITIVE_FILES[$file]}"
-
-        if [[ ! -f "$file" ]]; then
-            continue
-        fi
+    # Single inner loop reused for both the static FS_SENSITIVE_FILES
+    # entries and the drop-in directories. Pulled into a helper so the
+    # bitmask logic stays in one place.
+    _fs_fix_one() {
+        local file="$1"
+        local expected="$2"
+        [[ -f "$file" ]] || return 0
 
         local actual
         actual=$(stat -c "%a" "$file" 2>/dev/null)
+        [[ -z "$actual" ]] && return 0
         local actual_num=$((8#$actual))
         local expected_num=$((8#$expected))
 
-        if ((actual_num > expected_num)); then
+        # Same bitmask test as _fs_check_sensitive_file — chmod whenever
+        # the file has any bit not in the expected mask. The original
+        # arithmetic `((actual > expected))` failed to fix files like
+        # /etc/shadow at 0604 (world-readable but numerically smaller
+        # than the 0640 expected mask) — the audit reported the issue
+        # via the bitmask check above, but the fix never ran.
+        local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
+        if (( extra_bits != 0 )); then
             print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$expected")"
             if chmod "$expected" "$file" 2>/dev/null; then
                 ((fixed++))
@@ -1046,7 +1085,27 @@ _fs_fix_sensitive_perms() {
                 print_error "$(i18n 'filesystem.file_fix_failed' "file=$file")"
             fi
         fi
+    }
+
+    for file in "${!FS_SENSITIVE_FILES[@]}"; do
+        _fs_fix_one "$file" "${FS_SENSITIVE_FILES[$file]}"
     done
+
+    # Mirror the audit-side drop-in expansion. /etc/sudoers.d/* should
+    # be 0440 (matching the sudoers main file); /etc/ssh/sshd_config.d/*
+    # should be 0644 (matching sshd_config). Without this, the fix
+    # path is silently a no-op for files the audit just flagged.
+    local _drop
+    for _drop in /etc/sudoers.d/*; do
+        [[ -f "$_drop" ]] || continue
+        _fs_fix_one "$_drop" "440"
+    done
+    for _drop in /etc/ssh/sshd_config.d/*; do
+        [[ -f "$_drop" ]] || continue
+        _fs_fix_one "$_drop" "644"
+    done
+
+    unset -f _fs_fix_one
 
     if ((fixed > 0)); then
         print_ok "$(i18n 'filesystem.perms_fixed' "count=$fixed")"

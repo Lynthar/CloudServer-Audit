@@ -118,9 +118,15 @@ _is_suspicious_username() {
     return 1
 }
 
-# Get all users with UID 0 (except root)
+# Get all users with UID 0 (except root).
+# Uses `getent passwd` rather than reading /etc/passwd directly: on
+# hosts joined to LDAP/AD/SSSD, a UID-0 entry coming from a directory
+# backend never appears in /etc/passwd, so the original /etc/passwd
+# scan missed exactly the kind of UID-0 backdoor that prompted this
+# check in the first place. getent walks the full NSS chain and emits
+# the same colon-delimited format.
 _find_uid0_users() {
-    awk -F: '$3 == 0 && $1 != "root" { print $1 }' /etc/passwd 2>/dev/null
+    getent passwd 2>/dev/null | awk -F: '$3 == 0 && $1 != "root" { print $1 }'
 }
 
 # Get users with empty passwords that can login
@@ -166,7 +172,7 @@ _find_system_users_with_shells() {
         if _has_login_shell "$shell"; then
             suspicious+=("$user|$uid|$shell")
         fi
-    done < /etc/passwd
+    done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${suspicious[@]}"
 }
@@ -309,7 +315,7 @@ _find_recent_users() {
                 recent+=("$user|$uid|$created|$home")
             fi
         fi
-    done < /etc/passwd
+    done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${recent[@]}"
 }
@@ -356,7 +362,7 @@ _analyze_ssh_keys() {
         done < "$authkeys"
 
         findings+=("$user|$key_count|$key_perms|$perms_ok|$suspicious_keys|$authkeys")
-    done < /etc/passwd
+    done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${findings[@]}"
 }
@@ -374,7 +380,7 @@ _find_suspicious_users() {
             _has_login_shell "$shell" && has_shell="yes"
             suspicious+=("$user|$uid|$shell|$has_shell")
         fi
-    done < /etc/passwd
+    done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${suspicious[@]}"
 }
@@ -398,7 +404,7 @@ _find_unusual_home() {
                 fi
                 ;;
         esac
-    done < /etc/passwd
+    done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${unusual[@]}"
 }

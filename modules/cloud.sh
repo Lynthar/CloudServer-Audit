@@ -174,20 +174,51 @@ _detect_cloud_provider() {
         esac
     fi
 
-    # Check metadata endpoints (careful - some may not respond)
+    # Check metadata endpoints. The previous implementation used
+    # `curl -s ... &>/dev/null` and tested the curl exit code, but
+    # without `-f` curl exits 0 on any HTTP response (including 401);
+    # on AWS instances with IMDSv2 enforced (the default since 2024)
+    # an unauthenticated GET returns 401 yet was treated as success.
+    # Fix: try an IMDSv2 token handshake for AWS, use `curl -fs` so
+    # HTTP errors fail the probe, and gate each endpoint on its
+    # provider-specific signature so a spurious response on one IP
+    # cannot reclassify another provider.
     if [[ "$provider" == "unknown" ]]; then
-        # AWS/Alibaba metadata
-        if curl -s --connect-timeout 1 -m 2 http://169.254.169.254/latest/meta-data/ &>/dev/null; then
-            if curl -s --connect-timeout 1 -m 2 http://100.100.100.200/latest/meta-data/ &>/dev/null; then
-                provider="alibaba"
-            else
-                provider="aws"
-            fi
-        # Azure metadata
-        elif curl -s --connect-timeout 1 -m 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" &>/dev/null; then
+        # AWS IMDSv2 (token-required path).
+        local _aws_token
+        _aws_token=$(curl -fs -X PUT --connect-timeout 1 -m 2 \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+            http://169.254.169.254/latest/api/token 2>/dev/null) || true
+        if [[ -n "$_aws_token" ]] && \
+            curl -fs --connect-timeout 1 -m 2 \
+            -H "X-aws-ec2-metadata-token: $_aws_token" \
+            http://169.254.169.254/latest/meta-data/ >/dev/null 2>&1; then
+            provider="aws"
+        # Alibaba IMDS lives on a separate IP, so probe it
+        # independently rather than as a sub-test of the EC2 endpoint
+        # (the previous nested test could misclassify AWS as Alibaba
+        # when 100.100.* happened to respond, or vice versa).
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://100.100.100.200/latest/meta-data/ >/dev/null 2>&1; then
+            provider="alibaba"
+        # IMDSv1-only AWS (rare on new instances) — accept only when
+        # the GET actually succeeds (HTTP 200), i.e. the instance has
+        # IMDSv1 explicitly enabled.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://169.254.169.254/latest/meta-data/ >/dev/null 2>&1; then
+            provider="aws"
+        # Azure: header is required (note the space after the colon —
+        # both forms are accepted) and path is /metadata/instance.
+        elif curl -fs --connect-timeout 1 -m 2 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+            >/dev/null 2>&1; then
             provider="azure"
-        # GCP metadata
-        elif curl -s --connect-timeout 1 -m 2 -H "Metadata-Flavor: Google" http://169.254.169.254/computeMetadata/v1/ &>/dev/null; then
+        # GCP: requires Metadata-Flavor: Google AND the
+        # /computeMetadata/v1/ path. Without -f, GCP's 301-on-missing-
+        # header redirect was previously treated as success.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            -H "Metadata-Flavor: Google" \
+            http://169.254.169.254/computeMetadata/v1/ >/dev/null 2>&1; then
             provider="gcp"
         fi
     fi
