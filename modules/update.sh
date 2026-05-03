@@ -33,13 +33,46 @@ _update_unattended_installed() {
     dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"
 }
 
-# Check if unattended-upgrades is enabled
+# Read from merged apt-config dump (not 20auto-upgrades directly) so drop-in overrides are caught.
+_update_unattended_periodic_from_dump() {
+    local val
+    val=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$1")
+    [[ "$val" == "1" ]]
+}
+
+# Match list elements (`Key:: "value";`) only; skip the empty-list anchor (`Key "";`).
+_update_unattended_origins_from_dump() {
+    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: "[^"]+";' <<<"$1"
+}
+
+# Echoes ok|service_disabled|periodic_off|no_origins|unknown; returns 0 iff ok.
+_update_unattended_status() {
+    if ! systemctl is-enabled unattended-upgrades &>/dev/null; then
+        echo "service_disabled"
+        return 1
+    fi
+    if ! command -v apt-config >/dev/null 2>&1; then
+        echo "unknown"
+        return 1
+    fi
+    local dump
+    dump=$(apt-config dump 2>/dev/null) || { echo "unknown"; return 1; }
+
+    if ! _update_unattended_periodic_from_dump "$dump"; then
+        echo "periodic_off"
+        return 1
+    fi
+    if ! _update_unattended_origins_from_dump "$dump"; then
+        echo "no_origins"
+        return 1
+    fi
+
+    echo "ok"
+    return 0
+}
+
 _update_unattended_enabled() {
-    # Check if the service is enabled
-    systemctl is-enabled unattended-upgrades &>/dev/null && \
-    # Check if auto-upgrade is configured
-    [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]] && \
-    grep -q 'APT::Periodic::Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null
+    [[ "$(_update_unattended_status)" == "ok" ]]
 }
 
 # Check if system reboot is required
@@ -207,7 +240,10 @@ _update_audit_unattended() {
         return
     fi
 
-    if _update_unattended_enabled; then
+    local status
+    status=$(_update_unattended_status)
+
+    if [[ "$status" == "ok" ]]; then
         local check=$(create_check_json \
             "update.unattended_enabled" \
             "update" \
@@ -220,13 +256,25 @@ _update_audit_unattended() {
         state_add_check "$check"
         print_ok "$(i18n 'update.unattended_enabled')"
     else
+        local reason_desc
+        case "$status" in
+            service_disabled)
+                reason_desc="systemd unit unattended-upgrades is not enabled" ;;
+            periodic_off)
+                reason_desc="APT::Periodic::Unattended-Upgrade is not 1 in merged apt config (check 20auto-upgrades and drop-ins)" ;;
+            no_origins)
+                reason_desc="merged Unattended-Upgrade::Origins-Pattern/Allowed-Origins is empty (check 50unattended-upgrades and drop-ins)" ;;
+            *)
+                reason_desc="unattended-upgrades installed but not effective" ;;
+        esac
+
         local check=$(create_check_json \
             "update.unattended_disabled" \
             "update" \
             "medium" \
             "failed" \
             "$(i18n 'update.unattended_disabled')" \
-            "unattended-upgrades installed but not enabled" \
+            "$reason_desc" \
             "$(i18n 'update.fix_install_unattended')" \
             "update.enable_unattended")
         state_add_check "$check"

@@ -23,6 +23,29 @@ _baseline_apparmor_installed() {
     check_command aa-status || check_command apparmor_status
 }
 
+# Echoes "<enforced>:<complain>" — empty fields default to 0 in caller.
+# Tries machine-readable `aa-status --json` first (available on Debian 12+),
+# then falls back to the human-readable form under LC_ALL=C so the regex
+# doesn't fail on hosts running zh_CN.UTF-8 / de_DE.UTF-8 / etc.
+_baseline_apparmor_count_profiles() {
+    local enforced complain json
+
+    if json=$(aa-status --json 2>/dev/null) && [[ -n "$json" ]]; then
+        enforced=$(echo "$json" | jq -r '[.profiles[]? | select(. == "enforce")] | length' 2>/dev/null)
+        complain=$(echo "$json" | jq -r '[.profiles[]? | select(. == "complain")] | length' 2>/dev/null)
+        if [[ "$enforced" =~ ^[0-9]+$ && "$complain" =~ ^[0-9]+$ ]]; then
+            echo "${enforced}:${complain}"
+            return 0
+        fi
+    fi
+
+    local text
+    text=$(LC_ALL=C aa-status 2>/dev/null) || return 1
+    enforced=$(echo "$text" | grep -E "^\s*[0-9]+ profiles are in enforce mode" | grep -oE "[0-9]+" | head -1)
+    complain=$(echo "$text" | grep -E "^\s*[0-9]+ profiles are in complain mode" | grep -oE "[0-9]+" | head -1)
+    echo "${enforced:-0}:${complain:-0}"
+}
+
 _baseline_apparmor_get_status() {
     if ! _baseline_apparmor_installed; then
         echo "not_installed"
@@ -30,10 +53,7 @@ _baseline_apparmor_get_status() {
     fi
 
     if _baseline_apparmor_enabled; then
-        # Get profile stats
-        local enforced=$(aa-status 2>/dev/null | grep -E "^\s*[0-9]+ profiles are in enforce mode" | grep -oE "[0-9]+" | head -1)
-        local complain=$(aa-status 2>/dev/null | grep -E "^\s*[0-9]+ profiles are in complain mode" | grep -oE "[0-9]+" | head -1)
-        echo "enabled:${enforced:-0}:${complain:-0}"
+        echo "enabled:$(_baseline_apparmor_count_profiles)"
     else
         echo "disabled"
     fi

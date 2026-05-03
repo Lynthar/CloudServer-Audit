@@ -457,6 +457,8 @@
     "tunnels_configured": "{count} tunnel(s) configured",
     "no_tunnels": "No Cloudflare tunnels configured",
     "no_tunnels_desc": "No tunnels found in cloudflared",
+    "tunnel_list_unavailable": "Cloudflared tunnel list unavailable",
+    "tunnel_list_unavailable_desc": "cloudflared tunnel list requires API authentication (~/.cloudflared/cert.pem); local tunnels via systemd unit remain unaffected",
     "fix_generate_config": "Generate configuration template",
     "fix_install_service": "Install systemd service",
     "fix_setup_service": "Consider configuring as systemd service",

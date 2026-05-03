@@ -33,10 +33,19 @@ _nginx_has_catchall() {
         return $?
     fi
 
-    # Fallback: scan standard directories when nginx -T is unavailable
-    # or the current config fails to parse.
-    grep -rE "default_server.*;" "$NGINX_SITES_ENABLED" 2>/dev/null | grep -q "return 444" || \
-    grep -rE "listen.*default_server" "$NGINX_CONF_DIR" 2>/dev/null | head -1 | xargs -I{} grep -l "return 444" 2>/dev/null
+    # Fallback when nginx -T is unavailable. Imprecise — doesn't track
+    # server-block scope — so accepts any file that contains both a
+    # default_server listen and a return 444 directive. The original
+    # implementation chained `grep -r ... | head -1 | xargs -I{} grep`
+    # which fed `xargs` the entire `path:matched-line` string from
+    # grep -r, looking for a file literally named "path:matched-line"
+    # and silently returning success for the wrong reason.
+    local f
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        grep -qE "^[[:space:]]*return[[:space:]]+444" "$f" 2>/dev/null && return 0
+    done < <(grep -rlE "listen.*default_server" "$NGINX_CONF_DIR" 2>/dev/null)
+    return 1
 }
 
 _nginx_test_config() {

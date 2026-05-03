@@ -714,43 +714,58 @@ _webapp_ssl_self_signed() {
 _webapp_sensitive_files() {
     local findings=()
 
+    # Build a single find name-expression once: -name a -o -name b -o ...
+    # The original ran one find per pattern (20+ calls per web root) and
+    # bypassed _fs_run_find/_FS_PRUNE_PATHS — the project-wide invariants
+    # documented in CLAUDE.md.
+    local name_expr=()
+    local first=1 path
+    for path in "${SENSITIVE_PATHS[@]}"; do
+        if (( first )); then
+            name_expr+=( -name "$path" )
+            first=0
+        else
+            name_expr+=( -o -name "$path" )
+        fi
+    done
+
+    local prune_args=()
+    _fs_build_prune_args prune_args
+
     for root_pattern in "${WEB_ROOTS[@]}"; do
+        local root
+        # shellcheck disable=SC2086 # WEB_ROOTS contains glob patterns we want expanded
         for root in $root_pattern; do
             [[ -d "$root" ]] || continue
-
-            for path in "${SENSITIVE_PATHS[@]}"; do
-                # Check if file/directory exists
-                local full_path="$root/$path"
-
-                if [[ -e "$full_path" ]]; then
-                    findings+=("$full_path")
-                fi
-
-                # Also check with find for pattern matching
-                while IFS= read -r -d '' found; do
-                    if ! printf '%s\n' "${findings[@]}" | grep -q "^$found$"; then
-                        findings+=("$found")
-                    fi
-                done < <(find "$root" -maxdepth 3 -name "$path" -print0 2>/dev/null | head -20)
-            done
+            while IFS= read -r -d '' found; do
+                findings+=("$found")
+            done < <(_fs_run_find "webapp-sensitive" \
+                find "$root" -maxdepth 3 "${prune_args[@]}" \
+                \( "${name_expr[@]}" \) -print0 2>/dev/null)
         done
     done
 
-    printf '%s\n' "${findings[@]}" | head -50
+    printf '%s\n' "${findings[@]}" | sort -u | head -50
 }
 
 # Check for backup files
 _webapp_backup_files() {
     local findings=()
 
+    local prune_args=()
+    _fs_build_prune_args prune_args
+
     for root_pattern in "${WEB_ROOTS[@]}"; do
+        local root
+        # shellcheck disable=SC2086 # WEB_ROOTS contains glob patterns we want expanded
         for root in $root_pattern; do
             [[ -d "$root" ]] || continue
 
             # Common backup patterns
             while IFS= read -r -d '' file; do
                 findings+=("$file")
-            done < <(find "$root" -maxdepth 4 \( \
+            done < <(_fs_run_find "webapp-backup" \
+                find "$root" -maxdepth 4 "${prune_args[@]}" \( \
                 -name "*.bak" -o \
                 -name "*.backup" -o \
                 -name "*.old" -o \

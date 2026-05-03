@@ -117,6 +117,20 @@ declare -a SAFE_SYSTEM_PROCESSES=(
     "mongod"
     "docker"
     "containerd"
+    # Virtualization guest tools — most VPS providers ship one of these
+    # by default and several superficially match SUSPICIOUS_AGENT_PATTERNS
+    # (notably spice-vdagent → `.*[Aa]gent.*`). qemu-ga is included as
+    # belt-and-suspenders even though its comm doesn't currently match.
+    "qemu-ga"
+    "spice-vdagent"
+    "spice-vdagentd"
+    "vmtoolsd"
+    "VBoxService"
+    "VBoxClient"
+    "xe-daemon"
+    "hv_kvp_daemon"
+    "hv_vss_daemon"
+    "hv_fcopy_daemon"
 )
 
 # ==============================================================================

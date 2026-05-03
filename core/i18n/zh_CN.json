@@ -457,6 +457,8 @@
     "tunnels_configured": "已配置 {count} 个隧道",
     "no_tunnels": "未配置 Cloudflare 隧道",
     "no_tunnels_desc": "cloudflared 中未找到隧道",
+    "tunnel_list_unavailable": "无法枚举 Cloudflared 隧道列表",
+    "tunnel_list_unavailable_desc": "cloudflared tunnel list 需要 API 认证 (~/.cloudflared/cert.pem),通过 systemd 服务运行的本地隧道不受影响",
     "fix_generate_config": "生成配置模板",
     "fix_install_service": "安装 systemd 服务",
     "fix_setup_service": "建议配置为 systemd 服务",

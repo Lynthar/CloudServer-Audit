@@ -20,19 +20,68 @@ _cloudflared_installed() {
 }
 
 _cloudflared_service_active() {
-    systemctl is-active --quiet "$CLOUDFLARED_SERVICE" 2>/dev/null || \
-    systemctl is-active --quiet "cloudflared-tunnel" 2>/dev/null || \
-    systemctl is-active --quiet "cloudflared@*" 2>/dev/null
+    if systemctl is-active --quiet "$CLOUDFLARED_SERVICE" 2>/dev/null; then
+        return 0
+    fi
+    if systemctl is-active --quiet "cloudflared-tunnel" 2>/dev/null; then
+        return 0
+    fi
+    # Template instances (cloudflared@<name>.service): plain `is-active` with
+    # a quoted glob has implementation-defined behavior on zero matches
+    # (systemd issue #6379), so use list-units which is deterministic.
+    [[ -n "$(systemctl list-units --type=service --state=running --no-legend 'cloudflared@*' 2>/dev/null)" ]]
+}
+
+# Pure-data variant of _cloudflared_find_user_config for testability.
+# $1: getent-passwd content (multi-line). Echoes the first
+# /home/<user>/.cloudflared/config.yml that exists, exits 1 if none.
+_cloudflared_find_user_config_from_passwd() {
+    local passwd_text="$1"
+    local user pwd uid gid gecos home shell
+    while IFS=: read -r user pwd uid gid gecos home shell; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
+        [[ "$uid" -lt 1000 ]] && continue
+        [[ -n "$home" && -f "$home/.cloudflared/config.yml" ]] || continue
+        echo "$home/.cloudflared/config.yml"
+        return 0
+    done <<<"$passwd_text"
+    return 1
+}
+
+# Walk real users via getent (covers LDAP/SSSD/AD too) for ~/.cloudflared/config.yml.
+# Plain "$HOME/.cloudflared/config.yml" was always /root/.cloudflared/config.yml
+# under sudo, missing every user-mode tunnel install.
+_cloudflared_find_user_config() {
+    _cloudflared_find_user_config_from_passwd "$(getent passwd 2>/dev/null)"
+}
+
+# First config path found: /etc/cloudflared/config.yml, then any
+# /home/*/.cloudflared/config.yml. Empty + exit 1 if none exists.
+_cloudflared_find_config() {
+    if [[ -f "$CLOUDFLARED_CONFIG" ]]; then
+        echo "$CLOUDFLARED_CONFIG"
+        return 0
+    fi
+    _cloudflared_find_user_config
 }
 
 _cloudflared_has_config() {
-    [[ -f "$CLOUDFLARED_CONFIG" ]] || \
-    [[ -f "$HOME/.cloudflared/config.yml" ]] || \
-    [[ -d "/etc/cloudflared" && -n "$(ls -A /etc/cloudflared/*.yml 2>/dev/null)" ]]
+    [[ -f "$CLOUDFLARED_CONFIG" ]] && return 0
+    if [[ -d "/etc/cloudflared" ]] && compgen -G "/etc/cloudflared/*.yml" >/dev/null 2>&1; then
+        return 0
+    fi
+    _cloudflared_find_user_config >/dev/null 2>&1
 }
 
+# Echoes "<id> <name>" for each tunnel; non-zero exit signals enumeration
+# failure (e.g. cloudflared can't find cert.pem) — distinct from a valid
+# query that returned zero tunnels.
 _cloudflared_get_tunnels() {
-    cloudflared tunnel list 2>/dev/null | tail -n +2 | awk '{print $1, $2}'
+    local out
+    if ! out=$(cloudflared tunnel list 2>/dev/null); then
+        return 1
+    fi
+    echo "$out" | tail -n +2 | awk '{print $1, $2}'
 }
 
 _cloudflared_tunnel_running() {
@@ -157,13 +206,9 @@ _cloudflared_audit_config() {
         return
     fi
 
-    # Find the config file
-    local config=""
-    if [[ -f "$CLOUDFLARED_CONFIG" ]]; then
-        config="$CLOUDFLARED_CONFIG"
-    elif [[ -f "$HOME/.cloudflared/config.yml" ]]; then
-        config="$HOME/.cloudflared/config.yml"
-    fi
+    # Find the config file (system-wide first, then any user home via getent)
+    local config
+    config=$(_cloudflared_find_config 2>/dev/null) || config=""
 
     if [[ -n "$config" ]]; then
         local issues=$(_cloudflared_check_ingress_security "$config")
@@ -197,9 +242,26 @@ _cloudflared_audit_config() {
 }
 
 _cloudflared_audit_tunnels() {
-    local tunnels=$(_cloudflared_get_tunnels)
+    local tunnels rc
+    tunnels=$(_cloudflared_get_tunnels)
+    rc=$?
 
-    if [[ -n "$tunnels" ]]; then
+    if [[ $rc -ne 0 ]]; then
+        # Enumeration failed (typically: ~/.cloudflared/cert.pem missing →
+        # API auth unavailable). Local tunnels via systemd remain unaffected,
+        # so this is informational, not a security failure.
+        local check=$(create_check_json \
+            "cloudflared.tunnel_list_unavailable" \
+            "cloudflared" \
+            "info" \
+            "passed" \
+            "$(i18n 'cloudflared.tunnel_list_unavailable')" \
+            "$(i18n 'cloudflared.tunnel_list_unavailable_desc')" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_msg "$(i18n 'cloudflared.tunnel_list_unavailable')"
+    elif [[ -n "$tunnels" ]]; then
         local tunnel_count=$(echo "$tunnels" | wc -l)
         local check=$(create_check_json \
             "cloudflared.tunnels_configured" \

@@ -745,6 +745,98 @@ confirm_critical() {
 }
 
 # ==============================================================================
+# Filesystem-walk Helpers (shared across modules)
+# ==============================================================================
+
+# Paths to prune from filesystem-walk scans.
+#
+# `find -xdev` already skips anything not on the root filesystem, so
+# kernel/proc/sys/run/snap-squashfs mounts are handled automatically.
+# This list is for trees that DO live on the root filesystem but would
+# either swamp the audit with container-image content or take so long
+# to traverse that the run hangs:
+#   - /var/lib/docker        : overlay2/<sha>/diff/* contains thousands
+#                              of files inherited from Docker images,
+#                              including legitimate-inside-the-image
+#                              SUID binaries that would be flagged as
+#                              host-level anomalies
+#   - /var/lib/containerd    : same as above, for containerd
+#   - /var/lib/containers    : podman / buildah image storage
+#   - /var/lib/lxd           : LXD container rootfs cache
+#   - /var/lib/lxcfs         : LXC fuse layer
+#   - /var/lib/snapd         : snap state + image cache (huge)
+#   - /snap                  : snap mount point (squashfs is on its
+#                              own fs and -xdev skips, but if root is
+#                              a single fs the directory entries
+#                              themselves can confuse find on some
+#                              kernels — prune defensively)
+declare -ga _FS_PRUNE_PATHS=(
+    /var/lib/docker
+    /var/lib/containerd
+    /var/lib/containers
+    /var/lib/lxd
+    /var/lib/lxcfs
+    /var/lib/snapd
+    /snap
+)
+
+# Hard timeout for any single filesystem walk. Defaults to 60 seconds;
+# operators with very large filesystems can override at audit time:
+#     VPSSEC_FS_TIMEOUT=300 sudo ./vpssec audit
+# A scan that hits the timeout returns whatever output it has gathered
+# so far; the audit continues and a warning is logged. Better to
+# report partial findings than to hang an audit indefinitely.
+_FS_FIND_TIMEOUT="${VPSSEC_FS_TIMEOUT:-60}"
+
+# Build the prune-args portion of a find expression from
+# _FS_PRUNE_PATHS. Each path becomes `-path P -prune -o`. Caller
+# concatenates the result before its `-type ... -print0` portion:
+#
+#     local prune_args=()
+#     _fs_build_prune_args prune_args
+#     find / -xdev "${prune_args[@]}" -type f -perm -4000 -print0 ...
+#
+# The single source of truth (the array above) keeps every walking
+# helper from drifting out of sync — three filesystem.sh scans used to
+# omit container prunes entirely, so world-writable / no-owner walks
+# flagged Docker image content as host findings.
+_fs_build_prune_args() {
+    local -n _out=$1
+    _out=()
+    local p
+    for p in "${_FS_PRUNE_PATHS[@]}"; do
+        _out+=( -path "$p" -prune -o )
+    done
+}
+
+# Run a find invocation under a hard timeout. Output is forwarded to
+# stdout (so callers can wire it into a process substitution feeding
+# `while read`). On timeout (exit 124) we log a warning but return 0
+# so the audit doesn't bail; partial output already reached the
+# consumer. Caller is responsible for the rest of the find arguments.
+#
+# `timeout` is part of GNU coreutils, present by default on every
+# supported distro (Debian/Ubuntu/RHEL/Rocky/Alma). The graceful
+# fallback below is for niche environments — minimal containers,
+# macOS dev shells running tests — where coreutils may be absent;
+# the audit still runs, just without the safety net.
+_fs_run_find() {
+    local label="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$_FS_FIND_TIMEOUT" "$@"
+        local rc=$?
+        if (( rc == 124 )); then
+            log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend."
+        fi
+    else
+        log_debug "timeout(1) unavailable; running '${label}' scan without time bound"
+        "$@"
+    fi
+    return 0
+}
+
+# ==============================================================================
 # Initialization
 # ==============================================================================
 

@@ -189,21 +189,46 @@ _find_system_users_with_shells() {
 # and missed the common Ansible/Terraform pattern of granting sudo via
 # a `%admins` group — guide mode would then insist the user create a
 # new admin account even though one existed via the group rule.
+# Pure-data variant of _group_all_members for testability.
+# $1: a getent-group line (`name:x:gid:m1,m2`)
+# $2: getent-passwd content (multi-line)
+_group_all_members_from_streams() {
+    local group_line="$1"
+    local passwd_text="$2"
+
+    local name pwd gid secondary
+    IFS=: read -r name pwd gid secondary <<<"$group_line"
+
+    if [[ -n "$secondary" ]]; then
+        echo "$secondary" | tr ',' '\n'
+    fi
+    if [[ -n "$gid" ]]; then
+        awk -F: -v g="$gid" '$4 == g {print $1}' <<<"$passwd_text"
+    fi
+}
+
+# Returns all users in the named group: secondary members from /etc/group's
+# 4th field PLUS users with primary GID matching the group's GID. Plain
+# `getent group <g> | cut -d: -f4` misses the latter, so `useradd -g sudo bob`
+# was silently absent from the audit list.
+_group_all_members() {
+    local group="$1"
+    local group_line passwd
+    group_line=$(getent group "$group" 2>/dev/null) || return 0
+    passwd=$(getent passwd 2>/dev/null)
+    _group_all_members_from_streams "$group_line" "$passwd"
+}
+
 _find_sudo_users() {
     local sudo_users=()
 
-    # Check sudo group
-    if getent group sudo &>/dev/null; then
-        local members=$(getent group sudo | cut -d: -f4)
-        IFS=',' read -ra sudo_users <<< "$members"
-    fi
-
-    # Check wheel group
-    if getent group wheel &>/dev/null; then
-        local wheel_members=$(getent group wheel | cut -d: -f4)
-        IFS=',' read -ra wheel_arr <<< "$wheel_members"
-        sudo_users+=("${wheel_arr[@]}")
-    fi
+    # Check sudo and wheel groups (Debian/Ubuntu vs RHEL/CentOS).
+    local g
+    for g in sudo wheel; do
+        local arr=()
+        mapfile -t arr < <(_group_all_members "$g")
+        sudo_users+=("${arr[@]}")
+    done
 
     # Scan sudoers files for direct user rules AND %group rules.
     local sudoers_files=()
@@ -232,15 +257,10 @@ _find_sudo_users() {
             if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]+[^=]+= ]]; then
                 local token="${BASH_REMATCH[1]}"
                 if [[ "$token" == %* ]]; then
-                    # Group rule — expand members via getent.
                     local group_name="${token#%}"
-                    local group_members
-                    group_members=$(getent group "$group_name" 2>/dev/null | cut -d: -f4)
-                    if [[ -n "$group_members" ]]; then
-                        local -a members_arr=()
-                        IFS=',' read -ra members_arr <<< "$group_members"
-                        sudo_users+=("${members_arr[@]}")
-                    fi
+                    local -a members_arr=()
+                    mapfile -t members_arr < <(_group_all_members "$group_name")
+                    sudo_users+=("${members_arr[@]}")
                 else
                     sudo_users+=("$token")
                 fi
@@ -448,10 +468,45 @@ _check_password_policy() {
     printf '%s\n' "${issues[@]}"
 }
 
+# Read the effective value of a pwquality.conf directive across the supplied files.
+# libpwquality reads /etc/security/pwquality.conf.d/*.conf in ASCII order with
+# last-write-wins semantics; this awk mirrors that. Strips inline `#` comments
+# and accepts the `key = value` form with arbitrary whitespace around the `=`.
+# Pure-data variant for unit tests; production wrapper enumerates real paths.
+_pwquality_get_directive_from_files() {
+    local key="$1"
+    shift
+    [[ $# -eq 0 ]] && return 0
+
+    awk -v k="$key" '
+        { sub(/[[:space:]]*#.*$/, "") }
+        $0 ~ ("^[[:space:]]*" k "[[:space:]]*=") {
+            split($0, a, "=")
+            v = a[2]
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            val = v
+        }
+        END { if (val != "") print val }
+    ' "$@"
+}
+
+_pwquality_get_directive() {
+    local key="$1"
+    local -a files=()
+    [[ -f /etc/security/pwquality.conf ]] && files+=(/etc/security/pwquality.conf)
+    if [[ -d /etc/security/pwquality.conf.d ]]; then
+        local f
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+            [[ -f "$f" ]] && files+=("$f")
+        done
+    fi
+    [[ ${#files[@]} -eq 0 ]] && return 0
+    _pwquality_get_directive_from_files "$key" "${files[@]}"
+}
+
 # Check password quality settings (pwquality.conf or pam_pwquality)
 _check_pwquality() {
     local issues=()
-    local pwquality_conf="/etc/security/pwquality.conf"
 
     # Check if pwquality is used in PAM
     local pam_uses_pwquality=false
@@ -466,18 +521,20 @@ _check_pwquality() {
         fi
     fi
 
-    # If pwquality.conf exists, check settings
-    if [[ -f "$pwquality_conf" ]]; then
-        local minlen=$(grep -E "^minlen" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+    # Check pwquality directives if any config source exists. Reads main
+    # pwquality.conf plus pwquality.conf.d/*.conf with last-write-wins
+    # semantics so drop-in policies (the recommended layout on Debian 11+
+    # and Ubuntu 22.04+) are honored.
+    if [[ -f /etc/security/pwquality.conf || -d /etc/security/pwquality.conf.d ]]; then
+        local minlen
+        minlen=$(_pwquality_get_directive minlen)
         if [[ -z "$minlen" || "$minlen" -lt 8 ]]; then
             issues+=("minlen=$minlen (should be at least 12)")
         fi
 
-        # Check for complexity requirements
-        local dcredit=$(grep -E "^dcredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-        local ucredit=$(grep -E "^ucredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-        local lcredit=$(grep -E "^lcredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-        local ocredit=$(grep -E "^ocredit" "$pwquality_conf" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        local dcredit ucredit
+        dcredit=$(_pwquality_get_directive dcredit)
+        ucredit=$(_pwquality_get_directive ucredit)
 
         # Negative values mean required, 0 or positive means not enforced
         if [[ -z "$dcredit" || "$dcredit" -ge 0 ]]; then

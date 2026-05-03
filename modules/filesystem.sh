@@ -59,97 +59,14 @@ declare -A FS_SENSITIVE_FILES=(
 # Maximum number of items to report (to prevent huge output)
 FS_MAX_REPORT_ITEMS=20
 
-# Paths to prune from filesystem-walk scans.
-#
-# `find -xdev` already skips anything not on the root filesystem, so
-# kernel/proc/sys/run/snap-squashfs mounts are handled automatically.
-# This list is for trees that DO live on the root filesystem but would
-# either swamp the audit with container-image content or take so long
-# to traverse that the run hangs:
-#   - /var/lib/docker        : overlay2/<sha>/diff/* contains thousands
-#                              of files inherited from Docker images,
-#                              including legitimate-inside-the-image
-#                              SUID binaries that would be flagged as
-#                              host-level anomalies
-#   - /var/lib/containerd    : same as above, for containerd
-#   - /var/lib/containers    : podman / buildah image storage
-#   - /var/lib/lxd           : LXD container rootfs cache
-#   - /var/lib/lxcfs         : LXC fuse layer
-#   - /var/lib/snapd         : snap state + image cache (huge)
-#   - /snap                  : snap mount point (squashfs is on its
-#                              own fs and -xdev skips, but if root is
-#                              a single fs the directory entries
-#                              themselves can confuse find on some
-#                              kernels — prune defensively)
-declare -ga _FS_PRUNE_PATHS=(
-    /var/lib/docker
-    /var/lib/containerd
-    /var/lib/containers
-    /var/lib/lxd
-    /var/lib/lxcfs
-    /var/lib/snapd
-    /snap
-)
-
-# Hard timeout for any single filesystem walk. Defaults to 60 seconds;
-# operators with very large filesystems can override at audit time:
-#     VPSSEC_FS_TIMEOUT=300 sudo ./vpssec audit
-# A scan that hits the timeout returns whatever output it has gathered
-# so far; the audit continues and a warning is logged. Better to
-# report partial findings than to hang an audit indefinitely.
-_FS_FIND_TIMEOUT="${VPSSEC_FS_TIMEOUT:-60}"
+# Filesystem-walk infrastructure (_FS_PRUNE_PATHS, _FS_FIND_TIMEOUT,
+# _fs_build_prune_args, _fs_run_find) lives in core/common.sh so any
+# module — webapp's web-root scans, malware's path probes — can use it
+# without depending on filesystem.sh being in the include set.
 
 # ==============================================================================
 # Filesystem Helper Functions
 # ==============================================================================
-
-# Build the prune-args portion of a find expression from
-# _FS_PRUNE_PATHS. Each path becomes `-path P -prune -o`. Caller
-# concatenates the result before its `-type ... -print0` portion:
-#
-#     local prune_args=()
-#     _fs_build_prune_args prune_args
-#     find / -xdev "${prune_args[@]}" -type f -perm -4000 -print0 ...
-#
-# The single source of truth (the array above) keeps the five scans
-# from drifting out of sync — three of them used to omit container
-# prunes entirely, so world-writable / no-owner scans flagged Docker
-# image content as host findings.
-_fs_build_prune_args() {
-    local -n _out=$1
-    _out=()
-    local p
-    for p in "${_FS_PRUNE_PATHS[@]}"; do
-        _out+=( -path "$p" -prune -o )
-    done
-}
-
-# Run a find invocation under a hard timeout. Output is forwarded to
-# stdout (so callers can wire it into a process substitution feeding
-# `while read`). On timeout (exit 124) we log a warning but return 0
-# so the audit doesn't bail; partial output already reached the
-# consumer. Caller is responsible for the rest of the find arguments.
-#
-# `timeout` is part of GNU coreutils, present by default on every
-# supported distro (Debian/Ubuntu/RHEL/Rocky/Alma). The graceful
-# fallback below is for niche environments — minimal containers,
-# macOS dev shells running tests — where coreutils may be absent;
-# the audit still runs, just without the safety net.
-_fs_run_find() {
-    local label="$1"
-    shift
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$_FS_FIND_TIMEOUT" "$@"
-        local rc=$?
-        if (( rc == 124 )); then
-            log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend."
-        fi
-    else
-        log_debug "timeout(1) unavailable; running '${label}' scan without time bound"
-        "$@"
-    fi
-    return 0
-}
 
 # Sanitize count value to ensure it's a single integer
 # Handles cases where grep -c returns multiline output
@@ -414,6 +331,59 @@ _fs_check_umask() {
     fi
 
     echo "${umask_value:-022}"
+}
+
+# Returns "yes" or "no" — the value of USERGROUPS_ENAB in /etc/login.defs.
+# Defaults to "yes" (the documented Debian/Ubuntu default) when the
+# directive is absent, since that's how pam_umask actually behaves.
+_fs_get_usergroups_enab() {
+    local val=""
+    if [[ -f /etc/login.defs ]]; then
+        val=$(grep -E "^USERGROUPS_ENAB" /etc/login.defs 2>/dev/null | awk '{print tolower($2)}')
+    fi
+    echo "${val:-yes}"
+}
+
+# Apply the USERGROUPS_ENAB transformation to a configured umask. When
+# USERGROUPS_ENAB=yes (Debian/Ubuntu default) and the user's uid equals
+# their primary gid (the standard private-group convention), pam_umask
+# rewrites the group mask bits to match the owner bits. So configured
+# 027 becomes effective 007, and the audit lying about "027 is set"
+# was the actual M15 user-facing bug.
+#
+# $1 = configured umask string (e.g. "027" or "0027")
+# $2 = "yes"|"no" (USERGROUPS_ENAB)
+# Echoes a 4-digit normalized effective umask.
+_fs_compute_effective_umask() {
+    local raw="$1"
+    local usergroups="${2:-no}"
+
+    [[ -z "$raw" ]] && raw="022"
+    # Normalize — keep only octal digits, then pad/truncate to 4.
+    raw="${raw//[^0-7]/}"
+    while [[ ${#raw} -lt 4 ]]; do raw="0$raw"; done
+    raw="${raw: -4}"
+
+    if [[ "${usergroups,,}" == "yes" ]]; then
+        # Group digit (pos 2) is replaced with owner digit (pos 1).
+        echo "${raw:0:1}${raw:1:1}${raw:1:1}${raw:3:1}"
+    else
+        echo "$raw"
+    fi
+}
+
+# Returns 0 if pam_umask is enabled in /etc/pam.d/common-session*.
+# pam_umask reading login.defs UMASK is what makes the configured
+# value actually take effect at session start; without it, only shell
+# rc files (/etc/profile, /etc/bash.bashrc) influence umask.
+_fs_check_pam_umask_enabled() {
+    local f
+    for f in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do
+        [[ -f "$f" ]] || continue
+        # Match "session ... pam_umask.so" while skipping commented lines.
+        grep -qE '^[[:space:]]*session[[:space:]]+[^#]*pam_umask\.so' "$f" 2>/dev/null && return 0
+    done
+    return 1
 }
 
 # Known legitimate binaries with capabilities (whitelist)
@@ -862,34 +832,46 @@ _fs_audit_tmp_mount() {
 }
 
 _fs_audit_umask() {
-    local umask_value
-    umask_value=$(_fs_check_umask)
+    local configured usergroups effective
+    configured=$(_fs_check_umask)
+    usergroups=$(_fs_get_usergroups_enab)
+    effective=$(_fs_compute_effective_umask "$configured" "$usergroups")
 
-    # umask 027 or 077 is recommended
-    if [[ "$umask_value" == "027" || "$umask_value" == "077" ]]; then
+    # Severity is decided on the EFFECTIVE umask (what actually applies
+    # at session start), not the literal value in login.defs. Otherwise
+    # configured=027 + USERGROUPS_ENAB=yes (Debian default) reports "OK"
+    # while real users get effective 007.
+    local desc="configured=$configured"
+    if [[ "$configured" != "$effective" ]]; then
+        desc="$desc, effective=$effective (USERGROUPS_ENAB=$usergroups rewrites group bits)"
+    fi
+
+    # OK = world denied (last digit = 7). Captures 027, 077, 007 (the
+    # USERGROUPS-rewritten form), and any other strict variant.
+    if [[ "$effective" =~ ^0[0-7][0-7]7$ ]]; then
         local check=$(create_check_json \
             "filesystem.umask_ok" \
             "filesystem" \
             "low" \
             "passed" \
             "$(i18n 'filesystem.umask_ok')" \
-            "umask=$umask_value" \
+            "$desc" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'filesystem.umask_ok') ($umask_value)"
-    elif [[ "$umask_value" == "022" ]]; then
+        print_ok "$(i18n 'filesystem.umask_ok') ($desc)"
+    elif [[ "$effective" == "0022" || "$effective" == "0002" ]]; then
         local check=$(create_check_json \
             "filesystem.umask_default" \
             "filesystem" \
             "low" \
             "failed" \
             "$(i18n 'filesystem.umask_default')" \
-            "umask=$umask_value (default, consider 027)" \
+            "$desc (consider 027)" \
             "Set umask to 027 in /etc/login.defs" \
-            "")
+            "filesystem.fix_umask")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'filesystem.umask_default') ($umask_value)"
+        print_severity "low" "$(i18n 'filesystem.umask_default') ($desc)"
     else
         local check=$(create_check_json \
             "filesystem.umask_weak" \
@@ -897,11 +879,29 @@ _fs_audit_umask() {
             "medium" \
             "failed" \
             "$(i18n 'filesystem.umask_weak')" \
-            "umask=$umask_value (too permissive)" \
+            "$desc (too permissive)" \
             "Set umask to 027 or 077" \
             "filesystem.fix_umask")
         state_add_check "$check"
-        print_severity "medium" "Weak umask: $umask_value"
+        print_severity "medium" "Weak umask: $desc"
+    fi
+
+    # pam_umask presence is informational — if absent, the UMASK setting
+    # in login.defs may not be applied at session start (only via shell
+    # rc files), so tell the user. No fix offered: PAM stack edits are
+    # too sensitive to auto-modify.
+    if ! _fs_check_pam_umask_enabled; then
+        local pam_check
+        pam_check=$(create_check_json \
+            "filesystem.pam_umask_disabled" \
+            "filesystem" \
+            "info" \
+            "passed" \
+            "pam_umask not enabled in common-session" \
+            "Without pam_umask, /etc/login.defs UMASK is only applied via shell rc files (/etc/profile etc), not at PAM session start" \
+            "" \
+            "")
+        state_add_check "$pam_check"
     fi
 }
 
@@ -1135,6 +1135,18 @@ _fs_fix_umask() {
         fi
 
         print_ok "$(i18n 'filesystem.umask_fixed')"
+
+        # Surface the USERGROUPS_ENAB interaction so the operator isn't
+        # surprised. With the Debian default (USERGROUPS_ENAB=yes +
+        # private user groups), pam_umask rewrites 027 to effective 007
+        # at session start. World access is still denied; the change
+        # is just that group bits mirror owner bits — harmless on a
+        # standard VPS where each user has their own private group.
+        local usergroups
+        usergroups=$(_fs_get_usergroups_enab)
+        if [[ "$usergroups" == "yes" ]]; then
+            print_info "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
+        fi
         return 0
     else
         print_error "$(i18n 'filesystem.login_defs_not_found')"
