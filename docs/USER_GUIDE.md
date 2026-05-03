@@ -221,7 +221,7 @@ systemctl restart sshd
 
 **为什么重要**: 过高的值使暴力破解更容易，过低可能影响正常使用
 
-**通过条件**: MaxAuthTries 设置为 3-6 之间
+**通过条件**: MaxAuthTries 设置为 4 或更小（推荐 3-4）
 
 **修复方法**:
 ```bash
@@ -482,8 +482,10 @@ rm /path/to/orphan/file
 - `curl ... | sh` 或 `wget ... | sh` - 从网络下载并执行
 - `base64 -d` - Base64 解码（常用于混淆）
 - `/dev/tcp/` - Bash 网络连接
-- `nc -e` - Netcat 反向 shell
-- 在 `/tmp` 中执行隐藏文件
+- `nc -e` 或 `ncat -e` - Netcat 反向 shell
+- `python -c ... import` / `perl -e` / `ruby -e` - 内联解释器执行
+- `\xNN` 形式 - 十六进制编码 payload
+- 在 `/tmp` 中执行隐藏文件（`/tmp/.`）
 
 **修复方法**:
 ```bash
@@ -557,9 +559,12 @@ ufw default allow outgoing
 | 3306 | MySQL | 仅限本地或内网 |
 | 5432 | PostgreSQL | 仅限本地或内网 |
 | 6379 | Redis | 仅限本地或内网 |
+| 11211 | Memcached | 仅限本地或内网 |
+| 5672 | RabbitMQ | 仅限本地或内网 |
 | 27017 | MongoDB | 仅限本地或内网 |
 | 9200 | Elasticsearch | 仅限本地或内网 |
 | 2375/2376 | Docker API | 绝对不要暴露 |
+| 8080 | HTTP 代理/管理后台 | 评估是否对外开放 |
 
 **修复方法**:
 ```bash
@@ -572,6 +577,37 @@ ufw allow from 10.0.0.0/8 to any port 3306
 # 3. 或者配置服务只监听本地
 # MySQL 示例：编辑 /etc/mysql/mysql.conf.d/mysqld.cnf
 # bind-address = 127.0.0.1
+```
+
+---
+
+### 4. IPv6 一致性检测
+
+**检测内容**: 检查 UFW 是否同时管理 IPv6 流量
+
+**为什么重要**: `/etc/default/ufw` 中 `IPV6=no` 会让 UFW 只生效于 IPv4。
+如果主机本身有全局 IPv6 地址（多数云厂商默认会下发 v6），那么所有
+IPv6 入站连接都直接绕过 UFW 规则——你以为只放行了 22，但任何监听
+`::` 的服务（Redis、PostgreSQL、应用调试端口等）都暴露在 v6 公网上。
+UFW 默认 `IPV6=yes`，只有手动改过才会触发本告警。
+
+**通过条件**: 满足以下任一即可：
+- `/etc/default/ufw` 设为 `IPV6=yes`（UFW 同时管理 v4/v6 流量）
+- 主机没有全局 IPv6 地址（`IPV6=no` 在此情况下无风险）
+
+**修复方法**:
+```bash
+# 1. 编辑 /etc/default/ufw，把 IPV6=no 改回 IPV6=yes
+sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw
+
+# 2. 重新加载 UFW（必须 disable 后再 enable，
+#    单独 reload 不会重建 ip6tables 规则）
+ufw disable
+ufw enable
+
+# 3. 验证 IPv6 规则已生效
+ufw status verbose
+ip6tables -L -n | head -20
 ```
 
 ---

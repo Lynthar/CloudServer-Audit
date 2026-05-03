@@ -116,6 +116,10 @@ When running vpssec, you'll see a module selection menu:
 Enter choices (space-separated, e.g., 1 2 3) [default: 0] >
 ```
 
+> **Note**: `preflight`, `cloud`, and `timezone` are always included as
+> context regardless of which categories you pick — they provide OS,
+> network, and clock baselines the other modules rely on.
+
 Or use CLI to specify modules directly:
 ```bash
 sudo ./vpssec audit --include=ssh,ufw,malware
@@ -213,12 +217,13 @@ Modes:
                     module's audit/fix detail (no root, no side effects)
 
 Options:
-  --lang=LANG       Set language (zh_CN, en_US)
+  --lang=LANG       Set language (zh_CN [default], en_US)
   --include=MODS    Run only specified modules (comma-separated)
   --exclude=MODS    Skip specified modules
   --yes             Auto-confirm non-critical prompts
   --json-only       Output JSON only (for CI/CD)
   --no-color        Disable colored output
+  --debug           Enable verbose logging to logs/vpssec.log
   -h, --help        Show help
   --version         Show version
 
@@ -420,15 +425,23 @@ module is classified in `VPSSEC_MODULE_CATEGORY`.
 ### Tests
 
 ```bash
-bats tests/                 # Run the full bats suite (~80 cases)
+bats tests/                 # Run the full bats suite (~226 cases)
 bats tests/test_score.bats  # Single test file
 ```
 
-Pure-function coverage: `count_lines`, `validate_*`,
+Coverage spans pure functions (`count_lines`, `validate_*`,
 `calculate_score`, fix classification, plan-resume filter,
-help dispatch, backup-restore path safety. Tests are isolated
-per-test (each gets its own `state/`, `backups/`, `logs/` under
-`BATS_TEST_TMPDIR`); no live system state is touched.
+help dispatch, backup-restore path safety) and module-level
+parsers/regressions: UFW IPv6 consistency, UFW LIMIT vs ALLOW,
+nginx catchall state machine (incl. IPv6 bracket form and port
+boundaries), journald drop-in semantics, needrestart KSTA,
+suspicious-username regression, cross-cutting `declare -g`
+module-array scoping, webapp PHP regex / HSTS, baseline
+AppArmor, cloudflared user/config, filesystem perms / umask,
+fail2ban custom jail, malware hidden-process detection. Tests
+are isolated per-test (each gets its own `state/`, `backups/`,
+`logs/` under `BATS_TEST_TMPDIR`); no live system state is
+touched.
 
 ## License
 
