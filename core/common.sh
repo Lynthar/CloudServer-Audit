@@ -677,6 +677,14 @@ create_check_json() {
     local suggestion="${7:-}"
     local fix_id="${8:-}"
 
+    # Quote every key as a string. `module` became a reserved word in
+    # jq 1.7.0 (modules feature), and a stock 1.7.0 binary on Debian
+    # trixie / Ubuntu 24.04 rejects the unquoted form `{module: ...}`
+    # with "unexpected module, expecting IDENT or __loc__", killing
+    # every state_add_check call and silently producing an empty
+    # checks.json (audit appears to "hang" because the report writer
+    # then has no data). Quoting all keys is also defense in depth
+    # against future jq keyword additions.
     jq -n \
         --arg id        "$id" \
         --arg module    "$module" \
@@ -686,8 +694,8 @@ create_check_json() {
         --arg desc      "$desc" \
         --arg suggestion "$suggestion" \
         --arg fix_id    "$fix_id" \
-        '{id: $id, module: $module, severity: $severity, status: $status,
-          title: $title, desc: $desc, suggestion: $suggestion, fix_id: $fix_id}'
+        '{"id": $id, "module": $module, "severity": $severity, "status": $status,
+          "title": $title, "desc": $desc, "suggestion": $suggestion, "fix_id": $fix_id}'
 }
 
 # ==============================================================================

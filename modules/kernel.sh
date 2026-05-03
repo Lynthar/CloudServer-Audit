@@ -220,12 +220,22 @@ _kernel_ipv6_in_use() {
 _kernel_ipv6_get_stats() {
     local stats=""
 
+    # `grep -c` always prints "0" even when it exits 1 (no matches);
+    # the historical `|| echo "0"` then appended a SECOND "0",
+    # giving the literal "0\n0" and tripping `[[ -gt ]]` arithmetic
+    # downstream. `|| true` swallows the exit code without polluting
+    # stdout; the `${var:-0}` guard covers a fully-failed pipe.
+
     # Count interfaces with IPv6
-    local iface_count=$(ip -6 addr show 2>/dev/null | grep -c "inet6" || echo "0")
+    local iface_count
+    iface_count=$(ip -6 addr show 2>/dev/null | grep -c "inet6" || true)
+    iface_count="${iface_count:-0}"
     stats+="interfaces:$iface_count;"
 
     # Count global addresses
-    local global_count=$(ip -6 addr show scope global 2>/dev/null | grep -c "inet6" || echo "0")
+    local global_count
+    global_count=$(ip -6 addr show scope global 2>/dev/null | grep -c "inet6" || true)
+    global_count="${global_count:-0}"
     stats+="global:$global_count;"
 
     # Check if IPv6 forwarding is enabled
@@ -293,7 +303,7 @@ _kernel_ipv6_firewall_check() {
         # grep -c already emits a single integer, so the previous
         # `| head -1` was dead; kept the defensive regex strip below
         # for robustness.
-        rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" || echo "0")
+        rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" || true)
         rule_count="${rule_count//[^0-9]/}"
         [[ -z "$rule_count" ]] && rule_count=0
         if [[ "$rule_count" -gt 0 ]]; then
@@ -813,7 +823,9 @@ _kernel_audit_auditd() {
     # Check if auditd service is running
     if systemctl is-active --quiet auditd 2>/dev/null; then
         # Check if rules are loaded
-        local rule_count=$(auditctl -l 2>/dev/null | grep -cv "^No rules" || echo 0)
+        local rule_count
+        rule_count=$(auditctl -l 2>/dev/null | grep -cv "^No rules" || true)
+        rule_count="${rule_count:-0}"
 
         if ((rule_count > 5)); then
             local check=$(create_check_json \

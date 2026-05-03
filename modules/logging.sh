@@ -112,8 +112,14 @@ _logging_get_failed_logins() {
 }
 
 _logging_get_sudo_events() {
-    # Get recent sudo events
-    journalctl _COMM=sudo --since "24 hours ago" 2>/dev/null | wc -l || echo "0"
+    # Get recent sudo events. `wc -l` prints "0" on empty input, but
+    # under `set -o pipefail` a journalctl failure still trips the
+    # pipe to non-zero, so swallow the exit code with `|| true` rather
+    # than appending a second "0" via `|| echo "0"` (see _logging_get_failed_logins
+    # above for the same idiom).
+    local count
+    count=$(journalctl _COMM=sudo --since "24 hours ago" 2>/dev/null | wc -l) || true
+    echo "${count:-0}"
 }
 
 # ==============================================================================

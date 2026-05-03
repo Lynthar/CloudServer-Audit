@@ -18,18 +18,25 @@ _ufw_enabled() {
 }
 
 # Check if iptables has rules (beyond default)
+#
+# `grep -c` and `wc -l` always print an integer to stdout (0 on no
+# matches / empty input); use `|| true` to swallow the exit-1-on-zero
+# behavior of grep -c without ALSO appending a second "0" — the old
+# `|| echo 0` produced the literal "0\n0" and tripped `[[ -gt ]]`
+# with "syntax error in expression" on hosts where iptables existed
+# but had no ACCEPT/DROP/REJECT lines.
 _iptables_has_rules() {
     local rule_count
-    rule_count=$(iptables -L -n 2>/dev/null | grep -cE "^(ACCEPT|DROP|REJECT)" || echo 0)
-    [[ "$rule_count" -gt 3 ]]  # More than default policy rules
+    rule_count=$(iptables -L -n 2>/dev/null | grep -cE "^(ACCEPT|DROP|REJECT)" || true)
+    [[ "${rule_count:-0}" -gt 3 ]]  # More than default policy rules
 }
 
 # Check if nftables is active
 _nftables_active() {
     if check_command nft; then
         local table_count
-        table_count=$(nft list tables 2>/dev/null | wc -l || echo 0)
-        [[ "$table_count" -gt 0 ]]
+        table_count=$(nft list tables 2>/dev/null | wc -l || true)
+        [[ "${table_count:-0}" -gt 0 ]]
     else
         return 1
     fi
