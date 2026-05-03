@@ -335,18 +335,41 @@ _record_unavailable_modules() {
     done
 }
 
-# Run audit for all enabled modules
-audit_all() {
+# Run one full audit pass: state_init → enumerate modules → invoke
+# every <module>_audit → record unavailable modules. Used by both
+# `audit_all` (read-only mode) and `guide_mode` (which needs the same
+# audit results before computing fixes). Pulled out of the two
+# callers so a behavioural change to the audit pass only has to land
+# in one place.
+#
+# Side effects (intentional, preserved from the previous inline
+# implementations):
+#   * state/checks.json is reset and refilled (state_init handles
+#     the .prev backup).
+#   * VPSSEC_QUIET_SCAN is exported as 1 during the loop and reset
+#     to 0 on return — both callers expect QUIET_SCAN=0 immediately
+#     afterwards (audit_all calls report_generate_all, guide_mode
+#     calls report_print_details / report_print_summary).
+#   * The per-module progress line is rewritten in place via \r;
+#     we clear it before returning so the next print starts on a
+#     fresh column.
+#
+# Loop variables (`module`, `mod_title`, etc.) are declared local
+# here even though the previous inline blocks let `module` leak as
+# a global — leaking was harmless (no caller referenced it after
+# return) but making it local means a future caller can't be
+# surprised by a stale value.
+_run_audit_pass() {
     state_init
 
-    # Get enabled modules as array
     local -a modules=()
+    local m
     while IFS= read -r m; do
         modules+=("$m")
     done < <(module_get_enabled)
 
-    # Count total including unavailable for progress
     local unavailable_count=0
+    local module
     for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
         [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]] && ((unavailable_count++)) || true
     done
@@ -354,27 +377,25 @@ audit_all() {
     local total=$((${#modules[@]} + unavailable_count))
     local current=0
 
-    # Enable quiet scan mode for cleaner output
     export VPSSEC_QUIET_SCAN=1
 
     print_msg ""
     print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
     print_msg ""
 
+    local mod_title
     for module in "${modules[@]}"; do
         ((current++)) || true
-        # Show progress line
-        local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+        mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
         printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
 
         audit_module "$module"
     done
 
-    # Record unavailable modules
     for module in "${VPSSEC_MODULE_ORDER[@]}"; do
         if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
             ((current++)) || true
-            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+            mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
             printf "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
         fi
     done
@@ -383,8 +404,12 @@ audit_all() {
     # Clear progress line
     printf "\r                                                              \r"
 
-    # Disable quiet mode for summary output
     export VPSSEC_QUIET_SCAN=0
+}
+
+# Run audit for all enabled modules
+audit_all() {
+    _run_audit_pass
 
     # Generate reports and print summary
     report_generate_all
@@ -731,55 +756,10 @@ guide_mode() {
         print_msg ""
     fi
 
-    # Run audit (same as audit_all for consistency)
-    state_init
-
-    # Get enabled modules as array
-    local -a modules=()
-    while IFS= read -r m; do
-        modules+=("$m")
-    done < <(module_get_enabled)
-
-    # Count total including unavailable for progress
-    local unavailable_count=0
-    for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
-        [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]] && ((unavailable_count++)) || true
-    done
-
-    local total=$((${#modules[@]} + unavailable_count))
-    local current=0
-
-    # Enable quiet scan mode for cleaner output (same as audit mode)
-    export VPSSEC_QUIET_SCAN=1
-
-    print_msg ""
-    print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
-    print_msg ""
-
-    for module in "${modules[@]}"; do
-        ((current++)) || true
-        # Show progress line
-        local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-        printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
-
-        audit_module "$module"
-    done
-
-    # Record unavailable modules
-    for module in "${VPSSEC_MODULE_ORDER[@]}"; do
-        if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
-            ((current++)) || true
-            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-            printf "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
-        fi
-    done
-    _record_unavailable_modules
-
-    # Clear progress line
-    printf "\r                                                              \r"
-
-    # Disable quiet mode for summary output
-    export VPSSEC_QUIET_SCAN=0
+    # Run audit pass (shared with audit_all). state/checks.json is
+    # repopulated in-place; QUIET_SCAN is reset to 0 on return so the
+    # report-print calls below render correctly.
+    _run_audit_pass
 
     # Get available fixes
     local fixes=$(get_available_fixes)
