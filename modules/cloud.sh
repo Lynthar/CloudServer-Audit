@@ -191,7 +191,7 @@ _detect_cloud_provider() {
             *"DigitalOcean"*) provider="digitalocean" ;;
             *"Vultr"*|*"Choopa"*) provider="vultr" ;;
             *"Linode"*|*"Akamai"*) provider="linode" ;;
-            *"Oracle"*|*"OracleCloud"*) provider="oracle" ;;
+            *"Oracle"*)      provider="oracle" ;;
             *"Hetzner"*)     provider="hetzner" ;;
             *"OVH"*)         provider="ovh" ;;
             *"Scaleway"*|*"Online"*) provider="scaleway" ;;
@@ -238,7 +238,7 @@ _detect_cloud_provider() {
     # vendor is generic (e.g., bare "Xen").
     if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_uuid ]]; then
         # Read may fail with EACCES for non-root; ignore quietly.
-        local uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr 'A-Z' 'a-z')
+        local uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr '[:upper:]' '[:lower:]')
         if [[ "$uuid" == ec2* ]]; then
             provider="aws"
         fi
@@ -386,7 +386,7 @@ _detect_cloud_provider() {
 
         if [[ -n "$_imds_body" ]]; then
             # Disambiguate. Strip whitespace; lower-case for region match.
-            local _b=$(printf '%s' "$_imds_body" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+            local _b=$(printf '%s' "$_imds_body" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
             case "$_b" in
                 # Tencent regions: ap-* (overlaps with AWS Asia-Pacific)
                 # plus eu-frankfurt, na-* — but the real giveaway is the
