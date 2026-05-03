@@ -677,24 +677,26 @@ create_check_json() {
     local suggestion="${7:-}"
     local fix_id="${8:-}"
 
-    # Quote every key as a string. `module` became a reserved word in
-    # jq 1.7.0 (modules feature), and a stock 1.7.0 binary on Debian
-    # trixie / Ubuntu 24.04 rejects the unquoted form `{module: ...}`
-    # with "unexpected module, expecting IDENT or __loc__", killing
-    # every state_add_check call and silently producing an empty
-    # checks.json (audit appears to "hang" because the report writer
-    # then has no data). Quoting all keys is also defense in depth
-    # against future jq keyword additions.
+    # `module` became a reserved word in jq 1.7.0 (the modules feature),
+    # and a stock Linux 1.7.0 build (Debian trixie, Ubuntu 24.04+)
+    # rejects BOTH:
+    #   - unquoted shorthand keys      `{module: ...}`
+    #   - variables named `$module`    via `--arg module ...`
+    # The macOS/Apple jq build is more permissive and accepts both, so
+    # this only blew up in production. Fix is twofold: quote every JSON
+    # key as a string (defense in depth against future jq keywords),
+    # AND rename the bash-side `--arg module` to `--arg mod` so the
+    # injected jq variable is `$mod`, not `$module`.
     jq -n \
         --arg id        "$id" \
-        --arg module    "$module" \
+        --arg mod       "$module" \
         --arg severity  "$severity" \
         --arg status    "$status" \
         --arg title     "$title" \
         --arg desc      "$desc" \
         --arg suggestion "$suggestion" \
         --arg fix_id    "$fix_id" \
-        '{"id": $id, "module": $module, "severity": $severity, "status": $status,
+        '{"id": $id, "module": $mod, "severity": $severity, "status": $status,
           "title": $title, "desc": $desc, "suggestion": $suggestion, "fix_id": $fix_id}'
 }
 

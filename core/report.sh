@@ -601,12 +601,17 @@ report_generate_sarif() {
         # quote or a command-output snippet contained CR.
         if [[ "$status" == "failed" ]]; then
             local result
+            # `--arg module ...` would create a jq variable named
+            # `$module`, which jq 1.7.0+ rejects because `module` is
+            # a reserved word (modules feature). Use `--arg mod` so
+            # the injected variable is `$mod` instead. See the same
+            # fix in core/common.sh's create_check_json.
             result=$(jq -n \
                 --arg id         "$id" \
                 --arg level      "$level" \
                 --arg message    "$title. $desc" \
                 --arg host       "$hostname" \
-                --arg module     "$module" \
+                --arg mod        "$module" \
                 --arg suggestion "$suggestion" \
                 '{
                     ruleId: $id,
@@ -620,7 +625,7 @@ report_generate_sarif() {
                             }
                         },
                         logicalLocations: [{
-                            name: $module,
+                            name: $mod,
                             kind: "module"
                         }]
                     }],
