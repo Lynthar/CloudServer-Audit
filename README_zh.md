@@ -419,7 +419,7 @@ CI 中的 `module-contract` 任务会校验：每个 `VPSSEC_MODULE_ORDER`
 ### 测试
 
 ```bash
-bats tests/                 # 运行完整测试套件（约 226 用例）
+bats tests/                 # 运行完整测试套件（约 239 用例）
 bats tests/test_score.bats  # 单个测试文件
 ```
 

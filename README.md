@@ -425,7 +425,7 @@ module is classified in `VPSSEC_MODULE_CATEGORY`.
 ### Tests
 
 ```bash
-bats tests/                 # Run the full bats suite (~226 cases)
+bats tests/                 # Run the full bats suite (~239 cases)
 bats tests/test_score.bats  # Single test file
 ```
 

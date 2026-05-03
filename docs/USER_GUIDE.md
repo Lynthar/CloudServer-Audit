@@ -109,6 +109,13 @@ usermod -s /sbin/nologin <账户名>
 
 **通过条件**: sudoers 配置中不存在 NOPASSWD 选项（或仅用于自动化场景）
 
+**严重性分级**:
+- 单一用户且属于已知云镜像默认用户（如 `debian` / `ubuntu` /
+  `ec2-user` / `centos` / `admin` / `azureuser` / `opc` 等）：中危。
+  几乎所有云厂商出厂镜像都给 cloud-init 默认用户配了 NOPASSWD，
+  这是事实标准，单独标 high 没有信号增益。
+- 多用户、`%group`、`Cmnd_Alias`、`User_Alias` 或带通配的条目：高危。
+
 **修复方法**:
 ```bash
 # 1. 编辑 sudoers 文件
@@ -165,6 +172,12 @@ systemctl restart sshd
 - 一旦被入侵，攻击者直接获得最高权限
 
 **通过条件**: SSH 配置中 `PermitRootLogin` 设置为 `no` 或 `prohibit-password`
+
+**严重性分级**:
+- `PermitRootLogin yes` **且** `PasswordAuthentication yes`：高危
+- `PermitRootLogin yes` **但** `PasswordAuthentication no`（仅密钥）：中危
+  （操作上等同于一个有 sudo 权限的密钥用户，但仍建议改成
+  `prohibit-password` 或 `no` 以减少误配置风险）
 
 **修复方法**:
 ```bash
