@@ -70,7 +70,7 @@ SENSITIVE_PATHS=(
 )
 
 # Nginx security headers
-declare -A NGINX_SECURITY_HEADERS=(
+declare -gA NGINX_SECURITY_HEADERS=(
     ["X-Frame-Options"]="SAMEORIGIN"
     ["X-Content-Type-Options"]="nosniff"
     ["X-XSS-Protection"]="1; mode=block"

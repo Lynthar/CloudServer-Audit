@@ -9,7 +9,7 @@
 
 # Known legitimate SUID binaries (whitelist)
 # These are standard system binaries that normally have SUID bit set
-declare -a FS_SUID_WHITELIST=(
+declare -ga FS_SUID_WHITELIST=(
     "/usr/bin/sudo"
     "/usr/bin/su"
     "/usr/bin/passwd"
@@ -41,7 +41,7 @@ declare -a FS_SUID_WHITELIST=(
 # Sensitive files and their expected permissions
 # Note: sshd_config is 644 on Debian/Ubuntu by default (no secrets stored)
 # SSH private keys should be 600, public keys 644
-declare -A FS_SENSITIVE_FILES=(
+declare -gA FS_SENSITIVE_FILES=(
     ["/etc/passwd"]="644"
     ["/etc/shadow"]="640"
     ["/etc/group"]="644"
@@ -387,7 +387,7 @@ _fs_check_pam_umask_enabled() {
 }
 
 # Known legitimate binaries with capabilities (whitelist)
-declare -a FS_CAPS_WHITELIST=(
+declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/ping:cap_net_raw"
     "/usr/bin/traceroute:cap_net_raw"
     "/usr/bin/mtr-packet:cap_net_raw"
@@ -398,7 +398,7 @@ declare -a FS_CAPS_WHITELIST=(
 )
 
 # Dangerous capabilities that grant significant privileges
-declare -a FS_DANGEROUS_CAPS=(
+declare -ga FS_DANGEROUS_CAPS=(
     "cap_sys_admin"
     "cap_sys_ptrace"
     "cap_sys_module"

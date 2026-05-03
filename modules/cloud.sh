@@ -16,7 +16,7 @@
 # ==============================================================================
 
 # Format: process_name|service_name|vendor|description|can_disable
-declare -a KNOWN_CLOUD_AGENTS=(
+declare -ga KNOWN_CLOUD_AGENTS=(
     # Alibaba Cloud
     "AliYunDun|aegis|阿里云|安骑士/云安全中心|yes"
     "AliYunDunMonitor|aegis|阿里云|安骑士监控|yes"
@@ -73,7 +73,7 @@ declare -a KNOWN_CLOUD_AGENTS=(
 )
 
 # Suspicious process name patterns (regex)
-declare -a SUSPICIOUS_AGENT_PATTERNS=(
+declare -ga SUSPICIOUS_AGENT_PATTERNS=(
     ".*[Aa]gent.*"
     ".*[Mm]onitor.*"
     ".*[Gg]uard.*"
@@ -85,7 +85,7 @@ declare -a SUSPICIOUS_AGENT_PATTERNS=(
 )
 
 # Known safe system processes (to exclude from suspicious detection)
-declare -a SAFE_SYSTEM_PROCESSES=(
+declare -ga SAFE_SYSTEM_PROCESSES=(
     "gpg-agent"
     "ssh-agent"
     "dbus-daemon"

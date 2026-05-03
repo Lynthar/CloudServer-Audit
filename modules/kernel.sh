@@ -13,7 +13,7 @@ VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 
 # Recommended sysctl settings with descriptions
 # Format: parameter:recommended_value:severity:description
-declare -a KERNEL_SECURITY_PARAMS=(
+declare -ga KERNEL_SECURITY_PARAMS=(
     # Network security - IPv4
     "net.ipv4.ip_forward:0:medium:IP forwarding (should be disabled unless routing)"
     "net.ipv4.conf.all.send_redirects:0:medium:ICMP redirects sending"

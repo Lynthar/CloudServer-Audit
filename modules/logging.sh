@@ -37,23 +37,45 @@ _logging_journald_persistent() {
     return 1
 }
 
+# Pure-data variant for tests. Argument is the merged journald config
+# text. Echoes the last SystemMaxUse= value found, or empty.
+_logging_journald_max_size_from_text() {
+    awk -F= '
+        /^SystemMaxUse=/ {
+            gsub(/[[:space:]]/, "", $2)
+            v = $2
+        }
+        END { if (v != "") print v }
+    ' <<<"$1"
+}
+
+# Last definition wins across main + drop-in files (matches systemd
+# semantics). Original implementation read only the main file, so
+# vpssec writing its own drop-in via _logging_fix_enable_persistent_journal
+# became invisible to the next audit — self-inconsistent display.
 _logging_journald_max_size() {
-    local size=$(grep -E "^SystemMaxUse=" "$JOURNALD_CONF" 2>/dev/null | cut -d= -f2)
+    local size=""
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        local merged
+        merged=$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null)
+        size=$(_logging_journald_max_size_from_text "$merged")
+    fi
+    if [[ -z "$size" ]]; then
+        # Fallback: manually read main + drop-ins (alphabetical, last wins).
+        local f text=""
+        for f in "$JOURNALD_CONF" "$JOURNALD_CONF_D"/*.conf; do
+            [[ -f "$f" ]] || continue
+            text="${text}$(cat "$f" 2>/dev/null)
+"
+        done
+        size=$(_logging_journald_max_size_from_text "$text")
+    fi
     echo "${size:-auto}"
 }
 
 _logging_check_logrotate() {
     # Check if logrotate is installed and configured
     check_command logrotate && [[ -f "$LOGROTATE_CONF" ]]
-}
-
-_logging_check_syslog_remote() {
-    # Check if remote syslog is configured
-    if [[ -f "$RSYSLOG_CONF" ]]; then
-        grep -qE "^[^#]*@@?" "$RSYSLOG_CONF" 2>/dev/null
-    else
-        return 1
-    fi
 }
 
 _logging_check_audit_installed() {

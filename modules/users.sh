@@ -23,13 +23,13 @@
 # ==============================================================================
 
 # System users that should have shells (whitelist)
-declare -a ALLOWED_SHELL_USERS=(
+declare -ga ALLOWED_SHELL_USERS=(
     "root"
     "sync"  # Has /bin/sync as shell
 )
 
 # Known system accounts (should not have login shells)
-declare -a SYSTEM_ACCOUNTS=(
+declare -ga SYSTEM_ACCOUNTS=(
     "daemon" "bin" "sys" "games" "man" "lp" "mail" "news" "uucp"
     "proxy" "www-data" "backup" "list" "irc" "gnats" "nobody"
     "systemd-network" "systemd-resolve" "systemd-timesync"
@@ -40,8 +40,13 @@ declare -a SYSTEM_ACCOUNTS=(
     "colord" "geoclue" "pulse" "rtkit" "saned" "avahi" "cups"
 )
 
-# Suspicious username patterns
-declare -a SUSPICIOUS_USERNAMES=(
+# Suspicious username patterns. Names like firstname.lastname are
+# the *standard* convention in LDAP/AD environments — the previous
+# `.*\..*` pattern flagged every one of them as suspicious, so the
+# dot pattern has been dropped. Real malicious accounts rarely use
+# dotted names anyway. Spaces remain flagged because shell-metacharacter
+# usernames are operationally unusual on a server.
+declare -ga SUSPICIOUS_USERNAMES=(
     "^admin[0-9]*$"
     "^test[0-9]*$"
     "^guest[0-9]*$"
@@ -56,15 +61,14 @@ declare -a SUSPICIOUS_USERNAMES=(
     "^support[0-9]*$"
     "^service[0-9]*$"
     "^daemon[0-9]+$"
-    ".*\\..*"  # Contains dots
-    ".*[[:space:]].*"  # Contains spaces
+    ".*[[:space:]].*"  # Contains whitespace
 )
 
 # Days to consider a user "recently created"
 RECENT_USER_DAYS=7
 
 # Password policy settings (recommended values)
-declare -A PASSWORD_POLICY=(
+declare -gA PASSWORD_POLICY=(
     ["PASS_MAX_DAYS"]="90"      # Maximum days before password expires
     ["PASS_MIN_DAYS"]="1"       # Minimum days between password changes
     ["PASS_MIN_LEN"]="8"        # Minimum password length
@@ -72,7 +76,7 @@ declare -A PASSWORD_POLICY=(
 )
 
 # pwquality recommended settings
-declare -A PWQUALITY_POLICY=(
+declare -gA PWQUALITY_POLICY=(
     ["minlen"]="12"
     ["dcredit"]="-1"
     ["ucredit"]="-1"

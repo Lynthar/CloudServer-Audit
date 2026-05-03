@@ -70,9 +70,13 @@ _ufw_get_default_outgoing() {
 # UFW emits a separate "22/tcp (v6) ALLOW ..." line for the IPv6 rule;
 # the pattern has to accept an optional " (v6)" segment between the
 # port spec and ALLOW or the v6-only case reports a false negative.
+# Accept LIMIT as well as ALLOW: `ufw limit ssh` is the rate-limited
+# variant (recommended for SSH against brute force) and used to be
+# misreported as "no SSH rule", which then routed users to fix_allow_ssh
+# — silently downgrading their LIMIT to a plain ALLOW.
 _ufw_ssh_allowed() {
     local ssh_port=$(get_ssh_port)
-    ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+ALLOW"
+    ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+(ALLOW|LIMIT)"
 }
 
 # Get current UFW rules
@@ -84,6 +88,41 @@ _ufw_get_rules() {
 _ufw_port_allowed() {
     local port="$1"
     ufw status 2>/dev/null | grep -qE "^${port}(/tcp)?\s+ALLOW"
+}
+
+# Pure-data variant of _ufw_get_ipv6_setting for tests. $1 is the text
+# of /etc/default/ufw. Returns "yes" or "no". Defaults to "yes" (the
+# UFW package default since ~2014).
+_ufw_parse_ipv6_setting() {
+    local val
+    val=$(awk -F= '
+        /^IPV6=/ {
+            v = $2
+            gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", v)
+            print tolower(v)
+            exit
+        }
+    ' <<<"$1")
+    echo "${val:-yes}"
+}
+
+_ufw_get_ipv6_setting() {
+    local text=""
+    [[ -f /etc/default/ufw ]] && text=$(cat /etc/default/ufw 2>/dev/null)
+    _ufw_parse_ipv6_setting "$text"
+}
+
+# Pure-data variant. Returns 0 if input contains a global-scope inet6
+# entry (output of `ip -6 addr show scope global`).
+_host_has_global_ipv6_from_text() {
+    grep -qE 'inet6[[:space:]]+[0-9a-fA-F:]+/[0-9]+.*scope[[:space:]]+global' <<<"$1"
+}
+
+_host_has_global_ipv6() {
+    command -v ip >/dev/null 2>&1 || return 1
+    local out
+    out=$(ip -6 addr show scope global 2>/dev/null)
+    _host_has_global_ipv6_from_text "$out"
 }
 
 # Detect overly permissive rules (from Anywhere to sensitive ports)
@@ -270,6 +309,12 @@ ufw_audit() {
     if _ufw_enabled; then
         print_item "$(i18n 'ufw.check_permissive_rules')"
         _ufw_audit_permissive_rules
+
+        # IPv6 consistency: IPV6=no in /etc/default/ufw + host has global
+        # v6 = v6 packets bypass UFW entirely. Only meaningful when UFW
+        # is the active firewall.
+        print_item "$(i18n 'ufw.check_ipv6_consistency')"
+        _ufw_audit_ipv6_consistency
     fi
 }
 
@@ -358,6 +403,52 @@ _ufw_audit_ssh_rule() {
             "ufw.allow_ssh")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'ufw.no_ssh_rule')"
+    fi
+}
+
+_ufw_audit_ipv6_consistency() {
+    local ipv6_setting
+    ipv6_setting=$(_ufw_get_ipv6_setting)
+
+    if [[ "$ipv6_setting" == "yes" ]]; then
+        local check=$(create_check_json \
+            "ufw.ipv6_managed" \
+            "ufw" \
+            "low" \
+            "passed" \
+            "$(i18n 'ufw.ipv6_managed')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ufw.ipv6_managed')"
+        return
+    fi
+
+    # IPV6=no — check whether the host actually has v6 connectivity.
+    if _host_has_global_ipv6; then
+        local check=$(create_check_json \
+            "ufw.ipv6_bypass" \
+            "ufw" \
+            "high" \
+            "failed" \
+            "$(i18n 'ufw.ipv6_bypass')" \
+            "$(i18n 'ufw.ipv6_bypass_desc')" \
+            "$(i18n 'ufw.fix_enable_ipv6')" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'ufw.ipv6_bypass')"
+    else
+        local check=$(create_check_json \
+            "ufw.ipv6_no_traffic" \
+            "ufw" \
+            "info" \
+            "passed" \
+            "$(i18n 'ufw.ipv6_no_traffic')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
     fi
 }
 

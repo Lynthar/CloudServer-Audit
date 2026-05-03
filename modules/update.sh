@@ -75,15 +75,51 @@ _update_unattended_enabled() {
     [[ "$(_update_unattended_status)" == "ok" ]]
 }
 
-# Check if system reboot is required
+# Pure-data variant for tests. Returns 0 when needrestart batch output
+# reports a kernel reboot is pending: NEEDRESTART-KSTA in {2,3} per
+# liske/needrestart docs (1=current, 2=ABI-compat upgrade, 3=full
+# version upgrade, 0=detection failure). 2 is included on purpose —
+# operationally an ABI-compat kernel still calls for a reboot to run
+# the new version.
+_update_needrestart_kernel_pending() {
+    local ksta
+    ksta=$(awk -F': ' '/^NEEDRESTART-KSTA:/ {print $2; exit}' <<<"$1")
+    [[ "$ksta" =~ ^[0-9]+$ ]] && (( ksta >= 2 ))
+}
+
+# Check if system reboot is required.
+# /var/run/reboot-required is created by the `update-notifier-common`
+# package (Ubuntu default; not installed on stock Debian), so on a
+# Debian box without it the file may never exist even after kernel /
+# glibc updates. needrestart (default-installed on Debian 12+) is the
+# distro-agnostic signal.
 _update_reboot_required() {
-    [[ -f /var/run/reboot-required ]]
+    [[ -f /var/run/reboot-required ]] && return 0
+    if command -v needrestart >/dev/null 2>&1; then
+        local out
+        out=$(needrestart -k -b 2>/dev/null) || return 1
+        _update_needrestart_kernel_pending "$out"
+        return $?
+    fi
+    return 1
 }
 
 # Get reboot required packages
 _update_reboot_packages() {
     if [[ -f /var/run/reboot-required.pkgs ]]; then
         cat /var/run/reboot-required.pkgs 2>/dev/null
+        return
+    fi
+    # needrestart fallback: surface the kernel-version delta as
+    # informational context (no per-package list available).
+    if command -v needrestart >/dev/null 2>&1; then
+        local nr_out kcur kexp
+        nr_out=$(needrestart -k -b 2>/dev/null) || return 0
+        kcur=$(awk -F': ' '/^NEEDRESTART-KCUR:/ {print $2; exit}' <<<"$nr_out")
+        kexp=$(awk -F': ' '/^NEEDRESTART-KEXP:/ {print $2; exit}' <<<"$nr_out")
+        if [[ -n "$kcur" && -n "$kexp" && "$kcur" != "$kexp" ]]; then
+            echo "kernel: ${kcur} → ${kexp}"
+        fi
     fi
 }
 
@@ -377,23 +413,30 @@ update_fix() {
 _update_fix_apply_security() {
     print_info "$(i18n 'update.applying_updates')"
 
-    # Use unattended-upgrade if available for safer updates
-    if _update_unattended_installed; then
-        if unattended-upgrade -d 2>/dev/null; then
-            print_ok "$(i18n 'update.updates_applied')"
-            return 0
+    # Honor the function name. Previous fallback was `apt-get upgrade -y`
+    # which upgrades EVERY package (database, web server, language
+    # runtimes, etc.) — not what an "apply security updates" function
+    # should ever do. If unattended-upgrades is missing we install it
+    # and use it; if it then fails, we surface the error rather than
+    # silently doing something different.
+    if ! _update_unattended_installed; then
+        print_info "$(i18n 'update.installing_unattended_for_security')"
+        export DEBIAN_FRONTEND=noninteractive
+        if ! apt-get install -y unattended-upgrades; then
+            print_error "$(i18n 'update.unattended_install_failed')"
+            print_info "$(i18n 'update.security_aborted_install_uu_first')"
+            return 1
         fi
     fi
 
-    # Fallback to apt upgrade
-    export DEBIAN_FRONTEND=noninteractive
-    if apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"; then
-        print_ok "$(i18n 'update.all_updates_applied')"
+    if unattended-upgrade -d 2>/dev/null; then
+        print_ok "$(i18n 'update.updates_applied')"
         return 0
-    else
-        print_error "$(i18n 'update.updates_failed')"
-        return 1
     fi
+
+    print_error "$(i18n 'update.updates_failed')"
+    print_info "$(i18n 'update.check_uu_log')"
+    return 1
 }
 
 _update_fix_install_unattended() {
