@@ -321,6 +321,66 @@ _find_nopasswd_sudo() {
     printf '%s\n' "${findings[@]}"
 }
 
+# Decide whether all NOPASSWD entries in `findings` are scoped to a
+# single cloud-init default user (one of the well-known cloud image
+# default accounts). Returns 0 (true) only when:
+#   * every line has exactly one principal token (no comma list,
+#     no group `%`, no Runas_Spec games),
+#   * that principal is in the cloud-init default-user list, and
+#   * the same principal is used across every line (we don't want
+#     "debian NOPASSWD" + "ubuntu NOPASSWD" classified as "single
+#     cloud-init user" — that pattern is unusual and worth a high).
+#
+# Anything with `%group`, `ALL=`, `Cmnd_Alias`, wildcards, or more
+# than one user falls through to high.
+_nopasswd_is_cloudinit_only() {
+    local findings="$1"
+    local cloudinit_users="^(debian|ubuntu|ec2-user|centos|rocky|almalinux|fedora|opensuse|admin|azureuser|cloud-user|cloud_user|clouduser|root|opc|arch|linaro|gardenlinux|core)$"
+    local seen_user=""
+
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+
+        # Strip "/path/to/sudoers: " prefix to get the raw rule.
+        local rule="${entry#*: }"
+
+        # Trim leading whitespace.
+        rule="${rule#"${rule%%[![:space:]]*}"}"
+
+        # First token is the principal. If it starts with `%`, it's
+        # a group — we don't want to special-case groups even if the
+        # group looks safe.
+        local principal="${rule%%[[:space:]]*}"
+        [[ -z "$principal" ]] && return 1
+        [[ "$principal" == %* ]] && return 1
+
+        # Comma in principal means multiple users on one line.
+        [[ "$principal" == *,* ]] && return 1
+
+        # Cmnd_Alias / User_Alias / Defaults / Host_Alias lines aren't
+        # access grants per se, but if NOPASSWD shows up in them treat
+        # the whole batch as high — they affect everyone they're later
+        # referenced from.
+        case "$principal" in
+            Cmnd_Alias|User_Alias|Host_Alias|Runas_Alias|Defaults*) return 1 ;;
+        esac
+
+        if ! [[ "$principal" =~ $cloudinit_users ]]; then
+            return 1
+        fi
+
+        if [[ -z "$seen_user" ]]; then
+            seen_user="$principal"
+        elif [[ "$seen_user" != "$principal" ]]; then
+            # Multiple cloud-init users with NOPASSWD in the same
+            # sudoers tree is unusual; surface as high.
+            return 1
+        fi
+    done <<< "$findings"
+
+    [[ -n "$seen_user" ]]
+}
+
 # Get recently created users
 _find_recent_users() {
     local recent=()
@@ -703,7 +763,25 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 4.5 Check for NOPASSWD sudo - HIGH RISK
+    # 4.5 Check for NOPASSWD sudo
+    #
+    # Severity model: cloud images (AWS, DO, Tencent, Alibaba, Azure,
+    # GCP, Hetzner) ship NOPASSWD sudo for their cloud-init default
+    # user out of the box. Calling literally every fresh cloud VM
+    # "high risk" undermines the signal — operators never read past
+    # the third "but this one is normal" finding.
+    #
+    # Heuristic:
+    #   * any wildcard / Cmnd_Alias / multi-user line  → high (real
+    #     blast radius beyond a single account)
+    #   * one or more entries, all scoped to a single account that
+    #     looks like a cloud-init default user            → medium
+    #   * everything else                                  → high
+    #
+    # The cloud-init default-user list is a known, finite set; we
+    # don't try to detect "user added by operator" because that's
+    # exactly the case where the user *did* opt in to NOPASSWD and
+    # already knows.
     local nopasswd=$(_find_nopasswd_sudo)
     local nopasswd_count=$(count_lines "$nopasswd")
 
@@ -715,12 +793,19 @@ users_audit() {
         done <<< "$nopasswd"
         nopasswd_list="${nopasswd_list%; }"
 
+        local sev="high"
+        local title_key="users.nopasswd_sudo"
+        if _nopasswd_is_cloudinit_only "$nopasswd"; then
+            sev="medium"
+            title_key="users.nopasswd_sudo_cloudinit"
+        fi
+
         check_json=$(create_check_json \
             "users.nopasswd_sudo" \
             "users" \
-            "high" \
+            "$sev" \
             "failed" \
-            "$(i18n 'users.nopasswd_sudo' 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count" \
+            "$(i18n "$title_key" 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count" \
             "$nopasswd_list" \
             "$(i18n 'users.review_nopasswd' 2>/dev/null || echo 'NOPASSWD allows privilege escalation without password - review if necessary')" \
             "users.nopasswd_sudo")

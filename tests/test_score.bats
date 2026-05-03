@@ -66,24 +66,25 @@ _write_checks() {
 
 @test "calculate_score: 1 high failure on 3-check host" {
     # scored_total = 3, passed = 2, base = 66.
-    # penalty = 8 (one high). score = 58.
+    # penalty = 5 (one high). score = 61.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
         "ssh.root_login_disabled|low|passed" \
         "ufw.enabled|low|passed"
     run calculate_score
-    [ "$output" = "58" ]
+    [ "$output" = "61" ]
 }
 
 @test "calculate_score: 1 medium failure on 4-check host" {
-    # scored = 4, passed = 3 → base = 75. penalty = 2. score = 73.
+    # scored = 4, passed = 3 → base = 75. penalty = 1.5; integer-
+    # divided in 4× space: penalty_4x=6, penalty=1. score = 74.
     _write_checks \
         "ssh.password_auth_disabled|low|passed" \
         "ssh.root_login_disabled|low|passed" \
         "ufw.enabled|low|passed" \
         "fail2ban.installed|medium|failed"
     run calculate_score
-    [ "$output" = "73" ]
+    [ "$output" = "74" ]
 }
 
 @test "calculate_score: info-category checks do not dilute" {
@@ -115,7 +116,8 @@ _write_checks() {
 @test "calculate_score: README example reproduces" {
     # 2 high + 1 medium failures on a 15-scored-check host with 12
     # safe; matches the example shown in README.md / README_zh.md.
-    # base = 100 * 12 / 15 = 80; penalty = 8*2 + 2*1 = 18 → score = 62.
+    # base = 100 * 12 / 15 = 80; penalty = 5*2 + 1.5*1 = 11.5,
+    # integer-divided in 4× space → 11. score = 69.
     local fails=(
         "ssh.password_auth_enabled|high|failed"
         "users.uid0_found|high|failed"
@@ -137,7 +139,7 @@ _write_checks() {
     )
     _write_checks "${fails[@]}" "${passes[@]}"
     run calculate_score
-    [ "$output" = "62" ]
+    [ "$output" = "69" ]
 }
 
 # ---- get_check_stats -------------------------------------------------

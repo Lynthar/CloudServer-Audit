@@ -727,14 +727,40 @@ _fs_audit_no_owner() {
 }
 
 _fs_audit_sensitive_perms() {
-    local issues=()
+    # Severity model: not every "wrong perms" finding is equal.
+    #   * /etc/shadow, /etc/gshadow, /etc/sudoers, /etc/sudoers.d/*,
+    #     SSH host private keys (ssh_host_*_key) → mistaken perms
+    #     here are direct local-priv-esc / credential-leak
+    #     primitives. Stay HIGH.
+    #   * /etc/passwd, /etc/group, sshd_config, /etc/crontab, public
+    #     hosts.allow/deny, sshd_config.d drop-ins → wrong perms are
+    #     real but typically read-only exposure, not direct
+    #     compromise. MEDIUM.
+    # Emit one finding per bucket so the score reflects actual
+    # exposure rather than counting a wrong-perm /etc/group as
+    # equivalent to a 666 sudoers drop-in.
+    local high_issues=()
+    local med_issues=()
+
+    _fs_is_critical_perm_path() {
+        case "$1" in
+            /etc/shadow|/etc/gshadow|/etc/sudoers) return 0 ;;
+            /etc/sudoers.d/*) return 0 ;;
+            /etc/ssh/ssh_host_*_key) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
 
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
         local expected="${FS_SENSITIVE_FILES[$file]}"
         local result
         result=$(_fs_check_sensitive_file "$file" "$expected")
         if [[ -n "$result" ]]; then
-            issues+=("$result")
+            if _fs_is_critical_perm_path "$file"; then
+                high_issues+=("$result")
+            else
+                med_issues+=("$result")
+            fi
         fi
     done
 
@@ -750,28 +776,46 @@ _fs_audit_sensitive_perms() {
         [[ -f "$_drop" ]] || continue
         local result
         result=$(_fs_check_sensitive_file "$_drop" "440")
-        [[ -n "$result" ]] && issues+=("$result")
+        [[ -n "$result" ]] && high_issues+=("$result")
     done
     for _drop in /etc/ssh/sshd_config.d/*; do
         [[ -f "$_drop" ]] || continue
         local result
         result=$(_fs_check_sensitive_file "$_drop" "644")
-        [[ -n "$result" ]] && issues+=("$result")
+        [[ -n "$result" ]] && med_issues+=("$result")
     done
 
-    if [[ ${#issues[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues[@]}" | head -5 | tr '\n' ' ')
-        local check=$(create_check_json \
-            "filesystem.sensitive_perms_wrong" \
-            "filesystem" \
-            "high" \
-            "failed" \
-            "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#issues[@]}")" \
-            "Files with wrong permissions: $issue_list" \
-            "$(i18n 'filesystem.fix_sensitive_perms')" \
-            "filesystem.fix_sensitive_perms")
-        state_add_check "$check"
-        print_severity "high" "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#issues[@]}")"
+    local total=$(( ${#high_issues[@]} + ${#med_issues[@]} ))
+
+    if (( total > 0 )); then
+        if (( ${#high_issues[@]} > 0 )); then
+            local issue_list=$(printf '%s\n' "${high_issues[@]}" | head -5 | tr '\n' ' ')
+            local check=$(create_check_json \
+                "filesystem.sensitive_perms_wrong" \
+                "filesystem" \
+                "high" \
+                "failed" \
+                "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")" \
+                "Files with wrong permissions: $issue_list" \
+                "$(i18n 'filesystem.fix_sensitive_perms')" \
+                "filesystem.fix_sensitive_perms")
+            state_add_check "$check"
+            print_severity "high" "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")"
+        fi
+        if (( ${#med_issues[@]} > 0 )); then
+            local issue_list_m=$(printf '%s\n' "${med_issues[@]}" | head -5 | tr '\n' ' ')
+            local check_m=$(create_check_json \
+                "filesystem.sensitive_perms_wrong_minor" \
+                "filesystem" \
+                "medium" \
+                "failed" \
+                "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")" \
+                "Files with wrong permissions: $issue_list_m" \
+                "$(i18n 'filesystem.fix_sensitive_perms')" \
+                "filesystem.fix_sensitive_perms")
+            state_add_check "$check_m"
+            print_severity "medium" "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")"
+        fi
     else
         local check=$(create_check_json \
             "filesystem.sensitive_perms_ok" \

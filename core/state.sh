@@ -575,16 +575,25 @@ calculate_score() {
 
     # Score calculation (pass-rate based, with severity penalty on top).
     #
-    # The previous additive/capped model (start 100, per-severity caps
-    # at -80/-40/-15) hit its combined cap of -135 quickly on any real
-    # server: 3 high + 11 medium + 10 low saturated every cap and
-    # produced score 0, identical to a catastrophically compromised
-    # system. There was no differentiation between "needs hardening"
-    # and "rooted".
+    # History:
+    #   v1 — additive/capped (-80/-40/-15) hit its combined cap of
+    #        -135 on any real server with a handful of mediums; could
+    #        not distinguish "needs hardening" from "rooted".
+    #   v2 — pass_rate − (8h + 2m + 0.5l). Better, but the penalty
+    #        still saturated for typical cloud VPSes: 4 high alone
+    #        consumed 32 points on top of a base that was already at
+    #        ~57 (a server with ~57% pass rate ⇒ 0). The classification
+    #        pass that landed alongside this trim cuts most of the
+    #        spurious highs, so the residual penalty here can be
+    #        reduced too without losing signal on actually-bad hosts.
+    #   v3 — pass_rate − (5h + 1.5m + 0.25l). Same shape, lower
+    #        weights. A server with no failures still gets 100; a
+    #        rooted box (10h + 20m + 30l = 87.5 penalty on top of a
+    #        ~33% pass rate) still floors at 0.
     #
-    # New formula:
-    #     base    = 100 × passed / scored_total   (the pass rate, 0..100)
-    #     penalty = 8×high + 2×medium + 0.5×low   (additive, severity-weighted)
+    # Final formula:
+    #     base    = 100 × passed / scored_total     (the pass rate, 0..100)
+    #     penalty = 5×high + 1.5×medium + 0.25×low  (additive, severity-weighted)
     #     score   = clamp(0, 100, base − penalty)
     #
     # info-category checks (see security_levels.sh) are excluded from
@@ -594,10 +603,14 @@ calculate_score() {
     #
     # Expected outcomes (all on a 50-check scored total):
     #   0 failures                   → 100 (Excellent)
-    #   1 medium only                → 96  (Excellent)
-    #   1 high only                  → 90  (Good)
-    #   3 high only                  → 70  (Needs work)
-    #   3 high + 6 medium + 3 low    → 38  (Poor)
+    #   1 medium only                → 97  (Excellent)
+    #   1 high only                  → 93  (Good)
+    #   3 high only                  → 79  (Fair)
+    #   3 high + 6 medium + 3 low    → 53  (Needs work)
+    #   7 high + 11 medium + 3 low (the typical fresh-VPS shape after
+    #    the v3 classification trim drops 5 spurious highs to ≈2 high)
+    #                                ≈ ~40 — distinguishable from
+    #                                "actually broken"
     #   10 high + 20 medium + 30 low → 0   (Broken)
 
     if (( scored_total == 0 )); then
@@ -610,10 +623,10 @@ calculate_score() {
 
     local base=$(( 100 * passed_count / scored_total ))
 
-    # Penalty in 2× space so we don't lose the 0.5 weight on low.
-    # penalty*2 = 16*high + 4*medium + 1*low
-    local penalty_2x=$(( 16 * high_fail + 4 * medium_fail + low_fail ))
-    local penalty=$(( penalty_2x / 2 ))
+    # Penalty in 4× space so we don't lose the 0.25 weight on low.
+    # penalty*4 = 20*high + 6*medium + 1*low  (= 5h + 1.5m + 0.25l ×4)
+    local penalty_4x=$(( 20 * high_fail + 6 * medium_fail + low_fail ))
+    local penalty=$(( penalty_4x / 4 ))
 
     local score=$(( base - penalty ))
     (( score < 0 )) && score=0

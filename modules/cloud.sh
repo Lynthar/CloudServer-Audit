@@ -137,103 +137,289 @@ declare -ga SAFE_SYSTEM_PROCESSES=(
 # Detection Functions
 # ==============================================================================
 
-# Detect cloud provider from system info
+# Detect cloud provider from system info.
+#
+# Detection order — earlier signals are stronger and cheaper than
+# later ones, and we deliberately exhaust every offline signal before
+# touching the network:
+#
+#   1. DMI vendor / board_vendor / bios_vendor            (offline,
+#                                                          authoritative
+#                                                          when the
+#                                                          hypervisor
+#                                                          stamps it)
+#   2. DMI product_name                                   (offline)
+#   3. DMI product_uuid prefix                            (offline; AWS
+#                                                          EC2 UUIDs
+#                                                          start "ec2"
+#                                                          on Xen)
+#   4. cloud-init datasource (ds-identify.log,
+#      /var/lib/cloud/data/datasource, /run/cloud-init/cloud-id,
+#      /etc/cloud/cloud.cfg.d/*)                          (offline)
+#   5. Provider-specific files (/etc/digitalocean,
+#      /sys/firmware/qemu_fw_cfg/by_name/opt/io.systemd.credentials/...)
+#                                                          (offline)
+#   6. Provider-specific NETWORK metadata endpoints       (the only
+#                                                          probes that
+#                                                          go on the
+#                                                          wire — and
+#                                                          we order
+#                                                          them so
+#                                                          provider-
+#                                                          unique IPs
+#                                                          are tried
+#                                                          BEFORE
+#                                                          shared
+#                                                          169.254.169.254)
+#   7. Shared 169.254.169.254 IMDSv2/v1 — disambiguated by parsing the
+#      placement/region or instance-id payload (Tencent and several
+#      other providers offer EC2-compatible IMDS at the same IP, so a
+#      bare 200 here is NOT enough to call it AWS).
 _detect_cloud_provider() {
     local provider="unknown"
 
-    # Check DMI/SMBIOS info
+    # ---------- 1. DMI sys_vendor ----------
     if [[ -r /sys/class/dmi/id/sys_vendor ]]; then
         local vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)
         case "$vendor" in
             *"Alibaba"*)     provider="alibaba" ;;
             *"Tencent"*)     provider="tencent" ;;
-            *"HUAWEI"*)      provider="huawei" ;;
+            *"HUAWEI"*|*"Huawei"*) provider="huawei" ;;
             *"Amazon"*)      provider="aws" ;;
             *"Microsoft"*)   provider="azure" ;;
             *"Google"*)      provider="gcp" ;;
             *"DigitalOcean"*) provider="digitalocean" ;;
-            *"Vultr"*)       provider="vultr" ;;
-            *"Linode"*)      provider="linode" ;;
-            *"Oracle"*)      provider="oracle" ;;
+            *"Vultr"*|*"Choopa"*) provider="vultr" ;;
+            *"Linode"*|*"Akamai"*) provider="linode" ;;
+            *"Oracle"*|*"OracleCloud"*) provider="oracle" ;;
             *"Hetzner"*)     provider="hetzner" ;;
             *"OVH"*)         provider="ovh" ;;
-            *"Scaleway"*)    provider="scaleway" ;;
+            *"Scaleway"*|*"Online"*) provider="scaleway" ;;
         esac
     fi
 
-    # Check product name if vendor didn't match
+    # ---------- 2. DMI product_name ----------
     if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_name ]]; then
         local product=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
         case "$product" in
-            *"Alibaba"*|*"ECS"*)  provider="alibaba" ;;
-            *"CVM"*)              provider="tencent" ;;
-            *"HVM"*)              provider="aws" ;;
-            *"Virtual Machine"*) provider="azure" ;;
-            *"Google"*)          provider="gcp" ;;
-            *"Droplet"*)         provider="digitalocean" ;;
+            *"Alibaba"*|*"Aliyun"*|*"ECS"*)  provider="alibaba" ;;
+            *"CVM"*|*"Tencent"*)             provider="tencent" ;;
+            *"HVM domU"*|*"HVM"*)            provider="aws" ;;
+            *"Virtual Machine"*)             provider="azure" ;;
+            *"Google Compute Engine"*)       provider="gcp" ;;
+            *"Droplet"*)                     provider="digitalocean" ;;
+            *"Standard PC (Q35"*) ;;  # very generic — KVM default, do not classify
+            *"OracleCloud"*)                 provider="oracle" ;;
+            *"VirtualBox"*) ;;        # local dev — leave as unknown
         esac
     fi
 
-    # Check for cloud-init datasource
-    if [[ "$provider" == "unknown" && -f /run/cloud-init/ds-identify.log ]]; then
-        local ds=$(grep -oP 'datasource: \K\w+' /run/cloud-init/ds-identify.log 2>/dev/null | head -1)
-        case "$ds" in
-            "Ec2")          provider="aws" ;;
-            "Azure")        provider="azure" ;;
-            "GCE")          provider="gcp" ;;
-            "DigitalOcean") provider="digitalocean" ;;
-            "Vultr")        provider="vultr" ;;
-            "Hetzner")      provider="hetzner" ;;
-            "AliYun")       provider="alibaba" ;;
-        esac
-    fi
-
-    # Check metadata endpoints. The previous implementation used
-    # `curl -s ... &>/dev/null` and tested the curl exit code, but
-    # without `-f` curl exits 0 on any HTTP response (including 401);
-    # on AWS instances with IMDSv2 enforced (the default since 2024)
-    # an unauthenticated GET returns 401 yet was treated as success.
-    # Fix: try an IMDSv2 token handshake for AWS, use `curl -fs` so
-    # HTTP errors fail the probe, and gate each endpoint on its
-    # provider-specific signature so a spurious response on one IP
-    # cannot reclassify another provider.
+    # ---------- 2b. board_vendor / bios_vendor (rare; some providers
+    # only stamp these). Only consult if still unknown.
     if [[ "$provider" == "unknown" ]]; then
-        # AWS IMDSv2 (token-required path).
+        local extra
+        for extra in /sys/class/dmi/id/board_vendor /sys/class/dmi/id/bios_vendor /sys/class/dmi/id/chassis_vendor; do
+            [[ -r "$extra" ]] || continue
+            local val=$(cat "$extra" 2>/dev/null)
+            case "$val" in
+                *"Tencent"*)     provider="tencent"; break ;;
+                *"Alibaba"*)     provider="alibaba"; break ;;
+                *"Amazon"*)      provider="aws"; break ;;
+                *"DigitalOcean"*) provider="digitalocean"; break ;;
+                *"Hetzner"*)     provider="hetzner"; break ;;
+                *"Oracle"*)      provider="oracle"; break ;;
+            esac
+        done
+    fi
+
+    # ---------- 3. product_uuid prefix ----------
+    # AWS EC2 (Xen) instances have product_uuid starting with "EC2";
+    # Nitro instances are random. Useful as a tiebreaker when DMI
+    # vendor is generic (e.g., bare "Xen").
+    if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_uuid ]]; then
+        # Read may fail with EACCES for non-root; ignore quietly.
+        local uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr 'A-Z' 'a-z')
+        if [[ "$uuid" == ec2* ]]; then
+            provider="aws"
+        fi
+    fi
+
+    # ---------- 4. cloud-init datasource ----------
+    if [[ "$provider" == "unknown" ]]; then
+        local ds=""
+
+        # Preferred: cloud-init's resolved cloud-id (single token).
+        if [[ -r /run/cloud-init/cloud-id ]]; then
+            ds=$(head -n1 /run/cloud-init/cloud-id 2>/dev/null | tr -d '[:space:]')
+        fi
+
+        # Next: ds-identify.log (multi-line; first datasource: line wins).
+        if [[ -z "$ds" && -f /run/cloud-init/ds-identify.log ]]; then
+            ds=$(grep -oP 'datasource: \K\w+' /run/cloud-init/ds-identify.log 2>/dev/null | head -1)
+        fi
+
+        # Persisted datasource (survives reboot, set by cloud-init init).
+        if [[ -z "$ds" && -r /var/lib/cloud/data/datasource ]]; then
+            ds=$(head -n1 /var/lib/cloud/data/datasource 2>/dev/null | awk -F': ' '{print $1}')
+        fi
+
+        # /etc/cloud/cloud.cfg.d/ drop-ins. Vendors ship distinct names;
+        # we look at filenames rather than parse the YAML.
+        if [[ -z "$ds" && -d /etc/cloud/cloud.cfg.d ]]; then
+            local f
+            for f in /etc/cloud/cloud.cfg.d/*.cfg; do
+                [[ -f "$f" ]] || continue
+                case "$f" in
+                    *aliyun*|*alicloud*) ds="AliYun"; break ;;
+                    *tencent*|*qcloud*)  ds="Tencent"; break ;;
+                    *digitalocean*)      ds="DigitalOcean"; break ;;
+                    *hetzner*)           ds="Hetzner"; break ;;
+                    *vultr*)             ds="Vultr"; break ;;
+                    *oracle*)            ds="Oracle"; break ;;
+                esac
+            done
+        fi
+
+        case "$ds" in
+            "Ec2"|"aws"|"AWS")                   provider="aws" ;;
+            "Azure"|"azure")                     provider="azure" ;;
+            "GCE"|"gce"|"gcp")                   provider="gcp" ;;
+            "DigitalOcean"|"digitalocean")       provider="digitalocean" ;;
+            "Vultr"|"vultr")                     provider="vultr" ;;
+            "Hetzner"|"hetzner"|"hcloud")        provider="hetzner" ;;
+            "AliYun"|"aliyun"|"alibaba")         provider="alibaba" ;;
+            "Tencent"|"tencent")                 provider="tencent" ;;
+            "Oracle"|"oracle"|"oci")             provider="oracle" ;;
+            "Linode"|"linode")                   provider="linode" ;;
+            "Scaleway"|"scaleway")               provider="scaleway" ;;
+            "OpenStack"|"openstack")
+                # OVH and several Chinese clouds use OpenStack — stays
+                # unknown unless one of the offline signals above
+                # already pinned it.
+                ;;
+        esac
+    fi
+
+    # ---------- 5. Provider-specific files ----------
+    if [[ "$provider" == "unknown" ]]; then
+        if [[ -e /etc/digitalocean ]] || [[ -e /var/lib/digitalocean ]]; then
+            provider="digitalocean"
+        elif [[ -e /etc/hetzner-build ]] || [[ -e /var/lib/hetzner ]]; then
+            provider="hetzner"
+        elif [[ -e /etc/oracle-cloud-agent ]] || [[ -d /etc/oci-hostname.conf ]]; then
+            provider="oracle"
+        fi
+    fi
+
+    # ---------- 6. Provider-specific NETWORK endpoints ----------
+    # These IPs are unique to one provider, so a 200 here is conclusive.
+    # Do these BEFORE the shared 169.254.169.254 fallback so we don't
+    # misclassify Tencent/OCI/etc. as AWS.
+    if [[ "$provider" == "unknown" ]]; then
+        # Tencent Cloud has its own metadata service at metadata.tencentyun.com
+        # (the canonical name used in Tencent's documentation), AND mirrors
+        # an EC2-compatible service at 169.254.169.254. Hitting the
+        # tencent-specific name first avoids the EC2-compat misclassification.
+        if curl -fs --connect-timeout 1 -m 2 \
+            http://metadata.tencentyun.com/latest/meta-data/ >/dev/null 2>&1; then
+            provider="tencent"
+        # Alibaba IMDS at its dedicated 100.100.100.200.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://100.100.100.200/latest/meta-data/ >/dev/null 2>&1; then
+            provider="alibaba"
+        # Oracle Cloud (OCI) IMDS — distinct path /opc/v2/instance/.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            -H "Authorization: Bearer Oracle" \
+            http://169.254.169.254/opc/v2/instance/ >/dev/null 2>&1; then
+            provider="oracle"
+        # Hetzner Cloud IMDS — distinct path /hetzner/v1/metadata.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://169.254.169.254/hetzner/v1/metadata/ >/dev/null 2>&1; then
+            provider="hetzner"
+        # DigitalOcean IMDS — distinct path /metadata/v1/.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://169.254.169.254/metadata/v1/id >/dev/null 2>&1; then
+            provider="digitalocean"
+        # Vultr IMDS — distinct path /v1.json.
+        elif curl -fs --connect-timeout 1 -m 2 \
+            http://169.254.169.254/v1.json >/dev/null 2>&1; then
+            provider="vultr"
+        fi
+    fi
+
+    # ---------- 7. Shared 169.254.169.254 IMDS (ambiguous IP) ----------
+    # AWS, Tencent, Huawei and several others all serve EC2-compatible
+    # endpoints at this IP. A bare 200 is not enough; we have to read
+    # the placement/region or instance-id and compare against known
+    # provider patterns.
+    if [[ "$provider" == "unknown" ]]; then
+        local _imds_body=""
+
+        # IMDSv2 token-required path (AWS/Tencent both support this).
         local _aws_token
         _aws_token=$(curl -fs -X PUT --connect-timeout 1 -m 2 \
             -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
             http://169.254.169.254/latest/api/token 2>/dev/null) || true
-        if [[ -n "$_aws_token" ]] && \
-            curl -fs --connect-timeout 1 -m 2 \
-            -H "X-aws-ec2-metadata-token: $_aws_token" \
-            http://169.254.169.254/latest/meta-data/ >/dev/null 2>&1; then
-            provider="aws"
-        # Alibaba IMDS lives on a separate IP, so probe it
-        # independently rather than as a sub-test of the EC2 endpoint
-        # (the previous nested test could misclassify AWS as Alibaba
-        # when 100.100.* happened to respond, or vice versa).
-        elif curl -fs --connect-timeout 1 -m 2 \
-            http://100.100.100.200/latest/meta-data/ >/dev/null 2>&1; then
-            provider="alibaba"
-        # IMDSv1-only AWS (rare on new instances) — accept only when
-        # the GET actually succeeds (HTTP 200), i.e. the instance has
-        # IMDSv1 explicitly enabled.
-        elif curl -fs --connect-timeout 1 -m 2 \
-            http://169.254.169.254/latest/meta-data/ >/dev/null 2>&1; then
-            provider="aws"
-        # Azure: header is required (note the space after the colon —
-        # both forms are accepted) and path is /metadata/instance.
-        elif curl -fs --connect-timeout 1 -m 2 -H "Metadata: true" \
-            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
-            >/dev/null 2>&1; then
-            provider="azure"
-        # GCP: requires Metadata-Flavor: Google AND the
-        # /computeMetadata/v1/ path. Without -f, GCP's 301-on-missing-
-        # header redirect was previously treated as success.
-        elif curl -fs --connect-timeout 1 -m 2 \
-            -H "Metadata-Flavor: Google" \
-            http://169.254.169.254/computeMetadata/v1/ >/dev/null 2>&1; then
-            provider="gcp"
+        if [[ -n "$_aws_token" ]]; then
+            _imds_body=$(curl -fs --connect-timeout 1 -m 2 \
+                -H "X-aws-ec2-metadata-token: $_aws_token" \
+                http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null) || true
+            if [[ -z "$_imds_body" ]]; then
+                # Fallback to instance-id; AWS Nitro IDs start with "i-"
+                # (Tencent uses "ins-").
+                _imds_body=$(curl -fs --connect-timeout 1 -m 2 \
+                    -H "X-aws-ec2-metadata-token: $_aws_token" \
+                    http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null) || true
+            fi
+        fi
+
+        # IMDSv1 fallback (rare on AWS post-2024; common on Tencent /
+        # several local cloud appliances).
+        if [[ -z "$_imds_body" ]]; then
+            _imds_body=$(curl -fs --connect-timeout 1 -m 2 \
+                http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null) || true
+            if [[ -z "$_imds_body" ]]; then
+                _imds_body=$(curl -fs --connect-timeout 1 -m 2 \
+                    http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null) || true
+            fi
+        fi
+
+        if [[ -n "$_imds_body" ]]; then
+            # Disambiguate. Strip whitespace; lower-case for region match.
+            local _b=$(printf '%s' "$_imds_body" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+            case "$_b" in
+                # Tencent regions: ap-* (overlaps with AWS Asia-Pacific)
+                # plus eu-frankfurt, na-* — but the real giveaway is the
+                # instance-id prefix "ins-".
+                ins-*)                provider="tencent" ;;
+                # AWS Nitro / Xen instance IDs.
+                i-*)                  provider="aws" ;;
+                # AWS region tokens look like us-east-1 / eu-west-2; they
+                # always have a single trailing digit. Tencent's
+                # eu-frankfurt has no trailing digit, ap-guangzhou ditto.
+                *-[0-9])              provider="aws" ;;
+                ap-guangzhou|ap-shanghai|ap-beijing|ap-chengdu|ap-chongqing|ap-nanjing|ap-hongkong|ap-singapore|ap-bangkok|ap-jakarta|ap-mumbai|ap-seoul|ap-tokyo|na-siliconvalley|na-ashburn|na-toronto|sa-saopaulo|eu-frankfurt|eu-moscow)
+                                       provider="tencent" ;;
+                cn-north-*|cn-east-*|cn-south-*)
+                                       provider="huawei" ;;
+                *)
+                    # Last resort: we got *something* from 169.254.169.254
+                    # with the EC2 path shape; fall back to AWS but flag
+                    # via the ambiguous return.
+                    provider="aws-or-compatible"
+                    ;;
+            esac
+        else
+            # Try Azure (header-required path) and GCP (header + path).
+            if curl -fs --connect-timeout 1 -m 2 -H "Metadata: true" \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+                >/dev/null 2>&1; then
+                provider="azure"
+            elif curl -fs --connect-timeout 1 -m 2 \
+                -H "Metadata-Flavor: Google" \
+                http://169.254.169.254/computeMetadata/v1/ >/dev/null 2>&1; then
+                provider="gcp"
+            fi
         fi
     fi
 
@@ -248,6 +434,7 @@ _get_provider_name() {
         tencent)      echo "腾讯云 (Tencent Cloud)" ;;
         huawei)       echo "华为云 (Huawei Cloud)" ;;
         aws)          echo "AWS (Amazon Web Services)" ;;
+        aws-or-compatible) echo "EC2-compatible IMDS (provider unconfirmed)" ;;
         azure)        echo "Microsoft Azure" ;;
         gcp)          echo "Google Cloud Platform" ;;
         digitalocean) echo "DigitalOcean" ;;

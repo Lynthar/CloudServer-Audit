@@ -176,7 +176,7 @@ vpssec uses a clean dual-column layout for compact, readable results:
     ✗ Processes with deleted binaries
 
 ────────────────────────────────────────────────────────
-  Score: 62/100
+  Score: 69/100
 
   ● 2 High  ● 1 Medium  ● 12 Safe
 ```
@@ -239,7 +239,7 @@ The score combines a pass-rate base with a severity-weighted penalty
 
 ```
 base    = 100 × passed / scored_total
-penalty = 8 × high + 2 × medium + 0.5 × low
+penalty = 5 × high + 1.5 × medium + 0.25 × low
 score   = clamp(0, 100, base − penalty)
 ```
 
@@ -254,10 +254,10 @@ Indicative outcomes (on a host with ~50 scored checks):
 | Failures                       | Score | Band         |
 |--------------------------------|-------|--------------|
 | 0                              | 100   | Excellent    |
-| 1 medium                       | 96    | Excellent    |
-| 1 high                         | 90    | Good         |
-| 3 high                         | 70    | Needs work   |
-| 3 high + 6 medium + 3 low      | 38    | Poor         |
+| 1 medium                       | 97    | Excellent    |
+| 1 high                         | 93    | Good         |
+| 3 high                         | 79    | Fair         |
+| 3 high + 6 medium + 3 low      | 53    | Fair         |
 | 10 high + 20 medium + 30 low   | 0     | Broken       |
 
 Score ranges:

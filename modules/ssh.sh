@@ -340,17 +340,32 @@ _ssh_audit_password_auth() {
 
 _ssh_audit_root_login() {
     if _ssh_root_login_enabled; then
+        # When PasswordAuthentication is off, PermitRootLogin=yes only
+        # exposes root via key-based auth — operationally equivalent to
+        # any other key-authorised sudoer. Calling that "high" against
+        # every key-only server made the signal noisy and didn't match
+        # how operators actually run things. We still flag it (defence
+        # in depth: a single misplaced authorized_key on root is worse
+        # than on a non-root user, and disabling root login is still
+        # the recommended hardening), but at medium so the system score
+        # tracks real exposure rather than a CIS checkbox.
+        local sev="high"
+        local title_key="ssh.root_login_enabled"
+        if ! _ssh_password_auth_enabled; then
+            sev="medium"
+            title_key="ssh.root_login_keyonly"
+        fi
         local check=$(create_check_json \
             "ssh.root_login_enabled" \
             "ssh" \
-            "high" \
+            "$sev" \
             "failed" \
-            "$(i18n 'ssh.root_login_enabled')" \
+            "$(i18n "$title_key")" \
             "PermitRootLogin is set to yes" \
             "$(i18n 'ssh.fix_disable_root')" \
             "ssh.disable_root_login")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ssh.root_login_enabled')"
+        print_severity "$sev" "$(i18n "$title_key")"
     else
         local check=$(create_check_json \
             "ssh.root_login_disabled" \

@@ -233,12 +233,34 @@ _update_audit_available() {
         state_add_check "$check"
         print_ok "$(i18n 'update.no_updates')"
     else
+        # Severity model:
+        #   no security updates                          → low (just
+        #                                                  pending
+        #                                                  routine
+        #                                                  packages)
+        #   security updates pending                     → medium (the
+        #                                                  default we
+        #                                                  expect to
+        #                                                  see on a
+        #                                                  freshly
+        #                                                  imaged host)
+        #   security updates AND list-age signals stale  → high
+        #     (last `apt update` ran > 30 days ago, i.e. the operator
+        #      hasn't even pulled the security index in a month — at
+        #      that point the lag is the actual finding, not the
+        #      individual updates)
         local severity="low"
         local fix_id=""
 
         if ((security_count > 0)); then
-            severity="high"
+            severity="medium"
             fix_id="update.apply_security"
+
+            local stale_days
+            stale_days=$(_update_apt_list_age_days)
+            if [[ -n "$stale_days" ]] && (( stale_days > 30 )); then
+                severity="high"
+            fi
         fi
 
         local check=$(create_check_json \
@@ -253,11 +275,35 @@ _update_audit_available() {
         state_add_check "$check"
 
         if ((security_count > 0)); then
-            print_severity "high" "$(i18n 'update.security_updates' "count=$security_count")"
+            print_severity "$severity" "$(i18n 'update.security_updates' "count=$security_count")"
         else
             print_severity "low" "$(i18n 'update.updates_available' "count=$update_count")"
         fi
     fi
+}
+
+# Return how many days ago `apt update` last ran, or empty if we can't
+# tell. Used as a "is the operator paying attention" signal — a host
+# that has security updates pending *and* hasn't pulled the index in
+# weeks is qualitatively worse than one that's a day behind.
+_update_apt_list_age_days() {
+    local marker=""
+    if [[ -f /var/lib/apt/periodic/update-success-stamp ]]; then
+        marker=/var/lib/apt/periodic/update-success-stamp
+    elif [[ -d /var/lib/apt/lists ]]; then
+        # Fall back to the newest mtime in the lists dir; -t sorts by mtime.
+        marker=$(find /var/lib/apt/lists -maxdepth 1 -type f -name '*Packages*' 2>/dev/null | head -1)
+    fi
+    [[ -z "$marker" ]] && return 0
+    [[ ! -e "$marker" ]] && return 0
+
+    local mtime now age_seconds
+    mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null)
+    [[ -z "$mtime" ]] && return 0
+    now=$(date +%s)
+    age_seconds=$(( now - mtime ))
+    (( age_seconds < 0 )) && age_seconds=0
+    echo $(( age_seconds / 86400 ))
 }
 
 _update_audit_unattended() {

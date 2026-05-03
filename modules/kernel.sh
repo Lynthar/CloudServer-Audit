@@ -60,8 +60,17 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "kernel.core_uses_pid:1:low:Core dump filename includes PID"
 
     # Additional kernel hardening (may not be available on all systems)
-    "kernel.unprivileged_userns_clone:0:high:Disable unprivileged user namespaces (container escape prevention)"
-    "kernel.unprivileged_bpf_disabled:1:high:Disable unprivileged BPF (exploit prevention)"
+    # Disabling unprivileged user namespaces breaks Docker rootless,
+    # podman, snap, the Chrome/Electron sandbox, bwrap-based tooling,
+    # and a stack of CI runners. Debian/Ubuntu ship with =1 by default
+    # for that reason. Treating the *default* as critical kernel
+    # hardening drives users to disable it and then their containers
+    # stop working — bad guidance loop. Keep it as a finding (a real
+    # container-escape mitigation) but at medium severity.
+    "kernel.unprivileged_userns_clone:0:medium:Disable unprivileged user namespaces (defence-in-depth; breaks Docker rootless / podman / snap / Chrome sandbox if enabled)"
+    # Worth doing on hardened hosts but not a default-broken
+    # kernel — keep at medium.
+    "kernel.unprivileged_bpf_disabled:1:medium:Disable unprivileged BPF (exploit prevention)"
     "net.core.bpf_jit_harden:2:medium:BPF JIT hardening"
     "kernel.sysrq:0:medium:Disable Magic SysRq key (or use 176 for safe subset)"
     "kernel.perf_event_paranoid:3:medium:Restrict perf events"

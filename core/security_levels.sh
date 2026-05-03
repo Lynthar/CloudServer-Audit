@@ -387,6 +387,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["filesystem.no_owner"]="recommended"
     ["filesystem.owner_ok"]="recommended"
     ["filesystem.sensitive_perms_wrong"]="required"
+    ["filesystem.sensitive_perms_wrong_minor"]="required"
     ["filesystem.sensitive_perms_ok"]="required"
     ["filesystem.tmp_mount_ok"]="info"
     ["filesystem.tmp_not_separate"]="info"
