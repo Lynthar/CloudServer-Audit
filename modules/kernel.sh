@@ -182,22 +182,40 @@ _kernel_check_aslr() {
     esac
 }
 
-# Check if IP forwarding is needed (Docker, LXC, etc.)
+# True when something on this host legitimately needs IP forwarding /
+# acts as a router. Covers container runtimes, VM hosts, mesh-VPN
+# subnet routers, and Kubernetes nodes. The original list only had
+# Docker/LXC/libvirt, which produced a medium-severity FP on every
+# Tailscale or Wireguard server (the two most common ip_forward=1
+# sources on cloud VPS) — Lynis cross-check surfaced the gap.
 _kernel_ip_forward_needed() {
-    # Check if Docker is running (needs IP forwarding)
-    if systemctl is-active --quiet docker 2>/dev/null; then
+    # Container / VM runtimes
+    systemctl is-active --quiet docker 2>/dev/null && return 0
+    systemctl is-active --quiet podman 2>/dev/null && return 0
+    systemctl is-active --quiet lxc 2>/dev/null && return 0
+    systemctl is-active --quiet lxd 2>/dev/null && return 0
+    systemctl is-active --quiet incus 2>/dev/null && return 0
+    systemctl is-active --quiet libvirtd 2>/dev/null && return 0
+
+    # VPN / mesh-network daemons. tailscaled and openvpn(.service)
+    # match directly; wg-quick@<iface>.service and openvpn-{client,
+    # server}@<name>.service are template units and need a listing scan.
+    systemctl is-active --quiet tailscaled 2>/dev/null && return 0
+    systemctl is-active --quiet openvpn 2>/dev/null && return 0
+    if systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null \
+        | awk '{print $1}' \
+        | grep -qE '^(wg-quick@|openvpn-(client|server)@)'; then
         return 0
     fi
 
-    # Check if LXC/LXD is running
-    if systemctl is-active --quiet lxc 2>/dev/null || \
-       systemctl is-active --quiet lxd 2>/dev/null; then
-        return 0
-    fi
+    # Kubernetes node
+    systemctl is-active --quiet k3s 2>/dev/null && return 0
+    systemctl is-active --quiet kubelet 2>/dev/null && return 0
 
-    # Check if libvirt is running
-    if systemctl is-active --quiet libvirtd 2>/dev/null; then
-        return 0
+    # Wireguard via manual `ip link add` (no systemd unit). Cheaper
+    # than `wg show` and works without the wireguard-tools package.
+    if command -v ip >/dev/null 2>&1; then
+        ip -br link show type wireguard 2>/dev/null | grep -q . && return 0
     fi
 
     return 1
@@ -667,8 +685,22 @@ _kernel_audit_network_params() {
 
         # Special handling for ip_forward
         if [[ "$param" == "net.ipv4.ip_forward" ]] && _kernel_ip_forward_needed; then
-            # IP forwarding is needed for Docker/LXC
+            # IP forwarding is needed for Docker/LXC/Tailscale/WG/k3s/...
             continue
+        fi
+
+        # Special handling for rp_filter on forwarding hosts.
+        # When the kernel acts as a router (subnet router, container
+        # bridge, k8s node), rp_filter=2 ("loose mode") is the standard
+        # value — strict mode (1) drops the asymmetric-return packets
+        # those workloads produce. rp_filter=0 (off entirely) still
+        # gets flagged: it allows spoofed source addresses and has no
+        # legitimate use case on a single-host server.
+        if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
+           && _kernel_ip_forward_needed; then
+            local rp_val
+            rp_val=$(_kernel_get_sysctl "$param" 2>/dev/null)
+            [[ "$rp_val" == "2" ]] && continue
         fi
 
         local actual

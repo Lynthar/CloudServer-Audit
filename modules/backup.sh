@@ -33,24 +33,44 @@ _backup_check_systemd_timer() {
     systemctl list-timers 2>/dev/null | grep -qiE "(restic|borg|backup)"
 }
 
+# Single source of truth for "is a backup tool installed?". Both the
+# tools audit and the audit-flow gate consult this so the three backup
+# checks can't disagree (previously: no_tools failed while scheduled
+# and critical_paths both passed, because the latter two only looked
+# for cron entries / on-disk paths without cross-referencing tools).
+_backup_count_tools() {
+    local count=0
+    _backup_restic_installed && ((count++)) || true
+    _backup_borg_installed && ((count++)) || true
+    _backup_rclone_installed && ((count++)) || true
+    echo "$count"
+}
+
 # ==============================================================================
 # Backup Audit
 # ==============================================================================
 
 backup_audit() {
     local module="backup"
+    local tools_found
+    tools_found=$(_backup_count_tools)
 
     # Check for backup tools
     print_item "$(i18n 'backup.check_tools')"
     _backup_audit_tools
 
-    # Check for scheduled backups
-    print_item "$(i18n 'backup.check_scheduled')"
-    _backup_audit_scheduled
+    # Schedule and critical-paths checks are meaningful only when at
+    # least one backup tool is installed — otherwise a stray cron line
+    # whose name contains "backup", or the mere existence of /etc on
+    # disk, would emit a passing check next to "no backup tools",
+    # giving the operator a false sense that backups are in place.
+    if (( tools_found > 0 )); then
+        print_item "$(i18n 'backup.check_scheduled')"
+        _backup_audit_scheduled
 
-    # Check critical paths for backup
-    print_item "$(i18n 'backup.check_critical_paths')"
-    _backup_audit_critical_paths
+        print_item "$(i18n 'backup.check_critical_paths')"
+        _backup_audit_critical_paths
+    fi
 }
 
 _backup_audit_tools() {
