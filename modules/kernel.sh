@@ -32,10 +32,18 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv4.icmp_ignore_bogus_error_responses:1:low:Ignore bogus ICMP errors"
     "net.ipv4.tcp_syncookies:1:high:SYN flood protection"
     "net.ipv4.tcp_timestamps:1:low:TCP timestamps"
+    # Niche-but-default-off IPv4 features (Lynis KRNL-6000 cross-check)
+    "net.ipv4.conf.all.bootp_relay:0:low:BOOTP relay (default off; enable = relay agent role)"
+    "net.ipv4.conf.all.mc_forwarding:0:low:Multicast forwarding (default off; enable = mrouted role)"
+    "net.ipv4.conf.all.proxy_arp:0:low:Proxy ARP (default off; enable = bridge/router role)"
 
     # Network security - IPv6 (Enhanced)
     "net.ipv6.conf.all.accept_redirects:0:medium:IPv6 ICMP redirects"
     "net.ipv6.conf.default.accept_redirects:0:medium:IPv6 ICMP redirects (default)"
+    # IPv6 symmetry with the IPv4 send_redirects checks above (Lynis
+    # cross-check; the original list audited IPv4 only).
+    "net.ipv6.conf.all.send_redirects:0:medium:IPv6 ICMP redirects sending"
+    "net.ipv6.conf.default.send_redirects:0:medium:IPv6 ICMP redirects sending (default)"
     "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"
     "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"
     "net.ipv6.conf.all.accept_ra:0:medium:IPv6 Router Advertisements (can be MITM vector)"
@@ -76,6 +84,13 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "kernel.perf_event_paranoid:3:medium:Restrict perf events"
     "fs.protected_fifos:2:low:FIFO protection"
     "fs.protected_regular:2:low:Regular file protection"
+    # Console/console-equivalent attack surface (Lynis KRNL-6000 cross-check)
+    "kernel.core_setuid_ok:0:low:SUID core dumps disabled (defence-in-depth)"
+    "kernel.ctrl-alt-del:0:low:Console Ctrl-Alt-Del bypass disabled"
+    # TTY line discipline autoload — CVE-2019-13272 / CVE-2020-14381
+    # exploit primitive lives here. Mainline default is 0 since 5.x;
+    # flag anything else.
+    "dev.tty.ldisc_autoload:0:low:TTY line discipline autoload restricted"
 )
 
 # ==============================================================================
@@ -787,8 +802,13 @@ _kernel_audit_kernel_params() {
         local severity="${rest%%:*}"
         local desc="${rest#*:}"
 
-        # Only check kernel.* and fs.* params here
-        if [[ ! "$param" =~ ^(kernel\.|fs\.) ]]; then
+        # Only check kernel.* / fs.* / dev.* params here. dev.* was
+        # silently dropped before — KERNEL_SECURITY_PARAMS had no
+        # dev.* entries so it never showed, but adding e.g.
+        # dev.tty.ldisc_autoload (Lynis KRNL-6000) requires routing
+        # the dev.* prefix through this function rather than the
+        # net.* one.
+        if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
             continue
         fi
 
