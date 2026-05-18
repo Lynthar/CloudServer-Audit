@@ -242,6 +242,19 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ssh.x11_forwarding_enabled"]="info"
     ["ssh.weak_algorithms"]="optional"
     ["ssh.algorithms_ok"]="optional"
+    # SSH-7408 additional hardening (Lynis cross-check) - info only
+    ["ssh.allow_tcp_forwarding_disabled"]="info"
+    ["ssh.allow_tcp_forwarding_enabled"]="info"
+    ["ssh.client_alive_ok"]="info"
+    ["ssh.client_alive_high"]="info"
+    ["ssh.log_level_ok"]="info"
+    ["ssh.log_level_low"]="info"
+    ["ssh.max_sessions_ok"]="info"
+    ["ssh.max_sessions_high"]="info"
+    ["ssh.tcp_keepalive_disabled"]="info"
+    ["ssh.tcp_keepalive_enabled"]="info"
+    ["ssh.agent_forwarding_disabled"]="info"
+    ["ssh.agent_forwarding_enabled"]="info"
 
     # === UFW Module - required (core firewall) ===
     ["ufw.not_installed"]="required"
@@ -314,6 +327,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["baseline.no_mac_system"]="recommended"
     ["baseline.unused_services"]="recommended"
     ["baseline.no_unused_services"]="recommended"
+    ["baseline.integrity_installed"]="info"
+    ["baseline.integrity_missing"]="info"
 
     # === Logging Module ===
     ["logging.journald_persistent"]="recommended"
@@ -368,6 +383,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.kernel_params_weak"]="recommended"
     ["kernel.core_dump_ok"]="recommended"
     ["kernel.core_dump_enabled"]="recommended"
+    ["kernel.unused_protocols_blocked"]="info"
+    ["kernel.unused_protocols_unblocked"]="info"
     # IPv6 checks - recommended
     ["kernel.ipv6_disabled"]="info"
     ["kernel.ipv6_secure"]="recommended"

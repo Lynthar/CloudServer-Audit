@@ -205,6 +205,58 @@ baseline_audit() {
     # Check unused services
     print_item "$(i18n 'baseline.check_unused_services')"
     _baseline_audit_unused_services
+
+    # Check file integrity tool (Lynis FINT-4350)
+    print_item "$(i18n 'baseline.check_integrity')"
+    _baseline_audit_integrity
+}
+
+# Detect a host-based file integrity monitoring tool. Mirrors Lynis
+# FINT-4350; treated as a defence-in-depth control (low severity), not
+# a baseline requirement.
+_baseline_audit_integrity() {
+    local found=""
+    local t
+    for t in aide aide.wrapper tripwire samhain afick integrit; do
+        if command -v "$t" &>/dev/null; then
+            found="$t"
+            break
+        fi
+    done
+    if [[ -z "$found" ]] && command -v dpkg-query &>/dev/null; then
+        for t in aide tripwire samhain afick integrit ossec-hids-server ossec-hids-agent; do
+            if dpkg-query -W -f='${Status}\n' "$t" 2>/dev/null | grep -q '^install ok installed$'; then
+                found="$t"
+                break
+            fi
+        done
+    fi
+
+    if [[ -n "$found" ]]; then
+        local check=$(create_check_json \
+            "baseline.integrity_installed" \
+            "baseline" \
+            "low" \
+            "passed" \
+            "$(i18n 'baseline.integrity_installed' "tool=$found")" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'baseline.integrity_installed' "tool=$found")"
+    else
+        local check=$(create_check_json \
+            "baseline.integrity_missing" \
+            "baseline" \
+            "low" \
+            "failed" \
+            "$(i18n 'baseline.integrity_missing')" \
+            "No file integrity monitor (AIDE/Tripwire/Samhain) installed" \
+            "Install a file integrity tool: apt install aide" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'baseline.integrity_missing')"
+    fi
 }
 
 # Combined MAC (Mandatory Access Control) audit - SELinux + AppArmor

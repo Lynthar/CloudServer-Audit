@@ -405,6 +405,64 @@ kernel_audit() {
     # Check core dump settings
     print_item "$(i18n 'kernel.check_core_dump')"
     _kernel_audit_core_dump
+
+    # Check rarely-used network protocol modules (Lynis NETW-3200)
+    print_item "$(i18n 'kernel.check_unused_protocols')"
+    _kernel_audit_unused_protocols
+}
+
+# Check that rarely-used network protocol kernel modules are blacklisted.
+# dccp/sctp/rds/tipc are almost never needed on a server but ship enabled
+# in stock Debian/Ubuntu kernels; blacklisting them in /etc/modprobe.d/
+# reduces kernel attack surface. Mirrors Lynis NETW-3200.
+_kernel_audit_unused_protocols() {
+    local protocols=("dccp" "sctp" "rds" "tipc")
+    local unblocked=()
+    local search_paths=(/etc/modprobe.d /usr/lib/modprobe.d /run/modprobe.d /lib/modprobe.d)
+    local existing=()
+    local p
+    for p in "${search_paths[@]}"; do
+        [[ -d "$p" ]] && existing+=("$p")
+    done
+
+    local proto
+    for proto in "${protocols[@]}"; do
+        local blocked=0
+        if (( ${#existing[@]} > 0 )); then
+            # Match: `install <proto> /bin/(true|false)` or `blacklist <proto>`
+            if grep -rqsE "^[[:space:]]*(install[[:space:]]+${proto}[[:space:]]+/bin/(true|false)|blacklist[[:space:]]+${proto})([[:space:]]|$)" "${existing[@]}"; then
+                blocked=1
+            fi
+        fi
+        (( blocked == 0 )) && unblocked+=("$proto")
+    done
+
+    if (( ${#unblocked[@]} > 0 )); then
+        local list="${unblocked[*]}"
+        local check=$(create_check_json \
+            "kernel.unused_protocols_unblocked" \
+            "kernel" \
+            "low" \
+            "failed" \
+            "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")" \
+            "Unblacklisted: $list" \
+            "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")"
+    else
+        local check=$(create_check_json \
+            "kernel.unused_protocols_blocked" \
+            "kernel" \
+            "low" \
+            "passed" \
+            "$(i18n 'kernel.unused_protocols_blocked')" \
+            "All of: ${protocols[*]} are blacklisted" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'kernel.unused_protocols_blocked')"
+    fi
 }
 
 # ==============================================================================

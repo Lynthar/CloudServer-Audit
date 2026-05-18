@@ -297,6 +297,27 @@ ssh_audit() {
     print_item "$(i18n 'ssh.check_x11_forwarding')"
     _ssh_audit_x11_forwarding
 
+    # Additional hardening options surfaced by Lynis SSH-7408 that the
+    # original module didn't cover. All are advisory (low severity,
+    # info-category) — operator preferences, not security baseline.
+    print_item "$(i18n 'ssh.check_allow_tcp_forwarding')"
+    _ssh_audit_allow_tcp_forwarding
+
+    print_item "$(i18n 'ssh.check_client_alive')"
+    _ssh_audit_client_alive_count_max
+
+    print_item "$(i18n 'ssh.check_log_level')"
+    _ssh_audit_log_level
+
+    print_item "$(i18n 'ssh.check_max_sessions')"
+    _ssh_audit_max_sessions
+
+    print_item "$(i18n 'ssh.check_tcp_keepalive')"
+    _ssh_audit_tcp_keepalive
+
+    print_item "$(i18n 'ssh.check_agent_forwarding')"
+    _ssh_audit_agent_forwarding
+
     # Check SSH protocol and algorithms
     print_item "$(i18n 'ssh.check_algorithms')"
     _ssh_audit_algorithms
@@ -603,6 +624,180 @@ _ssh_audit_x11_forwarding() {
             "ssh.disable_x11_forwarding")
         state_add_check "$check"
         print_severity "low" "$(i18n 'ssh.x11_forwarding_enabled')"
+    fi
+}
+
+_ssh_audit_allow_tcp_forwarding() {
+    local val=$(_ssh_get_config "AllowTcpForwarding" "yes")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.allow_tcp_forwarding_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.allow_tcp_forwarding_disabled')" \
+            "AllowTcpForwarding=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.allow_tcp_forwarding_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.allow_tcp_forwarding_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.allow_tcp_forwarding_enabled')" \
+            "AllowTcpForwarding=$val (recommended: no unless tunneling is intentional)" \
+            "Set AllowTcpForwarding to no in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.allow_tcp_forwarding_enabled')"
+    fi
+}
+
+_ssh_audit_client_alive_count_max() {
+    local val=$(_ssh_get_config "ClientAliveCountMax" "3")
+    if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 2 )); then
+        local check=$(create_check_json \
+            "ssh.client_alive_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.client_alive_ok')" \
+            "ClientAliveCountMax=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.client_alive_ok') ($val)"
+    else
+        local check=$(create_check_json \
+            "ssh.client_alive_high" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.client_alive_high')" \
+            "ClientAliveCountMax=$val (recommended: 2 or less)" \
+            "Set ClientAliveCountMax to 2 in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.client_alive_high') ($val)"
+    fi
+}
+
+_ssh_audit_log_level() {
+    local val=$(_ssh_get_config "LogLevel" "INFO")
+    if [[ "${val^^}" == "VERBOSE" ]]; then
+        local check=$(create_check_json \
+            "ssh.log_level_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.log_level_ok')" \
+            "LogLevel=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.log_level_ok')"
+    else
+        local check=$(create_check_json \
+            "ssh.log_level_low" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.log_level_low')" \
+            "LogLevel=$val (VERBOSE logs fingerprints used at auth time)" \
+            "Set LogLevel to VERBOSE in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.log_level_low') ($val)"
+    fi
+}
+
+_ssh_audit_max_sessions() {
+    local val=$(_ssh_get_config "MaxSessions" "10")
+    if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 4 )); then
+        local check=$(create_check_json \
+            "ssh.max_sessions_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.max_sessions_ok')" \
+            "MaxSessions=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.max_sessions_ok') ($val)"
+    else
+        local check=$(create_check_json \
+            "ssh.max_sessions_high" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.max_sessions_high')" \
+            "MaxSessions=$val (recommended: 4 or less)" \
+            "Set MaxSessions to 4 in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.max_sessions_high') ($val)"
+    fi
+}
+
+_ssh_audit_tcp_keepalive() {
+    local val=$(_ssh_get_config "TCPKeepAlive" "yes")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.tcp_keepalive_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.tcp_keepalive_disabled')" \
+            "TCPKeepAlive=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.tcp_keepalive_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.tcp_keepalive_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.tcp_keepalive_enabled')" \
+            "TCPKeepAlive=$val (spoofable; ClientAliveInterval is preferred)" \
+            "Set TCPKeepAlive to no and rely on ClientAliveInterval instead" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.tcp_keepalive_enabled')"
+    fi
+}
+
+_ssh_audit_agent_forwarding() {
+    local val=$(_ssh_get_config "AllowAgentForwarding" "yes")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.agent_forwarding_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.agent_forwarding_disabled')" \
+            "AllowAgentForwarding=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.agent_forwarding_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.agent_forwarding_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.agent_forwarding_enabled')" \
+            "AllowAgentForwarding=$val (forwarded agent socket can be abused by anyone with root on the remote host)" \
+            "Set AllowAgentForwarding to no in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.agent_forwarding_enabled')"
     fi
 }
 
