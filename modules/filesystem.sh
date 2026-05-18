@@ -43,19 +43,40 @@ declare -ga FS_SUID_WHITELIST=(
 # Sensitive files and their expected permissions
 # Note: sshd_config is 644 on Debian/Ubuntu by default (no secrets stored)
 # SSH private keys should be 600, public keys 644
+# Backup-shadow files (/etc/shadow-, /etc/gshadow-, etc.) are checked
+# alongside the originals — they hold the same secrets and are a
+# classic blind spot (also missed by Lynis's default profile).
 declare -gA FS_SENSITIVE_FILES=(
+    # Account databases + their backup copies
     ["/etc/passwd"]="644"
+    ["/etc/passwd-"]="644"
     ["/etc/shadow"]="640"
+    ["/etc/shadow-"]="640"
     ["/etc/group"]="644"
+    ["/etc/group-"]="644"
     ["/etc/gshadow"]="640"
+    ["/etc/gshadow-"]="640"
+    # SSH server config + host keys
     ["/etc/ssh/sshd_config"]="644"
     ["/etc/ssh/ssh_host_rsa_key"]="600"
     ["/etc/ssh/ssh_host_ecdsa_key"]="600"
     ["/etc/ssh/ssh_host_ed25519_key"]="600"
-    ["/etc/crontab"]="600"
+    # sudo + scheduled jobs
     ["/etc/sudoers"]="440"
+    ["/etc/crontab"]="600"
+    ["/etc/cron.allow"]="600"
+    ["/etc/cron.deny"]="600"
+    ["/etc/at.allow"]="600"
+    ["/etc/at.deny"]="600"
+    # TCP wrappers (public, read-only)
     ["/etc/hosts.allow"]="644"
     ["/etc/hosts.deny"]="644"
+    # Boot loader config — write access here changes kernel cmdline
+    ["/boot/grub/grub.cfg"]="600"
+    ["/boot/grub2/grub.cfg"]="600"
+    # Legacy r-* trust files: if present, lax perms are a remote-trust leak
+    ["/root/.rhosts"]="600"
+    ["/root/.shosts"]="600"
 )
 
 # Maximum number of items to report (to prevent huge output)
@@ -754,7 +775,11 @@ _fs_audit_sensitive_perms() {
 
     _fs_is_critical_perm_path() {
         case "$1" in
-            /etc/shadow|/etc/gshadow|/etc/sudoers) return 0 ;;
+            # /etc/shadow- and /etc/gshadow- are the rotated backups
+            # written by passwd/usermod/etc. — they hold the *same*
+            # password hashes as the live files, so weak perms there
+            # are an equivalent credential-leak primitive.
+            /etc/shadow|/etc/shadow-|/etc/gshadow|/etc/gshadow-|/etc/sudoers) return 0 ;;
             /etc/sudoers.d/*) return 0 ;;
             /etc/ssh/ssh_host_*_key) return 0 ;;
             *) return 1 ;;
