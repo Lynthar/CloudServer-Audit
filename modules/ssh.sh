@@ -23,12 +23,26 @@ _ssh_get_config() {
     local default="$2"
     local value=""
 
-    # Method 1: Use sshd -T for accurate effective configuration
-    # This handles Match blocks, Include directives, and all override rules correctly
+    # Method 1: Use sshd -T for accurate effective configuration.
+    # This handles Match blocks, Include directives, and all override
+    # rules correctly. The `-C` connection-spec is critical: without
+    # it, sshd -T evaluates Match blocks against the *current* user/
+    # host/addr (typically root when vpssec runs), so any `Match User
+    # root` override silently became the reported "base value". The
+    # OpenSSH-recommended workaround for audit tools is to pass a
+    # connection spec that won't match any Match clause — Lynis
+    # SSH-7408 uses the same trick.
     if command -v sshd &>/dev/null; then
-        # sshd -T outputs all effective settings in lowercase
         local key_lower="${key,,}"
-        value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
+        value=$(sshd -T -C user=doesnotexist,host=none,addr=none 2>/dev/null \
+            | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
+        # Some hardened or chrooted sshd builds reject the -C probe
+        # (e.g. unprivileged or missing /etc/ssh/moduli). Retry without
+        # it before falling through to file parsing — still better
+        # than nothing for the non-Match-block portion of the config.
+        if [[ -z "$value" ]]; then
+            value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
+        fi
         if [[ -n "$value" ]]; then
             echo "$value"
             return
@@ -317,6 +331,27 @@ ssh_audit() {
 
     print_item "$(i18n 'ssh.check_agent_forwarding')"
     _ssh_audit_agent_forwarding
+
+    # Lynis SSH-7408 also flags these defaults-flipping options.
+    # They alter the security boundary directly (not just hygiene),
+    # so a misconfiguration here is more impactful than the six
+    # options above — though we still classify as low severity to
+    # match the existing SSH-option category and let the operator
+    # decide.
+    print_item "$(i18n 'ssh.check_ignore_rhosts')"
+    _ssh_audit_ignore_rhosts
+
+    print_item "$(i18n 'ssh.check_strict_modes')"
+    _ssh_audit_strict_modes
+
+    print_item "$(i18n 'ssh.check_permit_user_env')"
+    _ssh_audit_permit_user_environment
+
+    print_item "$(i18n 'ssh.check_permit_tunnel')"
+    _ssh_audit_permit_tunnel
+
+    print_item "$(i18n 'ssh.check_gateway_ports')"
+    _ssh_audit_gateway_ports
 
     # Check SSH protocol and algorithms
     print_item "$(i18n 'ssh.check_algorithms')"
@@ -798,6 +833,151 @@ _ssh_audit_agent_forwarding() {
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'ssh.agent_forwarding_enabled')"
+    fi
+}
+
+_ssh_audit_ignore_rhosts() {
+    local val=$(_ssh_get_config "IgnoreRhosts" "yes")
+    if [[ "${val,,}" == "yes" ]]; then
+        local check=$(create_check_json \
+            "ssh.ignore_rhosts_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.ignore_rhosts_ok')" \
+            "IgnoreRhosts=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.ignore_rhosts_ok')"
+    else
+        local check=$(create_check_json \
+            "ssh.ignore_rhosts_disabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.ignore_rhosts_disabled')" \
+            "IgnoreRhosts=$val (default is yes; setting no re-enables legacy rhosts-based trust)" \
+            "Set IgnoreRhosts to yes in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.ignore_rhosts_disabled')"
+    fi
+}
+
+_ssh_audit_strict_modes() {
+    local val=$(_ssh_get_config "StrictModes" "yes")
+    if [[ "${val,,}" == "yes" ]]; then
+        local check=$(create_check_json \
+            "ssh.strict_modes_ok" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.strict_modes_ok')" \
+            "StrictModes=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.strict_modes_ok')"
+    else
+        local check=$(create_check_json \
+            "ssh.strict_modes_disabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.strict_modes_disabled')" \
+            "StrictModes=$val (disables permission checks on host keys and ~/.ssh)" \
+            "Set StrictModes to yes in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.strict_modes_disabled')"
+    fi
+}
+
+_ssh_audit_permit_user_environment() {
+    local val=$(_ssh_get_config "PermitUserEnvironment" "no")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.permit_user_env_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.permit_user_env_disabled')" \
+            "PermitUserEnvironment=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.permit_user_env_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.permit_user_env_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.permit_user_env_enabled')" \
+            "PermitUserEnvironment=$val (lets authorized_keys inject env vars — privilege escalation primitive)" \
+            "Set PermitUserEnvironment to no in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.permit_user_env_enabled')"
+    fi
+}
+
+_ssh_audit_permit_tunnel() {
+    local val=$(_ssh_get_config "PermitTunnel" "no")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.permit_tunnel_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.permit_tunnel_disabled')" \
+            "PermitTunnel=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.permit_tunnel_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.permit_tunnel_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.permit_tunnel_enabled')" \
+            "PermitTunnel=$val (allows tun/tap forwarding — network pivot vector)" \
+            "Set PermitTunnel to no in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.permit_tunnel_enabled')"
+    fi
+}
+
+_ssh_audit_gateway_ports() {
+    local val=$(_ssh_get_config "GatewayPorts" "no")
+    if [[ "${val,,}" == "no" ]]; then
+        local check=$(create_check_json \
+            "ssh.gateway_ports_disabled" \
+            "ssh" \
+            "low" \
+            "passed" \
+            "$(i18n 'ssh.gateway_ports_disabled')" \
+            "GatewayPorts=$val" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'ssh.gateway_ports_disabled')"
+    else
+        local check=$(create_check_json \
+            "ssh.gateway_ports_enabled" \
+            "ssh" \
+            "low" \
+            "failed" \
+            "$(i18n 'ssh.gateway_ports_enabled')" \
+            "GatewayPorts=$val (forwarded ports bind to wildcard address, exposing tunneled services)" \
+            "Set GatewayPorts to no in /etc/ssh/sshd_config.d/" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'ssh.gateway_ports_enabled')"
     fi
 }
 

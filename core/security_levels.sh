@@ -255,6 +255,17 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ssh.tcp_keepalive_enabled"]="info"
     ["ssh.agent_forwarding_disabled"]="info"
     ["ssh.agent_forwarding_enabled"]="info"
+    # SSH-7408 defaults-flipping options (Lynis source cross-check)
+    ["ssh.ignore_rhosts_ok"]="info"
+    ["ssh.ignore_rhosts_disabled"]="info"
+    ["ssh.strict_modes_ok"]="info"
+    ["ssh.strict_modes_disabled"]="info"
+    ["ssh.permit_user_env_disabled"]="info"
+    ["ssh.permit_user_env_enabled"]="info"
+    ["ssh.permit_tunnel_disabled"]="info"
+    ["ssh.permit_tunnel_enabled"]="info"
+    ["ssh.gateway_ports_disabled"]="info"
+    ["ssh.gateway_ports_enabled"]="info"
 
     # === UFW Module - required (core firewall) ===
     ["ufw.not_installed"]="required"
