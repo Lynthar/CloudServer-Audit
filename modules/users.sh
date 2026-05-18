@@ -747,16 +747,32 @@ users_audit() {
     fi
 
     # 4. List sudo/privileged users - INFO
+    #
+    # `sudo_count` includes root (every distro ships `root ALL=(ALL:ALL) ALL`
+    # in /etc/sudoers, so the count is never zero). A bare "Privileged
+    # Users: 1" with a green check reads as "I have an admin, safe to
+    # disable root login" — but that 1 is often just root itself, which
+    # is precisely the case ssh.no_admin_user is trying to flag. Surface
+    # the non-root count in the title so the two checks tell a consistent
+    # story without the operator having to cross-reference modules.
     local sudo_users=$(_find_sudo_users)
     local sudo_count=$(count_lines "$sudo_users")
+    local non_root_count=$(echo "$sudo_users" | grep -vx 'root' | grep -c .)
 
     if [[ -n "$sudo_users" && "$sudo_count" -gt 0 ]]; then
+        local label="$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users')"
+        local title
+        if [[ "$non_root_count" -eq 0 ]]; then
+            title="${label}: ${sudo_count} (root only — no non-root admin)"
+        else
+            title="${label}: ${sudo_count} (${non_root_count} non-root)"
+        fi
         check_json=$(create_check_json \
             "users.sudo_users" \
             "users" \
             "info" \
             "passed" \
-            "$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users'): $sudo_count" \
+            "$title" \
             "$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')" \
             "$(i18n 'users.review_sudo' 2>/dev/null || echo 'Review if all these users need sudo access')" \
             "")

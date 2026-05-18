@@ -22,6 +22,8 @@ declare -ga FS_SUID_WHITELIST=(
     "/usr/bin/pkexec"
     "/usr/bin/crontab"
     "/usr/bin/at"
+    "/usr/bin/ping"
+    "/usr/bin/ping6"
     "/usr/bin/ssh-agent"
     "/usr/bin/wall"
     "/usr/bin/write"
@@ -422,12 +424,20 @@ _fs_find_caps_files() {
         return
     fi
 
-    # Find all files with capabilities
+    # Find all files with capabilities.
+    # getcap output format varies by libcap version:
+    #   modern (libcap >= 2.43):  "/usr/bin/ping cap_net_raw=ep"
+    #   legacy:                   "/usr/bin/ping = cap_net_raw+ep"
+    # Previously parsed only the legacy form, so on every modern Debian/
+    # Ubuntu the whitelist match silently failed and every cap-bearing
+    # binary got flagged. Split on the first space, then strip a leading
+    # "= " to handle the legacy form too.
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
 
-        local file="${line%% =*}"
-        local caps="${line#*= }"
+        local file="${line%% *}"
+        local caps="${line#* }"
+        caps="${caps#= }"
 
         # Check if in whitelist
         local whitelisted=false

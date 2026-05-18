@@ -351,9 +351,11 @@ _ssh_audit_root_login() {
         # tracks real exposure rather than a CIS checkbox.
         local sev="high"
         local title_key="ssh.root_login_enabled"
+        local info="PermitRootLogin=yes (allows root via password and key)"
         if ! _ssh_password_auth_enabled; then
             sev="medium"
             title_key="ssh.root_login_keyonly"
+            info="PermitRootLogin=yes; effectively key-only because PasswordAuthentication=no globally"
         fi
         local check=$(create_check_json \
             "ssh.root_login_enabled" \
@@ -361,7 +363,7 @@ _ssh_audit_root_login() {
             "$sev" \
             "failed" \
             "$(i18n "$title_key")" \
-            "PermitRootLogin is set to yes" \
+            "$info" \
             "$(i18n 'ssh.fix_disable_root')" \
             "ssh.disable_root_login")
         state_add_check "$check"
