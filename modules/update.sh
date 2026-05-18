@@ -87,21 +87,43 @@ _update_needrestart_kernel_pending() {
     [[ "$ksta" =~ ^[0-9]+$ ]] && (( ksta >= 2 ))
 }
 
+# Latest installed linux-image package version (e.g. 6.12.88+deb13-amd64).
+# Empty string if dpkg unavailable or no kernel package installed.
+_update_latest_installed_kernel() {
+    command -v dpkg-query >/dev/null 2>&1 || return 0
+    dpkg-query -W -f='${Status}\t${Package}\n' 'linux-image-[0-9]*' 2>/dev/null \
+        | awk -F'\t' '$1 == "install ok installed" {sub(/^linux-image-/, "", $2); print $2}' \
+        | sort -V | tail -1
+}
+
+# True when the running kernel version differs from the latest installed
+# linux-image package.
+_update_running_kernel_outdated() {
+    local running latest
+    running="$(uname -r)"
+    latest="$(_update_latest_installed_kernel)"
+    [[ -n "$running" && -n "$latest" && "$running" != "$latest" ]]
+}
+
 # Check if system reboot is required.
 # /var/run/reboot-required is created by the `update-notifier-common`
 # package (Ubuntu default; not installed on stock Debian), so on a
 # Debian box without it the file may never exist even after kernel /
 # glibc updates. needrestart (default-installed on Debian 12+) is the
-# distro-agnostic signal.
+# preferred distro-agnostic signal. As a final fallback we compare the
+# running kernel against the latest installed linux-image package —
+# catches stock Debian hosts that have neither update-notifier-common
+# nor needrestart available (real case surfaced by Lynis cross-check
+# against KRNL-5830).
 _update_reboot_required() {
     [[ -f /var/run/reboot-required ]] && return 0
     if command -v needrestart >/dev/null 2>&1; then
         local out
-        out=$(needrestart -k -b 2>/dev/null) || return 1
-        _update_needrestart_kernel_pending "$out"
-        return $?
+        if out=$(needrestart -k -b 2>/dev/null); then
+            _update_needrestart_kernel_pending "$out" && return 0
+        fi
     fi
-    return 1
+    _update_running_kernel_outdated
 }
 
 # Get reboot required packages
@@ -114,12 +136,18 @@ _update_reboot_packages() {
     # informational context (no per-package list available).
     if command -v needrestart >/dev/null 2>&1; then
         local nr_out kcur kexp
-        nr_out=$(needrestart -k -b 2>/dev/null) || return 0
-        kcur=$(awk -F': ' '/^NEEDRESTART-KCUR:/ {print $2; exit}' <<<"$nr_out")
-        kexp=$(awk -F': ' '/^NEEDRESTART-KEXP:/ {print $2; exit}' <<<"$nr_out")
-        if [[ -n "$kcur" && -n "$kexp" && "$kcur" != "$kexp" ]]; then
-            echo "kernel: ${kcur} → ${kexp}"
+        if nr_out=$(needrestart -k -b 2>/dev/null); then
+            kcur=$(awk -F': ' '/^NEEDRESTART-KCUR:/ {print $2; exit}' <<<"$nr_out")
+            kexp=$(awk -F': ' '/^NEEDRESTART-KEXP:/ {print $2; exit}' <<<"$nr_out")
+            if [[ -n "$kcur" && -n "$kexp" && "$kcur" != "$kexp" ]]; then
+                echo "kernel: ${kcur} → ${kexp}"
+                return
+            fi
         fi
+    fi
+    # Direct dpkg fallback when no other source is available.
+    if _update_running_kernel_outdated; then
+        echo "kernel: $(uname -r) → $(_update_latest_installed_kernel)"
     fi
 }
 
