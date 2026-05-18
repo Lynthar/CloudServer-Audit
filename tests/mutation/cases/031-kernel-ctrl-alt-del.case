@@ -1,0 +1,31 @@
+# Plant: kernel.ctrl-alt-del=1 (immediate-reboot on console keystroke).
+# Verifies the Lynis cross-check addition is reachable.
+#
+# Aggregate-check caveat: kernel.kernel_params_weak lumps every weak
+# kernel param into one check_id. The user's host already has several
+# (sysrq, kptr_restrict, etc.), so a bare ID match would pass even
+# if our mutation did nothing. EXPECT_DESC_CONTAINS narrows it to
+# "this specific param appears in the failure description".
+TEST_DESC="kernel.ctrl-alt-del=1 surfaces in kernel.kernel_params_weak"
+EXPECT_ID="kernel.kernel_params_weak"
+EXPECT_STATUS="failed"
+EXPECT_DESC_CONTAINS="ctrl-alt-del"
+MODULE="kernel"
+
+_PARAM="kernel.ctrl-alt-del"
+_ORIG=""
+
+precheck() {
+    [[ -f /proc/sys/kernel/ctrl-alt-del ]]
+}
+
+mutate() {
+    _ORIG=$(sysctl -n "$_PARAM" 2>/dev/null || echo "")
+    sysctl -w "${_PARAM}=1" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    sysctl -w "${_PARAM}=${_ORIG:-0}" >/dev/null 2>&1
+    return 0
+}

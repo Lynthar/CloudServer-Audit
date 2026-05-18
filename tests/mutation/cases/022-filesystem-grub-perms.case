@@ -1,0 +1,33 @@
+# Plant: weaken /boot/grub/grub.cfg perms to world-readable.
+# Verifies the new FS_SENSITIVE_FILES entry from the Lynis cross-check
+# is wired up and routes correctly into the medium (non-critical)
+# bucket — grub.cfg isn't in _fs_is_critical_perm_path, so it should
+# surface in sensitive_perms_wrong_minor (medium), not _wrong (high).
+TEST_DESC="/boot/grub/grub.cfg with 644 perms surfaces in sensitive_perms_wrong_minor"
+EXPECT_ID="filesystem.sensitive_perms_wrong_minor"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+# Critical for this case: the user's host may already have other
+# minor-perm issues queued (e.g. /etc/crontab at 644), so an EXPECT_ID
+# match alone proves nothing. Force the substring check.
+EXPECT_DESC_CONTAINS="/boot/grub/grub.cfg"
+MODULE="filesystem"
+
+_TARGET="/boot/grub/grub.cfg"
+_ORIG_PERMS=""
+
+precheck() {
+    # Skip on UEFI-only / non-GRUB-Legacy systems.
+    [[ -f "$_TARGET" ]]
+}
+
+mutate() {
+    _ORIG_PERMS=$(stat -c '%a' "$_TARGET" 2>/dev/null)
+    chmod 644 "$_TARGET"
+    return 0
+}
+
+restore() {
+    chmod "${_ORIG_PERMS:-600}" "$_TARGET"
+    return 0
+}

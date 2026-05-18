@@ -1,0 +1,31 @@
+# Plant: weaken /etc/shadow- (rotated backup) permissions to world-readable.
+# Expect: HIGH-severity sensitive_perms_wrong — verifies the entry we
+# added from the Lynis cross-check is wired up *and* classified into
+# the HIGH bucket (not the medium one).
+TEST_DESC="/etc/shadow- with 644 perms triggers HIGH sensitive_perms_wrong"
+EXPECT_ID="filesystem.sensitive_perms_wrong"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+MODULE="filesystem"
+
+_TARGET="/etc/shadow-"
+_ORIG_PERMS=""
+
+precheck() {
+    # Skip if the rotated backup doesn't exist yet (fresh install
+    # before any passwd/usermod/etc).
+    [[ -f "$_TARGET" ]]
+}
+
+mutate() {
+    _ORIG_PERMS=$(stat -c '%a' "$_TARGET" 2>/dev/null)
+    chmod 644 "$_TARGET"
+    return 0
+}
+
+restore() {
+    # Always restore to 640 (the expected value) even if we couldn't
+    # read the original — never leave a world-readable shadow- behind.
+    chmod "${_ORIG_PERMS:-640}" "$_TARGET"
+    return 0
+}

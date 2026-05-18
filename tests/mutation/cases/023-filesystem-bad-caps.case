@@ -1,0 +1,28 @@
+# Plant: a binary with cap_net_raw at a non-whitelisted path.
+# Verifies _fs_find_caps_files actually finds it AFTER the getcap-
+# parsing fix (modern libcap output `/path cap=flags` — pre-fix the
+# parser only handled the legacy `/path = cap+flags` form and matched
+# nothing, so every cap-bearing binary was a FP regardless of the
+# whitelist).
+TEST_DESC="Non-whitelisted file with caps triggers filesystem.non_standard_caps"
+EXPECT_ID="filesystem.non_standard_caps"
+EXPECT_STATUS="failed"
+MODULE="filesystem"
+
+_TARGET="/usr/local/bin/vpssec-mutation-cap-test"
+
+precheck() {
+    # Need setcap to plant the capability.
+    command -v setcap >/dev/null 2>&1
+}
+
+mutate() {
+    cp /bin/true "$_TARGET"
+    setcap cap_net_raw=ep "$_TARGET" 2>/dev/null || return 1
+    return 0
+}
+
+restore() {
+    rm -f "$_TARGET"
+    return 0
+}

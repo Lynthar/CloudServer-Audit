@@ -1,0 +1,23 @@
+# Plant: create a non-whitelisted SUID binary outside the standard
+# system locations. Verifies (a) detection still works after the
+# ping/ping6 whitelist additions, (b) the whitelist isn't accidentally
+# matching everything.
+TEST_DESC="Non-whitelisted SUID binary triggers filesystem.suspicious_suid"
+EXPECT_ID="filesystem.suspicious_suid"
+EXPECT_STATUS="failed"
+MODULE="filesystem"
+
+_SUID_FILE="/usr/local/bin/vpssec-mutation-suid"
+
+mutate() {
+    # Use cp instead of touch+chmod so the file is a real ELF (some
+    # FS audit logic skips empty / zero-byte files).
+    cp /bin/true "$_SUID_FILE"
+    chmod 4755 "$_SUID_FILE"
+    return 0
+}
+
+restore() {
+    rm -f "$_SUID_FILE"
+    return 0
+}

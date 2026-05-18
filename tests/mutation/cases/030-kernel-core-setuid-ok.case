@@ -1,0 +1,28 @@
+# Plant: set kernel.core_setuid_ok=1 (allow SUID core dumps).
+# Expect: kernel.kernel_params_weak fires, with the runtime severity
+# bucket dictated by the (medium) entry in KERNEL_SECURITY_PARAMS.
+# Verifies the Lynis-cross-check addition is reachable.
+TEST_DESC="kernel.core_setuid_ok=1 surfaces in kernel.kernel_params_weak"
+EXPECT_ID="kernel.kernel_params_weak"
+EXPECT_STATUS="failed"
+MODULE="kernel"
+
+_PARAM="kernel.core_setuid_ok"
+_ORIG=""
+
+precheck() {
+    # Only run if the kernel exposes this sysctl (kept guarded so the
+    # case is harmless on older kernels).
+    [[ -f /proc/sys/kernel/core_setuid_ok ]]
+}
+
+mutate() {
+    _ORIG=$(sysctl -n "$_PARAM" 2>/dev/null || echo "")
+    sysctl -w "${_PARAM}=1" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    sysctl -w "${_PARAM}=${_ORIG:-0}" >/dev/null 2>&1
+    return 0
+}

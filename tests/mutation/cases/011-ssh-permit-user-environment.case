@@ -1,0 +1,29 @@
+# Plant: enable PermitUserEnvironment (privilege escalation primitive).
+# Expect: ssh.permit_user_env_enabled — one of the Lynis-cross-check
+# additions; this case verifies the new detection actually fires.
+TEST_DESC="SSH PermitUserEnvironment=yes triggers ssh.permit_user_env_enabled"
+EXPECT_ID="ssh.permit_user_env_enabled"
+EXPECT_STATUS="failed"
+MODULE="ssh"
+
+_DROPIN="/etc/ssh/sshd_config.d/99-vpssec-mutation-test.conf"
+_SERVICE=""
+_pick_service() {
+    if systemctl list-unit-files ssh.service &>/dev/null; then _SERVICE="ssh"
+    elif systemctl list-unit-files sshd.service &>/dev/null; then _SERVICE="sshd"
+    fi
+}
+
+mutate() {
+    _pick_service
+    printf 'PermitUserEnvironment yes\n' > "$_DROPIN"
+    chmod 644 "$_DROPIN"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}
