@@ -36,6 +36,62 @@ declare -gA VPSSEC_I18N=()
 declare -ga VPSSEC_CHECKS=()
 declare -ga VPSSEC_FIXES=()
 
+# Cloud-detection cache. Populated lazily on first call to
+# vpssec_cloud_provider() and vpssec_cloud_tier(). The detection itself
+# lives in modules/cloud.sh (`_detect_cloud_provider`) — these getters
+# delegate to it when available and fall back to "unknown" when cloud.sh
+# isn't loaded (e.g. running `vpssec audit --include=users` alone), so
+# any module can call them without depending on module load order.
+declare -g VPSSEC_CLOUD_PROVIDER=""
+declare -g VPSSEC_CLOUD_TIER=""
+
+# Returns one of:
+#   aws | azure | gcp | alibaba | tencent | huawei | oracle
+#   | digitalocean | vultr | linode | hetzner | ovh | scaleway
+#   | unknown
+vpssec_cloud_provider() {
+    if [[ -n "$VPSSEC_CLOUD_PROVIDER" ]]; then
+        echo "$VPSSEC_CLOUD_PROVIDER"
+        return
+    fi
+    if declare -f _detect_cloud_provider >/dev/null 2>&1; then
+        VPSSEC_CLOUD_PROVIDER=$(_detect_cloud_provider)
+    else
+        VPSSEC_CLOUD_PROVIDER="unknown"
+    fi
+    echo "$VPSSEC_CLOUD_PROVIDER"
+}
+
+# Coarse provider tier — used by modules that need to vary behavior
+# based on "what kind of cloud" rather than which exact vendor:
+#   tier1 — full-stack public cloud, IAM/RAM credentials live in IMDS
+#           (AWS, Azure, GCP, Alibaba, Tencent, Huawei, Oracle).
+#           IMDSv1-vs-v2 distinction is meaningful; SSRF -> credential
+#           theft is the headline threat.
+#   tier2 — managed VPS with a link-local IMDS but no IAM credentials.
+#           user-data (bootstrap script) is the primary exposed asset.
+#           (DigitalOcean, Vultr, Linode/Akamai, Hetzner Cloud, OVH
+#           Public Cloud, Scaleway.)
+#   unknown — independent / smaller VPS providers (RackNerd, HostHatch,
+#             GreenCloud, netcup classic, Spartan, ...) or local
+#             KVM/VirtualBox/bare-metal. Typically no network IMDS;
+#             cloud-init via NoCloud / ConfigDrive (filesystem seed).
+vpssec_cloud_tier() {
+    if [[ -n "$VPSSEC_CLOUD_TIER" ]]; then
+        echo "$VPSSEC_CLOUD_TIER"
+        return
+    fi
+    case "$(vpssec_cloud_provider)" in
+        aws|azure|gcp|alibaba|tencent|huawei|oracle)
+            VPSSEC_CLOUD_TIER="tier1" ;;
+        digitalocean|vultr|linode|hetzner|ovh|scaleway)
+            VPSSEC_CLOUD_TIER="tier2" ;;
+        *)
+            VPSSEC_CLOUD_TIER="unknown" ;;
+    esac
+    echo "$VPSSEC_CLOUD_TIER"
+}
+
 # ==============================================================================
 # Color and Formatting
 # ==============================================================================

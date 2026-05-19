@@ -387,6 +387,17 @@ _run_audit_pass() {
     print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
     print_msg ""
 
+    # Pre-warm the cloud-detection cache in *this* shell before any
+    # module spawns a `$(...)` subshell. The getters in core/common.sh
+    # write VPSSEC_CLOUD_PROVIDER / VPSSEC_CLOUD_TIER as `declare -g`
+    # globals, but a subshell's assignment dies with the subshell — so
+    # without this pre-warm every $(vpssec_cloud_provider) call across
+    # the audit would re-run DMI detection. Calling the getters here
+    # (no command substitution) sets the globals in the parent shell;
+    # every subsequent subshell inherits the cached values.
+    vpssec_cloud_provider >/dev/null
+    vpssec_cloud_tier >/dev/null
+
     local mod_title
     for module in "${modules[@]}"; do
         ((current++)) || true

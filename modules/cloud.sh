@@ -525,8 +525,12 @@ _find_suspicious_agents() {
 cloud_audit() {
     log_info "Running cloud environment audit"
 
-    # 1. Detect cloud provider
-    local provider=$(_detect_cloud_provider)
+    # 1. Detect cloud provider. Use the public getter so the detection
+    # result is cached in VPSSEC_CLOUD_PROVIDER / VPSSEC_CLOUD_TIER and
+    # any later-running module (users, networking, future IMDS checks)
+    # can read it via `vpssec_cloud_provider` / `vpssec_cloud_tier`
+    # without rerunning the DMI inspection.
+    local provider=$(vpssec_cloud_provider)
     local provider_name=$(_get_provider_name "$provider")
 
     local check_json

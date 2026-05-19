@@ -321,6 +321,40 @@ _find_nopasswd_sudo() {
     printf '%s\n' "${findings[@]}"
 }
 
+# Return a regex matching cloud-init default usernames *for the
+# detected provider*. Each provider has its own conventional default
+# account set (AWS = ec2-user/ubuntu/debian/admin; Oracle = opc;
+# Alibaba/Tencent/Hetzner/DO/Vultr = root; etc.). Falling back to the
+# union when provider is unknown preserves pre-refactor behavior on
+# small/independent VPS where DMI detection comes back empty.
+_cloudinit_default_users_for_provider() {
+    case "$(vpssec_cloud_provider)" in
+        aws)
+            echo "^(ec2-user|ubuntu|debian|admin|fedora|al2023-user|amzn-user|centos|rocky|almalinux|opensuse|root)$" ;;
+        azure)
+            echo "^(azureuser|ubuntu|debian|admin|root)$" ;;
+        gcp)
+            echo "^(ubuntu|debian|root)$" ;;
+        alibaba)
+            echo "^(root|ecs-user|aliyun)$" ;;
+        tencent)
+            echo "^(ubuntu|root|lighthouse)$" ;;
+        huawei)
+            echo "^(root|admin|ubuntu|debian)$" ;;
+        oracle)
+            echo "^(opc|oracle|ubuntu|root)$" ;;
+        digitalocean|vultr|linode|hetzner|ovh|scaleway)
+            # Mid-tier managed VPS: image defaults are usually root or
+            # the distro's stock user (debian/ubuntu).
+            echo "^(root|debian|ubuntu)$" ;;
+        *)
+            # Independent / unrecognized VPS — keep the union list so
+            # NOPASSWD-classification behavior is unchanged from before
+            # cloud-awareness was added.
+            echo "^(debian|ubuntu|ec2-user|centos|rocky|almalinux|fedora|opensuse|admin|azureuser|cloud-user|cloud_user|clouduser|root|opc|arch|linaro|gardenlinux|core)$" ;;
+    esac
+}
+
 # Decide whether all NOPASSWD entries in `findings` are scoped to a
 # single cloud-init default user (one of the well-known cloud image
 # default accounts). Returns 0 (true) only when:
@@ -335,7 +369,8 @@ _find_nopasswd_sudo() {
 # than one user falls through to high.
 _nopasswd_is_cloudinit_only() {
     local findings="$1"
-    local cloudinit_users="^(debian|ubuntu|ec2-user|centos|rocky|almalinux|fedora|opensuse|admin|azureuser|cloud-user|cloud_user|clouduser|root|opc|arch|linaro|gardenlinux|core)$"
+    local cloudinit_users
+    cloudinit_users=$(_cloudinit_default_users_for_provider)
     local seen_user=""
 
     while IFS= read -r entry; do
