@@ -793,7 +793,19 @@
     "optional": "Optional",
     "do_not_disable": "Do not disable - required for cloud functionality",
     "review_before_disable": "Review before disabling",
-    "investigate": "Investigate"
+    "investigate": "Investigate",
+    "imds_v1_enabled": "AWS IMDSv1 is enabled (HttpTokens=optional)",
+    "imds_v2_only": "AWS IMDSv2 enforced (HttpTokens=required)",
+    "fix_imds_v1": "Run: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required",
+    "imds_alibaba_normal_mode": "Alibaba Cloud IMDS accepts token-free reads (normal mode)",
+    "imds_alibaba_hardened": "Alibaba Cloud IMDS security hardening enabled",
+    "fix_imds_alibaba": "Enable security hardening mode in the ECS console under instance metadata options",
+    "user_data_leaked_secrets": "Embedded credentials detected in instance user-data",
+    "user_data_clean": "user-data scanned, no embedded credential patterns",
+    "fix_user_data_secrets": "Rotate the exposed credentials immediately; for new instances pass secrets via cloud-provider secret stores rather than user-data",
+    "imds_unrestricted": "No host-firewall restriction on IMDS access",
+    "imds_restricted": "Host firewall has rule(s) referencing IMDS address",
+    "fix_imds_firewall": "Consider blocking IMDS at the host firewall for non-root users (iptables -m owner --uid-owner root)"
   },
   "users": {
     "title": "User Security",

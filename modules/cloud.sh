@@ -519,6 +519,315 @@ _find_suspicious_agents() {
 }
 
 # ==============================================================================
+# IMDS (Instance Metadata Service) helpers
+# ==============================================================================
+#
+# Background: the Instance Metadata Service is a link-local endpoint
+# (typically 169.254.169.254) that cloud VMs query for their own
+# metadata — instance ID, network config, user-data, and on tier1
+# providers (AWS/Azure/GCP/Alibaba/Tencent/Huawei/Oracle) IAM/RAM
+# credentials. SSRF in apps and container escapes routinely turn
+# into credential theft via this endpoint; Capital One (2019, ~$150M
+# total cost) is the canonical case, and Wiz's 2024 APT41 report
+# documents active multi-cloud campaigns walking every vendor's IMDS.
+#
+# Strict engineering rules in this section:
+#   1. NEVER log or echo the response body. Bodies contain
+#      credentials, tokens, customer data.
+#   2. Use --max-time 1 / --connect-timeout 1 so non-cloud hosts
+#      fail fast (IMDS would respond in <50ms when present).
+#   3. Run only when vpssec_cloud_tier returns tier1 or tier2 —
+#      independent VPS / baremetal have no auditable IMDS surface.
+
+# Capture only HTTP status (3-digit, or "000" on connection failure).
+_cloud_imds_curl_status() {
+    local url="$1"; shift
+    curl -sS --max-time 1 --connect-timeout 1 \
+        -o /dev/null -w '%{http_code}' \
+        "$@" "$url" 2>/dev/null
+}
+
+# Fetch user-data via the detected provider's endpoint. Returns body
+# on stdout; empty when unavailable. Decodes base64 only where the
+# provider's API contract requires it (Azure customData).
+_cloud_imds_get_user_data() {
+    local provider; provider=$(vpssec_cloud_provider)
+    local body=""
+    case "$provider" in
+        aws)
+            # Prefer IMDSv2; fall back to v1 only if v2 unavailable.
+            local token
+            token=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+                -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+                --max-time 1 --connect-timeout 1 2>/dev/null)
+            if [[ -n "$token" ]]; then
+                body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                    -H "X-aws-ec2-metadata-token: $token" \
+                    "http://169.254.169.254/latest/user-data" 2>/dev/null)
+            fi
+            [[ -z "$body" ]] && body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/latest/user-data" 2>/dev/null)
+            ;;
+        alibaba)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://100.100.100.200/latest/user-data" 2>/dev/null)
+            [[ -z "$body" ]] && body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/latest/user-data" 2>/dev/null)
+            ;;
+        azure)
+            # customData is base64-encoded per Azure API contract.
+            local enc
+            enc=$(curl -sS --max-time 2 --connect-timeout 1 -H "Metadata: true" \
+                "http://169.254.169.254/metadata/instance/compute/customData?api-version=2021-01-01&format=text" \
+                2>/dev/null)
+            [[ -n "$enc" ]] && body=$(printf '%s' "$enc" | base64 -d 2>/dev/null)
+            ;;
+        gcp)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                -H "Metadata-Flavor: Google" \
+                "http://169.254.169.254/computeMetadata/v1/instance/attributes/user-data" 2>/dev/null)
+            ;;
+        digitalocean)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/metadata/v1/user-data" 2>/dev/null)
+            ;;
+        hetzner)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/hetzner/v1/userdata" 2>/dev/null)
+            ;;
+        vultr|linode)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/v1/user-data" 2>/dev/null)
+            ;;
+        tencent)
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://metadata.tencentyun.com/latest/user-data" 2>/dev/null)
+            ;;
+    esac
+    printf '%s' "$body"
+}
+
+# Scan content for KNOWN-FORMAT credentials. Output is the count and
+# kind only — never the matched value. Patterns are deliberately
+# specific (vendor-mandated prefixes, PEM headers, JWT structure):
+# generic markers like `PASSWORD=` are NOT matched because they're
+# legitimate in many bootstrap scripts. FP rate should approach zero.
+_cloud_imds_scan_secrets() {
+    local content="$1"
+    [[ -z "$content" ]] && return 0
+    local found=() n
+
+    # PEM private keys (any flavor).
+    n=$(grep -cE -- '-----BEGIN[[:space:]]+(RSA|OPENSSH|EC|DSA|ENCRYPTED|PGP)?[[:space:]]?PRIVATE[[:space:]]+KEY-----' \
+        <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("private_key(x$n)")
+
+    # AWS access key IDs (AKIA = long-lived user; ASIA = temporary session).
+    n=$(grep -cE '(AKIA|ASIA)[0-9A-Z]{16}' <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("aws_access_key(x$n)")
+
+    # AWS secret access key (after canonical variable name).
+    n=$(grep -cE 'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}' \
+        <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("aws_secret_key(x$n)")
+
+    # GitHub tokens (vendor-strict 2021+ prefix: ghp_, ghs_, gho_, ghu_).
+    n=$(grep -cE 'gh[posu]_[A-Za-z0-9]{36}' <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("github_token(x$n)")
+
+    # GitLab PAT.
+    n=$(grep -cE 'glpat-[A-Za-z0-9_-]{20}' <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("gitlab_token(x$n)")
+
+    # Slack tokens.
+    n=$(grep -cE 'xox[bpoasr]-[0-9A-Za-z-]{10,}' <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("slack_token(x$n)")
+
+    # JWT (a.b.c with base64url-format segments starting with eyJ).
+    n=$(grep -cE 'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' \
+        <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("jwt(x$n)")
+
+    # Stripe live keys (sk_live_).
+    n=$(grep -cE 'sk_live_[0-9a-zA-Z]{24,}' <<< "$content" 2>/dev/null || echo 0)
+    (( n > 0 )) && found+=("stripe_live_key(x$n)")
+
+    printf '%s ' "${found[@]}"
+}
+
+# True if any host-firewall rule mentions an IMDS IP. Weak signal:
+# distinguishing a rule that fully blocks from one that only logs
+# requires parsing iptables/nftables syntax in detail; for defense-
+# in-depth purposes, presence of *any* rule vs none is what matters.
+_cloud_imds_firewall_restricted() {
+    local imds_ips=("169.254.169.254" "100.100.100.200")
+    local ip re
+    for ip in "${imds_ips[@]}"; do
+        re="${ip//./\\.}"
+        if command -v iptables-save >/dev/null 2>&1 \
+           && iptables-save 2>/dev/null | grep -q "$re"; then
+            return 0
+        fi
+        if command -v ip6tables-save >/dev/null 2>&1 \
+           && ip6tables-save 2>/dev/null | grep -q "$re"; then
+            return 0
+        fi
+        if command -v nft >/dev/null 2>&1 \
+           && nft list ruleset 2>/dev/null | grep -q "$re"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Lightweight container check (cloud.sh shouldn't depend on kernel.sh
+# being loaded). Skips host-firewall checks in containers since the
+# container can't see the host's nftables.
+_cloud_imds_in_container() {
+    [[ -f /.dockerenv ]] && return 0
+    [[ -f /run/.containerenv ]] && return 0
+    if [[ -r /proc/1/cgroup ]]; then
+        grep -qE '/(docker|kubepods|libpod|containerd|lxc)/' /proc/1/cgroup 2>/dev/null \
+            && return 0
+    fi
+    return 1
+}
+
+# Main IMDS audit orchestrator. Silent no-op on unknown tier.
+_cloud_audit_imds() {
+    local tier; tier=$(vpssec_cloud_tier)
+    [[ "$tier" == "unknown" ]] && return 0
+    command -v curl >/dev/null 2>&1 || return 0
+
+    local provider; provider=$(vpssec_cloud_provider)
+    local check
+
+    # 1. AWS-specific: IMDSv1 still open?
+    if [[ "$provider" == "aws" ]]; then
+        local v1_status v2_token
+        v1_status=$(_cloud_imds_curl_status "http://169.254.169.254/latest/meta-data/")
+        v2_token=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+            --max-time 1 --connect-timeout 1 2>/dev/null)
+
+        if [[ "$v1_status" == "200" ]]; then
+            check=$(create_check_json \
+                "cloud.imds_v1_enabled" \
+                "cloud" \
+                "high" \
+                "failed" \
+                "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled (HttpTokens=optional)')" \
+                "GET /latest/meta-data/ returned 200 with no session token — IMDSv1 reachable, exposes IAM role credentials to SSRF (Capital One pattern)" \
+                "$(i18n 'cloud.fix_imds_v1' 2>/dev/null || echo 'Run: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required')" \
+                "")
+            state_add_check "$check"
+            print_severity "high" "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled')"
+        elif [[ "$v1_status" == "401" && -n "$v2_token" ]]; then
+            check=$(create_check_json \
+                "cloud.imds_v2_only" \
+                "cloud" \
+                "info" \
+                "passed" \
+                "$(i18n 'cloud.imds_v2_only' 2>/dev/null || echo 'AWS IMDSv2 enforced (HttpTokens=required)')" \
+                "" "" "")
+            state_add_check "$check"
+            print_ok "$(i18n 'cloud.imds_v2_only' 2>/dev/null || echo 'AWS IMDSv2 enforced')"
+        fi
+    fi
+
+    # 2. Alibaba-specific: security hardening mode enforced?
+    if [[ "$provider" == "alibaba" ]]; then
+        local ali_status
+        ali_status=$(_cloud_imds_curl_status "http://100.100.100.200/latest/meta-data/")
+        [[ "$ali_status" != "200" ]] && ali_status=$(_cloud_imds_curl_status "http://169.254.169.254/latest/meta-data/")
+
+        if [[ "$ali_status" == "200" ]]; then
+            check=$(create_check_json \
+                "cloud.imds_alibaba_normal_mode" \
+                "cloud" \
+                "medium" \
+                "failed" \
+                "$(i18n 'cloud.imds_alibaba_normal_mode' 2>/dev/null || echo 'Alibaba Cloud IMDS accepts token-free reads (normal mode)')" \
+                "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode" \
+                "$(i18n 'cloud.fix_imds_alibaba' 2>/dev/null || echo 'Enable security hardening mode in the ECS console under instance metadata options')" \
+                "")
+            state_add_check "$check"
+            print_severity "medium" "$(i18n 'cloud.imds_alibaba_normal_mode' 2>/dev/null || echo 'Alibaba IMDS in normal mode')"
+        elif [[ "$ali_status" == "403" || "$ali_status" == "401" ]]; then
+            check=$(create_check_json \
+                "cloud.imds_alibaba_hardened" \
+                "cloud" \
+                "info" \
+                "passed" \
+                "$(i18n 'cloud.imds_alibaba_hardened' 2>/dev/null || echo 'Alibaba Cloud IMDS security hardening enabled')" \
+                "" "" "")
+            state_add_check "$check"
+            print_ok "$(i18n 'cloud.imds_alibaba_hardened' 2>/dev/null || echo 'Alibaba IMDS hardened')"
+        fi
+    fi
+
+    # 3. user-data secret scan (universal across tier1 + tier2).
+    local user_data; user_data=$(_cloud_imds_get_user_data)
+    if [[ -n "$user_data" ]]; then
+        local hits; hits=$(_cloud_imds_scan_secrets "$user_data")
+        hits="${hits% }"
+        if [[ -n "$hits" ]]; then
+            # NEVER log user_data body — only kinds + counts.
+            log_info "user-data secret hits (kinds): $hits"
+            check=$(create_check_json \
+                "cloud.user_data_leaked_secrets" \
+                "cloud" \
+                "high" \
+                "failed" \
+                "$(i18n 'cloud.user_data_leaked_secrets' 2>/dev/null || echo 'Embedded credentials detected in instance user-data')" \
+                "Pattern matches: $hits (kinds + counts only; raw values withheld). cloud-init user-data is readable by every process on this host — rotate the exposed credentials and remove them from user-data" \
+                "$(i18n 'cloud.fix_user_data_secrets' 2>/dev/null || echo 'Rotate the exposed credentials immediately; pass secrets via the cloud providers secret store rather than user-data')" \
+                "")
+            state_add_check "$check"
+            print_severity "high" "$(i18n 'cloud.user_data_leaked_secrets' 2>/dev/null || echo 'Secrets in user-data'): $hits"
+        else
+            check=$(create_check_json \
+                "cloud.user_data_clean" \
+                "cloud" \
+                "info" \
+                "passed" \
+                "$(i18n 'cloud.user_data_clean' 2>/dev/null || echo 'user-data scanned, no embedded credential patterns')" \
+                "" "" "")
+            state_add_check "$check"
+            print_ok "$(i18n 'cloud.user_data_clean' 2>/dev/null || echo 'user-data clean')"
+        fi
+    fi
+
+    # 4. Defense-in-depth: host firewall rule referencing IMDS IPs?
+    # Skip in containers (no view of host nftables).
+    if ! _cloud_imds_in_container; then
+        if _cloud_imds_firewall_restricted; then
+            check=$(create_check_json \
+                "cloud.imds_restricted" \
+                "cloud" \
+                "info" \
+                "passed" \
+                "$(i18n 'cloud.imds_restricted' 2>/dev/null || echo 'Host firewall has rule(s) referencing IMDS address')" \
+                "" "" "")
+            state_add_check "$check"
+            print_ok "$(i18n 'cloud.imds_restricted' 2>/dev/null || echo 'IMDS firewall restriction present')"
+        else
+            check=$(create_check_json \
+                "cloud.imds_unrestricted" \
+                "cloud" \
+                "low" \
+                "failed" \
+                "$(i18n 'cloud.imds_unrestricted' 2>/dev/null || echo 'No host-firewall restriction on IMDS access')" \
+                "iptables/nftables has no rule mentioning 169.254.169.254 or 100.100.100.200 — defense-in-depth recommends restricting IMDS to specific users (e.g. iptables -m owner --uid-owner root)" \
+                "$(i18n 'cloud.fix_imds_firewall' 2>/dev/null || echo 'Consider blocking IMDS at the host firewall for non-root users')" \
+                "")
+            state_add_check "$check"
+            print_severity "low" "$(i18n 'cloud.imds_unrestricted' 2>/dev/null || echo 'No firewall restriction on IMDS')"
+        fi
+    fi
+}
+
+# ==============================================================================
 # Audit Functions
 # ==============================================================================
 
@@ -635,6 +944,9 @@ cloud_audit() {
             "cloud.suspicious_agents")
         state_add_check "$check_json"
     fi
+
+    # 4. IMDS posture audit (tier1 + tier2 only; silent on independent VPS).
+    _cloud_audit_imds
 
     return 0
 }

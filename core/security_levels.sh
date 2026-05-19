@@ -449,6 +449,15 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["cloud.agents_found"]="info"
     ["cloud.no_known_agents"]="info"
     ["cloud.suspicious_agents"]="info"
+    # IMDS posture (tier1 / tier2 cloud-only checks)
+    ["cloud.imds_v1_enabled"]="required"
+    ["cloud.imds_v2_only"]="info"
+    ["cloud.imds_alibaba_normal_mode"]="required"
+    ["cloud.imds_alibaba_hardened"]="info"
+    ["cloud.user_data_leaked_secrets"]="required"
+    ["cloud.user_data_clean"]="info"
+    ["cloud.imds_unrestricted"]="info"
+    ["cloud.imds_restricted"]="info"
 
     # === Users Module ===
     ["users.uid0_found"]="required"

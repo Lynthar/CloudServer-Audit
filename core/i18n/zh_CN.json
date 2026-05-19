@@ -793,7 +793,19 @@
     "optional": "可选",
     "do_not_disable": "请勿禁用 - 云功能所必需",
     "review_before_disable": "禁用前请先了解用途",
-    "investigate": "调查"
+    "investigate": "调查",
+    "imds_v1_enabled": "AWS IMDSv1 已启用（HttpTokens=optional）",
+    "imds_v2_only": "AWS IMDSv2 已强制启用（HttpTokens=required）",
+    "fix_imds_v1": "运行: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required",
+    "imds_alibaba_normal_mode": "阿里云 IMDS 处于普通模式（接受无 token 读取）",
+    "imds_alibaba_hardened": "阿里云 IMDS 已启用安全加固模式",
+    "fix_imds_alibaba": "在 ECS 控制台的实例元数据选项中启用安全加固模式",
+    "user_data_leaked_secrets": "检测到实例 user-data 中嵌入凭据",
+    "user_data_clean": "user-data 已扫描，未发现嵌入凭据特征",
+    "fix_user_data_secrets": "立即轮换泄漏的凭据；新实例请通过云服务商的 secret store 而非 user-data 传递机密",
+    "imds_unrestricted": "主机防火墙未限制 IMDS 访问",
+    "imds_restricted": "主机防火墙包含引用 IMDS 地址的规则",
+    "fix_imds_firewall": "建议在主机防火墙限制非 root 用户访问 IMDS（iptables -m owner --uid-owner root）"
   },
   "users": {
     "title": "用户安全",
