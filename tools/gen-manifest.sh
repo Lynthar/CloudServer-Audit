@@ -20,13 +20,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 if command -v sha256sum >/dev/null 2>&1; then
-    # `--text` forces two-space (text-mode) output regardless of
-    # platform. On Linux this is already the default and is a no-op;
-    # on Git Bash for Windows the default is binary mode which emits
-    # `<hash> *<path>` and breaks byte-for-byte equality with the
-    # Linux-generated manifest, tripping the manifest-freshness CI
-    # job even when contents are identical.
-    HASH_CMD=(sha256sum --text)
+    HASH_CMD=(sha256sum)
 elif command -v shasum >/dev/null 2>&1; then
     HASH_CMD=(shasum -a 256)
 else
@@ -39,9 +33,17 @@ files+=( vpssec install.sh run.sh )
 while IFS= read -r f; do files+=("$f"); done < <(find core -type f \( -name '*.sh' -o -name '*.json' \) | sort)
 while IFS= read -r f; do files+=("$f"); done < <(find modules -type f -name '*.sh' | sort)
 
-# Sort by filename for stable diff output regardless of generation
-# order. The leading hash is irrelevant to ordering since paths are
-# unique.
-"${HASH_CMD[@]}" "${files[@]}" | sort -k 2 > manifest.sha256
+# Strip CR before hashing so Windows checkouts (where Git Bash can
+# leave CRLF in the working tree despite .gitattributes eol=lf, e.g.
+# files staged before the attribute was added) produce the same hash
+# as Linux. install.sh runs `sha256sum -c` on Linux targets only —
+# files there are LF, so a CR-stripped hash matches the byte-for-byte
+# hash on-disk. Sorted by path for stable diff output.
+{
+    for f in "${files[@]}"; do
+        hash=$(tr -d '\r' < "$f" | "${HASH_CMD[@]}" | awk '{print $1}')
+        printf '%s  %s\n' "$hash" "$f"
+    done
+} | sort -k 2 > manifest.sha256
 
 echo "manifest.sha256 regenerated (${#files[@]} files)"

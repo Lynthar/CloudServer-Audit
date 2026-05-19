@@ -144,7 +144,15 @@ _write_checks() {
 
 # ---- get_check_stats -------------------------------------------------
 
-@test "get_check_stats: counts by severity, splits info" {
+@test "get_check_stats: counts by severity, info overlaps" {
+    # Severity and category are orthogonal dimensions:
+    #   - low counts ALL failed low-severity checks (so the summary
+    #     table matches the body listing, which filters purely on
+    #     .severity).
+    #   - info counts info-category checks regardless of severity, as
+    #     a separate informational dimension. Score is unaffected —
+    #     calculate_score() applies its own _check_counts_in_score
+    #     filter.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
         "fail2ban.installed|medium|failed" \
@@ -161,7 +169,7 @@ _write_checks() {
     info=$(echo "$output" | jq '.info')
     [ "$high" = "1" ]
     [ "$medium" = "1" ]
-    [ "$low" = "0" ]      # x11_forwarding is info, not low
+    [ "$low" = "1" ]      # x11_forwarding flows into both low AND info
     [ "$passed" = "1" ]
     [ "$info" = "1" ]
 }
