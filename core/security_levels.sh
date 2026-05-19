@@ -131,6 +131,10 @@ declare -gA FIX_ALERT_ONLY=(
     ["docker.sock_perms_loose"]="Changing socket perms can break running tooling; review users in the docker group first"
     ["docker.seccomp_unconfined"]="Reverting seccomp=unconfined requires understanding why it was set"
     ["docker.userns_not_enabled"]="Enabling userns-remap changes storage paths and breaks some tooling"
+    ["docker.host_network_used"]="Each container with --network=host needs case-by-case review; removing it may break the container's intended function"
+    ["docker.secrets_in_env"]="Credentials must be rotated externally; vpssec cannot mutate running container environments safely"
+    ["docker.unlimited_memory"]="Memory limits must be set at container start time; vpssec will not restart running containers"
+    ["docker.default_bridge_icc_enabled"]="Changing daemon ICC setting restarts dockerd and disconnects containers"
 
     # Filesystem - require manual review
     ["filesystem.suspicious_suid"]="Review and remove SUID bit if not needed"
@@ -325,6 +329,15 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["docker.no_seccomp_unconfined"]="conditional"
     ["docker.userns_enabled"]="info"
     ["docker.userns_not_enabled"]="info"
+    # CIS Docker network / secrets / resources additions
+    ["docker.host_network_used"]="conditional"
+    ["docker.no_host_network"]="conditional"
+    ["docker.default_bridge_icc_enabled"]="conditional"
+    ["docker.default_bridge_icc_disabled"]="conditional"
+    ["docker.secrets_in_env"]="conditional"
+    ["docker.no_env_secrets"]="conditional"
+    ["docker.unlimited_memory"]="conditional"
+    ["docker.memory_limits_set"]="conditional"
 
     # === Nginx Module - conditional (only if Nginx installed) ===
     ["nginx.not_installed"]="info"

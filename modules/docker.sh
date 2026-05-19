@@ -138,6 +138,86 @@ _docker_check_no_new_privileges() {
     return 1
 }
 
+# ----- Network isolation / secrets / resources (CIS additions) -----------------
+
+# Containers running with --network=host. Sharing the host's network
+# namespace bypasses Docker's isolation entirely: the container sees
+# all host interfaces, can bind to any port, and any process inside
+# it can sniff host traffic. CIS Docker 5.9 / NIST 800-190.
+_docker_get_host_network_containers() {
+    local hn=()
+    local c name mode
+    for c in $(docker ps -q 2>/dev/null); do
+        mode=$(docker inspect "$c" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)
+        if [[ "$mode" == "host" ]]; then
+            name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            hn+=("$name")
+        fi
+    done
+    printf '%s\n' "${hn[@]}"
+}
+
+# Containers without a memory cap (Memory == 0 = unlimited).
+# A misbehaving container can OOM the host. CIS Docker 5.10.
+_docker_get_unlimited_memory_containers() {
+    local um=()
+    local c name mem
+    for c in $(docker ps -q 2>/dev/null); do
+        mem=$(docker inspect "$c" --format '{{.HostConfig.Memory}}' 2>/dev/null)
+        if [[ "$mem" == "0" ]]; then
+            name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            um+=("$name")
+        fi
+    done
+    printf '%s\n' "${um[@]}"
+}
+
+# Containers whose .Config.Env contains known-format credentials.
+# Uses _vpssec_scan_secrets_in_content (same scanner as IMDS user-data).
+# We scan `docker ps -aq` (all containers including stopped) because
+# `docker inspect` exposes the env spec regardless of run state, and
+# a stopped container is one `docker start` from re-activating the
+# leak. Output format: "container_name: kind(xN) kind(xN)".
+_docker_get_containers_with_env_secrets() {
+    local hits=()
+    local c name env_str finding
+    for c in $(docker ps -aq 2>/dev/null); do
+        env_str=$(docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+        [[ -z "$env_str" ]] && continue
+        finding=$(_vpssec_scan_secrets_in_content "$env_str")
+        finding="${finding% }"
+        [[ -z "$finding" ]] && continue
+        name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+        hits+=("${name}: ${finding}")
+    done
+    printf '%s\n' "${hits[@]}"
+}
+
+# Is ICC (inter-container communication on the default bridge)
+# explicitly disabled? CIS Docker 2.2 — default state is ENABLED,
+# which is the laterall-movement-friendly state we want to flag.
+# Same three-source pattern as _docker_check_no_new_privileges.
+#
+# Returns 0 (true) when ICC is DISABLED somewhere, 1 when defaults
+# apply (= ICC enabled = the finding state).
+_docker_check_icc_disabled() {
+    if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
+        jq -e '.icc == false' "$DOCKER_DAEMON_JSON" &>/dev/null; then
+        return 0
+    fi
+    if command -v systemctl &>/dev/null && \
+        systemctl cat docker.service 2>/dev/null | \
+        grep -E '^ExecStart=' | grep -q -- '--icc=false'; then
+        return 0
+    fi
+    if [[ -r /etc/default/docker ]] && \
+        grep -E '^[[:space:]]*DOCKER_OPTS=' /etc/default/docker 2>/dev/null | \
+        grep -q -- '--icc=false'; then
+        return 0
+    fi
+    return 1
+}
+
 # ==============================================================================
 # Docker Audit
 # ==============================================================================
@@ -195,6 +275,19 @@ docker_audit() {
     # Check whether userns-remap is actually active (not just available).
     print_item "$(i18n 'docker.check_userns_remap')"
     _docker_audit_userns_remap
+
+    # CIS Docker network / secrets / resources additions:
+    print_item "$(i18n 'docker.check_host_network' 2>/dev/null || echo 'Checking host network usage')"
+    _docker_audit_host_network
+
+    print_item "$(i18n 'docker.check_default_bridge_icc' 2>/dev/null || echo 'Checking default-bridge ICC setting')"
+    _docker_audit_default_bridge_icc
+
+    print_item "$(i18n 'docker.check_secrets_in_env' 2>/dev/null || echo 'Scanning container env vars for embedded credentials')"
+    _docker_audit_secrets_in_env
+
+    print_item "$(i18n 'docker.check_unlimited_memory' 2>/dev/null || echo 'Checking container memory limits')"
+    _docker_audit_unlimited_memory
 }
 
 _docker_audit_exposed_ports() {
@@ -511,6 +604,145 @@ _docker_audit_userns_remap() {
             "")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'docker.userns_not_enabled')"
+    fi
+}
+
+# CIS Docker 5.9 — running with --network=host bypasses Docker's
+# network isolation entirely. medium severity (not high): legitimate
+# use cases exist (VPN daemons like Tailscale/Wireguard, network
+# monitoring agents, custom DNS containers) so this is "review each
+# one", not "broken-by-default".
+_docker_audit_host_network() {
+    local hn; hn=$(_docker_get_host_network_containers)
+    local count; count=$(count_lines "$hn")
+
+    if (( count > 0 )); then
+        local hn_list=$(echo "$hn" | tr '\n' ' ')
+        local check=$(create_check_json \
+            "docker.host_network_used" \
+            "docker" \
+            "medium" \
+            "failed" \
+            "$(i18n 'docker.host_network_used' "count=$count" 2>/dev/null || echo "${count} container(s) running with --network=host")" \
+            "Containers: ${hn_list% }. These share the host network namespace (bind any port, see all host traffic). Review whether each container actually needs host network." \
+            "$(i18n 'docker.fix_host_network' 2>/dev/null || echo 'Recreate the container without --network=host; use a user-defined bridge or default bridge instead unless host networking is truly required (VPN, monitoring)')" \
+            "")
+        state_add_check "$check"
+        print_severity "medium" "$(i18n 'docker.host_network_used' "count=$count" 2>/dev/null || echo "${count} container(s) on host network")"
+    else
+        local check=$(create_check_json \
+            "docker.no_host_network" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.no_host_network' 2>/dev/null || echo 'No containers using host network namespace')" \
+            "" "" "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.no_host_network' 2>/dev/null || echo 'No containers using host network')"
+    fi
+}
+
+# CIS Docker 2.2 — default bridge with ICC=true (Docker's out-of-box
+# default) lets every container on docker0 talk freely to every
+# other. low severity: this IS the default; flagging at medium would
+# be noisy on essentially every Docker install. Surface as a
+# defense-in-depth signal that operators can address with one daemon
+# setting.
+_docker_audit_default_bridge_icc() {
+    if _docker_check_icc_disabled; then
+        local check=$(create_check_json \
+            "docker.default_bridge_icc_disabled" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.default_bridge_icc_disabled' 2>/dev/null || echo 'Default-bridge ICC disabled (containers cannot freely cross-talk)')" \
+            "" "" "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.default_bridge_icc_disabled' 2>/dev/null || echo 'Default-bridge ICC disabled')"
+    else
+        local check=$(create_check_json \
+            "docker.default_bridge_icc_enabled" \
+            "docker" \
+            "low" \
+            "failed" \
+            "$(i18n 'docker.default_bridge_icc_enabled' 2>/dev/null || echo 'Default-bridge ICC enabled (Docker default; allows lateral movement)')" \
+            "Inter-container communication on the docker0 bridge is enabled. If any container is compromised it can reach every other container on the default bridge." \
+            "$(i18n 'docker.fix_default_bridge_icc' 2>/dev/null || echo 'Add \"icc\": false to /etc/docker/daemon.json, restart docker. Use user-defined networks for containers that genuinely need to communicate.')" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'docker.default_bridge_icc_enabled' 2>/dev/null || echo 'Default-bridge ICC enabled')"
+    fi
+}
+
+# Container env scan. HIGH severity matches cloud.user_data_leaked_
+# _secrets — the credential is already in a readable place (anyone
+# with the docker socket, /proc, or `docker inspect` access reads
+# it). NEVER log raw values — finding desc records only "kind +
+# count" output from the shared scanner.
+_docker_audit_secrets_in_env() {
+    local hits; hits=$(_docker_get_containers_with_env_secrets)
+    local count; count=$(count_lines "$hits")
+
+    if (( count > 0 )); then
+        # Log the FACT of hits; the desc carries kinds, not values.
+        log_info "docker env secret hits: $count container(s) with credential-format env vars"
+        # Compress to first 5 lines + total — long lists overflow display.
+        local sample; sample=$(echo "$hits" | head -5 | tr '\n' '; ' | sed 's/; $//')
+        local check=$(create_check_json \
+            "docker.secrets_in_env" \
+            "docker" \
+            "high" \
+            "failed" \
+            "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with embedded credentials in env vars")" \
+            "Containers (kinds + counts only; raw values withheld): ${sample}. Any process with docker socket access reads these via 'docker inspect'." \
+            "$(i18n 'docker.fix_secrets_in_env' 2>/dev/null || echo 'Rotate the exposed credentials. Use docker secrets / mounted secret files / cloud-provider secret stores instead of -e/--env.')" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with secrets in env")"
+    else
+        local check=$(create_check_json \
+            "docker.no_env_secrets" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.no_env_secrets' 2>/dev/null || echo 'No embedded credential patterns in container env vars')" \
+            "" "" "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.no_env_secrets' 2>/dev/null || echo 'No embedded credentials in container env')"
+    fi
+}
+
+# CIS Docker 5.10 — containers without a memory cap can OOM the host.
+# low severity: single-app servers commonly run one container without
+# memory limit (the container IS the workload, no reason to subdivide
+# the host's RAM). Multi-tenant / co-located workloads care more.
+_docker_audit_unlimited_memory() {
+    local um; um=$(_docker_get_unlimited_memory_containers)
+    local count; count=$(count_lines "$um")
+
+    if (( count > 0 )); then
+        local um_list=$(echo "$um" | tr '\n' ' ')
+        local check=$(create_check_json \
+            "docker.unlimited_memory" \
+            "docker" \
+            "low" \
+            "failed" \
+            "$(i18n 'docker.unlimited_memory' "count=$count" 2>/dev/null || echo "${count} container(s) without a memory limit")" \
+            "Containers: ${um_list% }. Without --memory a runaway / leaking container can OOM the host. Acceptable on single-app servers; address on multi-tenant hosts." \
+            "$(i18n 'docker.fix_unlimited_memory' 2>/dev/null || echo 'Re-run the container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose.')" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'docker.unlimited_memory' "count=$count" 2>/dev/null || echo "${count} container(s) without memory limit")"
+    else
+        local check=$(create_check_json \
+            "docker.memory_limits_set" \
+            "docker" \
+            "low" \
+            "passed" \
+            "$(i18n 'docker.memory_limits_set' 2>/dev/null || echo 'All running containers have memory limits configured')" \
+            "" "" "")
+        state_add_check "$check"
+        print_ok "$(i18n 'docker.memory_limits_set' 2>/dev/null || echo 'All containers have memory limits')"
     fi
 }
 

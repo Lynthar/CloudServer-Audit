@@ -92,6 +92,60 @@ vpssec_cloud_tier() {
     echo "$VPSSEC_CLOUD_TIER"
 }
 
+# Scan a content string for KNOWN-FORMAT credentials. Used by both
+# cloud.sh (IMDS user-data scan) and docker.sh (container env var
+# scan); kept here to avoid maintaining two copies of the same
+# pattern set.
+#
+# Output: "<kind>(<n>) <kind>(<n>) ..." — kinds + counts only, NEVER
+# the matched values. Patterns are deliberately specific (vendor-
+# mandated prefixes, PEM headers, JWT structure) so FP rate stays
+# near zero. Generic markers like PASSWORD= / SECRET= are NOT
+# matched: they're legitimate in many bootstrap scripts and
+# container environment variables (MYSQL_ROOT_PASSWORD, etc.).
+_vpssec_scan_secrets_in_content() {
+    local content="$1"
+    [[ -z "$content" ]] && return 0
+    local found=() n
+
+    # PEM private keys (any flavor).
+    n=$(grep -cE -- '-----BEGIN[[:space:]]+(RSA|OPENSSH|EC|DSA|ENCRYPTED|PGP)?[[:space:]]?PRIVATE[[:space:]]+KEY-----' \
+        <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("private_key(x$n)")
+
+    # AWS access key IDs (AKIA = long-lived user; ASIA = temporary session).
+    n=$(grep -cE '(AKIA|ASIA)[0-9A-Z]{16}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("aws_access_key(x$n)")
+
+    # AWS secret access key (after canonical variable name).
+    n=$(grep -cE 'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}' \
+        <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("aws_secret_key(x$n)")
+
+    # GitHub tokens (vendor-strict 2021+ prefix: ghp_, ghs_, gho_, ghu_).
+    n=$(grep -cE 'gh[posu]_[A-Za-z0-9]{36}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("github_token(x$n)")
+
+    # GitLab PAT.
+    n=$(grep -cE 'glpat-[A-Za-z0-9_-]{20}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("gitlab_token(x$n)")
+
+    # Slack tokens.
+    n=$(grep -cE 'xox[bpoasr]-[0-9A-Za-z-]{10,}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("slack_token(x$n)")
+
+    # JWT (a.b.c with base64url-format segments starting with eyJ).
+    n=$(grep -cE 'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' \
+        <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("jwt(x$n)")
+
+    # Stripe live keys.
+    n=$(grep -cE 'sk_live_[0-9a-zA-Z]{24,}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("stripe_live_key(x$n)")
+
+    printf '%s ' "${found[@]}"
+}
+
 # ==============================================================================
 # Color and Formatting
 # ==============================================================================

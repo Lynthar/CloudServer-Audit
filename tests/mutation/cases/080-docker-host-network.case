@@ -1,0 +1,41 @@
+# Plant: run a transient container with --network=host. Verifies
+# the inspect-and-classify pipeline correctly flags it at medium
+# severity. Mutation case covers only this check (not ICC / env-
+# secrets / memory-limit) because:
+#  * ICC: requires daemon.json edit + dockerd restart — too heavy/
+#    risky for an automated harness.
+#  * secrets_in_env: testable by passing -e AKIA... but the test
+#    container would need to actually launch; we keep this case
+#    focused on the one most-likely-to-regress code path.
+#  * unlimited_memory: same-shape inspect pipeline as host_network;
+#    if host_network case passes the parser works.
+TEST_DESC="Container with --network=host triggers docker.host_network_used"
+EXPECT_ID="docker.host_network_used"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+EXPECT_DESC_CONTAINS="vpssec-mutation-net"
+MODULE="docker"
+
+_CTR_NAME="vpssec-mutation-net"
+
+precheck() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker info >/dev/null 2>&1 || return 1
+    # Refuse if a stale container of this name somehow exists.
+    docker inspect "$_CTR_NAME" >/dev/null 2>&1 && return 1
+    return 0
+}
+
+mutate() {
+    # alpine:latest is small, ~3MB. `sleep 300` keeps the container
+    # alive for the audit to find it; restore kills before timeout.
+    docker run -d --rm --name "$_CTR_NAME" --network=host \
+        alpine:latest sleep 300 >/dev/null 2>&1 || return 1
+    sleep 1   # let docker register the container
+    return 0
+}
+
+restore() {
+    docker rm -f "$_CTR_NAME" >/dev/null 2>&1 || true
+    return 0
+}
