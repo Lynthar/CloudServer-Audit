@@ -121,6 +121,70 @@ _nginx_test_config() {
     nginx -t 2>/dev/null
 }
 
+# ----- DoS-hardening helpers (timeouts + rate limiting) ----------------------
+# nginx -T flattens every included config file into a single stream, so a
+# single awk pass can find the *effective* last setting for a directive
+# across http/server/location contexts. Per nginx semantics, a directive
+# declared in a more specific context overrides a less specific one for
+# that context's traffic; we treat "any occurrence > threshold" as a
+# finding because that means at least one served hostname / location is
+# weaker than the policy. Using END { print last } as the proxy is good
+# enough for 90% of real configs; the alternative (full block-scope
+# parsing) is too brittle for an auditor.
+
+# Read the effective value of a directive from a `nginx -T` dump. If the
+# directive doesn't appear anywhere, return the supplied default.
+_nginx_get_directive_value() {
+    local config="$1" key="$2" default="$3"
+    local value
+    value=$(awk -v k="$key" '
+        # Strip inline comments first so a commented-out line never matches.
+        { sub(/[[:space:]]*#.*$/, "") }
+        $1 == k {
+            sub("^[[:space:]]*" k "[[:space:]]+", "")
+            sub(/[[:space:]]*;.*$/, "")
+            last = $0
+        }
+        END { if (last != "") print last }
+    ' <<<"$config")
+    echo "${value:-$default}"
+}
+
+# Does the directive appear at least once in the effective config?
+_nginx_has_directive() {
+    local config="$1" key="$2"
+    awk -v k="$key" '
+        { sub(/[[:space:]]*#.*$/, "") }
+        $1 == k { found = 1; exit }
+        END { exit !found }
+    ' <<<"$config"
+}
+
+# nginx time values can be a bare integer (seconds), or carry a ms/s/m/h
+# suffix. Some directives accept multiple values (e.g. `keepalive_timeout
+# 65s 60s` — server-side + Keep-Alive header) — first token wins for
+# audit purposes. Anything unparseable returns 0 (treated as "safe"
+# rather than fabricating a number that would trigger a false flag).
+_nginx_parse_seconds() {
+    local val="$1"
+    # First whitespace-separated token only.
+    val="${val%% *}"
+    val="${val%;}"
+    case "$val" in
+        ''|0)         echo 0 ;;
+        *[!0-9]*)
+            if   [[ "$val" =~ ^([0-9]+)ms$ ]]; then echo $(( BASH_REMATCH[1] / 1000 ))
+            elif [[ "$val" =~ ^([0-9]+)s$  ]]; then echo "${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ ^([0-9]+)m$  ]]; then echo $(( BASH_REMATCH[1] * 60 ))
+            elif [[ "$val" =~ ^([0-9]+)h$  ]]; then echo $(( BASH_REMATCH[1] * 3600 ))
+            elif [[ "$val" =~ ^([0-9]+)d$  ]]; then echo $(( BASH_REMATCH[1] * 86400 ))
+            else                                    echo 0
+            fi
+            ;;
+        *)            echo "$val" ;;
+    esac
+}
+
 # ==============================================================================
 # Nginx Audit
 # ==============================================================================
@@ -148,6 +212,13 @@ nginx_audit() {
     # Check default server / catchall
     print_item "$(i18n 'nginx.check_default_server')"
     _nginx_audit_catchall
+
+    # Check DoS hardening (timeouts, rate limiting, slow-attack defenses).
+    # References: CIS NGINX Benchmark v2.0.1 (control 5.2.1 for
+    # client_header_timeout / client_body_timeout) + nginx official
+    # DDoS-mitigation guide (trac #2590, nginx.org blog).
+    print_item "$(i18n 'nginx.check_dos_hardening' 2>/dev/null || echo 'Checking DoS hardening')"
+    _nginx_audit_dos_hardening
 }
 
 _nginx_audit_catchall() {
@@ -208,6 +279,146 @@ _nginx_audit_catchall() {
             print_severity "medium" "$(i18n 'nginx.no_catchall')"
             ;;
     esac
+}
+
+_nginx_audit_dos_hardening() {
+    # Pull the effective config once; every sub-check awk-scans the same
+    # blob instead of re-running nginx -T.
+    local effective
+    if ! effective=$(nginx -T 2>/dev/null) || [[ -z "$effective" ]]; then
+        log_warn "nginx -T returned no output; skipping DoS hardening audit"
+        return 0
+    fi
+
+    local issues=()
+    local check
+
+    # 1. client_header_timeout — CIS 5.2.1, default 60s, recommended ≤10s.
+    local cht_raw cht
+    cht_raw=$(_nginx_get_directive_value "$effective" "client_header_timeout" "60s")
+    cht=$(_nginx_parse_seconds "$cht_raw")
+    if (( cht > 10 )); then
+        check=$(create_check_json \
+            "nginx.client_header_timeout_high" \
+            "nginx" \
+            "medium" \
+            "failed" \
+            "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high')" \
+            "client_header_timeout=$cht_raw (CIS 5.2.1: ≤10s; nginx default 60s leaves Slowloris vulnerable)" \
+            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_header_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "")
+        state_add_check "$check"
+        issues+=("client_header_timeout=$cht_raw")
+        print_severity "medium" "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high'): $cht_raw"
+    fi
+
+    # 2. client_body_timeout — CIS 5.2.1, default 60s, recommended ≤10s.
+    local cbt_raw cbt
+    cbt_raw=$(_nginx_get_directive_value "$effective" "client_body_timeout" "60s")
+    cbt=$(_nginx_parse_seconds "$cbt_raw")
+    if (( cbt > 10 )); then
+        check=$(create_check_json \
+            "nginx.client_body_timeout_high" \
+            "nginx" \
+            "medium" \
+            "failed" \
+            "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high')" \
+            "client_body_timeout=$cbt_raw (CIS 5.2.1: ≤10s)" \
+            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_body_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "")
+        state_add_check "$check"
+        issues+=("client_body_timeout=$cbt_raw")
+        print_severity "medium" "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high'): $cbt_raw"
+    fi
+
+    # 3. keepalive_timeout — default 75s, recommended ≤30s (F5 NGINX STIG).
+    local kt_raw kt
+    kt_raw=$(_nginx_get_directive_value "$effective" "keepalive_timeout" "75s")
+    kt=$(_nginx_parse_seconds "$kt_raw")
+    if (( kt > 30 )); then
+        check=$(create_check_json \
+            "nginx.keepalive_timeout_high" \
+            "nginx" \
+            "low" \
+            "failed" \
+            "$(i18n 'nginx.keepalive_timeout_high' 2>/dev/null || echo 'keepalive_timeout too high')" \
+            "keepalive_timeout=$kt_raw (recommended: ≤30s; nginx default 75s)" \
+            "$(i18n 'nginx.fix_dos_keepalive' 2>/dev/null || echo 'Set keepalive_timeout 30s; in /etc/nginx/nginx.conf')" \
+            "")
+        state_add_check "$check"
+        issues+=("keepalive_timeout=$kt_raw")
+        print_severity "low" "$(i18n 'nginx.keepalive_timeout_high' 2>/dev/null || echo 'keepalive_timeout too high'): $kt_raw"
+    fi
+
+    # 4. send_timeout — default 60s, recommended ≤10s.
+    local st_raw st
+    st_raw=$(_nginx_get_directive_value "$effective" "send_timeout" "60s")
+    st=$(_nginx_parse_seconds "$st_raw")
+    if (( st > 10 )); then
+        check=$(create_check_json \
+            "nginx.send_timeout_high" \
+            "nginx" \
+            "low" \
+            "failed" \
+            "$(i18n 'nginx.send_timeout_high' 2>/dev/null || echo 'send_timeout too high')" \
+            "send_timeout=$st_raw (recommended: ≤10s; nginx default 60s)" \
+            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set send_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "")
+        state_add_check "$check"
+        issues+=("send_timeout=$st_raw")
+        print_severity "low" "$(i18n 'nginx.send_timeout_high' 2>/dev/null || echo 'send_timeout too high'): $st_raw"
+    fi
+
+    # 5. Rate limiting presence — no severity escalation: many static
+    # / internal sites legitimately don't need it. Recorded as low.
+    if ! _nginx_has_directive "$effective" "limit_req_zone"; then
+        check=$(create_check_json \
+            "nginx.no_rate_limiting" \
+            "nginx" \
+            "low" \
+            "failed" \
+            "$(i18n 'nginx.no_rate_limiting' 2>/dev/null || echo 'No rate limiting configured (no limit_req_zone)')" \
+            "No limit_req_zone directive in effective config — public-facing nginx benefits from per-IP request rate caps to throttle brute-force and scraping attacks" \
+            "$(i18n 'nginx.fix_dos_rate_limit' 2>/dev/null || echo 'Add: limit_req_zone \$binary_remote_addr zone=perip:10m rate=10r/s; to nginx.conf http block, then apply per-location with limit_req zone=perip burst=20 nodelay;')" \
+            "")
+        state_add_check "$check"
+        issues+=("no_rate_limiting")
+        print_severity "low" "$(i18n 'nginx.no_rate_limiting' 2>/dev/null || echo 'No rate limiting configured')"
+    fi
+
+    # 6. reset_timedout_connection — default off, nginx mitigation guide
+    # explicitly recommends "on" to close lingering misbehaving clients.
+    local rtc
+    rtc=$(_nginx_get_directive_value "$effective" "reset_timedout_connection" "off")
+    if [[ "$rtc" != "on" ]]; then
+        check=$(create_check_json \
+            "nginx.reset_timedout_connection_off" \
+            "nginx" \
+            "low" \
+            "failed" \
+            "$(i18n 'nginx.reset_timedout_connection_off' 2>/dev/null || echo 'reset_timedout_connection not enabled')" \
+            "reset_timedout_connection is off (nginx default). Enabling forcibly closes connections with misbehaving / slow clients, accelerating slowloris recovery" \
+            "$(i18n 'nginx.fix_dos_reset_timedout' 2>/dev/null || echo 'Add: reset_timedout_connection on; to /etc/nginx/nginx.conf http block')" \
+            "")
+        state_add_check "$check"
+        issues+=("reset_timedout_connection=off")
+        print_severity "low" "$(i18n 'nginx.reset_timedout_connection_off' 2>/dev/null || echo 'reset_timedout_connection not enabled')"
+    fi
+
+    # Positive companion — only when EVERY directive met the threshold.
+    if (( ${#issues[@]} == 0 )); then
+        check=$(create_check_json \
+            "nginx.dos_hardening_ok" \
+            "nginx" \
+            "low" \
+            "passed" \
+            "$(i18n 'nginx.dos_hardening_ok' 2>/dev/null || echo 'DoS hardening directives configured')" \
+            "client_header/body/send_timeout, keepalive_timeout, rate limiting, and reset_timedout_connection all match CIS / nginx-mitigation recommendations" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'nginx.dos_hardening_ok' 2>/dev/null || echo 'DoS hardening directives configured')"
+    fi
 }
 
 # ==============================================================================

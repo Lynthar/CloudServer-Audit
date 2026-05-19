@@ -394,7 +394,19 @@
     "generating_cert": "正在生成自签名证书用于默认拦截...",
     "catchall_created": "默认拦截配置已创建: {path}",
     "nginx_reloaded": "Nginx 已重载",
-    "nginx_test_failed": "Nginx 配置测试失败"
+    "nginx_test_failed": "Nginx 配置测试失败",
+    "check_dos_hardening": "检查 DoS 加固（超时、速率限制）",
+    "client_header_timeout_high": "client_header_timeout 过高",
+    "client_body_timeout_high": "client_body_timeout 过高",
+    "keepalive_timeout_high": "keepalive_timeout 过高",
+    "send_timeout_high": "send_timeout 过高",
+    "no_rate_limiting": "未配置速率限制（无 limit_req_zone）",
+    "reset_timedout_connection_off": "未启用 reset_timedout_connection",
+    "dos_hardening_ok": "DoS 加固指令已配置",
+    "fix_dos_timeouts": "在 /etc/nginx/nginx.conf 的 http 块中将超时设为 ≤10s",
+    "fix_dos_keepalive": "在 /etc/nginx/nginx.conf 中设置 keepalive_timeout 30s;",
+    "fix_dos_rate_limit": "添加: limit_req_zone $binary_remote_addr zone=perip:10m rate=10r/s; 然后在 location 块中应用 limit_req zone=perip burst=20 nodelay;",
+    "fix_dos_reset_timedout": "在 /etc/nginx/nginx.conf 的 http 块中添加: reset_timedout_connection on;"
   },
   "baseline": {
     "title": "系统基线加固",

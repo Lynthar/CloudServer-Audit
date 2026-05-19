@@ -1,0 +1,45 @@
+# Plant: drop-in conf with client_header_timeout=60s (nginx default,
+# the value CIS 5.2.1 explicitly warns about). Verifies the timeout
+# parser correctly extracts the value, classifies it as > 10s, and
+# emits nginx.client_header_timeout_high at medium severity.
+#
+# Safety: drop-in goes to /etc/nginx/conf.d/, gets nginx -t verified
+# before reloading. On any test failure restore removes the file and
+# reloads back.
+TEST_DESC="client_header_timeout=60s triggers nginx.client_header_timeout_high"
+EXPECT_ID="nginx.client_header_timeout_high"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+MODULE="nginx"
+
+_CONF="/etc/nginx/conf.d/99-vpssec-mutation-test.conf"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 || return 1
+    [[ -d /etc/nginx/conf.d ]] || return 1
+    nginx -t >/dev/null 2>&1 || return 1
+}
+
+mutate() {
+    cat > "$_CONF" <<'EOF'
+# vpssec mutation test — restored on case completion
+client_header_timeout 60s;
+EOF
+    chmod 644 "$_CONF"
+    if ! nginx -t >/dev/null 2>&1; then
+        rm -f "$_CONF"
+        return 1
+    fi
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        systemctl reload nginx >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+restore() {
+    rm -f "$_CONF"
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        systemctl reload nginx >/dev/null 2>&1 || true
+    fi
+    return 0
+}

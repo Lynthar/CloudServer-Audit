@@ -394,7 +394,19 @@
     "generating_cert": "Generating self-signed certificate for catchall...",
     "catchall_created": "Catchall configuration created: {path}",
     "nginx_reloaded": "Nginx reloaded",
-    "nginx_test_failed": "Nginx configuration test failed"
+    "nginx_test_failed": "Nginx configuration test failed",
+    "check_dos_hardening": "Checking DoS hardening (timeouts, rate limiting)",
+    "client_header_timeout_high": "client_header_timeout too high",
+    "client_body_timeout_high": "client_body_timeout too high",
+    "keepalive_timeout_high": "keepalive_timeout too high",
+    "send_timeout_high": "send_timeout too high",
+    "no_rate_limiting": "No rate limiting configured (no limit_req_zone)",
+    "reset_timedout_connection_off": "reset_timedout_connection not enabled",
+    "dos_hardening_ok": "DoS hardening directives configured",
+    "fix_dos_timeouts": "Set timeout to ≤10s in /etc/nginx/nginx.conf http block",
+    "fix_dos_keepalive": "Set keepalive_timeout 30s; in /etc/nginx/nginx.conf",
+    "fix_dos_rate_limit": "Add: limit_req_zone $binary_remote_addr zone=perip:10m rate=10r/s; then apply with limit_req zone=perip burst=20 nodelay; in location blocks",
+    "fix_dos_reset_timedout": "Add: reset_timedout_connection on; to /etc/nginx/nginx.conf http block"
   },
   "baseline": {
     "title": "Baseline Hardening",

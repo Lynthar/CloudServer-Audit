@@ -330,6 +330,14 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["nginx.not_installed"]="info"
     ["nginx.catchall_exists"]="conditional"
     ["nginx.no_catchall"]="conditional"
+    # DoS hardening (CIS NGINX 5.2.1 + nginx mitigation guide)
+    ["nginx.client_header_timeout_high"]="recommended"
+    ["nginx.client_body_timeout_high"]="recommended"
+    ["nginx.keepalive_timeout_high"]="optional"
+    ["nginx.send_timeout_high"]="optional"
+    ["nginx.no_rate_limiting"]="optional"
+    ["nginx.reset_timedout_connection_off"]="optional"
+    ["nginx.dos_hardening_ok"]="optional"
 
     # === Baseline Module - recommended (MAC: SELinux/AppArmor) ===
     ["baseline.apparmor_enabled"]="recommended"
