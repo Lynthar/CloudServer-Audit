@@ -46,10 +46,21 @@ declare -ga NET_DANGEROUS_PUBLIC_PORTS=(
 # who explicitly want to flag SSH on 0.0.0.0 can do so via separate
 # SSH-module checks.
 declare -ga NET_PUBLIC_PORTS_OK=(
-    22      # SSH
+    22      # SSH (default port)
     80      # HTTP
     443     # HTTPS
     53      # DNS (when host runs a resolver)
+)
+
+# Processes whose listeners are always considered "expected public"
+# regardless of which port they bind to. The reason port 22 isn't
+# enough: operators routinely move SSH to a high port (2222, 22022,
+# 33xxx, ...) — ssh.sh's port check already approves that move, so
+# networking module flagging the same listener as "non-standard
+# public listener" produces a contradictory pair of findings. Match
+# by process name closes the loop.
+declare -ga NET_PUBLIC_PROCESSES_OK=(
+    sshd
 )
 
 # ==============================================================================
@@ -141,6 +152,17 @@ _net_port_in() {
     return 1
 }
 
+_net_proc_in() {
+    local needle="$1"
+    shift
+    [[ -z "$needle" ]] && return 1
+    local p
+    for p in "$@"; do
+        [[ "$needle" == "$p" ]] && return 0
+    done
+    return 1
+}
+
 # Detect interfaces in promiscuous mode. On a server, promisc usually
 # means tcpdump/wireshark is running — or something far worse.
 _net_promiscuous_interfaces() {
@@ -175,34 +197,64 @@ _net_audit_listeners() {
         return
     fi
 
-    local dangerous=()  # known-bad ports on wildcard
-    local exposed=()    # any other non-whitelisted port on wildcard
+    # First pass: collapse (proto, port, proc) tuples seen on
+    # wildcard / loopback / specific. ss(8) emits separate rows for
+    # the IPv4 and IPv6 sockets of the same service (sshd on
+    # 0.0.0.0:22 and [::]:22 are two rows), so iterating raw would
+    # double-count every dual-stack listener. The associative array
+    # acts as a set; presence on wildcard wins over loopback when
+    # both are seen (worst-case classification).
+    local -A wildcard_set loopback_only_set
     local loopback_only=1
-
-    local proto family ip port proc class
+    local proto family ip port proc class key
     while IFS=$'\t' read -r proto family ip port proc; do
         [[ -z "$port" ]] && continue
         class=$(_net_classify_addr "$family" "$ip")
+        key="${proto}/${port}/${proc:-?}"
         case "$class" in
             loopback)
-                # Loopback is fine, no signal.
+                # Only record as loopback-only if not already marked
+                # wildcard. Otherwise leave the wildcard entry alone.
+                [[ -z "${wildcard_set[$key]:-}" ]] && loopback_only_set["$key"]=1
                 ;;
             wildcard)
                 loopback_only=0
-                if _net_port_in "$port" "${NET_DANGEROUS_PUBLIC_PORTS[@]}"; then
-                    dangerous+=("${proto}/${port}${proc:+ ($proc)}")
-                elif ! _net_port_in "$port" "${NET_PUBLIC_PORTS_OK[@]}"; then
-                    exposed+=("${proto}/${port}${proc:+ ($proc)}")
-                fi
+                wildcard_set["$key"]=1
+                # If we had previously logged it as loopback, promote.
+                unset 'loopback_only_set[$key]' 2>/dev/null || true
                 ;;
             specific)
                 loopback_only=0
-                # Bound to a specific (non-loopback) address — could
-                # be private/cloud-internal, could be public. Without
-                # external context we don't flag.
+                # Specific-bind addresses are neither flagged nor
+                # tracked — operator context required.
                 ;;
         esac
     done <<< "$listeners"
+
+    # Second pass: classify deduplicated wildcard listeners.
+    local dangerous=()  # known-bad ports on wildcard
+    local exposed=()    # any other non-whitelisted port/proc on wildcard
+
+    for key in "${!wildcard_set[@]}"; do
+        proto="${key%%/*}"
+        local rest="${key#*/}"
+        port="${rest%%/*}"
+        proc="${rest#*/}"
+        [[ "$proc" == "?" ]] && proc=""
+
+        # Process-name whitelist wins first. sshd on a non-default
+        # port is approved by ssh.sh; networking would otherwise
+        # flag the same listener and contradict.
+        if _net_proc_in "$proc" "${NET_PUBLIC_PROCESSES_OK[@]}"; then
+            continue
+        fi
+
+        if _net_port_in "$port" "${NET_DANGEROUS_PUBLIC_PORTS[@]}"; then
+            dangerous+=("${proto}/${port}${proc:+ ($proc)}")
+        elif ! _net_port_in "$port" "${NET_PUBLIC_PORTS_OK[@]}"; then
+            exposed+=("${proto}/${port}${proc:+ ($proc)}")
+        fi
+    done
 
     if (( ${#dangerous[@]} > 0 )); then
         local list; list=$(printf '%s ' "${dangerous[@]}")

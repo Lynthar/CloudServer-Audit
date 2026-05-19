@@ -276,7 +276,9 @@
     "adding_ssh_rule": "正在添加 SSH 规则...",
     "default_deny_set": "已设置默认入站策略为拒绝",
     "default_deny_failed": "设置默认策略失败",
-    "ssh_rule_failed": "添加 SSH 规则失败"
+    "ssh_rule_failed": "添加 SSH 规则失败",
+    "firewall_empty": "{type} 已激活但 ruleset 为空",
+    "fix_firewall_empty": "为 {type} 加载规则，或改用 UFW/firewalld 等托管前端"
   },
   "update": {
     "title": "系统更新",
@@ -430,7 +432,10 @@
     "apparmor_enable_failed": "AppArmor 启用失败",
     "disabling_service": "正在禁用 {service}...",
     "service_disabled": "已禁用: {service}",
-    "service_disable_failed": "无法禁用: {service}"
+    "service_disable_failed": "无法禁用: {service}",
+    "check_insecure_services": "检查不安全的传统服务",
+    "insecure_services_active": "发现 {count} 个不安全的传统服务或软件包",
+    "insecure_services_clean": "未发现不安全的传统服务"
   },
   "logging": {
     "title": "日志与审计",
@@ -631,7 +636,33 @@
     "detected_backend": "检测到后端: {backend}",
     "detected_banaction": "检测到封禁动作: {banaction}",
     "ssh_jail_configured": "SSH jail 配置成功",
-    "ssh_jail_config_failed": "SSH jail 配置失败"
+    "ssh_jail_config_failed": "SSH jail 配置失败",
+    "check_any_jail": "检查活动 jail",
+    "jails_active": "活动 jail",
+    "no_jails_active": "fail2ban 在运行但无任何活动 jail",
+    "fix_enable_jail": "在 /etc/fail2ban/jail.local 启用至少一个 jail"
+  },
+  "networking": {
+    "title": "网络",
+    "desc": "监听套接字与网络接口审计",
+    "check_listeners": "检查监听端口",
+    "check_promisc": "检查混杂模式接口",
+    "exposed_dangerous_ports": "{count} 个危险服务绑定到通配地址",
+    "public_listeners_present": "{count} 个非标准服务绑定到通配地址",
+    "listeners_loopback_only": "所有监听都仅在本地回环",
+    "listeners_ok": "公网监听符合预期（SSH/HTTP/HTTPS/DNS）",
+    "promiscuous_interface": "网卡处于混杂模式",
+    "no_promisc": "未发现混杂模式接口"
+  },
+  "scheduling": {
+    "title": "计划任务",
+    "desc": "cron 与 at 任务清单和异常检测",
+    "check_at_jobs": "检查 at 任务",
+    "check_cron_internet_fetch": "检查 cron 中的管道下载",
+    "at_jobs_present": "队列中存在 {count} 个 at 任务",
+    "no_at_jobs": "无 at 任务",
+    "cron_fetches_internet": "{count} 条 cron 条目通过管道下载并执行远程内容",
+    "cron_clean": "未发现可疑的 cron 模式"
   },
   "kernel": {
     "title": "内核安全",
@@ -819,7 +850,17 @@
     "pwquality_weak": "密码复杂度未强制",
     "fix_pwquality": "配置 pam_pwquality 以强制密码复杂度",
     "history_insecure": "Bash 历史记录安全问题",
-    "fix_history": "在 /etc/profile 中添加 HISTTIMEFORMAT 和 HISTCONTROL"
+    "fix_history": "在 /etc/profile 中添加 HISTTIMEFORMAT 和 HISTCONTROL",
+    "duplicate_uids": "/etc/passwd 中存在重复的 UID",
+    "review_duplicate_uids": "多个账户共用一个 UID——后门模式或配置错误，请调查",
+    "weak_hash_method": "检测到弱密码哈希方法",
+    "fix_hash_method": "在 pam_unix 中配置 yescrypt 或 sha512，并重设受影响账户密码",
+    "hash_rounds_low": "密码哈希轮数低于建议值",
+    "fix_hash_rounds": "在 /etc/login.defs 中将 SHA_CRYPT_MIN_ROUNDS 设为 10000 或更高",
+    "faillog_disabled": "登录失败日志未完全启用",
+    "fix_faillog": "在 /etc/login.defs 设置 FAILLOG_ENAB=yes 与 LOG_UNKFAIL_ENAB=yes",
+    "sudoers_syntax_invalid": "sudoers 文件存在语法错误",
+    "fix_sudoers_syntax": "仅通过 visudo 编辑；检查 /etc/sudoers 和 /etc/sudoers.d/*"
   },
   "report": {
     "title": "安全检查报告",

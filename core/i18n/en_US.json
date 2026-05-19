@@ -276,7 +276,9 @@
     "adding_ssh_rule": "Adding SSH rule before changing default policy...",
     "default_deny_set": "Default incoming policy set to deny",
     "default_deny_failed": "Failed to set default policy",
-    "ssh_rule_failed": "Failed to add SSH rule"
+    "ssh_rule_failed": "Failed to add SSH rule",
+    "firewall_empty": "{type} active but ruleset is empty",
+    "fix_firewall_empty": "Load rules into {type} or switch to a managed front-end like UFW/firewalld"
   },
   "update": {
     "title": "System Updates",
@@ -430,7 +432,10 @@
     "apparmor_enable_failed": "Failed to enable AppArmor",
     "disabling_service": "Disabling {service}...",
     "service_disabled": "Disabled: {service}",
-    "service_disable_failed": "Could not disable: {service}"
+    "service_disable_failed": "Could not disable: {service}",
+    "check_insecure_services": "Checking for insecure legacy services",
+    "insecure_services_active": "{count} insecure legacy service(s)/package(s) present",
+    "insecure_services_clean": "No insecure legacy services found"
   },
   "logging": {
     "title": "Logging & Audit",
@@ -631,7 +636,33 @@
     "detected_backend": "Detected backend: {backend}",
     "detected_banaction": "Detected banaction: {banaction}",
     "ssh_jail_configured": "SSH jail configured successfully",
-    "ssh_jail_config_failed": "Failed to configure SSH jail"
+    "ssh_jail_config_failed": "Failed to configure SSH jail",
+    "check_any_jail": "Checking active jails",
+    "jails_active": "Active jails",
+    "no_jails_active": "fail2ban running but no jails active",
+    "fix_enable_jail": "Enable at least one jail in /etc/fail2ban/jail.local"
+  },
+  "networking": {
+    "title": "Networking",
+    "desc": "Listening sockets and network interface posture",
+    "check_listeners": "Checking listening sockets",
+    "check_promisc": "Checking promiscuous interfaces",
+    "exposed_dangerous_ports": "{count} dangerous service(s) bound to wildcard address",
+    "public_listeners_present": "{count} non-standard service(s) on wildcard address",
+    "listeners_loopback_only": "All listeners are loopback-only",
+    "listeners_ok": "Public listeners match expected services (SSH/HTTP/HTTPS/DNS)",
+    "promiscuous_interface": "Interface(s) in promiscuous mode",
+    "no_promisc": "No promiscuous interfaces"
+  },
+  "scheduling": {
+    "title": "Scheduling",
+    "desc": "cron / at job inventory and anomaly detection",
+    "check_at_jobs": "Checking at jobs",
+    "check_cron_internet_fetch": "Checking cron jobs for piped fetches",
+    "at_jobs_present": "{count} at job(s) queued",
+    "no_at_jobs": "No at jobs queued",
+    "cron_fetches_internet": "{count} cron entry(ies) pipe remote downloads to a shell",
+    "cron_clean": "No suspicious cron patterns detected"
   },
   "kernel": {
     "title": "Kernel Security",
@@ -819,7 +850,17 @@
     "pwquality_weak": "Password quality not enforced",
     "fix_pwquality": "Configure pam_pwquality for password complexity",
     "history_insecure": "Bash history security issues",
-    "fix_history": "Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile"
+    "fix_history": "Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile",
+    "duplicate_uids": "Duplicate UIDs in /etc/passwd",
+    "review_duplicate_uids": "Investigate accounts sharing a UID — backdoor pattern or misconfiguration",
+    "weak_hash_method": "Weak password hashing detected",
+    "fix_hash_method": "Configure pam_unix for yescrypt or sha512 and re-set affected passwords",
+    "hash_rounds_low": "Password hash rounds below recommended",
+    "fix_hash_rounds": "Set SHA_CRYPT_MIN_ROUNDS to 10000 or higher in /etc/login.defs",
+    "faillog_disabled": "Login-failure logging not fully enabled",
+    "fix_faillog": "Set FAILLOG_ENAB=yes and LOG_UNKFAIL_ENAB=yes in /etc/login.defs",
+    "sudoers_syntax_invalid": "sudoers file has syntax errors",
+    "fix_sudoers_syntax": "Edit via visudo only; check /etc/sudoers and /etc/sudoers.d/*"
   },
   "report": {
     "title": "Security Check Report",

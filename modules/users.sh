@@ -735,11 +735,35 @@ _check_hash_method() {
 # Lynis AUTH-9230 — hash rounds (cost factor). glibc defaults to 5000
 # (the minimum) when SHA_CRYPT_*_ROUNDS is unset. Setting an explicit
 # >= 10000 raises offline-cracking cost against captured /etc/shadow.
+#
+# ONLY relevant when the configured method is SHA-256 / SHA-512.
+# yescrypt (Debian 12+ default), bcrypt, md5, and des do not consult
+# SHA_CRYPT_*_ROUNDS — flagging them was a false positive that fired
+# on every stock Debian 13 / Ubuntu 22.04+ install.
 _check_hash_rounds() {
+    local pam_method="" f
+    for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+        [[ -f "$f" ]] || continue
+        pam_method=$(grep -E '^password[[:space:]]+\S+[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
+            | grep -oiE '\b(yescrypt|sha512|sha256|md5|blowfish|bigcrypt|des)\b' \
+            | head -1 | tr '[:upper:]' '[:lower:]')
+        [[ -n "$pam_method" ]] && break
+    done
+    # Fall back to login.defs ENCRYPT_METHOD when PAM doesn't name a method
+    if [[ -z "$pam_method" ]]; then
+        pam_method=$(grep -E '^ENCRYPT_METHOD' /etc/login.defs 2>/dev/null \
+            | awk '{print tolower($2)}')
+    fi
+
+    case "$pam_method" in
+        sha512|sha256) ;;   # rounds parameter is relevant
+        *) return 0 ;;       # yescrypt/bcrypt/md5/des/unset — skip
+    esac
+
     local rmin
     rmin=$(grep -E '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs 2>/dev/null | awk '{print $2}')
     if [[ -z "$rmin" ]]; then
-        echo "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended)"
+        echo "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended for SHA-512)"
     elif (( rmin < 10000 )); then
         echo "SHA_CRYPT_MIN_ROUNDS=$rmin (>= 10000 recommended)"
     fi
