@@ -20,7 +20,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 if command -v sha256sum >/dev/null 2>&1; then
-    HASH_CMD=(sha256sum)
+    # `--text` forces two-space (text-mode) output regardless of
+    # platform. On Linux this is already the default and is a no-op;
+    # on Git Bash for Windows the default is binary mode which emits
+    # `<hash> *<path>` and breaks byte-for-byte equality with the
+    # Linux-generated manifest, tripping the manifest-freshness CI
+    # job even when contents are identical.
+    HASH_CMD=(sha256sum --text)
 elif command -v shasum >/dev/null 2>&1; then
     HASH_CMD=(shasum -a 256)
 else

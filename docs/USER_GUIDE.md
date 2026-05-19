@@ -7,9 +7,21 @@
 > **覆盖范围说明**：本指南覆盖最常触发问题与修复的核心模块——
 > users、ssh、kernel、filesystem、ufw、fail2ban、docker、malware。
 > 其余模块（cloud、timezone、update、baseline、nginx、webapp、
-> cloudflared、logging、backup、alerts）的检测项标题与建议会在审计
-> 报告（`reports/summary.md`）和终端输出中以 i18n 方式直接给出，本指
-> 南暂未对每一项展开，欢迎通过 PR 补充。
+> cloudflared、logging、backup、alerts、networking、scheduling）的
+> 检测项标题与建议会在审计报告（`reports/summary.md`）和终端输出
+> 中以 i18n 方式直接给出，本指南暂未对每一项展开，欢迎通过 PR 补充。
+>
+> **本指南更新说明**：vpssec 后续陆续加入了若干新检查（CIS / Lynis
+> 交叉对照衍生），包括 users 的 `duplicate_uids` / `weak_hash_method` /
+> `faillog_disabled` / `sudoers_syntax_invalid`，ssh 的 SSH-7408 全集
+> （`AllowTcpForwarding` / `IgnoreRhosts` / `StrictModes` /
+> `PermitTunnel` / `GatewayPorts` 等共 11 项），filesystem 新增的
+> sensitive 文件清单（`/etc/shadow-`、`/boot/grub/grub.cfg` 等），
+> kernel 的 8 条新 sysctl，ufw 的 `firewall_empty`，docker 的
+> `host_network_used` / `secrets_in_env` / `unlimited_memory` 等。
+> 上述新增项**没有**在本指南详细展开，但每条检查的 Recommendations
+> 字段已自带具体修复命令，可直接在审计报告里看到。设计依据
+> （CIS 控件、NIST、Lynis 对照）保留在各检测函数的代码注释中。
 
 ## 目录
 
@@ -970,6 +982,282 @@ A: 建议步骤：
 5. **评估损失** - 检查数据是否泄露
 6. **修复漏洞** - 找到并修复入侵点
 7. **考虑重装** - 严重入侵时重装是最安全的选择
+
+---
+
+---
+
+## 附录 A：vpssec 命令参考
+
+```bash
+vpssec [mode] [options]
+```
+
+### 模式
+
+| 模式 | 说明 |
+|---|---|
+| `audit` | 只读审计（默认模式） |
+| `guide` | 交互式加固向导（会修改系统） |
+| `rollback [TS]` | 回滚到指定时间戳的备份；省略 `TS` 进入交互选择 |
+| `status` | 显示最近一次运行的得分和最新备份信息 |
+| `help [MODULE]` | 列出所有模块和 `fix_id`；带模块名时显示该模块的详情（不需要 root，不会改系统） |
+
+### 选项
+
+| 选项 | 说明 |
+|---|---|
+| `--lang=LANG` | 语言（`zh_CN` 默认，`en_US`） |
+| `--include=MODS` | 只运行指定模块（逗号分隔） |
+| `--exclude=MODS` | 排除指定模块 |
+| `--yes` | 自动确认非关键提示（**critical_confirm 仍然必须手动确认**） |
+| `--json-only` | 只输出 JSON（CI/CD 用） |
+| `--no-color` | 关闭彩色输出 |
+| `--debug` | 详细日志写到 `logs/vpssec.log` |
+| `-h, --help` | 显示帮助 |
+| `--version` | 显示版本 |
+
+### 环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `VPSSEC_FS_TIMEOUT=N` | 单次 find 遍历的超时秒数（默认 60），用于 SUID/SGID/世界可写/无主文件扫描 |
+
+---
+
+## 附录 B：安全评分计算
+
+```
+base    = 100 × passed / scored_total
+penalty = 5 × high + 1.5 × medium + 0.25 × low
+score   = clamp(0, 100, base − penalty)
+```
+
+`scored_total` 只统计分类为 `required`、`recommended`、`conditional`
+（且对应组件已安装）、`optional` 的检查。`info` 类检查（如云厂商
+识别、"Docker 未安装"）既不进分子也不进分母——所以这些项不会影响
+分数。
+
+### 不同失败组合下的示例（按 ~50 个 scored check 估算）
+
+| 失败情况 | 分数 | 档位 |
+|---|---|---|
+| 0 | 100 | 优秀 |
+| 1 medium | 97 | 优秀 |
+| 1 high | 93 | 良好 |
+| 3 high | 79 | 一般 |
+| 3 high + 6 medium + 3 low | 53 | 一般 |
+| 10 high + 20 medium + 30 low | 0 | 较差 |
+
+### 评分档位
+
+- **90–100 优秀**：基线已建立
+- **75–89 良好**：少数项目可改善
+- **50–74 一般**：有多个值得修的项
+- **0–49 较差**：建议尽快加固
+
+### 评分类别
+
+| 类别 | 说明 | 示例 |
+|---|---|---|
+| `required` | 始终计入分数 | SSH 认证、防火墙、kernel ASLR |
+| `recommended` | 相关时计入 | fail2ban、AppArmor |
+| `conditional` | 仅当组件已安装时计入 | Docker、Nginx、Cloudflared |
+| `optional` | 权重较低 | auditd、alerts、backup |
+| `info` | 不影响分数 | 云厂商识别 |
+
+这样保证没使用的组件不会拖累分数。
+
+---
+
+## 附录 C：模块完整列表
+
+### 始终运行的上下文模块
+
+| 模块 | 用途 |
+|---|---|
+| `preflight` | 环境预检（系统、网络、依赖、监听端口计数） |
+| `cloud` | 云厂商 / Agent 识别 + IMDS 姿态（IMDSv1/v2、user-data 凭据扫描、多云 tier1/tier2 覆盖） |
+| `timezone` | 时区与 NTP 时间同步 |
+
+### 核心模块
+
+| 模块 | 用途 |
+|---|---|
+| `users` | 用户安全（UID 0、空密码、重复 UID、NOPASSWD sudo、哈希方法、faillog、sudoers 语法） |
+| `ssh` | SSH 加固（密码认证、root 登录、SSH-7408 全量选项） |
+| `ufw` | 防火墙（UFW/firewalld/iptables/nftables）+ 空 ruleset 检测 |
+| `fail2ban` | Fail2ban 服务 + SSH jail + 活动 jail 清单 |
+| `networking` | 监听端口（公网/loopback 区分、危险端口黑名单、混杂模式接口） |
+| `update` | 系统更新（安全更新、自动更新、内核版本不匹配 reboot 检测） |
+| `kernel` | 内核加固（ASLR、sysctl 网络/安全参数、IPv6、少用协议模块黑名单） |
+| `filesystem` | 文件系统（SUID/SGID、权限、umask、敏感文件含 shadow- 备份） |
+| `baseline` | 基线（AppArmor/SELinux、未用服务、文件完整性工具、传统不安全服务） |
+| `docker` | Docker 安全（特权容器、暴露端口、host-network、env 凭据、内存限制） |
+| `nginx` | Nginx 兜底 + DoS 加固（CIS 5.2.1 超时、速率限制） |
+| `webapp` | Web 应用（Nginx/Apache/PHP 配置、SSL、敏感文件） |
+| `malware` | 恶意软件检测（rootkit、挖矿、webshell、反向 shell、已删二进制进程） |
+| `logging` | 日志与审计（journald、auditd、logrotate） |
+| `scheduling` | cron/at 任务清单 + 供应链模式扫描 |
+
+### 可选模块
+
+| 模块 | 用途 |
+|---|---|
+| `cloudflared` | Cloudflare Tunnel 配置检查 |
+| `backup` | 备份工具检测和模板生成 |
+| `alerts` | Webhook/邮件告警配置 |
+
+---
+
+## 附录 D：目录结构
+
+```
+vpssec/
+├── vpssec              # 主入口脚本
+├── run.sh              # 一行安装执行入口
+├── install.sh          # 安装脚本（验证 manifest.sha256）
+├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；install.sh 启动时校验
+├── core/               # 核心引擎
+│   ├── common.sh       # 公共工具（日志、i18n、校验、原子写、单例锁）
+│   ├── engine.sh       # 模块加载、audit/guide 调度、计划恢复
+│   ├── state.sh        # JSON 状态（checks/plan/progress）、备份、评分
+│   ├── report.sh       # 报告生成（双列布局）
+│   ├── security_levels.sh  # fix 安全分级 + 评分类别定义
+│   ├── help.sh         # `vpssec help [module]` 调度
+│   ├── ui_tui.sh       # TUI 界面（whiptail/dialog）
+│   ├── ui_text.sh      # 文本回退界面
+│   └── i18n/           # 国际化
+│       ├── zh_CN.json
+│       └── en_US.json
+├── modules/            # 安全检查模块（共 21 个）
+├── tests/              # 测试基础设施
+│   ├── *.bats          # bats 单元测试（用 `bats tests/` 运行）
+│   └── mutation/       # 变异测试 harness
+│       ├── run.sh      # 驱动（sudo bash tests/mutation/run.sh）
+│       └── cases/      # 每个 check_id 一个文件
+├── tools/              # 开发者工具
+│   └── gen-manifest.sh # 重新生成 manifest.sha256
+├── docs/               # 用户文档
+├── state/              # 运行时状态
+├── reports/            # 生成的报告
+├── backups/            # 配置备份
+└── logs/               # 日志文件
+```
+
+---
+
+## 附录 E：扩展开发指南
+
+### 添加新模块
+
+1. 创建 `modules/mymodule.sh`：
+
+```bash
+#!/usr/bin/env bash
+# vpssec - My Custom Module
+
+mymodule_audit() {
+    print_item "Checking something..."
+
+    local check=$(create_check_json \
+        "mymodule.check_id" \
+        "mymodule" \
+        "medium" \
+        "failed" \
+        "Check title" \
+        "Detailed description" \
+        "How to fix" \
+        "mymodule.fix_id")
+    state_add_check "$check"
+    print_severity "medium" "Issue found"
+}
+
+mymodule_fix() {
+    case "$1" in
+        mymodule.fix_id)
+            print_info "Fixing issue..."
+            # 修复逻辑
+            print_ok "Fixed"
+            ;;
+    esac
+}
+```
+
+2. 在 `core/engine.sh` 中把模块名加到 `VPSSEC_MODULE_ORDER`，并在
+   `VPSSEC_MODULE_CATEGORY` 给它分类。
+
+3. **同时**在 `core/i18n/en_US.json` 和 `core/i18n/zh_CN.json` 添加翻译——
+   `tests` workflow 的 `i18n-parity` job 会校验两边的 key 集合相同。
+
+4. 在 `core/security_levels.sh` 给每个 `fix_id` 分类（`FIX_SAFE` /
+   `FIX_CONFIRM` / `FIX_RISKY` / `FIX_ALERT_ONLY`），以及给每个
+   `check_id` 加 `CHECK_SCORE_CATEGORY` 条目。
+
+5. 运行 `bash tools/gen-manifest.sh`，commit 更新后的
+   `manifest.sha256` —— 否则 `manifest-freshness` CI job 会拒绝 PR。
+
+`module-contract` CI job 会验证每个 `VPSSEC_MODULE_ORDER` 里的名字
+都对应 `modules/<name>.sh`，并且导出了 `<name>_audit()` 和 `<name>_fix()`。
+
+### 单元测试
+
+```bash
+bats tests/                 # 跑完整 bats 套件（约 240 用例）
+bats tests/test_score.bats  # 跑单个测试文件
+```
+
+bats 测试覆盖纯函数（`count_lines`、`validate_*`、`calculate_score`、
+fix 分级、plan-resume 过滤、help 调度、backup-restore 路径安全）
+和模块级解析/回归测试。每个测试有独立的 `BATS_TEST_TMPDIR`，不
+触碰真实系统状态。
+
+### 变异测试
+
+```bash
+sudo bash tests/mutation/run.sh           # 跑全部 case（仅在可丢弃 VM）
+sudo bash tests/mutation/run.sh ssh       # 按名字过滤
+sudo bash tests/mutation/run.sh -k 020    # 按编号过滤
+```
+
+每个 `.case` 文件负责：注入一个已知缺陷 → 运行审计 → 断言对应
+检测命中 → 还原。restore 是 best-effort，因此**只在可丢弃的 VM
+或容器上运行**。
+
+---
+
+## 附录 F：CI/CD 集成示例
+
+vpssec 是给真实运行的服务器做审计用的。在 throwaway GitHub Actions
+runner 上跑技术上可行，但报告反映的是 runner 镜像本身——下面的
+workflow 是为**审计你自己的服务器**用的模板（通过 SSH 远程执行或
+self-hosted runner），不是在 `ubuntu-latest` 上跑出有意义结果的用法。
+
+### GitHub Actions（self-hosted runner 示例）
+
+```yaml
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # 每周一早上 6:00
+  workflow_dispatch:
+
+jobs:
+  audit:
+    # 替换为指向你要审计的生产服务器的 self-hosted runner 标签
+    runs-on: [self-hosted, my-production-host]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Security Audit
+        run: sudo ./vpssec audit --json-only
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: reports/summary.sarif
+```
 
 ---
 

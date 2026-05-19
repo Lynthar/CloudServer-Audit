@@ -656,10 +656,20 @@ get_check_stats() {
 
         [[ -z "$check_id" ]] && continue
 
-        # Check if this check should be included in score
+        # Track info-category (not-scored) checks as a SEPARATE
+        # dimension. Previously this branched off with `continue`,
+        # excluding info-category checks from every other bucket —
+        # which made the summary table's "Low: N" undercount by ~25
+        # because most ergonomic SSH-option findings, history hygiene,
+        # umask, etc. are classified info. The body filters purely on
+        # `.severity`, so the summary needs the same semantics for the
+        # two numbers to match. Score impact is unaffected: scoring
+        # has its own _check_counts_in_score filter inside
+        # calculate_score().
         if ! _check_counts_in_score "$check_id" "$installed"; then
             ((info_count++)) || true
-            continue
+            # no `continue` — still flow into the severity / passed
+            # buckets below so the displayed count matches the body.
         fi
 
         if [[ "$status" == "passed" ]]; then

@@ -1,39 +1,21 @@
-# CloudServer Audit - VPS Security Check & Hardening Tool
+# vpssec
+
+> Pure-bash security auditing and hardening for Debian / Ubuntu VPS.
+> Read-only audit · guided hardening · atomic rollback.
 
 English | [简体中文](README_zh.md) | [User Guide](docs/USER_GUIDE.md)
 
-A VPS security auditing and hardening script designed for individuals and small-scale operations.
+---
 
-## Features
+## Quick start
 
-- **Security Audit Mode (audit)**: Read-only security checks with Markdown + JSON + SARIF report output
-- **Guided Hardening Mode (guide)**: Interactive security hardening wizard with step-by-step guidance
-- **Modular Selection**: Choose which security modules to run by category or individually
-- **One-Click Rollback (rollback)**: Automatic backup before changes with quick recovery capability
-- **Dual-Column Output**: Clean, compact dual-column layout for better information density
-- **Multi-language Support**: Chinese/English interface with i18n support
-- **Malware Detection**: Lightweight rootkit, crypto miner, and webshell scanning
-- **Comprehensive User Guide**: Detailed documentation for every detection item with fix instructions
-
-## Supported Systems
-
-- Debian 12 / 13
-- Ubuntu 22.04 / 24.04
-
-## Quick Start
-
-### One-Line Installation
+One-line install (downloads, runs, copies report to `/tmp/vpssec-report-*`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
-> **Note**: `curl | sudo bash` downloads the tarball over TLS but does not
-> verify a signature or checksum. If you need stronger supply-chain
-> assurance, use the manual installation below or download `run.sh`
-> separately, review it, and run it locally.
-
-### Manual Installation
+Or clone and run manually (recommended for repeated use):
 
 ```bash
 git clone https://github.com/Lynthar/CloudServer-Audit.git
@@ -41,201 +23,118 @@ cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
-## Usage
+Reports land in `reports/summary.{md,json,sarif}`.
 
-### Security Audit (Read-Only)
+**Supported:** Debian 12 / 13 · Ubuntu 22.04 / 24.04
 
-```bash
-sudo ./vpssec audit
-```
+> ⚠️ The one-liner downloads over TLS but does **not** verify signatures.
+> For supply-chain assurance, clone the repo and review `run.sh` before
+> piping it to a shell — or use the manual flow above.
 
-Generates security reports in:
-- `reports/summary.md` - Markdown report
-- `reports/summary.json` - JSON format
-- `reports/summary.sarif` - SARIF format (for CI/CD integration)
+---
 
-### Interactive Hardening
+## What it does
 
-```bash
-sudo ./vpssec guide
-```
+| Mode | Purpose |
+|---|---|
+| `audit` | Read-only security checks → Markdown + JSON + SARIF reports |
+| `guide` | Interactive hardening wizard with safety gates |
+| `rollback` | Restore any change from per-run backups |
+| `status` | Last run summary + latest backup |
 
-Provides an interactive interface to:
-1. Select modules to check (by category or all)
-2. Review detected security issues
-3. Select items to fix
-4. Preview changes before applying
-5. Execute fixes with automatic rollback points
+Every detection emits a stable `check_id`; fixes carry a `fix_id` you can
+apply manually from the report or interactively via `guide`.
 
-### Rollback Changes
+---
 
-```bash
-sudo ./vpssec rollback
-```
+## Modules at a glance
 
-Restore previous configurations from automatic backups.
-
-### Check Status
+**21 modules** organised into 6 categories. Default runs everything;
+restrict via CLI or the interactive menu:
 
 ```bash
-sudo ./vpssec status
+sudo ./vpssec audit --include=ssh,ufw,networking
 ```
 
-View current security score and status.
+| # | Category | Modules |
+|---|---|---|
+| 1 | Access Control | `users`, `ssh` |
+| 2 | Network Security | `ufw`, `fail2ban`, `networking` |
+| 3 | System Hardening | `update`, `kernel`, `filesystem`, `baseline` |
+| 4 | Service Security | `docker`, `nginx`, `cloudflared`, `webapp` |
+| 5 | Security Scanning | `malware` |
+| 6 | Operations | `logging`, `backup`, `alerts`, `scheduling` |
 
-## Module Categories
+> `preflight`, `cloud`, `timezone` always run as context for other modules.
 
-vpssec organizes security checks into 6 categories. You can select which to run:
+Per-module check details, fix instructions, and the full module reference
+live in the [**User Guide**](docs/USER_GUIDE.md).
 
-| # | Category | Modules | Description |
-|---|----------|---------|-------------|
-| 0 | All | All modules | Run comprehensive check (recommended) |
-| 1 | Access Control | `users`, `ssh` | User accounts, SSH hardening |
-| 2 | Network Security | `ufw`, `fail2ban` | Firewall, brute-force protection |
-| 3 | System Hardening | `update`, `kernel`, `filesystem`, `baseline` | Updates, kernel params, permissions |
-| 4 | Service Security | `docker`, `nginx`, `cloudflared`, `webapp` | Container, web server security |
-| 5 | Security Scanning | `malware` | Rootkit, miner, webshell detection |
-| 6 | Operations | `logging`, `backup`, `alerts` | Logging, backup, monitoring |
+---
 
-### Interactive Module Selection
-
-When running vpssec, you'll see a module selection menu:
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Select modules to check:                                │
-│                                                          │
-│  [0] All modules (recommended)                           │
-│  [1] Access Control           (users,ssh)                │
-│  [2] Network Security         (ufw,fail2ban)             │
-│  [3] System Hardening         (update,kernel,...)        │
-│  [4] Service Security         (docker,nginx,webapp,...)  │
-│  [5] Security Scanning        (malware)                  │
-│  [6] Operations               (logging,backup,alerts)    │
-└──────────────────────────────────────────────────────────┘
-Enter choices (space-separated, e.g., 1 2 3) [default: 0] >
-```
-
-> **Note**: `preflight`, `cloud`, and `timezone` are always included as
-> context regardless of which categories you pick — they provide OS,
-> network, and clock baselines the other modules rely on.
-
-Or use CLI to specify modules directly:
-```bash
-sudo ./vpssec audit --include=ssh,ufw,malware
-```
-
-## Security Modules
-
-### Core Modules
-
-| Module | Description |
-|--------|-------------|
-| `preflight` | Environment pre-checks (OS, network, dependencies) |
-| `cloud` | Cloud provider detection and monitoring agent audit |
-| `timezone` | Timezone and NTP time synchronization |
-| `users` | User security audit (UID 0, empty passwords, suspicious accounts) |
-| `ssh` | SSH hardening (password auth, root login, key auth) |
-| `ufw` | Firewall configuration (UFW/firewalld/iptables/nftables) |
-| `fail2ban` | Fail2ban installation and SSH jail configuration |
-| `update` | System updates (security updates, unattended-upgrades) |
-| `kernel` | Kernel hardening (ASLR, sysctl network/security params, IPv6) |
-| `filesystem` | Filesystem security (SUID/SGID, permissions, umask) |
-| `baseline` | Baseline hardening (AppArmor/SELinux, unused services) |
-| `docker` | Docker security (privileged containers, exposed ports) |
-| `nginx` | Nginx catchall (prevent cert/hostname leakage) |
-| `webapp` | Web application security (Nginx/Apache/PHP config, SSL, sensitive files) |
-| `malware` | Malware detection (rootkits, crypto miners, webshells, reverse shells) |
-| `logging` | Logging & audit (journald, auditd, logrotate) |
-
-### Optional Modules
-
-| Module | Description |
-|--------|-------------|
-| `cloudflared` | Cloudflare Tunnel configuration checks |
-| `backup` | Backup tool detection and template generation |
-| `alerts` | Webhook/email alert configuration |
-
-## Output Format
-
-vpssec uses a clean dual-column layout for compact, readable results:
+## Sample output
 
 ```
 ─── Access Control ──────────────────────────────────────────────
-
-  User Security                          │  SSH Security
-    ✓ No extra UID 0 accounts            │    ✓ Password auth disabled
-    ✗ Empty password users detected      │    ✓ Root login disabled
-    ✓ System accounts secured            │    ● MaxAuthTries too high
+  User Security                  │  SSH Security
+    ✓ No extra UID 0 accounts    │    ✓ Password auth disabled
+    ✗ Empty password users       │    ● MaxAuthTries too high
+    ✓ System accounts secured    │    ● No access control configured
 
 ─── Security Scanning ───────────────────────────────────────────
-
   Malware Detection
     ✓ No hidden processes
-    ✓ No crypto miners found
     ✗ Processes with deleted binaries
 
-────────────────────────────────────────────────────────
-  Score: 69/100
-
-  ● 2 High  ● 1 Medium  ● 12 Safe
+────────────────────────────────────────────────────────────────
+  Score: 69 / 100   ● 2 High   ● 1 Medium   ● 12 Safe
 ```
 
-**Legend:**
-- `✓` Green: Passed
-- `✗` Red: High severity issue
-- `●` Yellow: Medium severity issue
-- `○` Blue: Low severity issue
+Legend: `✓` pass · `✗` high · `●` medium · `○` low
 
-For detailed explanations of each check and fix instructions, see the [User Guide](docs/USER_GUIDE.md).
+---
 
-## Score Categories
+## Safety
 
-Checks are categorized to ensure fair scoring:
+vpssec touches `/etc/*` files. To make that defensible:
 
-| Category | Description | Example |
-|----------|-------------|---------|
-| `required` | Always affects score | SSH auth, firewall, kernel ASLR |
-| `recommended` | Counts when relevant | fail2ban, AppArmor |
-| `conditional` | Only if component installed | Docker, Nginx, Cloudflared |
-| `optional` | Lower weight | auditd, alerts, backup |
-| `info` | Never affects score | Cloud provider detection |
+- **Atomic writes** — tempfile + validate + rename. No half-edited config.
+- **Per-run backups** — `backups/<timestamp>/` mirrors every file before change. `rollback` restores any single run.
+- **Validate before commit** — `sshd -t`, `nginx -t`, `visudo -c` all run on the staged file before it moves into place.
+- **SSH rescue port** — port 2222 is auto-opened before any `sshd_config` change so a bad config can't lock you out.
+- **Critical confirmation** — destructive ops (firewall enable, password-auth disable) require explicit confirmation that `--yes` cannot bypass.
+- **Fix classification** — every fix is tagged `safe` / `confirm` / `risky` / `alert_only`; risky ones surface their warning before applying.
 
-This prevents score penalties for components you don't use.
+---
 
-## Command Line Options
+## Common commands
 
 ```bash
-vpssec [mode] [options]
+# Audit
+sudo ./vpssec audit                    # full audit (recommended first run)
+sudo ./vpssec audit --include=ssh      # only specific modules
+sudo ./vpssec audit --exclude=docker   # skip a module
+sudo ./vpssec audit --json-only        # CI-friendly output
+sudo ./vpssec audit --lang=en_US       # English (default zh_CN)
+sudo ./vpssec audit --debug            # verbose log to logs/vpssec.log
 
-Modes:
-  audit             Security audit only (default)
-  guide             Interactive hardening wizard
-  rollback [TS]     Rollback to backup TS (interactive picker if omitted)
-  status            Show current security status
-  help [MODULE]     List modules and fix_ids; with MODULE, show that
-                    module's audit/fix detail (no root, no side effects)
+# Hardening + recovery
+sudo ./vpssec guide                    # interactive hardening
+sudo ./vpssec rollback                 # restore previous config
 
-Options:
-  --lang=LANG       Set language (zh_CN [default], en_US)
-  --include=MODS    Run only specified modules (comma-separated)
-  --exclude=MODS    Skip specified modules
-  --yes             Auto-confirm non-critical prompts
-  --json-only       Output JSON only (for CI/CD)
-  --no-color        Disable colored output
-  --debug           Enable verbose logging to logs/vpssec.log
-  -h, --help        Show help
-  --version         Show version
-
-Environment overrides:
-  VPSSEC_FS_TIMEOUT=N   Per-find-walk timeout in seconds (default 60)
-                        for SUID/SGID/world-writable/no-owner scans
+# Inspection (no root needed)
+./vpssec status                        # last run + backup status
+./vpssec help                          # list modules + fix_ids
+./vpssec help ssh                      # detail for one module
 ```
 
-## Security Score
+Full CLI reference: [User Guide → 命令参考](docs/USER_GUIDE.md#附录-a-vpssec-命令参考).
 
-The score combines a pass-rate base with a severity-weighted penalty
-(see `calculate_score` in `core/state.sh`):
+---
+
+## Security score
+
+Score combines a pass-rate base with a severity-weighted penalty:
 
 ```
 base    = 100 × passed / scored_total
@@ -243,210 +142,23 @@ penalty = 5 × high + 1.5 × medium + 0.25 × low
 score   = clamp(0, 100, base − penalty)
 ```
 
-`scored_total` only counts checks classified as `required`,
-`recommended`, `conditional` (when the parent component is installed),
-or `optional`. `info` checks are advisory and excluded from both
-numerator and denominator, so e.g. cloud-provider detection or
-"Docker not installed" do not move the score.
+Categories: `90+ Excellent · 75–89 Good · 50–74 Fair · <50 Poor`.
 
-Indicative outcomes (on a host with ~50 scored checks):
+`info`-category checks (e.g. cloud-provider detection) don't move the
+score. See [User Guide → 安全评分](docs/USER_GUIDE.md#附录-b-安全评分计算)
+for the full model.
 
-| Failures                       | Score | Band         |
-|--------------------------------|-------|--------------|
-| 0                              | 100   | Excellent    |
-| 1 medium                       | 97    | Excellent    |
-| 1 high                         | 93    | Good         |
-| 3 high                         | 79    | Fair         |
-| 3 high + 6 medium + 3 low      | 53    | Fair         |
-| 10 high + 20 medium + 30 low   | 0     | Broken       |
-
-Score ranges:
-- 90-100: Excellent
-- 75-89: Good
-- 50-74: Fair
-- 0-49: Poor
-
-## Safety Features
-
-- **Atomic writes**: Changes written to temp file first, validated, then moved
-- **Automatic backups**: All modified files backed up with timestamps
-- **SSH protection**: Rescue port (2222) enabled before SSH config changes
-- **Config validation**: `sshd -t` / `nginx -t` validation before applying
-- **Critical confirmation**: Important operations require explicit confirmation (not bypassed by `--yes`)
-- **Fix classification**: Fixes categorized as safe/confirm/risky/alert-only
-
-## CI/CD Integration
-
-vpssec is designed to audit a live server. Running it on a throwaway
-GitHub Actions runner will technically work, but the report will mostly
-reflect the runner image rather than your infrastructure — use the
-workflow below as a template for auditing **your own servers**, for
-example via SSH-based remote execution or a self-hosted runner, not as
-a meaningful check on `ubuntu-latest`.
-
-### GitHub Actions (self-hosted runner example)
-
-```yaml
-name: Security Audit
-
-on:
-  schedule:
-    - cron: '0 6 * * 1'  # Weekly on Monday
-  workflow_dispatch:
-
-jobs:
-  audit:
-    # Replace with a self-hosted runner label pointing at the
-    # production server you want to audit.
-    runs-on: [self-hosted, my-production-host]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Security Audit
-        run: sudo ./vpssec audit --json-only
-
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: reports/summary.sarif
-```
-
-## Directory Structure
-
-```
-vpssec/
-├── vpssec              # Main entry script
-├── run.sh              # One-line runner script
-├── install.sh          # Installation script (verifies manifest.sha256)
-├── manifest.sha256     # SHA-256 of every runtime-critical file;
-│                       # checked by install.sh's verify_integrity
-├── core/               # Core engine
-│   ├── common.sh       # Common utilities (logging, i18n, validation,
-│   │                   # atomic writes, single-instance run-lock)
-│   ├── engine.sh       # Module loader, audit/guide dispatch,
-│   │                   # plan resumption
-│   ├── state.sh        # checks/plan/progress JSON state, backups,
-│   │                   # score calculation
-│   ├── report.sh       # Report generation (dual-column output)
-│   ├── security_levels.sh  # Fix safety & score category definitions
-│   ├── help.sh         # `vpssec help [module]` dispatcher
-│   ├── ui_tui.sh       # TUI interface (whiptail/dialog)
-│   ├── ui_text.sh      # Text fallback interface
-│   └── i18n/           # Internationalization
-│       ├── zh_CN.json
-│       └── en_US.json
-├── modules/            # Security check modules (19 total)
-│   ├── preflight.sh    # Environment pre-checks
-│   ├── cloud.sh        # Cloud provider & agent detection
-│   ├── timezone.sh     # Timezone & NTP
-│   ├── users.sh        # User security audit
-│   ├── ssh.sh          # SSH hardening
-│   ├── ufw.sh          # Firewall (UFW/firewalld/iptables/nftables)
-│   ├── fail2ban.sh     # Fail2ban configuration
-│   ├── update.sh       # System updates
-│   ├── docker.sh       # Docker security
-│   ├── nginx.sh        # Nginx catchall
-│   ├── webapp.sh       # Web application security
-│   ├── malware.sh      # Malware detection
-│   ├── baseline.sh     # Baseline hardening
-│   ├── logging.sh      # Logging & audit
-│   ├── kernel.sh       # Kernel hardening
-│   ├── filesystem.sh   # Filesystem security
-│   ├── cloudflared.sh  # Cloudflare Tunnel
-│   ├── backup.sh       # Backup configuration
-│   └── alerts.sh       # Alert notifications
-├── tests/              # bats unit tests (run via `bats tests/`)
-├── tools/              # Developer utilities
-│   └── gen-manifest.sh # Regenerate manifest.sha256 (run before commit
-│                       # if any runtime-critical file changes)
-├── docs/               # User-facing documentation
-├── state/              # State files (runtime)
-├── reports/            # Generated reports
-├── backups/            # Configuration backups
-└── logs/               # Log files
-```
-
-## Extending vpssec
-
-### Adding a New Module
-
-1. Create `modules/mymodule.sh`:
-
-```bash
-#!/usr/bin/env bash
-# vpssec - My Custom Module
-
-mymodule_audit() {
-    print_item "Checking something..."
-
-    local check=$(create_check_json \
-        "mymodule.check_id" \
-        "mymodule" \
-        "medium" \
-        "failed" \
-        "Check title" \
-        "Detailed description" \
-        "How to fix" \
-        "mymodule.fix_id")
-    state_add_check "$check"
-    print_severity "medium" "Issue found"
-}
-
-mymodule_fix() {
-    case "$1" in
-        mymodule.fix_id)
-            print_info "Fixing issue..."
-            # Fix logic here
-            print_ok "Fixed"
-            ;;
-    esac
-}
-```
-
-2. Add module name to `VPSSEC_MODULE_ORDER` and category mapping in
-   `VPSSEC_MODULE_CATEGORY` in `core/engine.sh`
-
-3. Add translations to **both** `core/i18n/en_US.json` and
-   `core/i18n/zh_CN.json` — the `tests` workflow's `i18n-parity`
-   job fails the PR if key sets diverge
-
-4. Classify each `fix_id` in `core/security_levels.sh` (one of
-   `FIX_SAFE`, `FIX_CONFIRM`, `FIX_RISKY`, `FIX_ALERT_ONLY`)
-
-5. Run `bash tools/gen-manifest.sh` and commit the updated
-   `manifest.sha256` — the `manifest-freshness` CI job will
-   otherwise reject the PR
-
-The `module-contract` CI job verifies that every name in
-`VPSSEC_MODULE_ORDER` has a corresponding `modules/<name>.sh`
-exporting `<name>_audit()` and `<name>_fix()`, and that the
-module is classified in `VPSSEC_MODULE_CATEGORY`.
-
-### Tests
-
-```bash
-bats tests/                 # Run the full bats suite (~239 cases)
-bats tests/test_score.bats  # Single test file
-```
-
-Coverage spans pure functions (`count_lines`, `validate_*`,
-`calculate_score`, fix classification, plan-resume filter,
-help dispatch, backup-restore path safety) and module-level
-parsers/regressions: UFW IPv6 consistency, UFW LIMIT vs ALLOW,
-nginx catchall state machine (incl. IPv6 bracket form and port
-boundaries), journald drop-in semantics, needrestart KSTA,
-suspicious-username regression, cross-cutting `declare -g`
-module-array scoping, webapp PHP regex / HSTS, baseline
-AppArmor, cloudflared user/config, filesystem perms / umask,
-fail2ban custom jail, malware hidden-process detection. Tests
-are isolated per-test (each gets its own `state/`, `backups/`,
-`logs/` under `BATS_TEST_TMPDIR`); no live system state is
-touched.
-
-## License
-
-GPL-3.0 License
+---
 
 ## Contributing
 
-Issues and Pull Requests are welcome!
+PRs welcome.
+
+- Architecture and module-extension patterns: [`CLAUDE.md`](CLAUDE.md)
+- Unit tests: `bats tests/` (~240 cases)
+- Mutation harness (plant-defect verification): `tests/mutation/` — only run on a disposable VM
+- Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`
+
+## License
+
+[GPL-3.0](LICENSE)
