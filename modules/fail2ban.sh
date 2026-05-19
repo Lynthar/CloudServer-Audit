@@ -120,6 +120,18 @@ _f2b_ssh_jail_enabled() {
     fail2ban-client status ssh &>/dev/null
 }
 
+# Return whitespace-separated list of currently-active jails as reported
+# by `fail2ban-client status`. Empty output means the service is up but
+# no jails are loaded — the silent-no-op failure mode Lynis TOOL-5104
+# warns about ("Fail2ban installed but completely disabled").
+_f2b_list_active_jails() {
+    fail2ban-client status 2>/dev/null \
+        | awk -F: '/Jail list/{print $2}' \
+        | tr ',' '\n' \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | grep -v '^$'
+}
+
 # Get SSH jail configuration
 _f2b_get_ssh_jail_config() {
     local jail_name=""
@@ -281,6 +293,13 @@ fail2ban_audit() {
     print_item "$(i18n 'fail2ban.check_service')"
     _f2b_audit_service
 
+    # Check at least one jail is active (Lynis TOOL-5104). Distinct
+    # from the SSH-specific check below — fail2ban can be "running"
+    # with every jail disabled, which the service_active check alone
+    # would report as healthy.
+    print_item "$(i18n 'fail2ban.check_any_jail')"
+    _f2b_audit_any_jail
+
     # Check SSH jail
     print_item "$(i18n 'fail2ban.check_ssh_jail')"
     _f2b_audit_ssh_jail
@@ -329,6 +348,44 @@ _f2b_audit_service() {
             "fail2ban.enable_service")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'fail2ban.service_inactive')"
+    fi
+}
+
+_f2b_audit_any_jail() {
+    if ! _f2b_service_active; then
+        return  # Service-down already surfaced by _f2b_audit_service
+    fi
+
+    local jails
+    jails=$(_f2b_list_active_jails)
+
+    if [[ -z "$jails" ]]; then
+        local check=$(create_check_json \
+            "fail2ban.no_jails_active" \
+            "fail2ban" \
+            "medium" \
+            "failed" \
+            "$(i18n 'fail2ban.no_jails_active' 2>/dev/null || echo 'fail2ban running but no jails active')" \
+            "fail2ban-client status reports 0 active jails — service is doing nothing" \
+            "$(i18n 'fail2ban.fix_enable_jail' 2>/dev/null || echo 'Enable at least one jail in /etc/fail2ban/jail.local')" \
+            "fail2ban.enable_ssh_jail")
+        state_add_check "$check"
+        print_severity "medium" "$(i18n 'fail2ban.no_jails_active' 2>/dev/null || echo 'No active jails')"
+    else
+        local jail_count jail_list
+        jail_count=$(echo "$jails" | wc -l)
+        jail_list=$(echo "$jails" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+        local check=$(create_check_json \
+            "fail2ban.jails_active" \
+            "fail2ban" \
+            "low" \
+            "passed" \
+            "$(i18n 'fail2ban.jails_active' 2>/dev/null || echo "Active jails"): $jail_count" \
+            "Jails: $jail_list" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'fail2ban.jails_active' 2>/dev/null || echo "Active jails"): $jail_list"
     fi
 }
 

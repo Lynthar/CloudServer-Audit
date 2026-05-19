@@ -273,6 +273,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ufw.disabled"]="required"
     ["ufw.firewall_active"]="required"
     ["ufw.no_firewall"]="required"
+    ["ufw.firewall_empty"]="required"
     ["ufw.default_deny"]="recommended"
     ["ufw.default_accept"]="recommended"
     ["ufw.ssh_allowed"]="recommended"
@@ -291,6 +292,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["fail2ban.maxretry_high"]="optional"
     ["fail2ban.custom_config"]="optional"
     ["fail2ban.default_config"]="optional"
+    # Lynis TOOL-5104 cross-check
+    ["fail2ban.jails_active"]="info"
+    ["fail2ban.no_jails_active"]="recommended"
 
     # === Update Module - required ===
     ["update.apt_available"]="required"

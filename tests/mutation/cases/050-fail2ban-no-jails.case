@@ -1,0 +1,45 @@
+# Plant: write a jail.local that disables the sshd jail. On a stock
+# Debian fail2ban install, sshd is the only enabled jail by default,
+# so disabling it leaves the service running with zero active jails —
+# the exact silent-no-op state Lynis TOOL-5104 (and now vpssec's
+# fail2ban.no_jails_active) is meant to catch.
+TEST_DESC="jail.local disabling sshd triggers fail2ban.no_jails_active"
+EXPECT_ID="fail2ban.no_jails_active"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+MODULE="fail2ban"
+
+_JAIL_LOCAL="/etc/fail2ban/jail.local"
+_BACKUP="/etc/fail2ban/jail.local.vpssec-mutation-bak"
+
+precheck() {
+    command -v fail2ban-client >/dev/null 2>&1 && \
+        systemctl is-active --quiet fail2ban 2>/dev/null
+}
+
+mutate() {
+    # Preserve existing jail.local (if any) so we don't clobber a real
+    # config — common on production hosts.
+    if [[ -f "$_JAIL_LOCAL" ]]; then
+        mv "$_JAIL_LOCAL" "$_BACKUP" || return 1
+    fi
+    cat > "$_JAIL_LOCAL" <<'EOF'
+[sshd]
+enabled = false
+EOF
+    # `reload` is enough on Debian (no service drop); fall back to
+    # restart for distros where reload's a stub.
+    systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null
+    sleep 1   # let fail2ban re-read its state before audit queries
+    return 0
+}
+
+restore() {
+    if [[ -f "$_BACKUP" ]]; then
+        mv "$_BACKUP" "$_JAIL_LOCAL"
+    else
+        rm -f "$_JAIL_LOCAL"
+    fi
+    systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null
+    return 0
+}

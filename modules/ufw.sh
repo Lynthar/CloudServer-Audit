@@ -247,7 +247,10 @@ ufw_audit() {
                 "")
             state_add_check "$check"
             print_ok "$(i18n 'ufw.firewall_active' "type=nftables")"
-            # Skip UFW-specific checks
+            # Lynis FIRE-4540 cross-check: "firewall active" via kernel
+            # module is necessary but not sufficient — an empty ruleset
+            # is functionally equivalent to no firewall. Surface that.
+            _ufw_audit_ruleset_empty "nftables"
             return
             ;;
         iptables)
@@ -262,7 +265,8 @@ ufw_audit() {
                 "")
             state_add_check "$check"
             print_ok "$(i18n 'ufw.firewall_active' "type=iptables")"
-            # Skip UFW-specific checks
+            # Lynis FIRE-4512 cross-check (same rationale as nftables above).
+            _ufw_audit_ruleset_empty "iptables"
             return
             ;;
         none)
@@ -322,6 +326,56 @@ ufw_audit() {
         # is the active firewall.
         print_item "$(i18n 'ufw.check_ipv6_consistency')"
         _ufw_audit_ipv6_consistency
+    fi
+}
+
+# Count effective rules in the active firewall backend. "Effective"
+# means actual filter/accept/drop rules — not chain declarations,
+# default policy lines, or structural braces (which exist even when
+# the firewall is logically empty). Threshold: 0 rules == empty.
+# Lynis FIRE-4540 uses ≤3 for slack against tooling artifacts; we
+# stay stricter (== 0) because a passing audit should imply real
+# enforcement, not just "you typed nftables somewhere".
+_ufw_audit_ruleset_empty() {
+    local backend="$1"
+    local rule_count=0
+
+    case "$backend" in
+        nftables)
+            command -v nft >/dev/null 2>&1 || return 0
+            # Strip table/chain/set/map declarations, structural braces,
+            # blank lines, and trailing-`;` lines (which carry "type ...
+            # hook ... priority ...; policy ...;" metadata, not rules).
+            rule_count=$(nft --stateless list ruleset 2>/dev/null \
+                | grep -Ev '^[[:space:]]*(table|chain|set|map|element|\{|\})' \
+                | grep -Ev ';[[:space:]]*$' \
+                | grep -v '^[[:space:]]*$' \
+                | wc -l)
+            ;;
+        iptables)
+            command -v iptables >/dev/null 2>&1 || return 0
+            # Strip -P (policy) and -N (chain creation) lines.
+            rule_count=$(iptables -S 2>/dev/null \
+                | grep -Ev '^(-P|-N|$)' \
+                | wc -l)
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    if (( rule_count == 0 )); then
+        local check=$(create_check_json \
+            "ufw.firewall_empty" \
+            "ufw" \
+            "high" \
+            "failed" \
+            "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but ruleset is empty")" \
+            "$backend kernel module is loaded but the effective rule count is 0; traffic is unfiltered" \
+            "$(i18n 'ufw.fix_firewall_empty' 2>/dev/null || echo "Load rules into $backend or switch to a managed front-end like UFW/firewalld")" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but ruleset empty")"
     fi
 }
 
