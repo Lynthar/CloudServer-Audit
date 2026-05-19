@@ -344,6 +344,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["baseline.no_unused_services"]="recommended"
     ["baseline.integrity_installed"]="info"
     ["baseline.integrity_missing"]="info"
+    ["baseline.insecure_services_active"]="required"
+    ["baseline.insecure_services_clean"]="required"
 
     # === Logging Module ===
     ["logging.journald_persistent"]="recommended"
@@ -378,6 +380,19 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["backup.no_schedule"]="info"
     ["backup.scheduled"]="info"
     ["backup.critical_paths"]="info"
+
+    # === Networking Module - required (Lynis NETW-* cross-check) ===
+    ["networking.exposed_dangerous_ports"]="required"
+    ["networking.public_listeners_present"]="recommended"
+    ["networking.listeners_ok"]="recommended"
+    ["networking.promiscuous_interface"]="required"
+    ["networking.no_promisc"]="recommended"
+
+    # === Scheduling Module - recommended (Lynis SCHD-* cross-check) ===
+    ["scheduling.at_jobs_present"]="info"
+    ["scheduling.no_at_jobs"]="info"
+    ["scheduling.cron_fetches_internet"]="recommended"
+    ["scheduling.cron_clean"]="recommended"
 
     # === Alerts Module - optional ===
     ["alerts.configured"]="info"

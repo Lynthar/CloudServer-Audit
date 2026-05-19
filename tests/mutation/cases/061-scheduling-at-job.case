@@ -1,0 +1,33 @@
+# Plant: schedule a no-op `at` job far in the future. Verifies
+# scheduling.at_jobs_present detection.
+#
+# Safety: the job runs `true`, scheduled 1 year out. Even if restore
+# fails the worst case is a single no-op job entry the operator can
+# remove manually with `atrm <id>`.
+TEST_DESC="An at-job queued triggers scheduling.at_jobs_present"
+EXPECT_ID="scheduling.at_jobs_present"
+EXPECT_STATUS="failed"
+MODULE="scheduling"
+
+# Captured at mutate time, consumed at restore time. Bash sources case
+# files in driver scope; do NOT declare local, or restore can't see it.
+_AT_JOB_ID=""
+
+precheck() {
+    command -v at >/dev/null 2>&1 && command -v atq >/dev/null 2>&1 \
+        && command -v atrm >/dev/null 2>&1
+}
+
+mutate() {
+    # `at` writes "job N at <date>" to stderr on success.
+    local out
+    out=$(echo 'true' | at now + 1 year 2>&1)
+    _AT_JOB_ID=$(awk '/^job /{print $2; exit}' <<< "$out")
+    [[ -z "$_AT_JOB_ID" ]] && return 1
+    return 0
+}
+
+restore() {
+    [[ -n "$_AT_JOB_ID" ]] && atrm "$_AT_JOB_ID" 2>/dev/null
+    return 0
+}

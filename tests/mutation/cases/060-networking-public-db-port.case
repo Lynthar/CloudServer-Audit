@@ -1,0 +1,50 @@
+# Plant: spawn a python listener on 0.0.0.0:6379 (Redis port — in
+# NET_DANGEROUS_PUBLIC_PORTS). Verifies networking.exposed_dangerous_
+# _ports fires at HIGH severity.
+#
+# Safety: the listener does nothing — accepts connections and times
+# out. Restore kills the python process; if it somehow survives, it
+# self-terminates after 120s.
+TEST_DESC="Listener on 0.0.0.0:6379 triggers networking.exposed_dangerous_ports"
+EXPECT_ID="networking.exposed_dangerous_ports"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+EXPECT_DESC_CONTAINS="6379"
+MODULE="networking"
+
+_PIDFILE="/tmp/vpssec-mutation-net-listener.pid"
+_TARGET_PORT="6379"
+
+precheck() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    # Refuse if the port is already in use — would taint the test.
+    if ss -tulnH 2>/dev/null | awk '{print $5}' | grep -qE ":${_TARGET_PORT}\$"; then
+        return 1
+    fi
+    return 0
+}
+
+mutate() {
+    python3 -c "
+import socket, time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', ${_TARGET_PORT}))
+s.listen(5)
+time.sleep(120)
+" >/dev/null 2>&1 &
+    echo $! > "$_PIDFILE"
+    sleep 2  # let bind complete
+    return 0
+}
+
+restore() {
+    if [[ -f "$_PIDFILE" ]]; then
+        local pid; pid=$(cat "$_PIDFILE" 2>/dev/null)
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+        rm -f "$_PIDFILE"
+    fi
+    # Belt-and-suspenders: kill any stray listener on this port.
+    fuser -k "${_TARGET_PORT}/tcp" 2>/dev/null
+    return 0
+}

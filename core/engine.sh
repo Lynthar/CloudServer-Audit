@@ -38,6 +38,7 @@ declare -ga VPSSEC_MODULE_ORDER=(
     # Network Security
     "ufw"
     "fail2ban"
+    "networking"
     # System Hardening
     "update"
     "kernel"
@@ -54,6 +55,7 @@ declare -ga VPSSEC_MODULE_ORDER=(
     "logging"
     "backup"
     "alerts"
+    "scheduling"
 )
 
 # Module category definitions for grouped reporting
@@ -65,6 +67,7 @@ declare -gA VPSSEC_MODULE_CATEGORY=(
     ["ssh"]="access"
     ["ufw"]="network"
     ["fail2ban"]="network"
+    ["networking"]="network"
     ["update"]="hardening"
     ["kernel"]="hardening"
     ["filesystem"]="hardening"
@@ -77,6 +80,7 @@ declare -gA VPSSEC_MODULE_CATEGORY=(
     ["logging"]="operations"
     ["backup"]="operations"
     ["alerts"]="operations"
+    ["scheduling"]="operations"
 )
 
 # Category order for reporting (basic to advanced)

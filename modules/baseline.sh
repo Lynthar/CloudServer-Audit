@@ -209,6 +209,88 @@ baseline_audit() {
     # Check file integrity tool (Lynis FINT-4350)
     print_item "$(i18n 'baseline.check_integrity')"
     _baseline_audit_integrity
+
+    # Check for known-insecure legacy services (Lynis INSE-* family)
+    print_item "$(i18n 'baseline.check_insecure_services' 2>/dev/null || echo 'Checking for insecure legacy services')"
+    _baseline_audit_insecure_services
+}
+
+# Scan for telnet/rsh/finger/inetd/xinetd/NIS/tftp etc. — protocols
+# that should never be on a modern cloud VPS. Lynis dedicates a whole
+# tests_insecure_services file (INSE-* IDs); we condense to one check
+# because the action is the same regardless of which one is found:
+# stop the service and remove the package.
+_baseline_audit_insecure_services() {
+    local found=()
+    local svc
+
+    # Active services / sockets. Includes both service units and the
+    # .socket form of activated daemons (telnet.socket etc).
+    for svc in \
+        telnet telnet.socket telnetd telnetd.socket \
+        rsh rsh.socket rlogin rlogin.socket rexec rexec.socket \
+        rsh-server rlogin-server rexec-server \
+        finger fingerd \
+        inetd openbsd-inetd xinetd \
+        ypbind ypserv ypxfrd \
+        tftpd tftpd-hpa tftp.socket \
+        talk talkd ntalk \
+        rwhod rwho \
+    ; do
+        if systemctl is-active --quiet "$svc" 2>/dev/null \
+           || systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+            found+=("$svc(service)")
+        fi
+    done
+
+    # Packages installed but maybe not active — still a finding because
+    # a package may be enabled later, and shipped configs may include
+    # weak defaults.
+    if command -v dpkg-query >/dev/null 2>&1; then
+        local pkg
+        for pkg in \
+            telnetd inetutils-telnetd telnet-server \
+            rsh-server rsh-redone-server \
+            inetutils-inetd openbsd-inetd xinetd \
+            fingerd \
+            nis ypbind ypserv \
+            tftpd tftpd-hpa atftpd \
+            talkd ntalkd \
+            rwhod \
+        ; do
+            if dpkg-query -W -f='${Status}\n' "$pkg" 2>/dev/null \
+               | grep -q '^install ok installed$'; then
+                found+=("$pkg(pkg)")
+            fi
+        done
+    fi
+
+    if (( ${#found[@]} > 0 )); then
+        local list; list=$(printf '%s ' "${found[@]}")
+        local check=$(create_check_json \
+            "baseline.insecure_services_active" \
+            "baseline" \
+            "high" \
+            "failed" \
+            "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "${#found[@]} insecure legacy service(s)/package(s) present")" \
+            "Found: ${list% }" \
+            "Disable the service (systemctl disable --now <name>) and remove the package (apt purge <name>)" \
+            "")
+        state_add_check "$check"
+        print_severity "high" "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "Insecure legacy services present")"
+    else
+        local check=$(create_check_json \
+            "baseline.insecure_services_clean" \
+            "baseline" \
+            "low" \
+            "passed" \
+            "$(i18n 'baseline.insecure_services_clean' 2>/dev/null || echo 'No insecure legacy services found')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'baseline.insecure_services_clean' 2>/dev/null || echo 'No insecure legacy services found')"
+    fi
 }
 
 # Detect a host-based file integrity monitoring tool. Mirrors Lynis
