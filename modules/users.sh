@@ -659,6 +659,129 @@ _check_history_security() {
     printf '%s\n' "${issues[@]}"
 }
 
+# Find non-root accounts that share a UID. Lynis AUTH-9208 — duplicate
+# UIDs are either misconfiguration (rare, accidental aliasing) or an
+# intentional backdoor (a second account that maps to root's, or
+# another privileged user's, UID). Either way the audit should
+# surface it. Output format: "UID:user1,user2".
+_find_duplicate_uids() {
+    awk -F: '$3 != "" {
+        if (uids[$3]) uids[$3] = uids[$3] "," $1
+        else          uids[$3] = $1
+        count[$3]++
+    }
+    END {
+        for (u in count) if (count[u] > 1) print u ":" uids[u]
+    }' /etc/passwd 2>/dev/null
+}
+
+# Lynis AUTH-9229 — weak password hash methods. Two-source check:
+#   1. live hashes in /etc/shadow (already-set credentials). MD5 ($1$)
+#      or traditional 13-char DES here is an attacker-actionable
+#      weakness once /etc/shadow leaks.
+#   2. configured method for *new* passwords (pam_unix in common-
+#      password / system-auth / password-auth, falling back to
+#      ENCRYPT_METHOD in /etc/login.defs).
+_check_hash_method() {
+    local issues=()
+
+    if [[ -r /etc/shadow ]]; then
+        local weak="" user hash _rest
+        while IFS=: read -r user hash _rest; do
+            case "$hash" in
+                '$y$'*|'$6$'*|'$2'*|'$5$'*) ;;   # yescrypt / sha512 / bcrypt / sha256: OK
+                '$1$'*) weak+="${user}(md5) " ;;
+                '!'*|'*'|'') ;;                   # locked / unset
+                *)
+                    # Bare 13-char crypt = traditional DES. Anything
+                    # else that doesn't start with $ is treated as
+                    # non-hash (NIS hint, blank, etc.) and skipped.
+                    if [[ "$hash" =~ ^[A-Za-z0-9./]{13}$ ]]; then
+                        weak+="${user}(des) "
+                    fi
+                    ;;
+            esac
+        done < /etc/shadow
+        [[ -n "$weak" ]] && issues+=("Weak hashes in /etc/shadow: ${weak% }")
+    fi
+
+    local pam_method="" f
+    for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+        [[ -f "$f" ]] || continue
+        pam_method=$(grep -E '^password[[:space:]]+\S+[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
+            | grep -oiE '\b(yescrypt|sha512|sha256|md5|blowfish|bigcrypt|des)\b' \
+            | head -1 | tr '[:upper:]' '[:lower:]')
+        [[ -n "$pam_method" ]] && break
+    done
+
+    case "$pam_method" in
+        yescrypt|sha512) ;;
+        sha256) issues+=("pam_unix configured for sha256 (sha512/yescrypt preferred)") ;;
+        md5|blowfish|bigcrypt|des) issues+=("pam_unix configured for $pam_method (weak)") ;;
+        "")
+            local enc
+            enc=$(grep -E '^ENCRYPT_METHOD' /etc/login.defs 2>/dev/null | awk '{print tolower($2)}')
+            case "$enc" in
+                yescrypt|sha512|"") ;;
+                sha256) issues+=("ENCRYPT_METHOD=sha256 in login.defs (sha512 preferred)") ;;
+                md5|blowfish|bigcrypt|des) issues+=("ENCRYPT_METHOD=$enc in login.defs (weak)") ;;
+            esac
+            ;;
+    esac
+
+    printf '%s\n' "${issues[@]}"
+}
+
+# Lynis AUTH-9230 — hash rounds (cost factor). glibc defaults to 5000
+# (the minimum) when SHA_CRYPT_*_ROUNDS is unset. Setting an explicit
+# >= 10000 raises offline-cracking cost against captured /etc/shadow.
+_check_hash_rounds() {
+    local rmin
+    rmin=$(grep -E '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs 2>/dev/null | awk '{print $2}')
+    if [[ -z "$rmin" ]]; then
+        echo "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended)"
+    elif (( rmin < 10000 )); then
+        echo "SHA_CRYPT_MIN_ROUNDS=$rmin (>= 10000 recommended)"
+    fi
+}
+
+# Lynis AUTH-9408 — failed-login event logging in /etc/login.defs.
+# Both FAILLOG_ENAB (record failures) and LOG_UNKFAIL_ENAB (log
+# attempts against unknown usernames — surfaces brute-force scans
+# against fake account names) should be yes.
+_check_faillog_logging() {
+    local issues=() enab unk
+    enab=$(grep -E '^FAILLOG_ENAB'     /etc/login.defs 2>/dev/null | awk '{print $2}')
+    unk=$(grep -E  '^LOG_UNKFAIL_ENAB' /etc/login.defs 2>/dev/null | awk '{print $2}')
+    [[ -n "$enab" && "$enab" != "yes" ]] && issues+=("FAILLOG_ENAB=$enab (should be yes)")
+    [[ -n "$unk"  && "$unk"  != "yes" ]] && issues+=("LOG_UNKFAIL_ENAB=$unk (should be yes)")
+    printf '%s\n' "${issues[@]}"
+}
+
+# Lynis AUTH-9250 — sudoers integrity via visudo -c. A syntax error in
+# /etc/sudoers or any /etc/sudoers.d/ drop-in either locks operators
+# out (sudo refuses every command) or — in rarer parser-corner cases
+# — silently widens privileges if the rule list falls through past a
+# malformed line.
+_check_sudoers_syntax() {
+    command -v visudo >/dev/null 2>&1 || return 0
+    local issues=() drop
+
+    if ! visudo -c -f /etc/sudoers >/dev/null 2>&1; then
+        issues+=("/etc/sudoers syntax invalid")
+    fi
+    for drop in /etc/sudoers.d/*; do
+        [[ -f "$drop" ]] || continue
+        case "$drop" in
+            */README*|*.bak|*~) continue ;;
+        esac
+        if ! visudo -c -f "$drop" >/dev/null 2>&1; then
+            issues+=("$drop syntax invalid")
+        fi
+    done
+    printf '%s\n' "${issues[@]}"
+}
+
 # ==============================================================================
 # Audit Functions
 # ==============================================================================
@@ -1019,6 +1142,110 @@ users_audit() {
             "$hist_list" \
             "$(i18n 'users.fix_history' 2>/dev/null || echo 'Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile')" \
             "users.history")
+        state_add_check "$check_json"
+    fi
+
+    # 12. Duplicate UIDs in /etc/passwd (Lynis AUTH-9208) - HIGH
+    local dup_uids
+    dup_uids=$(_find_duplicate_uids)
+    if [[ -n "$dup_uids" ]]; then
+        local dup_list=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            dup_list+="UID=$line; "
+        done <<< "$dup_uids"
+        dup_list="${dup_list%; }"
+        check_json=$(create_check_json \
+            "users.duplicate_uids" \
+            "users" \
+            "high" \
+            "failed" \
+            "$(i18n 'users.duplicate_uids' 2>/dev/null || echo 'Duplicate UIDs in /etc/passwd')" \
+            "$dup_list" \
+            "$(i18n 'users.review_duplicate_uids' 2>/dev/null || echo 'Investigate accounts sharing a UID — backdoor pattern or misconfiguration')" \
+            "")
+        state_add_check "$check_json"
+    fi
+
+    # 13. Weak password hash method (Lynis AUTH-9229) - MEDIUM
+    local hash_issues
+    hash_issues=$(_check_hash_method)
+    if [[ -n "$hash_issues" ]]; then
+        local hash_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            hash_list+="$issue; "
+        done <<< "$hash_issues"
+        hash_list="${hash_list%; }"
+        check_json=$(create_check_json \
+            "users.weak_hash_method" \
+            "users" \
+            "medium" \
+            "failed" \
+            "$(i18n 'users.weak_hash_method' 2>/dev/null || echo 'Weak password hashing detected')" \
+            "$hash_list" \
+            "$(i18n 'users.fix_hash_method' 2>/dev/null || echo 'Configure pam_unix for yescrypt or sha512 and re-set affected passwords')" \
+            "")
+        state_add_check "$check_json"
+    fi
+
+    # 14. SHA crypt rounds (Lynis AUTH-9230) - LOW / defense in depth
+    local rounds_issue
+    rounds_issue=$(_check_hash_rounds)
+    if [[ -n "$rounds_issue" ]]; then
+        check_json=$(create_check_json \
+            "users.hash_rounds_low" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.hash_rounds_low' 2>/dev/null || echo 'Password hash rounds below recommended')" \
+            "$rounds_issue" \
+            "$(i18n 'users.fix_hash_rounds' 2>/dev/null || echo 'Set SHA_CRYPT_MIN_ROUNDS to 10000 or higher in /etc/login.defs')" \
+            "")
+        state_add_check "$check_json"
+    fi
+
+    # 15. Failed-login logging (Lynis AUTH-9408) - LOW
+    local faillog_issues
+    faillog_issues=$(_check_faillog_logging)
+    if [[ -n "$faillog_issues" ]]; then
+        local fl_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            fl_list+="$issue; "
+        done <<< "$faillog_issues"
+        fl_list="${fl_list%; }"
+        check_json=$(create_check_json \
+            "users.faillog_disabled" \
+            "users" \
+            "low" \
+            "failed" \
+            "$(i18n 'users.faillog_disabled' 2>/dev/null || echo 'Login-failure logging not fully enabled')" \
+            "$fl_list" \
+            "$(i18n 'users.fix_faillog' 2>/dev/null || echo 'Set FAILLOG_ENAB=yes and LOG_UNKFAIL_ENAB=yes in /etc/login.defs')" \
+            "")
+        state_add_check "$check_json"
+    fi
+
+    # 16. Sudoers syntax integrity (Lynis AUTH-9250) - HIGH
+    local sudoers_issues
+    sudoers_issues=$(_check_sudoers_syntax)
+    if [[ -n "$sudoers_issues" ]]; then
+        local su_list=""
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            su_list+="$issue; "
+        done <<< "$sudoers_issues"
+        su_list="${su_list%; }"
+        check_json=$(create_check_json \
+            "users.sudoers_syntax_invalid" \
+            "users" \
+            "high" \
+            "failed" \
+            "$(i18n 'users.sudoers_syntax_invalid' 2>/dev/null || echo 'sudoers file has syntax errors')" \
+            "$su_list" \
+            "$(i18n 'users.fix_sudoers_syntax' 2>/dev/null || echo 'Edit via visudo only; check /etc/sudoers and /etc/sudoers.d/*')" \
+            "")
         state_add_check "$check_json"
     fi
 

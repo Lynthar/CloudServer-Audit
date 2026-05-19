@@ -1,0 +1,31 @@
+# Plant: a sudoers.d/ drop-in with deliberately malformed content.
+# Verifies AUTH-9250-style visudo -c integrity detection.
+#
+# Safety: drops into /etc/sudoers.d/ with 0440 perms (the standard).
+# sudo itself ignores malformed drop-ins (logs and skips), so this
+# won't lock the host out of sudo for the duration of the test.
+TEST_DESC="Invalid sudoers drop-in triggers users.sudoers_syntax_invalid"
+EXPECT_ID="users.sudoers_syntax_invalid"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+EXPECT_DESC_CONTAINS="vpssec-mutation-test"
+MODULE="users"
+
+_DROPIN="/etc/sudoers.d/99-vpssec-mutation-test"
+
+precheck() {
+    command -v visudo >/dev/null 2>&1
+}
+
+mutate() {
+    # `"unmatched quote` triggers a token-level parse error in sudoers
+    # — guaranteed to fail visudo -c regardless of sudo version.
+    printf '"unmatched quote — vpssec mutation test\n' > "$_DROPIN"
+    chmod 440 "$_DROPIN"
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    return 0
+}

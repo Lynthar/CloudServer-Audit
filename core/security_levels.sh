@@ -452,6 +452,12 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # is no corresponding "ok" check_id to classify.
     ["users.pwquality_weak"]="info"
     ["users.history_insecure"]="info"
+    # Lynis AUTH-* cross-check additions
+    ["users.duplicate_uids"]="required"
+    ["users.weak_hash_method"]="required"
+    ["users.hash_rounds_low"]="info"
+    ["users.faillog_disabled"]="info"
+    ["users.sudoers_syntax_invalid"]="required"
 
     # === Timezone Module ===
     ["timezone.configured"]="info"

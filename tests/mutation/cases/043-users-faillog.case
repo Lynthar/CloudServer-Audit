@@ -1,0 +1,24 @@
+# Plant: FAILLOG_ENAB set to no in /etc/login.defs.
+# Verifies AUTH-9408-style detection.
+TEST_DESC="FAILLOG_ENAB=no triggers users.faillog_disabled"
+EXPECT_ID="users.faillog_disabled"
+EXPECT_STATUS="failed"
+EXPECT_DESC_CONTAINS="FAILLOG_ENAB=no"
+MODULE="users"
+
+_BACKUP="/etc/login.defs.vpssec-mutation-bak"
+
+mutate() {
+    cp /etc/login.defs "$_BACKUP" || return 1
+    if grep -qE '^FAILLOG_ENAB' /etc/login.defs; then
+        sed -i 's/^FAILLOG_ENAB.*/FAILLOG_ENAB no/' /etc/login.defs
+    else
+        printf 'FAILLOG_ENAB no\n' >> /etc/login.defs
+    fi
+    return 0
+}
+
+restore() {
+    [[ -f "$_BACKUP" ]] && mv "$_BACKUP" /etc/login.defs
+    return 0
+}

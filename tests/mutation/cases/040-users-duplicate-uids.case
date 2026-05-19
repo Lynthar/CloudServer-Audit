@@ -1,0 +1,33 @@
+# Plant: append a /etc/passwd line that reuses an existing regular
+# user's UID. Verifies AUTH-9208-style detection.
+#
+# Safety: the phantom account is created with /usr/sbin/nologin shell
+# and a non-existent home; even if restore fails it cannot log in.
+# Still: this case writes /etc/passwd. Run on a disposable host.
+TEST_DESC="Two /etc/passwd entries with the same UID trigger users.duplicate_uids"
+EXPECT_ID="users.duplicate_uids"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+MODULE="users"
+
+_BACKUP="/etc/passwd.vpssec-mutation-bak"
+
+precheck() {
+    # Need a regular (non-root, non-nobody) UID to alias.
+    awk -F: '$3 >= 1000 && $3 < 65000 {found=1; exit} END {exit !found}' /etc/passwd
+}
+
+mutate() {
+    local target_uid
+    target_uid=$(awk -F: '$3 >= 1000 && $3 < 65000 {print $3; exit}' /etc/passwd)
+    [[ -z "$target_uid" ]] && return 1
+    cp /etc/passwd "$_BACKUP" || return 1
+    printf 'vpssecdup:x:%s:65534:vpssec mutation test:/nonexistent:/usr/sbin/nologin\n' \
+        "$target_uid" >> /etc/passwd
+    return 0
+}
+
+restore() {
+    [[ -f "$_BACKUP" ]] && mv "$_BACKUP" /etc/passwd
+    return 0
+}

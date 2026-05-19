@@ -1,0 +1,26 @@
+# Plant: SHA_CRYPT_MIN_ROUNDS set below the recommended 10000.
+# Verifies AUTH-9230-style detection.
+#
+# Safety: only modifies /etc/login.defs (consulted at password-change
+# time, not session time). Won't affect logins during the test.
+TEST_DESC="SHA_CRYPT_MIN_ROUNDS=5000 triggers users.hash_rounds_low"
+EXPECT_ID="users.hash_rounds_low"
+EXPECT_STATUS="failed"
+MODULE="users"
+
+_BACKUP="/etc/login.defs.vpssec-mutation-bak"
+
+mutate() {
+    cp /etc/login.defs "$_BACKUP" || return 1
+    if grep -qE '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs; then
+        sed -i 's/^SHA_CRYPT_MIN_ROUNDS.*/SHA_CRYPT_MIN_ROUNDS 5000/' /etc/login.defs
+    else
+        printf 'SHA_CRYPT_MIN_ROUNDS 5000\n' >> /etc/login.defs
+    fi
+    return 0
+}
+
+restore() {
+    [[ -f "$_BACKUP" ]] && mv "$_BACKUP" /etc/login.defs
+    return 0
+}
