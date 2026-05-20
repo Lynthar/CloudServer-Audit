@@ -178,6 +178,7 @@ score   = clamp(0, 100, base − penalty)
 - 单元测试：`bats tests/`（约 240 个用例）
 - 变异测试 harness（注入缺陷验证检测）：`tests/mutation/` —— 仅在可丢弃的 VM 上跑
 - commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`
+- 发布版本：在 main 打 `vX.Y.Z` tag 并 push —— `release.yml` 会用 cosign keyless 构建+签名 tarball 并创建 GitHub release
 
 ## 许可证
 

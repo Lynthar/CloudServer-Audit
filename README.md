@@ -182,6 +182,7 @@ PRs welcome.
 - Unit tests: `bats tests/` (~240 cases)
 - Mutation harness (plant-defect verification): `tests/mutation/` — only run on a disposable VM
 - Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`
+- Releasing: push a `vX.Y.Z` tag — `release.yml` builds and signs the tarball with cosign keyless, then publishes the GitHub release
 
 ## License
 

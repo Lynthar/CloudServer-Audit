@@ -1115,8 +1115,8 @@ score   = clamp(0, 100, base − penalty)
 ```
 vpssec/
 ├── vpssec              # 主入口脚本
-├── run.sh              # 一行安装执行入口
-├── install.sh          # 安装脚本（验证 manifest.sha256）
+├── run.sh              # 一行安装入口（拉 release tarball + cosign 验签）
+├── install.sh          # 安装到 /opt/vpssec（校验 manifest.sha256）
 ├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；install.sh 启动时校验
 ├── core/               # 核心引擎
 │   ├── common.sh       # 公共工具（日志、i18n、校验、原子写、单例锁）
