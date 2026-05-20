@@ -73,6 +73,7 @@ run_case() {
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE 2>/dev/null || true
 
+    # shellcheck source=/dev/null
     if ! source "$case_file"; then
         echo "$(color red '[ERROR]') $case_name: source failed"
         results+=("ERROR | $case_name | failed to source")

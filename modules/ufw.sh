@@ -349,15 +349,13 @@ _ufw_audit_ruleset_empty() {
             rule_count=$(nft --stateless list ruleset 2>/dev/null \
                 | grep -Ev '^[[:space:]]*(table|chain|set|map|element|\{|\})' \
                 | grep -Ev ';[[:space:]]*$' \
-                | grep -v '^[[:space:]]*$' \
-                | wc -l)
+                | grep -cv '^[[:space:]]*$')
             ;;
         iptables)
             command -v iptables >/dev/null 2>&1 || return 0
             # Strip -P (policy) and -N (chain creation) lines.
             rule_count=$(iptables -S 2>/dev/null \
-                | grep -Ev '^(-P|-N|$)' \
-                | wc -l)
+                | grep -cEv '^(-P|-N|$)')
             ;;
         *)
             return 0
