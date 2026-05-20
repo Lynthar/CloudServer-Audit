@@ -1,0 +1,135 @@
+name: cosign pin freshness
+
+# Weekly: is run.sh's pinned cosign still the current sigstore stable?
+# If a newer release exists, this opens a PR that updates the version
+# string + the per-arch SHA256 hashes baked into run.sh. The PR is the
+# human review step — nothing auto-merges.
+#
+# Why a bot at all: the pinned cosign is what Debian users install in
+# the apt-fallback path. Letting it drift means users eventually get a
+# cosign too old to verify against rotated Fulcio roots. Tracking
+# sigstore releases manually is exactly the kind of thing that gets
+# forgotten until it breaks.
+
+on:
+  schedule:
+    # Monday 06:00 UTC. Off-peak for sigstore release cadence (they
+    # usually cut releases mid-week), so weekly drift is at most ~5 days.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write        # push the bump branch
+  pull-requests: write   # open the bump PR
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Detect current pin and latest cosign
+        id: detect
+        run: |
+          set -euo pipefail
+          current=$(grep -oP 'COSIGN_PIN_VERSION="\K[^"]+' run.sh)
+          latest=$(curl -fsSL https://api.github.com/repos/sigstore/cosign/releases/latest \
+            | jq -r '.tag_name | sub("^v"; "")')
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [[ "$current" == "$latest" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Pin already at cosign v$latest — nothing to do."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Will bump cosign v$current -> v$latest"
+          fi
+
+      - name: Download new .deb assets and compute SHA256
+        if: steps.detect.outputs.skip != 'true'
+        id: hashes
+        run: |
+          set -euo pipefail
+          v="${{ steps.detect.outputs.latest }}"
+          base="https://github.com/sigstore/cosign/releases/download/v${v}"
+          # If a future cosign release stops shipping .deb for one of
+          # these arches, this step fails loudly — that's intentional,
+          # so we don't silently update with a missing arch.
+          for arch in amd64 arm64; do
+            f="cosign_${v}_${arch}.deb"
+            url="${base}/${f}"
+            curl -fsSL -o "/tmp/${f}" "${url}"
+            h=$(sha256sum "/tmp/${f}" | awk '{print $1}')
+            echo "${arch}=${h}" >> "$GITHUB_OUTPUT"
+            rm -f "/tmp/${f}"
+            echo "${arch}: ${h}"
+          done
+
+      - name: Rewrite pin in run.sh
+        if: steps.detect.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          v="${{ steps.detect.outputs.latest }}"
+          amd64="${{ steps.hashes.outputs.amd64 }}"
+          arm64="${{ steps.hashes.outputs.arm64 }}"
+          # Anchor to the start of the line so we never accidentally
+          # match a similar-looking string elsewhere (e.g. in comments).
+          sed -i -E "s|^(COSIGN_PIN_VERSION=)\".*\"|\\1\"${v}\"|"        run.sh
+          sed -i -E "s|^(COSIGN_PIN_SHA256_AMD64=)\".*\"|\\1\"${amd64}\"|" run.sh
+          sed -i -E "s|^(COSIGN_PIN_SHA256_ARM64=)\".*\"|\\1\"${arm64}\"|" run.sh
+          # Hard-fail if any of the three lines wasn't actually rewritten
+          # (e.g. pin names changed in run.sh and the sed regex no longer
+          # matches). grep -F + set -e turns that into a workflow failure.
+          grep -F "COSIGN_PIN_VERSION=\"${v}\""        run.sh
+          grep -F "COSIGN_PIN_SHA256_AMD64=\"${amd64}\"" run.sh
+          grep -F "COSIGN_PIN_SHA256_ARM64=\"${arm64}\"" run.sh
+
+      - name: Push branch and open or update PR
+        if: steps.detect.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          v="${{ steps.detect.outputs.latest }}"
+          current="${{ steps.detect.outputs.current }}"
+          branch="cosign-bump/v${v}"
+
+          git config user.name  "cosign-bump-bot"
+          git config user.email "noreply@github.com"
+          git checkout -b "$branch"
+          git add run.sh
+          git commit -m "chore(run.sh): bump pinned cosign to v${v}"
+
+          # --force-with-lease so a re-run for the same target version
+          # (e.g. manual dispatch after a sigstore re-upload) updates
+          # the existing branch instead of failing on "already exists".
+          git push --force-with-lease -u origin "$branch"
+
+          # If a PR is already open for this branch, leave it alone —
+          # the push above updates the branch's HEAD, so the PR picks
+          # up the new commits automatically.
+          if gh pr list --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "PR for $branch already open; branch updated in place."
+            exit 0
+          fi
+
+          gh pr create \
+              --title "chore(run.sh): bump pinned cosign to v${v}" \
+              --body "$(cat <<EOF
+          Auto-bump: cosign \`v${current}\` → \`v${v}\`.
+
+          ### Review checklist before merging
+
+          - [ ] Open <https://github.com/sigstore/cosign/releases/tag/v${v}> and skim release notes for anything that breaks \`verify-blob --bundle\` against bundles signed by older cosign (this repo's \`release.yml\` may still pin an older signer).
+          - [ ] Independently re-verify the hashes in this diff:
+            \`\`\`
+            for a in amd64 arm64; do
+              curl -fsSL -O https://github.com/sigstore/cosign/releases/download/v${v}/cosign_${v}_\${a}.deb
+              sha256sum cosign_${v}_\${a}.deb
+            done
+            \`\`\`
+          - [ ] Smoke-test \`run.sh\` on a Debian VM (apt-fallback path).
+
+          Generated by \`.github/workflows/cosign-bump.yml\`.
+          EOF
+          )"

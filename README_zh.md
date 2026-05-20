@@ -30,8 +30,11 @@ sudo ./vpssec audit
 一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
 Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
 workflow，攻击者无法在不攻破 sigstore Fulcio CA 的情况下替换 tarball。
-Ubuntu 22.04+ 会自动安装 `cosign`；其他系统参考
-[sigstore 文档](https://docs.sigstore.dev/cosign/system_config/installation/)。
+Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；Debian 等 apt 仓库无 cosign 的
+系统会回退到从 sigstore GitHub release 下载 pinned 版本的 `.deb`，并在
+`dpkg` 执行前本地校验 SHA256。fallback 路径把 cosign 的引导信任从 distro
+仓库切到 github.com —— 与下载 `run.sh` 本身同源，不引入新的攻击面。完全
+跳过验证用 `VPSSEC_NO_VERIFY=1`（不推荐）。
 
 ```bash
 # 固定版本

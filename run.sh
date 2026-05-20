@@ -28,6 +28,19 @@ VPSSEC_TMP="/tmp/vpssec-$$"
 COSIGN_IDENTITY_REGEX="^https://github\.com/${VPSSEC_REPO}/\.github/workflows/release\.yml@refs/tags/v.+$"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
+# Pinned cosign for the apt-fallback install path (Debian, etc.). The
+# SHA256 below is verified locally before dpkg ever sees the .deb, so a
+# future compromise of the sigstore release pipeline still can't ship a
+# tampered cosign through this script — the hash check fails first.
+# Bump both VERSION and the per-arch hashes together; the bump workflow
+# at .github/workflows/cosign-bump.yml automates this weekly.
+# cosign v3.x verifies bundles signed by older v2.x cosign (sigstore
+# bundle verification is backwards compatible across majors), so this
+# pin can move independently of release.yml's signer pin.
+COSIGN_PIN_VERSION="3.0.6"
+COSIGN_PIN_SHA256_AMD64="e16e8eb815f8b1b3cee3e678874393c286f19dd59e9ac5da95e428f970ef00f3"
+COSIGN_PIN_SHA256_ARM64="93f382c7476e3effabff8a2c3561239381d55dc2b21b2ccbeaf70e460acfeaaa"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -54,10 +67,71 @@ print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Root + basic tools + cosign (unless verification is opted-out). We
 # best-effort `apt install cosign` since Ubuntu 22.04+ ships it in
-# universe; on systems where the package manager has nothing, we bail
-# with installation instructions. We deliberately do NOT fall back to
-# a hash-pinned cosign download from sigstore: the whole point of
-# cosign is to avoid trusting download paths to bootstrap trust.
+# universe. If apt has nothing (typical Debian), we fall back to a
+# pinned + SHA256-verified .deb from sigstore's GitHub release — see
+# install_cosign_pinned() for the trust-model trade-off. Architectures
+# without a pinned hash, or any other dpkg failure, still bail with
+# manual-install instructions.
+install_cosign_pinned() {
+    # Fallback used when apt has no cosign package. Resolves uname -m
+    # to a sigstore .deb arch suffix, downloads the pinned release
+    # asset, verifies it against the SHA256 baked into this script,
+    # then dpkg-installs. We deliberately do the hash check BEFORE
+    # dpkg so a compromised sigstore can't run a malicious maintainer
+    # script via package install. Returns non-zero on any failure.
+    if ! command -v dpkg &>/dev/null; then
+        print_error "dpkg not available — pinned cosign fallback is dpkg-only"
+        return 1
+    fi
+
+    local arch deb_arch want_hash
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)  deb_arch="amd64"; want_hash="$COSIGN_PIN_SHA256_AMD64" ;;
+        aarch64) deb_arch="arm64"; want_hash="$COSIGN_PIN_SHA256_ARM64" ;;
+        *)
+            print_error "No pinned cosign .deb for architecture: $arch"
+            return 1
+            ;;
+    esac
+
+    local deb_file="/tmp/cosign_${COSIGN_PIN_VERSION}_${deb_arch}.$$.deb"
+    local deb_url="https://github.com/sigstore/cosign/releases/download/v${COSIGN_PIN_VERSION}/cosign_${COSIGN_PIN_VERSION}_${deb_arch}.deb"
+
+    print_warn "cosign not in apt — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
+    print_warn "  trust root for cosign shifts from distro archive to github.com (same as run.sh itself)"
+
+    if ! curl -fsSL "$deb_url" -o "$deb_file"; then
+        print_error "Download failed: $deb_url"
+        rm -f "$deb_file"
+        return 1
+    fi
+
+    local got_hash
+    got_hash=$(sha256sum "$deb_file" | awk '{print $1}')
+    if [[ "$got_hash" != "$want_hash" ]]; then
+        print_error "cosign .deb SHA256 mismatch — refusing to install"
+        print_error "  expected: $want_hash"
+        print_error "  got:      $got_hash"
+        rm -f "$deb_file"
+        return 1
+    fi
+    print_ok "cosign .deb hash verified"
+
+    if ! dpkg -i "$deb_file" >/dev/null 2>&1; then
+        print_error "dpkg -i failed for $deb_file"
+        rm -f "$deb_file"
+        return 1
+    fi
+    rm -f "$deb_file"
+
+    if ! command -v cosign &>/dev/null; then
+        print_error "cosign installed but not on PATH"
+        return 1
+    fi
+    print_ok "cosign v${COSIGN_PIN_VERSION} installed"
+}
+
 check_requirements() {
     if [[ "$(id -u)" != "0" ]]; then
         print_error "This script must be run as root"
@@ -85,12 +159,15 @@ check_requirements() {
     if ! command -v cosign &>/dev/null; then
         print_info "Installing cosign for signature verification..."
         if ! apt-get install -y cosign 2>/dev/null; then
-            print_error "cosign is required to verify the release signature."
-            echo ""
-            echo "  Ubuntu 22.04+ :  sudo apt install cosign"
-            echo "  Other systems :  https://docs.sigstore.dev/cosign/system_config/installation/"
-            echo "  Skip verify   :  re-run with  VPSSEC_NO_VERIFY=1  (not recommended)"
-            exit 1
+            # apt has nothing (Debian, older Ubuntu, RHEL-family). Try
+            # the pinned sigstore .deb fallback before giving up.
+            if ! install_cosign_pinned; then
+                print_error "cosign is required to verify the release signature."
+                echo ""
+                echo "  Manual install :  https://docs.sigstore.dev/cosign/system_config/installation/"
+                echo "  Skip verify    :  re-run with  VPSSEC_NO_VERIFY=1  (not recommended)"
+                exit 1
+            fi
         fi
     fi
 }

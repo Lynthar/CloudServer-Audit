@@ -31,8 +31,14 @@ The one-liner downloads the latest release tarball and **verifies its
 signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
 extracting. The signing identity is pinned to this repo's `release.yml`
 workflow, so swapping the tarball isn't possible without compromising
-sigstore's Fulcio CA. `cosign` is auto-installed on Ubuntu 22.04+; on
-other systems see [sigstore docs](https://docs.sigstore.dev/cosign/system_config/installation/).
+sigstore's Fulcio CA. `cosign` is auto-installed via `apt` on Ubuntu
+22.04+; on Debian (and any other distro where apt has no cosign) the
+script falls back to a pinned `.deb` from sigstore's GitHub release with
+the SHA256 verified locally before `dpkg` runs. The fallback path shifts
+cosign's bootstrap trust from the distro archive to github.com — same
+trust root used to fetch `run.sh` itself, so no new attack surface vs.
+the existing one-liner. Skip verification entirely with `VPSSEC_NO_VERIFY=1`
+(not recommended).
 
 ```bash
 # Pin to a specific release
