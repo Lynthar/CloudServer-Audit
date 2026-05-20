@@ -27,8 +27,32 @@ sudo ./vpssec audit
 
 **支持系统：** Debian 12 / 13 · Ubuntu 22.04 / 24.04
 
-> ⚠️ 一行安装走 TLS 但**不验证签名**。需要供应链保障的话，请先克隆仓库
-> 手动审查 `run.sh` 再执行——或者直接走上面的手动流程。
+一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
+Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
+workflow，攻击者无法在不攻破 sigstore Fulcio CA 的情况下替换 tarball。
+Ubuntu 22.04+ 会自动安装 `cosign`；其他系统参考
+[sigstore 文档](https://docs.sigstore.dev/cosign/system_config/installation/)。
+
+```bash
+# 固定版本
+VPSSEC_VERSION=v0.0.9 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+
+# 跳过验证（不推荐）
+VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+```
+
+手动验证某个 release：
+
+```bash
+TAG=v0.0.9
+curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
+curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
+cosign verify-blob \
+  --bundle vpssec-${TAG#v}.tar.gz.sig.json \
+  --certificate-identity-regexp '^https://github\.com/Lynthar/CloudServer-Audit/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  vpssec-${TAG#v}.tar.gz
+```
 
 ---
 

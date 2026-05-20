@@ -1,0 +1,91 @@
+name: release
+
+# Triggered when a maintainer pushes a v* tag. Builds a clean tarball
+# from the tag, signs it with cosign keyless (sigstore + GitHub OIDC),
+# and uploads tarball + .sig.json + .sha256 as release assets.
+#
+# Verification on the user side: run.sh downloads the three files and
+# runs `cosign verify-blob` with --certificate-identity-regexp pinned
+# to this repo's release.yml. Sigstore + Rekor provide an independent
+# trust root from github.com, so a compromised upstream can't forge a
+# signature without compromising sigstore itself.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write    # create release + upload assets
+  id-token: write    # sigstore keyless OIDC
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # git archive needs the full history of the tag.
+          fetch-depth: 0
+
+      - name: Install cosign
+        # Pin a specific cosign version so a sigstore release doesn't
+        # silently change the signing surface area. Bump when reviewed.
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Build tarball
+        id: build
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          ARCHIVE="vpssec-${VER}.tar.gz"
+          # `git archive` produces a clean, reproducible tarball — matches
+          # `git clone` content at this tag, excludes .git/ and anything in
+          # .gitignore. The prefix gives a single top-level dir on extract.
+          git archive --format=tar.gz \
+              --prefix="vpssec-${VER}/" \
+              -o "$ARCHIVE" \
+              "$TAG"
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Sign tarball (cosign keyless via sigstore)
+        env:
+          # Skip the interactive "are you sure" prompt — this is non-tty CI.
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          ARCHIVE="${{ steps.build.outputs.archive }}"
+          # --bundle emits a single self-contained file: signature + signing
+          # cert + Rekor transparency-log inclusion proof. Verifiers only
+          # need this one file alongside the tarball.
+          cosign sign-blob \
+              --bundle "${ARCHIVE}.sig.json" \
+              "$ARCHIVE"
+
+      - name: Create or update release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          ARCHIVE="${{ steps.build.outputs.archive }}"
+
+          # Idempotent: if a release for this tag already exists
+          # (maintainer pre-created via `gh release create`), reuse it;
+          # otherwise create one with auto-generated notes.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" \
+                  --title "$TAG" \
+                  --generate-notes
+          fi
+
+          # --clobber lets workflow re-runs replace assets without erroring.
+          gh release upload "$TAG" \
+              "$ARCHIVE" \
+              "${ARCHIVE}.sha256" \
+              "${ARCHIVE}.sig.json" \
+              --clobber

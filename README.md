@@ -27,9 +27,33 @@ Reports land in `reports/summary.{md,json,sarif}`.
 
 **Supported:** Debian 12 / 13 · Ubuntu 22.04 / 24.04
 
-> ⚠️ The one-liner downloads over TLS but does **not** verify signatures.
-> For supply-chain assurance, clone the repo and review `run.sh` before
-> piping it to a shell — or use the manual flow above.
+The one-liner downloads the latest release tarball and **verifies its
+signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
+extracting. The signing identity is pinned to this repo's `release.yml`
+workflow, so swapping the tarball isn't possible without compromising
+sigstore's Fulcio CA. `cosign` is auto-installed on Ubuntu 22.04+; on
+other systems see [sigstore docs](https://docs.sigstore.dev/cosign/system_config/installation/).
+
+```bash
+# Pin to a specific release
+VPSSEC_VERSION=v0.0.9 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+
+# Skip verification (NOT recommended)
+VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+```
+
+Verify a release manually:
+
+```bash
+TAG=v0.0.9
+curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
+curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
+cosign verify-blob \
+  --bundle vpssec-${TAG#v}.tar.gz.sig.json \
+  --certificate-identity-regexp '^https://github\.com/Lynthar/CloudServer-Audit/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  vpssec-${TAG#v}.tar.gz
+```
 
 ---
 
