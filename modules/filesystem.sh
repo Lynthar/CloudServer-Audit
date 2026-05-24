@@ -41,6 +41,11 @@ declare -ga FS_SUID_WHITELIST=(
     # FUSE mount helpers (fuse2/fuse3) — SUID by design on Debian/Ubuntu
     "/usr/bin/fusermount"
     "/usr/bin/fusermount3"
+    # snapd sandbox helper at the system path (the /snap/snapd/* entry above
+    # only covers the in-snap copy); appears SUID on Ubuntu 24.04
+    "/usr/lib/snapd/snap-confine"
+    # polkit agent helper — Ubuntu 24.04 path (older: /usr/libexec or policykit-1)
+    "/usr/lib/polkit-1/polkit-agent-helper-1"
 )
 
 # Sensitive files and their expected permissions
@@ -426,6 +431,8 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/systemd-resolve:cap_net_bind_service"
     # snapd sandbox helper legitimately holds cap_sys_admin (+ others)
     "/usr/lib/snapd/snap-confine:cap_sys_admin"
+    # GStreamer PTP helper — legit cap_net_admin/net_bind_service/sys_nice (multiarch path)
+    "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin"
 )
 
 # Dangerous capabilities that grant significant privileges
@@ -473,7 +480,8 @@ _fs_find_caps_files() {
         for entry in "${FS_CAPS_WHITELIST[@]}"; do
             local wl_file="${entry%%:*}"
             local wl_cap="${entry#*:}"
-            if [[ "$file" == "$wl_file" && "$caps" =~ $wl_cap ]]; then
+            # Unquoted $wl_file = glob match (handles multiarch /usr/lib/*/ paths)
+            if [[ "$file" == $wl_file && "$caps" =~ $wl_cap ]]; then
                 whitelisted=true
                 break
             fi
