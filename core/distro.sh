@@ -433,7 +433,7 @@ distro_suid_whitelist() {
             printf '%s\n' \
                 /usr/lib/ssh/ssh-keysign \
                 /usr/lib/polkit-1/polkit-agent-helper-1 \
-                /usr/lib/dbus-1.0/dbus-daemon-launch-helper \
+                /usr/lib/dbus-daemon-launch-helper \
                 /usr/bin/fusermount /usr/bin/fusermount3 \
                 /usr/bin/mount.nfs
             ;;
@@ -469,7 +469,8 @@ distro_caps_whitelist() {
                 /usr/bin/ping:cap_net_raw \
                 /usr/sbin/suexec:cap_setuid,cap_setgid \
                 /usr/bin/newgidmap:cap_setgid \
-                /usr/bin/newuidmap:cap_setuid
+                /usr/bin/newuidmap:cap_setuid \
+                /usr/libexec/sssd/*:cap_dac_read_search
             ;;
         arch)
             printf '%s\n' \

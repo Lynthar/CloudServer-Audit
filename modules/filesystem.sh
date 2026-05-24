@@ -34,7 +34,8 @@ declare -ga FS_SUID_WHITELIST=(
     "/usr/lib/policykit-1/polkit-agent-helper-1"
     "/usr/libexec/polkit-agent-helper-1"
     "/usr/sbin/pam_timestamp_check"
-    "/usr/sbin/unix_chkpwd"
+    "/usr/*bin/unix_chkpwd"
+    "/usr/bin/ksu"
     "/usr/sbin/mount.nfs"
     "/usr/sbin/mount.cifs"
     "/snap/snapd/*/usr/lib/snapd/snap-confine"
@@ -180,6 +181,7 @@ _fs_find_sgid_files() {
         "/usr/sbin/unix_chkpwd"
         "/usr/sbin/pam_extrausers_chkpwd"
         "/usr/lib/*/utempter/utempter"
+        "/usr/bin/groupmems"
     )
 
     local prune_args=()
