@@ -426,7 +426,8 @@ distro_suid_whitelist() {
                 /usr/libexec/dbus-1/dbus-daemon-launch-helper \
                 /usr/libexec/polkit-1/polkit-agent-helper-1 \
                 /usr/bin/fusermount /usr/bin/fusermount3 \
-                /usr/sbin/mount.nfs /usr/sbin/grub2-set-bootflag
+                /usr/sbin/mount.nfs /usr/sbin/grub2-set-bootflag \
+                /usr/libexec/cockpit-session
             ;;
         arch)
             printf '%s\n' \

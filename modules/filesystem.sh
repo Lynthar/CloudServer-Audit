@@ -447,8 +447,9 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/ping:cap_net_raw"
     "/usr/bin/traceroute:cap_net_raw"
     "/usr/bin/mtr-packet:cap_net_raw"
-    "/usr/bin/arping:cap_net_raw"
-    "/usr/sbin/clockdiff:cap_net_raw"
+    # arping/clockdiff swap between /usr/bin and /usr/sbin across distros (RHEL vs Debian) — glob both
+    "/usr/*bin/arping:cap_net_raw"
+    "/usr/*bin/clockdiff:cap_net_raw"
     "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
     "/usr/bin/systemd-resolve:cap_net_bind_service"
     # snapd sandbox helper legitimately holds cap_sys_admin (+ others)
