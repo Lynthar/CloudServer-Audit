@@ -16,7 +16,7 @@ report_generate_json() {
 
     local os=$(detect_os)
     local os_version=$(detect_os_version)
-    local hostname=$(hostname)
+    local hostname=$(hostname 2>/dev/null || uname -n)
     local virt=$(detect_virtualization)
 
     local modules_checked="${VPSSEC_INCLUDE:-all}"
@@ -57,7 +57,7 @@ report_generate_markdown() {
 
     local os=$(detect_os)
     local os_version=$(detect_os_version)
-    local hostname=$(hostname)
+    local hostname=$(hostname 2>/dev/null || uname -n)
     local modules_checked="${VPSSEC_INCLUDE:-all}"
 
     cat > "$output_file" <<EOF
@@ -572,7 +572,7 @@ report_generate_sarif() {
 
     local os=$(detect_os)
     local os_version=$(detect_os_version)
-    local hostname=$(hostname)
+    local hostname=$(hostname 2>/dev/null || uname -n)
 
     # Build results array
     local results="[]"

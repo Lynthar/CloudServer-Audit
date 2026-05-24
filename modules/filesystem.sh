@@ -841,6 +841,15 @@ _fs_audit_sensitive_perms() {
 
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
         local expected="${FS_SENSITIVE_FILES[$file]}"
+        # RHEL/Fedora package SSH host private keys as 640 root:ssh_keys
+        # (the ssh-keysign helper and host-based auth need group read);
+        # that is the shipped default, not a permission slip. Accept 640
+        # for host keys only when the group really is ssh_keys — 640 still
+        # forbids world/other bits, so a world-readable key is still
+        # caught. Debian/Ubuntu/Arch keep the 600 expectation.
+        if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
+            expected="640"
+        fi
         local result
         result=$(_fs_check_sensitive_file "$file" "$expected")
         if [[ -n "$result" ]]; then
