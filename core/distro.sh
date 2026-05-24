@@ -135,11 +135,18 @@ pkg_update_count() {
             n=$(apt-get -s upgrade 2>/dev/null | grep -c '^Inst ') || true
             ;;
         dnf)
-            # `check-update` exits 100 when updates exist; capture-then-count
-            # so pipefail+set -e don't abort on the 100. One package per
-            # line, "name.arch  version  repo" — NF>=3 filters headers.
-            out=$(LC_ALL=C dnf -q check-update 2>/dev/null) || true
-            n=$(awk 'NF>=3 && $1 !~ /^(Last|Obsoleting|Security|Loaded)/ {c++} END{print c+0}' <<<"$out")
+            # check-update rc: 100 = updates available (list printed), 0 = none,
+            # 1 = error. Capture in an `if` so pipefail/set -e don't abort on 100.
+            # Count only real package lines: they start in column 0 (long-NEVRA
+            # continuation lines are indented) and stop at the trailing
+            # "Obsoleting Packages" section. NF>=3 = "name.arch  ver  repo".
+            local rc=0
+            if out=$(LC_ALL=C dnf -q check-update 2>/dev/null); then rc=0; else rc=$?; fi
+            if [[ "$rc" -eq 100 ]]; then
+                n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out")
+            else
+                n=0
+            fi
             ;;
         pacman)
             # Read-only against the already-synced db (no network refresh).
@@ -160,8 +167,17 @@ pkg_security_update_count() {
             n=$(apt-get -s upgrade 2>/dev/null | grep -c 'security') || true
             ;;
         dnf)
-            out=$(LC_ALL=C dnf -q updateinfo list security 2>/dev/null) || true
-            n=$(grep -c . <<<"$out") || true
+            # No dnf command cleanly yields "installed packages that have a
+            # pending security update": `updateinfo list` enumerates EVERY
+            # package named in an applicable security advisory (incl. ones not
+            # installed or already current), and `repoquery --security` ignores
+            # --security under dnf5. So this is an UPPER BOUND on real-box data
+            # it can exceed the total update count. It IS a reliable
+            # has-security-updates signal though (>0 iff any apply — verified
+            # non-empty on dnf4 with security updates, 0 on dnf5 with none).
+            # Callers: use as ">0?" only; clamp any displayed figure to the total.
+            out=$(LC_ALL=C dnf -q updateinfo list --security --available 2>/dev/null) || true
+            n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || true
             ;;
         pacman)
             echo "-1"; return 0
@@ -217,8 +233,12 @@ pkg_installed_kernel() {
             rpm -q --last kernel 2>/dev/null | awk 'NR==1{sub(/^kernel-/,"",$1); print $1}'
             ;;
         pacman)
-            command -v pacman >/dev/null 2>&1 || return 0
-            pacman -Q linux 2>/dev/null | awk '{print $2}'
+            # Arch's kernel package name varies (linux / linux-lts / linux-zen /
+            # linux-hardened), so don't query a fixed package. /usr/lib/modules/
+            # lists every installed kernel's module dir, and the dir name matches
+            # `uname -r` exactly (e.g. 6.18.31-1-lts) — newest = latest installed.
+            [[ -d /usr/lib/modules ]] || return 0
+            ls -1 /usr/lib/modules/ 2>/dev/null | sort -V | tail -1
             ;;
         *) return 0 ;;
     esac
@@ -236,11 +256,9 @@ _distro_running_kernel_outdated() {
     running="$(uname -r)"
     latest="$(pkg_installed_kernel)"
     [[ -z "$running" || -z "$latest" ]] && return 1
-    if [[ "$VPSSEC_DISTRO_FAMILY" == "arch" ]]; then
-        # `pacman -Q linux` -> 6.9.3.arch1-1 vs `uname -r` -> 6.9.3-arch1-1;
-        # normalise separators before comparing (best-effort).
-        running="${running//-/.}"; latest="${latest//-/.}"
-    fi
+    # All branches return a version in `uname -r` format (apt: linux-image
+    # NEVRA; rhel: rpm -q --last kernel; arch: /usr/lib/modules dir name),
+    # so a direct string compare is correct — no normalisation needed.
     [[ "$running" != "$latest" ]]
 }
 
@@ -359,6 +377,32 @@ distro_insecure_packages() {
             ;;
         *) echo "" ;;
     esac
+}
+
+# ==============================================================================
+# Firewall primitives (read-only)
+# ==============================================================================
+
+# Active firewall backend: ufw|firewalld|nftables|iptables|none — same probe
+# order as ufw.sh's _detect_firewall (which this is meant to replace). Probes
+# are standard across distros; each is guarded with `command -v`.
+fw_backend() {
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        echo "ufw"
+    elif systemctl is-active --quiet firewalld 2>/dev/null; then
+        echo "firewalld"
+    elif command -v nft >/dev/null 2>&1 && [[ "$(nft list tables 2>/dev/null | wc -l)" -gt 0 ]]; then
+        echo "nftables"
+    elif command -v iptables >/dev/null 2>&1 && (( "$(iptables -L -n 2>/dev/null | grep -cE '^(ACCEPT|DROP|REJECT)' || true)" > 3 )); then
+        echo "iptables"
+    else
+        echo "none"
+    fi
+}
+
+# True iff a firewall backend is active.
+fw_is_enabled() {
+    [[ "$(fw_backend)" != "none" ]]
 }
 
 # ==============================================================================
