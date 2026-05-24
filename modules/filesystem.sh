@@ -38,6 +38,9 @@ declare -ga FS_SUID_WHITELIST=(
     "/usr/sbin/mount.nfs"
     "/usr/sbin/mount.cifs"
     "/snap/snapd/*/usr/lib/snapd/snap-confine"
+    # FUSE mount helpers (fuse2/fuse3) — SUID by design on Debian/Ubuntu
+    "/usr/bin/fusermount"
+    "/usr/bin/fusermount3"
 )
 
 # Sensitive files and their expected permissions
@@ -155,6 +158,8 @@ _fs_find_sgid_files() {
         "/usr/bin/chage"
         "/usr/bin/crontab"
         "/usr/sbin/unix_chkpwd"
+        "/usr/sbin/pam_extrausers_chkpwd"
+        "/usr/lib/*/utempter/utempter"
     )
 
     local prune_args=()
@@ -163,7 +168,8 @@ _fs_find_sgid_files() {
     while IFS= read -r -d '' file; do
         local skip=0
         for pattern in "${sgid_whitelist[@]}"; do
-            if [[ "$file" == "$pattern" ]]; then
+            # Unquoted RHS = glob match (e.g. /usr/lib/*/utempter/utempter across arches)
+            if [[ "$file" == $pattern ]]; then
                 skip=1
                 break
             fi
@@ -418,6 +424,8 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/sbin/clockdiff:cap_net_raw"
     "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
     "/usr/bin/systemd-resolve:cap_net_bind_service"
+    # snapd sandbox helper legitimately holds cap_sys_admin (+ others)
+    "/usr/lib/snapd/snap-confine:cap_sys_admin"
 )
 
 # Dangerous capabilities that grant significant privileges

@@ -29,6 +29,7 @@ set -euo pipefail
 # ==============================================================================
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core/common.sh"
+source "${VPSSEC_ROOT}/core/distro.sh"
 source "${VPSSEC_ROOT}/core/state.sh"
 source "${VPSSEC_ROOT}/core/report.sh"
 source "${VPSSEC_ROOT}/core/ui_tui.sh"
@@ -212,6 +213,26 @@ main() {
             --include=*)
                 VPSSEC_INCLUDE="${arg#*=}"
                 export VPSSEC_INCLUDE
+                ;;
+            --exclude=*)
+                VPSSEC_EXCLUDE="${arg#*=}"
+                export VPSSEC_EXCLUDE
+                ;;
+            --json-only)
+                # Behaviour flags must be collected in this parent-shell
+                # pass too. parse_args() runs in a $(...) subshell, so the
+                # assignments it makes for --json-only/--yes/--exclude/--debug
+                # never propagate back — without this they were silent no-ops.
+                VPSSEC_JSON_ONLY=1
+                export VPSSEC_JSON_ONLY
+                ;;
+            --yes|-y)
+                VPSSEC_YES=1
+                export VPSSEC_YES
+                ;;
+            --debug)
+                VPSSEC_DEBUG=1
+                export VPSSEC_DEBUG
                 ;;
             audit|guide|rollback|status)
                 VPSSEC_MODE="$arg"
