@@ -278,7 +278,8 @@
     "default_deny_failed": "设置默认策略失败",
     "ssh_rule_failed": "添加 SSH 规则失败",
     "firewall_empty": "{type} 已激活但 ruleset 为空",
-    "fix_firewall_empty": "为 {type} 加载规则，或改用 UFW/firewalld 等托管前端"
+    "fix_firewall_empty": "为 {type} 加载规则，或改用 UFW/firewalld 等托管前端",
+    "fix_enable_firewall": "启用系统防火墙（RHEL 用 firewalld，Arch 用 nftables/ufw）"
   },
   "update": {
     "title": "系统更新",

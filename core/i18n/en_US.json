@@ -278,7 +278,8 @@
     "default_deny_failed": "Failed to set default policy",
     "ssh_rule_failed": "Failed to add SSH rule",
     "firewall_empty": "{type} active but ruleset is empty",
-    "fix_firewall_empty": "Load rules into {type} or switch to a managed front-end like UFW/firewalld"
+    "fix_firewall_empty": "Load rules into {type} or switch to a managed front-end like UFW/firewalld",
+    "fix_enable_firewall": "Enable a system firewall (firewalld on RHEL, nftables/ufw on Arch)"
   },
   "update": {
     "title": "System Updates",

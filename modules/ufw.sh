@@ -204,7 +204,12 @@ ufw_audit() {
 
     # First, detect what firewall is active
     print_item "$(i18n 'ufw.check_firewall_status')"
-    local active_fw=$(_detect_firewall)
+    local active_fw
+    if declare -f fw_backend >/dev/null 2>&1; then
+        active_fw=$(fw_backend)
+    else
+        active_fw=$(_detect_firewall)
+    fi
 
     case "$active_fw" in
         ufw)
@@ -270,7 +275,16 @@ ufw_audit() {
             return
             ;;
         none)
-            # No firewall active - this is a security issue
+            # No firewall active - this is a security issue. The remediation
+            # hint is distro-aware: UFW is only the right front-end on
+            # Debian/Ubuntu. RHEL ships firewalld and Arch typically uses
+            # nftables, so steer those users away from "install UFW".
+            local nf_suggestion
+            if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
+                nf_suggestion=$(i18n 'ufw.fix_install')
+            else
+                nf_suggestion=$(i18n 'ufw.fix_enable_firewall')
+            fi
             local check=$(create_check_json \
                 "ufw.no_firewall" \
                 "ufw" \
@@ -278,7 +292,7 @@ ufw_audit() {
                 "failed" \
                 "$(i18n 'ufw.no_firewall')" \
                 "$(i18n 'ufw.no_firewall_desc')" \
-                "$(i18n 'ufw.fix_install')" \
+                "$nf_suggestion" \
                 "ufw.install")
             state_add_check "$check"
             print_severity "high" "$(i18n 'ufw.no_firewall')"
@@ -289,17 +303,24 @@ ufw_audit() {
     # Check if UFW is installed
     print_item "$(i18n 'ufw.check_installed')"
     if ! _ufw_installed; then
-        local check=$(create_check_json \
-            "ufw.not_installed" \
-            "ufw" \
-            "medium" \
-            "failed" \
-            "$(i18n 'ufw.not_installed')" \
-            "$(i18n 'ufw.not_installed_desc')" \
-            "$(i18n 'ufw.fix_install')" \
-            "ufw.install")
-        state_add_check "$check"
-        print_severity "medium" "$(i18n 'ufw.not_installed')"
+        # "UFW not installed" is only actionable on Debian/Ubuntu, where
+        # UFW is the standard front-end. On RHEL/Arch the active firewall
+        # was already probed above; a "none" result has emitted the
+        # high-severity no_firewall check, so recommending UFW here would
+        # be both redundant and wrong for those distros.
+        if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
+            local check=$(create_check_json \
+                "ufw.not_installed" \
+                "ufw" \
+                "medium" \
+                "failed" \
+                "$(i18n 'ufw.not_installed')" \
+                "$(i18n 'ufw.not_installed_desc')" \
+                "$(i18n 'ufw.fix_install')" \
+                "ufw.install")
+            state_add_check "$check"
+            print_severity "medium" "$(i18n 'ufw.not_installed')"
+        fi
         return
     fi
     print_ok "$(i18n 'ufw.ufw_installed')"
