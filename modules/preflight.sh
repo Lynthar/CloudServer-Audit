@@ -56,7 +56,7 @@ _preflight_check_os() {
             "failed" \
             "$(i18n 'preflight.os_unsupported')" \
             "${os} ${version} - $(i18n 'preflight.os_unsupported')" \
-            "Use Debian 12/13 or Ubuntu 22.04/24.04" \
+            "Use Debian 12/13, Ubuntu 22.04/24.04/26.04, a RHEL 8/9/10 family distro (Rocky/Alma/CentOS Stream), or Arch" \
             "")
         state_add_check "$check"
         print_warn "$(i18n 'preflight.os_unsupported'): ${os} ${version}"

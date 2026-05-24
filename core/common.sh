@@ -425,10 +425,27 @@ is_supported_os() {
             [[ "$version" == "12" || "$version" == "13" ]]
             ;;
         ubuntu)
-            [[ "$version" == "22.04" || "$version" == "24.04" ]]
+            [[ "$version" == "22.04" || "$version" == "24.04" || "$version" == "26.04" ]]
             ;;
         *)
-            return 1
+            # RHEL family (Rocky/Alma/CentOS Stream) and Arch: the
+            # read-only audit is distro-aware via core/distro.sh and has
+            # been validated on real hosts. Match the detected family so
+            # ID_LIKE downstreams resolve without enumerating every ID.
+            # Automated fixes are NOT ported — guide_mode gates on
+            # is_debian_based() separately.
+            case "${VPSSEC_DISTRO_FAMILY:-unknown}" in
+                rhel)
+                    local major="${version%%.*}"
+                    [[ "$major" == "8" || "$major" == "9" || "$major" == "10" ]]
+                    ;;
+                arch)
+                    return 0
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
             ;;
     esac
 }

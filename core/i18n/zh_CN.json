@@ -937,6 +937,7 @@
     "operations_desc": "日志、备份、告警"
   },
   "guide": {
+    "fix_debian_only": "自动加固(guide)仅支持 Debian/Ubuntu。审计在本系统可用——请查看 reports/summary.md 并手动执行修复。",
     "welcome": "欢迎使用 VPS 安全加固向导",
     "security_level": "安全等级",
     "select_modules": "选择要检查/修复的模块",

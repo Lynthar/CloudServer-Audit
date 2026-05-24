@@ -351,7 +351,7 @@ main() {
         local os=$(detect_os)
         local version=$(detect_os_version)
         print_warn "$(i18n 'error.unsupported_os' "os=${os} ${version}")"
-        print_msg "Supported: Debian 12/13, Ubuntu 22.04/24.04"
+        print_msg "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only."
         print_msg ""
 
         if [[ "$command" != "status" ]] && ! confirm "Continue anyway?" "n"; then

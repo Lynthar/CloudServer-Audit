@@ -937,6 +937,7 @@
     "operations_desc": "Logging, backup, alerts"
   },
   "guide": {
+    "fix_debian_only": "Automated hardening (guide) is only supported on Debian/Ubuntu. Audit works on this system — review reports/summary.md and apply the fixes manually.",
     "welcome": "Welcome to VPS Security Hardening Wizard",
     "security_level": "Security Level",
     "select_modules": "Select modules to check/fix",

@@ -712,6 +712,15 @@ _guide_resume() {
 
 # Guide mode main flow
 guide_mode() {
+    # Guide/fix paths are apt/dpkg-based and only validated on Debian/
+    # Ubuntu. The audit path is distro-aware (RHEL/Arch), but automated
+    # remediation is not ported — refuse here instead of running apt
+    # against a system that lacks it. Audit still works on those hosts.
+    if ! is_debian_based; then
+        print_warn "$(i18n 'guide.fix_debian_only')"
+        return 0
+    fi
+
     # Resume gate. If state/progress.json exists, the previous plan
     # was killed mid-execution. Ask before re-auditing — saves the
     # user from waiting through a fresh ~10s scan they might not

@@ -1,7 +1,7 @@
 # vpssec
 
-> 面向 Debian / Ubuntu VPS 的纯 Bash 安全审计与加固工具。
-> 只读审计 · 引导式加固 · 原子回滚。
+> 面向 Linux VPS 的纯 Bash 安全审计与加固工具。
+> 审计(只读):Debian/Ubuntu/RHEL/Arch · 引导式加固 + 回滚:Debian/Ubuntu。
 
 [English](README.md) | 简体中文 | [用户指南](docs/USER_GUIDE.md)
 
@@ -25,7 +25,9 @@ sudo ./vpssec audit
 
 报告生成在 `reports/summary.{md,json,sarif}`。
 
-**支持系统：** Debian 12 / 13 · Ubuntu 22.04 / 24.04
+**审计(只读)：** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 家族(Rocky / Alma / CentOS Stream) · Arch
+
+**引导式加固 + 回滚：** 仅 Debian / Ubuntu
 
 一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
 Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`

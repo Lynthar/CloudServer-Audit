@@ -1,7 +1,7 @@
 # vpssec
 
-> Pure-bash security auditing and hardening for Debian / Ubuntu VPS.
-> Read-only audit · guided hardening · atomic rollback.
+> Pure-bash security auditing & hardening for Linux VPS.
+> Audit (read-only): Debian/Ubuntu/RHEL/Arch · Guided hardening + rollback: Debian/Ubuntu.
 
 English | [简体中文](README_zh.md) | [User Guide](docs/USER_GUIDE.md)
 
@@ -25,7 +25,9 @@ sudo ./vpssec audit
 
 Reports land in `reports/summary.{md,json,sarif}`.
 
-**Supported:** Debian 12 / 13 · Ubuntu 22.04 / 24.04
+**Audit (read-only):** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 family (Rocky / Alma / CentOS Stream) · Arch
+
+**Guided hardening + rollback:** Debian / Ubuntu only
 
 The one-liner downloads the latest release tarball and **verifies its
 signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
