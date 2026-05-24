@@ -447,6 +447,7 @@ distro_sgid_whitelist() {
             printf '%s\n' \
                 /usr/bin/unix_chkpwd \
                 /usr/libexec/utempter/utempter \
+                /usr/libexec/openssh/ssh-keysign \
                 /usr/bin/write /usr/bin/wall /usr/bin/screen
             ;;
         arch)

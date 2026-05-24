@@ -118,6 +118,7 @@ _fs_sanitize_count() {
 # Check if path is in whitelist (supports glob patterns)
 _fs_is_whitelisted() {
     local path="$1"
+    local pattern
 
     for pattern in "${FS_SUID_WHITELIST[@]}"; do
         # Support glob patterns with *
@@ -125,6 +126,13 @@ _fs_is_whitelisted() {
             return 0
         fi
     done
+    # Distro-specific legit SUID paths (RHEL/Arch) from core/distro.sh.
+    # The debian branch returns nothing, so this is a no-op on Debian/Ubuntu.
+    if declare -f distro_suid_whitelist >/dev/null 2>&1; then
+        while IFS= read -r pattern; do
+            [[ -n "$pattern" && "$path" == $pattern ]] && return 0
+        done < <(distro_suid_whitelist)
+    fi
     return 1
 }
 
@@ -186,6 +194,13 @@ _fs_find_sgid_files() {
                 break
             fi
         done
+
+        # Distro-specific SGID paths (RHEL/Arch) from core/distro.sh
+        if (( skip == 0 )) && declare -f distro_sgid_whitelist >/dev/null 2>&1; then
+            while IFS= read -r pattern; do
+                [[ -n "$pattern" && "$file" == $pattern ]] && { skip=1; break; }
+            done < <(distro_sgid_whitelist)
+        fi
 
         if ((skip == 0)); then
             results+=("$file")
@@ -493,6 +508,18 @@ _fs_find_caps_files() {
                 break
             fi
         done
+
+        # Distro-specific cap entries (RHEL/Arch) from core/distro.sh
+        if [[ "$whitelisted" == false ]] && declare -f distro_caps_whitelist >/dev/null 2>&1; then
+            local dentry
+            while IFS= read -r dentry; do
+                [[ -z "$dentry" ]] && continue
+                if [[ "$file" == ${dentry%%:*} && "$caps" =~ ${dentry#*:} ]]; then
+                    whitelisted=true
+                    break
+                fi
+            done < <(distro_caps_whitelist)
+        fi
 
         if [[ "$whitelisted" == false ]]; then
             # Check if dangerous capability
