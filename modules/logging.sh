@@ -184,7 +184,17 @@ _logging_audit_logrotate() {
         # Check if critical log files have rotation configured
         local missing=()
 
-        for log in syslog auth.log dpkg.log; do
+        # Critical log files to check, per distro (from distro.sh). Defaults to
+        # the Debian set; on Debian/Ubuntu distro_log_paths returns exactly this,
+        # so behaviour is unchanged. RHEL→messages/secure/dnf.rpm.log,
+        # Arch→pacman.log (everything else is journald-only there).
+        local logs="syslog auth.log dpkg.log"
+        if declare -f distro_log_paths >/dev/null 2>&1; then
+            local dl; dl=$(distro_log_paths)
+            if [[ -n "$dl" ]]; then logs="$dl"; fi
+        fi
+
+        for log in $logs; do
             if [[ -f "/var/log/$log" ]] && ! grep -rq "$log" "$LOGROTATE_D" 2>/dev/null; then
                 missing+=("$log")
             fi

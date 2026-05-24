@@ -246,20 +246,15 @@ _baseline_audit_insecure_services() {
     # Packages installed but maybe not active — still a finding because
     # a package may be enabled later, and shipped configs may include
     # weak defaults.
-    if command -v dpkg-query >/dev/null 2>&1; then
+    # Installed-but-maybe-inactive insecure packages. Both the package names and
+    # the query tool are distro-specific (distro.sh): Debian dpkg / RHEL rpm /
+    # Arch pacman. The debian list is the same names as before, so Debian/Ubuntu
+    # is unchanged; if distro.sh isn't loaded this scan is skipped (the active-
+    # service scan above still ran).
+    if declare -f distro_insecure_packages >/dev/null 2>&1; then
         local pkg
-        for pkg in \
-            telnetd inetutils-telnetd telnet-server \
-            rsh-server rsh-redone-server \
-            inetutils-inetd openbsd-inetd xinetd \
-            fingerd \
-            nis ypbind ypserv \
-            tftpd tftpd-hpa atftpd \
-            talkd ntalkd \
-            rwhod \
-        ; do
-            if dpkg-query -W -f='${Status}\n' "$pkg" 2>/dev/null \
-               | grep -q '^install ok installed$'; then
+        for pkg in $(distro_insecure_packages); do
+            if pkg_is_installed "$pkg"; then
                 found+=("$pkg(pkg)")
             fi
         done
@@ -305,9 +300,11 @@ _baseline_audit_integrity() {
             break
         fi
     done
-    if [[ -z "$found" ]] && command -v dpkg-query &>/dev/null; then
+    if [[ -z "$found" ]] && declare -f pkg_is_installed >/dev/null 2>&1; then
+        # Integrity-tool package names are the same across distros; only the
+        # query tool differs, so pkg_is_installed (dpkg/rpm/pacman) handles it.
         for t in aide tripwire samhain afick integrit ossec-hids-server ossec-hids-agent; do
-            if dpkg-query -W -f='${Status}\n' "$t" 2>/dev/null | grep -q '^install ok installed$'; then
+            if pkg_is_installed "$t"; then
                 found="$t"
                 break
             fi
