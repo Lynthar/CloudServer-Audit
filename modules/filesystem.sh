@@ -46,6 +46,13 @@ declare -ga FS_SUID_WHITELIST=(
     "/usr/lib/snapd/snap-confine"
     # polkit agent helper — Ubuntu 24.04 path (older: /usr/libexec or policykit-1)
     "/usr/lib/polkit-1/polkit-agent-helper-1"
+    # sudo-rs (Rust sudo) — default on Ubuntu 25.10+/26.04; ships under cargo/bin,
+    # plus /usr/bin/sudo.ws from the transitional `sudo` package
+    "/usr/lib/cargo/bin/sudo"
+    "/usr/lib/cargo/bin/su"
+    "/usr/bin/sudo.ws"
+    # NTFS-3G FUSE mount helper
+    "/usr/bin/ntfs-3g"
 )
 
 # Sensitive files and their expected permissions
