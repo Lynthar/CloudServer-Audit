@@ -360,6 +360,43 @@ pkg_is_installed() {
     esac
 }
 
+# Does some installed package own this file? 0 = owned, 1 = not owned,
+# 2 = cannot determine (no query tool / unknown pkg manager). Callers
+# MUST invoke this in a tested context (`if` / `&&`) so a non-zero result
+# from the query tool doesn't trip `set -e` inside the function body.
+file_owned_by_package() {
+    local path="$1"
+    case "$VPSSEC_PKG_MGR" in
+        apt)
+            command -v dpkg-query >/dev/null 2>&1 || return 2
+            dpkg-query -S "$path" &>/dev/null && return 0
+            # usrmerge: dpkg records some files under the pre-merge path
+            # (/bin, /sbin) and does NOT resolve the /bin -> /usr/bin
+            # symlink, so `dpkg -S /usr/bin/foo` misses a file the db
+            # stored as /bin/foo (and vice versa). Retry the aliased path
+            # before concluding the binary is orphaned.
+            local alt=""
+            case "$path" in
+                /usr/bin/*)  alt="/bin/${path#/usr/bin/}" ;;
+                /usr/sbin/*) alt="/sbin/${path#/usr/sbin/}" ;;
+                /bin/*)      alt="/usr/bin/${path#/bin/}" ;;
+                /sbin/*)     alt="/usr/sbin/${path#/sbin/}" ;;
+            esac
+            [[ -n "$alt" ]] && dpkg-query -S "$alt" &>/dev/null && return 0
+            return 1
+            ;;
+        dnf)
+            command -v rpm >/dev/null 2>&1 || return 2
+            rpm -qf "$path" &>/dev/null
+            ;;
+        pacman)
+            command -v pacman >/dev/null 2>&1 || return 2
+            pacman -Qo "$path" &>/dev/null
+            ;;
+        *) return 2 ;;
+    esac
+}
+
 # Per-family package names for the "insecure legacy server" scan in
 # baseline.sh (telnet/rsh/tftp/nis/...). The Debian list is taken
 # verbatim from modules/baseline.sh; the RHEL/Arch lists are

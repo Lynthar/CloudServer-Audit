@@ -134,6 +134,14 @@ _fs_is_whitelisted() {
             [[ -n "$pattern" && "$path" == $pattern ]] && return 0
         done < <(distro_suid_whitelist)
     fi
+    # Package-ownership fallback: a SUID binary owned by an installed
+    # package is distro-shipped and maintainer-vetted, not an anomaly —
+    # this is what lets us stop hand-maintaining per-release path
+    # whitelists. Orphaned (unowned) SUID files still fall through to a
+    # finding. No-op when the pkg manager can't answer (non-zero rc).
+    if declare -f file_owned_by_package >/dev/null 2>&1; then
+        file_owned_by_package "$path" && return 0
+    fi
     return 1
 }
 
@@ -202,6 +210,13 @@ _fs_find_sgid_files() {
             while IFS= read -r pattern; do
                 [[ -n "$pattern" && "$file" == $pattern ]] && { skip=1; break; }
             done < <(distro_sgid_whitelist)
+        fi
+
+        # Package-ownership fallback (same rationale as SUID): an SGID
+        # binary owned by an installed package is distro-shipped, not an
+        # anomaly. Orphaned ones still get reported.
+        if (( skip == 0 )) && declare -f file_owned_by_package >/dev/null 2>&1; then
+            file_owned_by_package "$file" && skip=1
         fi
 
         if ((skip == 0)); then
