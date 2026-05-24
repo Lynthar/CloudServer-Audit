@@ -214,7 +214,7 @@ update_audit() {
 }
 
 _update_audit_apt_lock() {
-    if _update_apt_locked; then
+    if pkg_manager_locked; then
         local check=$(create_check_json \
             "update.apt_locked" \
             "update" \
@@ -242,11 +242,12 @@ _update_audit_apt_lock() {
 }
 
 _update_audit_available() {
-    # Update package lists (silently)
-    apt-get update -qq 2>/dev/null
-
-    local update_count=$(_update_get_count)
-    local security_count=$(_update_get_security_count)
+    # Read-only: do NOT refresh the package index here. Auditing must not mutate
+    # state or hit the network, and refreshing would defeat the index-age signal
+    # below. Counts come from the existing metadata cache via distro.sh.
+    local update_count security_count sec_shown
+    update_count=$(pkg_update_count)
+    security_count=$(pkg_security_update_count)
 
     if ((update_count == 0)); then
         local check=$(create_check_json \
@@ -262,30 +263,28 @@ _update_audit_available() {
         print_ok "$(i18n 'update.no_updates')"
     else
         # Severity model:
-        #   no security updates                          → low (just
-        #                                                  pending
-        #                                                  routine
-        #                                                  packages)
-        #   security updates pending                     → medium (the
-        #                                                  default we
-        #                                                  expect to
-        #                                                  see on a
-        #                                                  freshly
-        #                                                  imaged host)
-        #   security updates AND list-age signals stale  → high
-        #     (last `apt update` ran > 30 days ago, i.e. the operator
-        #      hasn't even pulled the security index in a month — at
-        #      that point the lag is the actual finding, not the
-        #      individual updates)
+        #   no security updates                     → low (routine pending pkgs)
+        #   security updates pending                → medium
+        #   security updates AND index stale (>30d) → high (operator hasn't even
+        #                                             pulled the index in a month
+        #                                             — the lag is the finding)
+        # security_count < 0 means the distro has no security-update channel
+        # (Arch, rolling) → don't escalate. It's an upper bound on dnf, so the
+        # displayed figure is clamped to the total update count.
         local severity="low"
         local fix_id=""
+        local sec_desc=""
 
         if ((security_count > 0)); then
             severity="medium"
             fix_id="update.apply_security"
 
+            sec_shown=$security_count
+            if ((sec_shown > update_count)); then sec_shown=$update_count; fi
+            sec_desc="Security updates: $sec_shown"
+
             local stale_days
-            stale_days=$(_update_apt_list_age_days)
+            stale_days=$(pkg_index_age_days)
             if [[ -n "$stale_days" ]] && (( stale_days > 30 )); then
                 severity="high"
             fi
@@ -297,13 +296,13 @@ _update_audit_available() {
             "$severity" \
             "failed" \
             "$(i18n 'update.updates_available' "count=$update_count")" \
-            "Security updates: $security_count" \
-            "Run: apt upgrade" \
+            "$sec_desc" \
+            "Apply pending updates with the system package manager" \
             "$fix_id")
         state_add_check "$check"
 
         if ((security_count > 0)); then
-            print_severity "$severity" "$(i18n 'update.security_updates' "count=$security_count")"
+            print_severity "$severity" "$(i18n 'update.security_updates' "count=$sec_shown")"
         else
             print_severity "low" "$(i18n 'update.updates_available' "count=$update_count")"
         fi
@@ -335,23 +334,40 @@ _update_apt_list_age_days() {
 }
 
 _update_audit_unattended() {
-    if ! _update_unattended_installed; then
+    local status
+    status=$(auto_update_status) || true
+
+    # Arch (rolling) has no native auto-update mechanism — that's normal, not a
+    # finding. Mark passed so it doesn't penalise the score.
+    if [[ "$status" == "unsupported" ]]; then
+        local check=$(create_check_json \
+            "update.unattended_unsupported" \
+            "update" \
+            "low" \
+            "passed" \
+            "$(i18n 'update.unattended_unsupported' 2>/dev/null || echo 'No native auto-update mechanism (distro default)')" \
+            "" \
+            "" \
+            "")
+        state_add_check "$check"
+        print_ok "$(i18n 'update.unattended_unsupported' 2>/dev/null || echo 'No native auto-update mechanism (distro default)')"
+        return
+    fi
+
+    if ! auto_update_installed; then
         local check=$(create_check_json \
             "update.unattended_not_installed" \
             "update" \
             "medium" \
             "failed" \
             "$(i18n 'update.unattended_disabled')" \
-            "unattended-upgrades package not installed" \
+            "no automatic-update mechanism installed (unattended-upgrades / dnf-automatic)" \
             "$(i18n 'update.fix_install_unattended')" \
             "update.install_unattended")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'update.unattended_disabled')"
         return
     fi
-
-    local status
-    status=$(_update_unattended_status)
 
     if [[ "$status" == "ok" ]]; then
         local check=$(create_check_json \
@@ -369,13 +385,13 @@ _update_audit_unattended() {
         local reason_desc
         case "$status" in
             service_disabled)
-                reason_desc="systemd unit unattended-upgrades is not enabled" ;;
+                reason_desc="auto-update service/timer is not enabled" ;;
             periodic_off)
-                reason_desc="APT::Periodic::Unattended-Upgrade is not 1 in merged apt config (check 20auto-upgrades and drop-ins)" ;;
+                reason_desc="auto-update is installed but not set to apply updates" ;;
             no_origins)
-                reason_desc="merged Unattended-Upgrade::Origins-Pattern/Allowed-Origins is empty (check 50unattended-upgrades and drop-ins)" ;;
+                reason_desc="unattended-upgrades has no Origins-Pattern/Allowed-Origins configured" ;;
             *)
-                reason_desc="unattended-upgrades installed but not effective" ;;
+                reason_desc="auto-update mechanism installed but not effective" ;;
         esac
 
         local check=$(create_check_json \
@@ -393,7 +409,7 @@ _update_audit_unattended() {
 }
 
 _update_audit_reboot() {
-    if _update_reboot_required; then
+    if pkg_reboot_required; then
         local packages=$(_update_reboot_packages)
         local pkg_list=""
         if [[ -n "$packages" ]]; then
