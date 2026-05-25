@@ -34,9 +34,10 @@ signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
 extracting. The signing identity is pinned to this repo's `release.yml`
 workflow, so swapping the tarball isn't possible without compromising
 sigstore's Fulcio CA. `cosign` is auto-installed via `apt` on Ubuntu
-22.04+; on Debian (and any other distro where apt has no cosign) the
-script falls back to a pinned `.deb` from sigstore's GitHub release with
-the SHA256 verified locally before `dpkg` runs. The fallback path shifts
+22.04+; otherwise the script installs a pinned asset from sigstore's
+GitHub release with its SHA256 verified locally first — a `.deb` via
+`dpkg` on Debian, or the static `cosign` binary into `/usr/local/bin`
+on RHEL/Arch and other non-dpkg distros. The fallback path shifts
 cosign's bootstrap trust from the distro archive to github.com — same
 trust root used to fetch `run.sh` itself, so no new attack surface vs.
 the existing one-liner. Skip verification entirely with `VPSSEC_NO_VERIFY=1`
@@ -186,7 +187,7 @@ for the full model.
 
 PRs welcome.
 
-- Architecture and module-extension patterns: [`CLAUDE.md`](CLAUDE.md)
+- Architecture and module-extension patterns: the `<module>_audit` / `<module>_fix` contracts and the comments under `core/`
 - Unit tests: `bats tests/` (~240 cases)
 - Mutation harness (plant-defect verification): `tests/mutation/` — only run on a disposable VM
 - Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`

@@ -328,6 +328,17 @@ main() {
         exit 1
     fi
 
+    # Guide/fix is apt/dpkg-based and only supported on Debian/Ubuntu.
+    # Reject here — before the module menu — so a RHEL/Arch user isn't
+    # walked through module selection only to be turned away. The audit
+    # path is distro-aware and still works; guide_mode keeps its own
+    # is_debian_based gate as defence in depth.
+    if [[ "${VPSSEC_MODE:-}" == "guide" ]] && ! is_debian_based; then
+        i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
+        print_warn "$(i18n 'guide.fix_debian_only')"
+        exit 0
+    fi
+
     # Show module selection if not specified via CLI
     select_modules
 

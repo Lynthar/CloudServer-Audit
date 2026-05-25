@@ -32,9 +32,10 @@ sudo ./vpssec audit
 一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
 Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
 workflow，攻击者无法在不攻破 sigstore Fulcio CA 的情况下替换 tarball。
-Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；Debian 等 apt 仓库无 cosign 的
-系统会回退到从 sigstore GitHub release 下载 pinned 版本的 `.deb`，并在
-`dpkg` 执行前本地校验 SHA256。fallback 路径把 cosign 的引导信任从 distro
+Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；其它系统从 sigstore GitHub
+release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 `.deb`
+（`dpkg`），RHEL/Arch 等无 dpkg 的系统装静态 `cosign` 二进制到
+`/usr/local/bin`。fallback 路径把 cosign 的引导信任从 distro
 仓库切到 github.com —— 与下载 `run.sh` 本身同源，不引入新的攻击面。完全
 跳过验证用 `VPSSEC_NO_VERIFY=1`（不推荐）。
 
@@ -179,7 +180,7 @@ score   = clamp(0, 100, base − penalty)
 
 欢迎 PR。
 
-- 架构和模块扩展规范：[`CLAUDE.md`](CLAUDE.md)
+- 架构和模块扩展规范：见 `<module>_audit` / `<module>_fix` 契约和 `core/` 下的注释
 - 单元测试：`bats tests/`（约 240 个用例）
 - 变异测试 harness（注入缺陷验证检测）：`tests/mutation/` —— 仅在可丢弃的 VM 上跑
 - commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`

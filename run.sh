@@ -38,8 +38,12 @@ COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 # bundle verification is backwards compatible across majors), so this
 # pin can move independently of release.yml's signer pin.
 COSIGN_PIN_VERSION="3.0.6"
+# .deb assets — Debian/Ubuntu (installed via dpkg)
 COSIGN_PIN_SHA256_AMD64="e16e8eb815f8b1b3cee3e678874393c286f19dd59e9ac5da95e428f970ef00f3"
 COSIGN_PIN_SHA256_ARM64="93f382c7476e3effabff8a2c3561239381d55dc2b21b2ccbeaf70e460acfeaaa"
+# static binaries — RHEL/Arch and any other non-dpkg distro
+COSIGN_PIN_SHA256_BIN_AMD64="c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
+COSIGN_PIN_SHA256_BIN_ARM64="bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -67,63 +71,89 @@ print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Root + basic tools + cosign (unless verification is opted-out). We
 # best-effort `apt install cosign` since Ubuntu 22.04+ ships it in
-# universe. If apt has nothing (typical Debian), we fall back to a
-# pinned + SHA256-verified .deb from sigstore's GitHub release — see
-# install_cosign_pinned() for the trust-model trade-off. Architectures
-# without a pinned hash, or any other dpkg failure, still bail with
-# manual-install instructions.
+# universe. If that's unavailable, install_cosign_pinned() falls back to
+# a pinned, SHA256-verified asset from sigstore's GitHub release — the
+# .deb via dpkg on Debian/Ubuntu, or the static linux binary into
+# /usr/local/bin on RHEL/Arch and other non-dpkg distros. Architectures
+# without a pinned hash still bail with manual-install instructions.
 install_cosign_pinned() {
-    # Fallback used when apt has no cosign package. Resolves uname -m
-    # to a sigstore .deb arch suffix, downloads the pinned release
-    # asset, verifies it against the SHA256 baked into this script,
-    # then dpkg-installs. We deliberately do the hash check BEFORE
-    # dpkg so a compromised sigstore can't run a malicious maintainer
-    # script via package install. Returns non-zero on any failure.
-    if ! command -v dpkg &>/dev/null; then
-        print_error "dpkg not available — pinned cosign fallback is dpkg-only"
-        return 1
-    fi
-
-    local arch deb_arch want_hash
+    # Fallback used when apt has no cosign package. Resolves uname -m to a
+    # sigstore arch suffix and installs a pinned, SHA256-verified asset
+    # from cosign's GitHub release: the .deb via dpkg on Debian/Ubuntu, or
+    # the static linux binary into /usr/local/bin on RHEL/Arch and any
+    # other non-dpkg distro. The hash is always checked BEFORE the asset
+    # is installed or executed, so a compromised sigstore can't push a
+    # tampered cosign through this script. Returns non-zero on any failure.
+    local arch arch_sfx want_deb_hash want_bin_hash
     arch=$(uname -m)
     case "$arch" in
-        x86_64)  deb_arch="amd64"; want_hash="$COSIGN_PIN_SHA256_AMD64" ;;
-        aarch64) deb_arch="arm64"; want_hash="$COSIGN_PIN_SHA256_ARM64" ;;
+        x86_64)  arch_sfx="amd64"; want_deb_hash="$COSIGN_PIN_SHA256_AMD64"; want_bin_hash="$COSIGN_PIN_SHA256_BIN_AMD64" ;;
+        aarch64) arch_sfx="arm64"; want_deb_hash="$COSIGN_PIN_SHA256_ARM64"; want_bin_hash="$COSIGN_PIN_SHA256_BIN_ARM64" ;;
         *)
-            print_error "No pinned cosign .deb for architecture: $arch"
+            print_error "No pinned cosign for architecture: $arch"
             return 1
             ;;
     esac
 
-    local deb_file="/tmp/cosign_${COSIGN_PIN_VERSION}_${deb_arch}.$$.deb"
-    local deb_url="https://github.com/sigstore/cosign/releases/download/v${COSIGN_PIN_VERSION}/cosign_${COSIGN_PIN_VERSION}_${deb_arch}.deb"
-
-    print_warn "cosign not in apt — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
+    local base_url="https://github.com/sigstore/cosign/releases/download/v${COSIGN_PIN_VERSION}"
+    print_warn "cosign not in package manager — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
     print_warn "  trust root for cosign shifts from distro archive to github.com (same as run.sh itself)"
 
-    if ! curl -fsSL "$deb_url" -o "$deb_file"; then
-        print_error "Download failed: $deb_url"
+    if command -v dpkg &>/dev/null; then
+        # Debian/Ubuntu: pinned .deb. Hash-check before dpkg so a
+        # compromised sigstore can't run a malicious maintainer script.
+        local deb_file="/tmp/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.$$.deb"
+        if ! curl -fsSL "${base_url}/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb" -o "$deb_file"; then
+            print_error "Download failed: cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb"
+            rm -f "$deb_file"
+            return 1
+        fi
+        local got_hash
+        got_hash=$(sha256sum "$deb_file" | awk '{print $1}')
+        if [[ "$got_hash" != "$want_deb_hash" ]]; then
+            print_error "cosign .deb SHA256 mismatch — refusing to install"
+            print_error "  expected: $want_deb_hash"
+            print_error "  got:      $got_hash"
+            rm -f "$deb_file"
+            return 1
+        fi
+        print_ok "cosign .deb hash verified"
+        if ! dpkg -i "$deb_file" >/dev/null 2>&1; then
+            print_error "dpkg -i failed for $deb_file"
+            rm -f "$deb_file"
+            return 1
+        fi
         rm -f "$deb_file"
-        return 1
+    else
+        # RHEL/Arch / anything without dpkg: pinned static binary. Same
+        # trust trade-off; hash is checked before the file is made
+        # executable or run.
+        local bin_file="/tmp/cosign-linux-${arch_sfx}.$$"
+        if ! curl -fsSL "${base_url}/cosign-linux-${arch_sfx}" -o "$bin_file"; then
+            print_error "Download failed: cosign-linux-${arch_sfx}"
+            rm -f "$bin_file"
+            return 1
+        fi
+        local got_hash
+        got_hash=$(sha256sum "$bin_file" | awk '{print $1}')
+        if [[ "$got_hash" != "$want_bin_hash" ]]; then
+            print_error "cosign binary SHA256 mismatch — refusing to install"
+            print_error "  expected: $want_bin_hash"
+            print_error "  got:      $got_hash"
+            rm -f "$bin_file"
+            return 1
+        fi
+        print_ok "cosign binary hash verified"
+        if ! install -Dm0755 "$bin_file" /usr/local/bin/cosign 2>/dev/null; then
+            print_error "failed to install cosign to /usr/local/bin"
+            rm -f "$bin_file"
+            return 1
+        fi
+        rm -f "$bin_file"
+        # Make sure the freshly-installed binary is reachable for the
+        # verify-blob call below even if /usr/local/bin wasn't on PATH.
+        export PATH="/usr/local/bin:${PATH}"
     fi
-
-    local got_hash
-    got_hash=$(sha256sum "$deb_file" | awk '{print $1}')
-    if [[ "$got_hash" != "$want_hash" ]]; then
-        print_error "cosign .deb SHA256 mismatch — refusing to install"
-        print_error "  expected: $want_hash"
-        print_error "  got:      $got_hash"
-        rm -f "$deb_file"
-        return 1
-    fi
-    print_ok "cosign .deb hash verified"
-
-    if ! dpkg -i "$deb_file" >/dev/null 2>&1; then
-        print_error "dpkg -i failed for $deb_file"
-        rm -f "$deb_file"
-        return 1
-    fi
-    rm -f "$deb_file"
 
     if ! command -v cosign &>/dev/null; then
         print_error "cosign installed but not on PATH"
