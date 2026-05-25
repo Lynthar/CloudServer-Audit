@@ -41,7 +41,7 @@ release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 
 
 ```bash
 # 固定版本
-VPSSEC_VERSION=v0.0.9 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+VPSSEC_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 
 # 跳过验证（不推荐）
 VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -50,7 +50,7 @@ VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudS
 手动验证某个 release：
 
 ```bash
-TAG=v0.0.9
+TAG=v1.0.0
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \

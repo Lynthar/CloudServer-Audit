@@ -45,7 +45,7 @@ the existing one-liner. Skip verification entirely with `VPSSEC_NO_VERIFY=1`
 
 ```bash
 # Pin to a specific release
-VPSSEC_VERSION=v0.0.9 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+VPSSEC_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 
 # Skip verification (NOT recommended)
 VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -54,7 +54,7 @@ VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudS
 Verify a release manually:
 
 ```bash
-TAG=v0.0.9
+TAG=v1.0.0
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \
