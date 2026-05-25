@@ -9,7 +9,7 @@ set -euo pipefail
 # Global Variables
 # ==============================================================================
 
-VPSSEC_VERSION="0.1.0"
+VPSSEC_VERSION="1.0.0"
 VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VPSSEC_CORE="${VPSSEC_ROOT}/core"
 VPSSEC_MODULES="${VPSSEC_ROOT}/modules"
