@@ -412,7 +412,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # === Scheduling Module - recommended (Lynis SCHD-* cross-check) ===
     ["scheduling.at_jobs_present"]="info"
     ["scheduling.no_at_jobs"]="info"
-    ["scheduling.cron_fetches_internet"]="recommended"
+    ["scheduling.cron_fetches_internet"]="info"
     ["scheduling.cron_clean"]="recommended"
 
     # === Alerts Module - optional ===
@@ -510,14 +510,14 @@ declare -gA CHECK_SCORE_CATEGORY=(
 
     # === Timezone Module ===
     ["timezone.configured"]="info"
-    ["timezone.not_configured"]="recommended"
+    ["timezone.not_configured"]="info"
     ["timezone.using_utc"]="info"
     ["timezone.ntp_synced"]="recommended"
     ["timezone.ntp_not_synced"]="recommended"
     ["timezone.ntp_disabled"]="recommended"
-    ["timezone.time_accurate"]="recommended"
-    ["timezone.time_drift"]="recommended"
-    ["timezone.rtc_local"]="recommended"
+    ["timezone.time_accurate"]="info"
+    ["timezone.time_drift"]="info"
+    ["timezone.rtc_local"]="info"
     ["timezone.locale_ok"]="info"
     ["timezone.locale_not_set"]="info"
 
@@ -529,14 +529,14 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["malware.suspicious_lkm"]="required"
     ["malware.crypto_miner"]="required"
     ["malware.mining_pool_connection"]="required"
-    ["malware.cpu_anomaly"]="recommended"
+    ["malware.cpu_anomaly"]="info"
     ["malware.webshell"]="required"
     ["malware.deleted_binary"]="required"
     ["malware.memfd_execution"]="required"
-    ["malware.suspicious_path"]="recommended"
+    ["malware.suspicious_path"]="info"
     ["malware.reverse_shell"]="required"
-    ["malware.c2_connection"]="required"
-    ["malware.unusual_outbound"]="recommended"
+    ["malware.c2_connection"]="info"
+    ["malware.unusual_outbound"]="info"
     ["malware.clean"]="info"
 
     # === Webapp Module - conditional (only if webserver installed) ===
@@ -562,6 +562,50 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.sensitive_files_ok"]="required"
     ["webapp.backup_files"]="recommended"
     ["webapp.no_webserver"]="info"
+
+    # === Score-category round: previously-unlisted check_ids, classified
+    # per the hardening-posture rubric. The score measures configuration
+    # posture, so heuristic IOCs, tool-prerequisite/context checks, and
+    # operator-preference items are info (shown, but never move the score —
+    # a false positive must not lower it). Genuine posture gaps count. ===
+    # Heuristic IOC / advisory
+    ["filesystem.suspicious_cron"]="info"
+    ["filesystem.cron_ok"]="info"
+    ["filesystem.non_standard_caps"]="info"
+    ["filesystem.pam_umask_disabled"]="info"
+    ["filesystem.caps_unavailable"]="info"
+    ["kernel.container_detected"]="info"
+    ["cloudflared.tunnel_list_unavailable"]="info"
+    # Tool-prerequisite / context (preflight audits vpssec itself, not the host)
+    ["preflight.os_supported"]="info"
+    ["preflight.os_unsupported"]="info"
+    ["preflight.network_ok"]="info"
+    ["preflight.network_fail"]="info"
+    ["preflight.deps_ok"]="info"
+    ["preflight.deps_missing"]="info"
+    ["preflight.ports_ok"]="info"
+    # Operator preference / non-posture
+    ["ssh.no_access_control"]="info"
+    ["ssh.access_control_configured"]="info"
+    ["ssh.default_port"]="info"
+    ["ssh.custom_port"]="info"
+    ["users.password_policy_weak"]="info"
+    ["users.password_policy_ok"]="info"
+    ["ufw.ipv6_no_traffic"]="info"
+    # Dedup — counted by the authoritative sibling check
+    ["kernel.kernel_params_high"]="info"      # ASLR-off already counted by kernel.aslr_disabled
+    ["update.timesync_failed"]="info"         # NTP counted by timezone.ntp_*
+    ["update.timesync_ok"]="info"
+    ["update.unattended_unsupported"]="info"  # Arch passed-context state
+    # Genuine posture gaps → count
+    ["filesystem.dangerous_caps"]="recommended"
+    ["filesystem.caps_ok"]="recommended"
+    ["nginx.catchall_partial_80"]="conditional"
+    ["nginx.catchall_partial_443"]="conditional"
+    ["ufw.ipv6_bypass"]="recommended"
+    ["ufw.ipv6_managed"]="recommended"
+    ["update.reboot_required"]="recommended"
+    ["update.no_reboot"]="recommended"
 )
 
 # ==============================================================================
