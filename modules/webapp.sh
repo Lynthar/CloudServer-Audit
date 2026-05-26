@@ -834,7 +834,7 @@ webapp_audit() {
             check_json=$(create_check_json \
                 "webapp.nginx_security_headers" \
                 "webapp" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'webapp.missing_security_headers' 2>/dev/null || echo 'Missing Security Headers'): $missing_count" \
                 "$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
@@ -860,7 +860,7 @@ webapp_audit() {
             check_json=$(create_check_json \
                 "webapp.nginx_hsts_missing" \
                 "webapp" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')" \
                 "Strict-Transport-Security header not found" \
@@ -909,7 +909,7 @@ webapp_audit() {
             check_json=$(create_check_json \
                 "webapp.nginx_weak_ssl" \
                 "webapp" \
-                "high" \
+                "medium" \
                 "failed" \
                 "$(i18n 'webapp.weak_ssl_protocols' 2>/dev/null || echo 'Weak SSL/TLS Protocols Enabled'): $weak_ssl_count" \
                 "$(echo "$weak_ssl" | head -3 | tr '\n' '; ' | sed 's/;$//')" \
@@ -926,7 +926,7 @@ webapp_audit() {
             check_json=$(create_check_json \
                 "webapp.nginx_weak_ciphers" \
                 "webapp" \
-                "high" \
+                "medium" \
                 "failed" \
                 "$(i18n 'webapp.weak_ciphers' 2>/dev/null || echo 'Weak SSL Ciphers Detected'): $weak_cipher_count" \
                 "$(echo "$weak_ciphers" | tr '\n' ', ' | sed 's/,$//')" \
@@ -977,7 +977,7 @@ webapp_audit() {
             check_json=$(create_check_json \
                 "webapp.apache_trace_enabled" \
                 "webapp" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'webapp.apache_trace_on' 2>/dev/null || echo 'Apache TRACE Method Enabled')" \
                 "TRACE method can be used for XST attacks" \
@@ -1122,8 +1122,8 @@ webapp_audit() {
             expired_list+="$cert ($days); "
         done <<< "$expiring"
 
-        local severity="medium"
-        echo "$expiring" | grep -q "expired" && severity="high"
+        local severity="low"
+        echo "$expiring" | grep -q "expired" && severity="medium"
 
         check_json=$(create_check_json \
             "webapp.ssl_cert_expiry" \

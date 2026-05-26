@@ -243,40 +243,40 @@ _nginx_audit_catchall() {
             local check=$(create_check_json \
                 "nginx.catchall_partial_80" \
                 "nginx" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'nginx.catchall_partial_80')" \
                 "$(i18n 'nginx.catchall_partial_80_desc')" \
                 "$(i18n 'nginx.fix_add_catchall')" \
                 "nginx.add_catchall")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'nginx.catchall_partial_80')"
+            print_severity "low" "$(i18n 'nginx.catchall_partial_80')"
             ;;
         443only)
             local check=$(create_check_json \
                 "nginx.catchall_partial_443" \
                 "nginx" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'nginx.catchall_partial_443')" \
                 "$(i18n 'nginx.catchall_partial_443_desc')" \
                 "$(i18n 'nginx.fix_add_catchall')" \
                 "nginx.add_catchall")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'nginx.catchall_partial_443')"
+            print_severity "low" "$(i18n 'nginx.catchall_partial_443')"
             ;;
         *)
             local check=$(create_check_json \
                 "nginx.no_catchall" \
                 "nginx" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'nginx.no_catchall')" \
                 "$(i18n 'nginx.no_catchall_desc')" \
                 "$(i18n 'nginx.fix_add_catchall')" \
                 "nginx.add_catchall")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'nginx.no_catchall')"
+            print_severity "low" "$(i18n 'nginx.no_catchall')"
             ;;
     esac
 }
@@ -301,7 +301,7 @@ _nginx_audit_dos_hardening() {
         check=$(create_check_json \
             "nginx.client_header_timeout_high" \
             "nginx" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high')" \
             "client_header_timeout=$cht_raw (CIS 5.2.1: ≤10s; nginx default 60s leaves Slowloris vulnerable)" \
@@ -309,7 +309,7 @@ _nginx_audit_dos_hardening() {
             "")
         state_add_check "$check"
         issues+=("client_header_timeout=$cht_raw")
-        print_severity "medium" "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high'): $cht_raw"
+        print_severity "low" "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high'): $cht_raw"
     fi
 
     # 2. client_body_timeout — CIS 5.2.1, default 60s, recommended ≤10s.
@@ -320,7 +320,7 @@ _nginx_audit_dos_hardening() {
         check=$(create_check_json \
             "nginx.client_body_timeout_high" \
             "nginx" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high')" \
             "client_body_timeout=$cbt_raw (CIS 5.2.1: ≤10s)" \
@@ -328,7 +328,7 @@ _nginx_audit_dos_hardening() {
             "")
         state_add_check "$check"
         issues+=("client_body_timeout=$cbt_raw")
-        print_severity "medium" "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high'): $cbt_raw"
+        print_severity "low" "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high'): $cbt_raw"
     fi
 
     # 3. keepalive_timeout — default 75s, recommended ≤30s (F5 NGINX STIG).

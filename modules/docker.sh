@@ -331,14 +331,14 @@ _docker_audit_privileged() {
         local check=$(create_check_json \
             "docker.privileged_containers" \
             "docker" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'docker.privileged_containers' "count=$count")" \
             "Privileged containers: $container_list" \
             "Remove --privileged flag, use specific capabilities instead" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'docker.privileged_containers' "count=$count"): $container_list"
+        print_severity "medium" "$(i18n 'docker.privileged_containers' "count=$count"): $container_list"
     else
         local check=$(create_check_json \
             "docker.no_privileged" \
@@ -363,14 +363,14 @@ _docker_audit_root_containers() {
         local check=$(create_check_json \
             "docker.all_root_containers" \
             "docker" \
-            "medium" \
+            "low" \
             "failed" \
             "All containers running as root ($count)" \
             "All containers are running as root user" \
             "Use USER directive in Dockerfile or --user flag" \
             "")
         state_add_check "$check"
-        print_severity "medium" "All $count containers running as root"
+        print_severity "low" "All $count containers running as root"
     elif ((count > 0)); then
         local check=$(create_check_json \
             "docker.some_root_containers" \
@@ -454,14 +454,14 @@ _docker_audit_daemon_settings() {
         local check=$(create_check_json \
             "docker.no_new_privileges_disabled" \
             "docker" \
-            "medium" \
+            "low" \
             "failed" \
             "Docker no-new-privileges not set as default" \
             "Containers can gain new privileges by default" \
             "Enable no-new-privileges in daemon.json" \
             "docker.enable_no_new_privileges")
         state_add_check "$check"
-        print_severity "medium" "Docker no-new-privileges not set as default"
+        print_severity "low" "Docker no-new-privileges not set as default"
         ((issues++)) || true
     fi
 
@@ -551,14 +551,14 @@ _docker_audit_seccomp_unconfined() {
         local check=$(create_check_json \
             "docker.seccomp_unconfined" \
             "docker" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'docker.seccomp_unconfined' "count=$count")" \
             "$(i18n 'docker.seccomp_unconfined_desc' "containers=$list")" \
             "$(i18n 'docker.seccomp_fix')" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'docker.seccomp_unconfined' "count=$count"): $list"
+        print_severity "medium" "$(i18n 'docker.seccomp_unconfined' "count=$count"): $list"
     else
         local check=$(create_check_json \
             "docker.no_seccomp_unconfined" \
@@ -596,14 +596,14 @@ _docker_audit_userns_remap() {
         local check=$(create_check_json \
             "docker.userns_not_enabled" \
             "docker" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'docker.userns_not_enabled')" \
             "$(i18n 'docker.userns_not_enabled_desc')" \
             "$(i18n 'docker.userns_fix')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'docker.userns_not_enabled')"
+        print_severity "low" "$(i18n 'docker.userns_not_enabled')"
     fi
 }
 
@@ -674,11 +674,13 @@ _docker_audit_default_bridge_icc() {
     fi
 }
 
-# Container env scan. HIGH severity matches cloud.user_data_leaked_
-# _secrets — the credential is already in a readable place (anyone
-# with the docker socket, /proc, or `docker inspect` access reads
-# it). NEVER log raw values — finding desc records only "kind +
-# count" output from the shared scanner.
+# Container env scan. MEDIUM (not high like cloud.user_data_leaked_
+# secrets): cloud user-data is readable by EVERY process on the host,
+# whereas container env vars are scoped to the container's own
+# processes plus docker-socket / `docker inspect` (root-equivalent)
+# access — so realising the exposure needs the container, or docker
+# access, to be compromised first. NEVER log raw values — finding desc
+# records only "kind + count" output from the shared scanner.
 _docker_audit_secrets_in_env() {
     local hits; hits=$(_docker_get_containers_with_env_secrets)
     local count; count=$(count_lines "$hits")
@@ -691,14 +693,14 @@ _docker_audit_secrets_in_env() {
         local check=$(create_check_json \
             "docker.secrets_in_env" \
             "docker" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with embedded credentials in env vars")" \
             "Containers (kinds + counts only; raw values withheld): ${sample}. Any process with docker socket access reads these via 'docker inspect'." \
             "$(i18n 'docker.fix_secrets_in_env' 2>/dev/null || echo 'Rotate the exposed credentials. Use docker secrets / mounted secret files / cloud-provider secret stores instead of -e/--env.')" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with secrets in env")"
+        print_severity "medium" "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with secrets in env")"
     else
         local check=$(create_check_json \
             "docker.no_env_secrets" \
