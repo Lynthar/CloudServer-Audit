@@ -456,14 +456,14 @@ _ssh_audit_pubkey() {
         local check=$(create_check_json \
             "ssh.pubkey_disabled" \
             "ssh" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'ssh.pubkey_disabled')" \
             "PubkeyAuthentication is disabled" \
             "$(i18n 'ssh.fix_enable_pubkey')" \
             "ssh.enable_pubkey")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ssh.pubkey_disabled')"
+        print_severity "medium" "$(i18n 'ssh.pubkey_disabled')"
     fi
 }
 
@@ -492,14 +492,14 @@ _ssh_audit_admin_user() {
             check=$(create_check_json \
                 "ssh.admin_no_key" \
                 "ssh" \
-                "medium" \
+                "low" \
                 "failed" \
                 "Admin user $first_admin has no SSH key" \
                 "No authorized_keys file found" \
                 "Add SSH public key for $first_admin" \
                 "")
             state_add_check "$check"
-            print_severity "medium" "Admin user $first_admin has no SSH key"
+            print_severity "low" "Admin user $first_admin has no SSH key"
         else
             # Check authorized_keys permissions if key exists
             local perm_issues
@@ -523,14 +523,14 @@ _ssh_audit_admin_user() {
         check=$(create_check_json \
             "ssh.no_admin_user" \
             "ssh" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'ssh.no_admin_user')" \
             "No non-root user with sudo privileges found" \
             "Create a non-root admin user before disabling root login" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'ssh.no_admin_user')"
+        print_severity "low" "$(i18n 'ssh.no_admin_user')"
     fi
 }
 
@@ -1023,14 +1023,14 @@ _ssh_audit_algorithms() {
         local check=$(create_check_json \
             "ssh.weak_algorithms" \
             "ssh" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'ssh.weak_algorithms')" \
             "Weak algorithms: $issue_list" \
             "$(i18n 'ssh.fix_algorithms')" \
             "ssh.harden_algorithms")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'ssh.weak_algorithms'): ${#issues[@]} found"
+        print_severity "low" "$(i18n 'ssh.weak_algorithms'): ${#issues[@]} found"
     else
         local check=$(create_check_json \
             "ssh.algorithms_ok" \

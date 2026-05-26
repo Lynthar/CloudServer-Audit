@@ -288,14 +288,14 @@ ufw_audit() {
             local check=$(create_check_json \
                 "ufw.no_firewall" \
                 "ufw" \
-                "high" \
+                "medium" \
                 "failed" \
                 "$(i18n 'ufw.no_firewall')" \
                 "$(i18n 'ufw.no_firewall_desc')" \
                 "$nf_suggestion" \
                 "ufw.install")
             state_add_check "$check"
-            print_severity "high" "$(i18n 'ufw.no_firewall')"
+            print_severity "medium" "$(i18n 'ufw.no_firewall')"
             # Continue to check if UFW is installed but not enabled
             ;;
     esac
@@ -312,14 +312,14 @@ ufw_audit() {
             local check=$(create_check_json \
                 "ufw.not_installed" \
                 "ufw" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'ufw.not_installed')" \
                 "$(i18n 'ufw.not_installed_desc')" \
                 "$(i18n 'ufw.fix_install')" \
                 "ufw.install")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'ufw.not_installed')"
+            print_severity "low" "$(i18n 'ufw.not_installed')"
         fi
         return
     fi
@@ -350,52 +350,81 @@ ufw_audit() {
     fi
 }
 
-# Count effective rules in the active firewall backend. "Effective"
-# means actual filter/accept/drop rules — not chain declarations,
-# default policy lines, or structural braces (which exist even when
-# the firewall is logically empty). Threshold: 0 rules == empty.
-# Lynis FIRE-4540 uses ≤3 for slack against tooling artifacts; we
-# stay stricter (== 0) because a passing audit should imply real
-# enforcement, not just "you typed nftables somewhere".
+# Decide whether the active (non-ufw/non-firewalld) backend actually
+# enforces HOST INGRESS filtering. The previous version counted every
+# rule in every chain, which reported a host as "firewalled" whenever a
+# container runtime was present: Docker/podman populate FORWARD/NAT and
+# custom chains (DOCKER, DOCKER-USER, ...) that filter container traffic
+# but do NOT protect host-level services. On a modern iptables-nft host
+# those rules even land in nftables, so fw_backend returns "nftables"
+# and the ruleset looks busy while the host's INPUT path is wide open.
+#
+# Correct signal = the input hook: a host is protected if its input
+# chain has at least one rule OR a default drop/reject policy (a
+# default-drop input with no explicit rules is still enforcement — the
+# old all-chains count flagged that secure case as "empty", a separate
+# false positive this also fixes).
+#
+# Fail-safe: on any parse/query failure we return WITHOUT flagging, so
+# we never raise a false "empty" alarm on a host we could not read.
 _ufw_audit_ruleset_empty() {
     local backend="$1"
-    local rule_count=0
+    local ingress_rules=0
+    local default_drop=0
 
     case "$backend" in
         nftables)
             command -v nft >/dev/null 2>&1 || return 0
-            # Strip table/chain/set/map declarations, structural braces,
-            # blank lines, and trailing-`;` lines (which carry "type ...
-            # hook ... priority ...; policy ...;" metadata, not rules).
-            rule_count=$(nft --stateless list ruleset 2>/dev/null \
-                | grep -Ev '^[[:space:]]*(table|chain|set|map|element|\{|\})' \
-                | grep -Ev ';[[:space:]]*$' \
-                | grep -cv '^[[:space:]]*$')
+            local nft_out
+            nft_out=$(nft --stateless list ruleset 2>/dev/null) || return 0
+            [[ -z "$nft_out" ]] && return 0
+            # Walk base chains; count rules only inside chains hooked to
+            # `input`, and note a drop/reject policy on that hook. The
+            # close-brace test requires a lone `}` so an inline anonymous
+            # set (`tcp dport { 22, 80 } accept`) does not close the chain.
+            # [ \t] (not [[:space:]]) keeps this portable to mawk.
+            read -r ingress_rules default_drop <<<"$(awk '
+                /^[ \t]*chain[ \t]/ { inchain=1; isinput=0; next }
+                inchain && /^[ \t]*[}][ \t]*$/ { inchain=0; isinput=0; next }
+                inchain && /hook[ \t]+input/ {
+                    isinput=1
+                    if ($0 ~ /policy[ \t]+(drop|reject)/) pol=1
+                    next
+                }
+                inchain && isinput && $0 !~ /^[ \t]*$/ { r++ }
+                END { print r+0, pol+0 }
+            ' <<<"$nft_out")"
             ;;
         iptables)
             command -v iptables >/dev/null 2>&1 || return 0
-            # Strip -P (policy) and -N (chain creation) lines.
-            rule_count=$(iptables -S 2>/dev/null \
-                | grep -cEv '^(-P|-N|$)')
+            local pol
+            pol=$(iptables -S INPUT 2>/dev/null | awk '/^-P INPUT /{print $3; exit}')
+            [[ "$pol" == "DROP" || "$pol" == "REJECT" ]] && default_drop=1
+            # Count INPUT-chain rules only (host ingress); a jump to a
+            # custom chain counts as a rule, so split firewalls still pass.
+            ingress_rules=$(iptables -S INPUT 2>/dev/null | grep -cEv '^(-P|-N|$)' || true)
             ;;
         *)
             return 0
             ;;
     esac
 
-    if (( rule_count == 0 )); then
-        local check=$(create_check_json \
-            "ufw.firewall_empty" \
-            "ufw" \
-            "high" \
-            "failed" \
-            "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but ruleset is empty")" \
-            "$backend kernel module is loaded but the effective rule count is 0; traffic is unfiltered" \
-            "$(i18n 'ufw.fix_firewall_empty' 2>/dev/null || echo "Load rules into $backend or switch to a managed front-end like UFW/firewalld")" \
-            "")
-        state_add_check "$check"
-        print_severity "high" "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but ruleset empty")"
+    # Protected if the input hook drops by default or carries any rule.
+    if (( default_drop == 1 )) || (( ingress_rules > 0 )); then
+        return 0
     fi
+
+    local check=$(create_check_json \
+        "ufw.firewall_empty" \
+        "ufw" \
+        "medium" \
+        "failed" \
+        "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but host ingress is unfiltered")" \
+        "$backend is active but the host ingress (input) chain has no rules and no default drop/reject policy; host services are unfiltered. Container runtimes add forwarding/NAT rules that do not protect the host." \
+        "$(i18n 'ufw.fix_firewall_empty' 2>/dev/null || echo "Add input rules (or a default-deny input policy), or use a managed front-end like UFW/firewalld")" \
+        "")
+    state_add_check "$check"
+    print_severity "medium" "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but host ingress unfiltered")"
 }
 
 _ufw_audit_enabled() {
@@ -415,14 +444,14 @@ _ufw_audit_enabled() {
         local check=$(create_check_json \
             "ufw.disabled" \
             "ufw" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'ufw.disabled')" \
             "UFW is installed but not enabled" \
             "$(i18n 'ufw.fix_enable')" \
             "ufw.enable")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ufw.disabled')"
+        print_severity "medium" "$(i18n 'ufw.disabled')"
     fi
 }
 
@@ -445,14 +474,14 @@ _ufw_audit_default_policy() {
         local check=$(create_check_json \
             "ufw.default_accept" \
             "ufw" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'ufw.default_incoming_accept')" \
             "Default incoming policy is ACCEPT" \
             "$(i18n 'ufw.fix_default_deny')" \
             "ufw.set_default_deny")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ufw.default_incoming_accept')"
+        print_severity "medium" "$(i18n 'ufw.default_incoming_accept')"
     fi
 }
 
@@ -475,14 +504,14 @@ _ufw_audit_ssh_rule() {
         local check=$(create_check_json \
             "ufw.no_ssh_rule" \
             "ufw" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'ufw.no_ssh_rule')" \
             "SSH port $ssh_port is not explicitly allowed" \
             "$(i18n 'ufw.fix_allow_ssh')" \
             "ufw.allow_ssh")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'ufw.no_ssh_rule')"
+        print_severity "low" "$(i18n 'ufw.no_ssh_rule')"
     fi
 }
 
@@ -510,14 +539,14 @@ _ufw_audit_ipv6_consistency() {
         local check=$(create_check_json \
             "ufw.ipv6_bypass" \
             "ufw" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'ufw.ipv6_bypass')" \
             "$(i18n 'ufw.ipv6_bypass_desc')" \
             "$(i18n 'ufw.fix_enable_ipv6')" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'ufw.ipv6_bypass')"
+        print_severity "medium" "$(i18n 'ufw.ipv6_bypass')"
     else
         local check=$(create_check_json \
             "ufw.ipv6_no_traffic" \

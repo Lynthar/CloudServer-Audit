@@ -165,12 +165,20 @@ _net_proc_in() {
 
 # Detect interfaces in promiscuous mode. On a server, promisc usually
 # means tcpdump/wireshark is running — or something far worse.
+#
+# Exclude loopback and the virtual/bridge/container interface families
+# that legitimately run promiscuous as their normal mode (Docker bridges
+# and veth pairs, libvirt virbr, CNI/flannel/k8s bridges). Flagging those
+# is a guaranteed false positive on any container/KVM host; a sniffer on a
+# real NIC still shows up. veth pairs render as "vethXXXX@ifN" — strip the
+# @peer suffix before matching.
 _net_promiscuous_interfaces() {
     command -v ip >/dev/null 2>&1 || return 0
     ip -o link show 2>/dev/null \
         | awk -F': ' '/PROMISC/{print $2}' \
-        | awk '{print $1}' \
-        | grep -v '^lo$' || true
+        | awk '{sub(/@.*/, "", $1); print $1}' \
+        | grep -vE '^(lo|docker[0-9]*|br-[0-9a-f]+|veth[0-9a-z]*|virbr[0-9]*(-nic)?|cni[0-9]*|flannel\.[0-9]+|kube-[a-z0-9-]+)$' \
+        || true
 }
 
 # ==============================================================================
@@ -317,14 +325,14 @@ _net_audit_promisc() {
         local check=$(create_check_json \
             "networking.promiscuous_interface" \
             "networking" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Interface(s) in promiscuous mode')" \
             "Interfaces: ${list% }" \
             "Investigate why an interface is in PROMISC — tcpdump/wireshark in progress, or unexpected sniffer" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Promiscuous interface detected')"
+        print_severity "medium" "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Promiscuous interface detected')"
     else
         local check=$(create_check_json \
             "networking.no_promisc" \

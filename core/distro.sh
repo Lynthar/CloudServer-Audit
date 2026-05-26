@@ -27,11 +27,23 @@
 # auto_update_configure, sshd_binary_path, ...) are deliberately NOT
 # here — they belong to the later guide-mode multi-distro effort.
 #
-# STATUS: defined but not yet consumed. Nothing calls these functions
-# yet; sourcing this file does not change any audit result. Wiring the
-# modules (update.sh, baseline.sh, logging.sh, filesystem.sh, users.sh)
-# to call this layer is the next step, gated behind real-box validation
-# on RHEL 9 / Rocky / Alma / CentOS Stream 9 / Arch.
+# STATUS: consumed by the read-only audit path. Modules currently wired
+# to this layer:
+#   * ufw.sh        — fw_backend
+#   * update.sh     — pkg_update_count / pkg_security_update_count /
+#                     pkg_index_age_days / pkg_reboot_required /
+#                     auto_update_installed / auto_update_status /
+#                     pkg_manager_locked
+#   * baseline.sh   — pkg_is_installed / distro_insecure_packages
+#   * filesystem.sh — file_owned_by_package / distro_suid_whitelist /
+#                     distro_sgid_whitelist / distro_caps_whitelist
+#   * logging.sh    — distro_log_paths
+# Defined but not yet wired to any caller (available for future audit
+# wiring): fw_is_enabled, cron_spool_dir, grub_cfg_path,
+# pam_password_files, pam_session_files. Validated on the RHEL 8/9/10
+# family (Rocky/Alma/CentOS Stream) and Arch for the wired read paths;
+# fix-path primitives remain out of scope (guide_mode gates on
+# is_debian_based).
 
 # ==============================================================================
 # Detection layer
