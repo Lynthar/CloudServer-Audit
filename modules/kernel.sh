@@ -534,14 +534,14 @@ _kernel_audit_ipv6() {
             local check=$(create_check_json \
                 "kernel.ipv6_insecure" \
                 "kernel" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
                 "IPv6 in use with security issues: $ipv6_issues" \
                 "$(i18n 'kernel.fix_ipv6')" \
                 "kernel.harden_ipv6")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")"
+            print_severity "low" "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")"
         else
             local check=$(create_check_json \
                 "kernel.ipv6_secure" \
@@ -593,14 +593,14 @@ _kernel_audit_ipv6() {
                 local check=$(create_check_json \
                     "kernel.ipv6_firewall_missing" \
                     "kernel" \
-                    "high" \
+                    "medium" \
                     "failed" \
                     "$(i18n 'kernel.ipv6_firewall_missing')" \
                     "IPv6 is in use but firewall not configured for IPv6" \
                     "Enable IPv6 in firewall configuration" \
                     "")
                 state_add_check "$check"
-                print_severity "high" "$(i18n 'kernel.ipv6_firewall_missing')"
+                print_severity "medium" "$(i18n 'kernel.ipv6_firewall_missing')"
                 ;;
             ufw_ipv6_enabled|ip6tables_configured|nftables_ipv6_configured)
                 local check=$(create_check_json \
@@ -641,27 +641,27 @@ _kernel_audit_aslr() {
             local check=$(create_check_json \
                 "kernel.aslr_partial" \
                 "kernel" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'kernel.aslr_partial')" \
                 "ASLR is only partially enabled (randomize_va_space=1)" \
                 "$(i18n 'kernel.fix_aslr')" \
                 "kernel.enable_aslr")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'kernel.aslr_partial')"
+            print_severity "low" "$(i18n 'kernel.aslr_partial')"
             ;;
         disabled)
             local check=$(create_check_json \
                 "kernel.aslr_disabled" \
                 "kernel" \
-                "high" \
+                "medium" \
                 "failed" \
                 "$(i18n 'kernel.aslr_disabled')" \
                 "ASLR is disabled (randomize_va_space=0)" \
                 "$(i18n 'kernel.fix_aslr')" \
                 "kernel.enable_aslr")
             state_add_check "$check"
-            print_severity "high" "$(i18n 'kernel.aslr_disabled')"
+            print_severity "medium" "$(i18n 'kernel.aslr_disabled')"
             ;;
         *)
             local check=$(create_check_json \
@@ -741,14 +741,14 @@ _kernel_audit_network_params() {
         local check=$(create_check_json \
             "kernel.network_params_high" \
             "kernel" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")" \
             "Critical: $issue_list" \
             "$(i18n 'kernel.fix_network_params')" \
             "kernel.harden_network")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")"
+        print_severity "medium" "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")"
     fi
 
     if [[ ${#issues_medium[@]} -gt 0 ]]; then
@@ -756,14 +756,14 @@ _kernel_audit_network_params() {
         local check=$(create_check_json \
             "kernel.network_params_medium" \
             "kernel" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'kernel.network_params_weak' "count=${#issues_medium[@]}")" \
             "Issues: $issue_list" \
             "$(i18n 'kernel.fix_network_params')" \
             "kernel.harden_network")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'kernel.network_params_weak' "count=${#issues_medium[@]}")"
+        print_severity "low" "$(i18n 'kernel.network_params_weak' "count=${#issues_medium[@]}")"
     fi
 
     if [[ $total_issues -eq 0 ]]; then
@@ -838,14 +838,14 @@ _kernel_audit_kernel_params() {
         local check=$(create_check_json \
             "kernel.kernel_params_high" \
             "kernel" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")" \
             "Critical: $issue_list" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
-        print_severity "high" "Critical kernel hardening issues: ${#issues_high[@]}"
+        print_severity "medium" "Critical kernel hardening issues: ${#issues_high[@]}"
     fi
 
     # Report medium-severity issues
@@ -854,14 +854,14 @@ _kernel_audit_kernel_params() {
         local check=$(create_check_json \
             "kernel.kernel_params_weak" \
             "kernel" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")" \
             "Issues: $issue_list" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")"
+        print_severity "low" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")"
     fi
 
     # Report unavailable parameters (info only, not penalized)
@@ -905,14 +905,14 @@ _kernel_audit_core_dump() {
         local check=$(create_check_json \
             "kernel.core_dump_enabled" \
             "kernel" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'kernel.core_dump_enabled')" \
             "Issues: $issues" \
             "$(i18n 'kernel.fix_core_dump')" \
             "kernel.disable_core_dump")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'kernel.core_dump_enabled')"
+        print_severity "low" "$(i18n 'kernel.core_dump_enabled')"
     fi
 }
 

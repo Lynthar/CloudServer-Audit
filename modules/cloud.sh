@@ -673,14 +673,14 @@ _cloud_audit_imds() {
             check=$(create_check_json \
                 "cloud.imds_v1_enabled" \
                 "cloud" \
-                "high" \
+                "medium" \
                 "failed" \
                 "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled (HttpTokens=optional)')" \
                 "GET /latest/meta-data/ returned 200 with no session token — IMDSv1 reachable, exposes IAM role credentials to SSRF (Capital One pattern)" \
                 "$(i18n 'cloud.fix_imds_v1' 2>/dev/null || echo 'Run: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required')" \
                 "")
             state_add_check "$check"
-            print_severity "high" "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled')"
+            print_severity "medium" "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled')"
         elif [[ "$v1_status" == "401" && -n "$v2_token" ]]; then
             check=$(create_check_json \
                 "cloud.imds_v2_only" \
@@ -840,8 +840,10 @@ cloud_audit() {
         done <<< "$known_agents"
         agent_list="${agent_list%, }"
 
-        local severity="medium"
-        # Lower severity if all agents are from detected provider
+        local severity="low"
+        # Vendor monitoring agents are inventory, not an exposure — base
+        # severity is low. (The provider-match block below is now a no-op
+        # but kept for when a foreign-vendor agent warrants escalation.)
         if [[ "$provider" != "unknown" ]]; then
             local all_from_provider=true
             while IFS='|' read -r proc_name service_name vendor desc can_disable status; do

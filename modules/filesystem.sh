@@ -802,14 +802,14 @@ _fs_audit_no_owner() {
         local check=$(create_check_json \
             "filesystem.no_owner" \
             "filesystem" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'filesystem.no_owner' "count=$count")" \
             "Files: $file_list" \
             "$(i18n 'filesystem.fix_no_owner')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'filesystem.no_owner' "count=$count")"
+        print_severity "low" "$(i18n 'filesystem.no_owner' "count=$count")"
     else
         local check=$(create_check_json \
             "filesystem.owner_ok" \
@@ -919,14 +919,14 @@ _fs_audit_sensitive_perms() {
             local check_m=$(create_check_json \
                 "filesystem.sensitive_perms_wrong_minor" \
                 "filesystem" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")" \
                 "Files with wrong permissions: $issue_list_m" \
                 "$(i18n 'filesystem.fix_sensitive_perms')" \
                 "filesystem.fix_sensitive_perms")
             state_add_check "$check_m"
-            print_severity "medium" "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")"
+            print_severity "low" "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")"
         fi
     else
         local check=$(create_check_json \
@@ -1032,14 +1032,14 @@ _fs_audit_umask() {
         local check=$(create_check_json \
             "filesystem.umask_weak" \
             "filesystem" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'filesystem.umask_weak')" \
             "$desc (too permissive)" \
             "Set umask to 027 or 077" \
             "filesystem.fix_umask")
         state_add_check "$check"
-        print_severity "medium" "Weak umask: $desc"
+        print_severity "low" "Weak umask: $desc"
     fi
 
     # pam_umask presence is informational — if absent, the UMASK setting
@@ -1098,14 +1098,14 @@ _fs_audit_caps() {
         local check=$(create_check_json \
             "filesystem.dangerous_caps" \
             "filesystem" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
             "Dangerous capabilities: $dangerous_list" \
             "$(i18n 'filesystem.review_caps')" \
             "filesystem.review_caps")
         state_add_check "$check"
-        print_severity "high" "Files with dangerous capabilities: $dangerous_count"
+        print_severity "medium" "Files with dangerous capabilities: $dangerous_count"
     elif ((total_count > 0)); then
         local caps_list=""
         while IFS= read -r line; do
@@ -1159,14 +1159,14 @@ _fs_audit_cron() {
         local check=$(create_check_json \
             "filesystem.suspicious_cron" \
             "filesystem" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
             "$sus_list" \
             "Review cron entries for potential malware or backdoors" \
             "")
         state_add_check "$check"
-        print_severity "high" "Suspicious cron entries found: $sus_count"
+        print_severity "medium" "Suspicious cron entries found: $sus_count"
     else
         local check=$(create_check_json \
             "filesystem.cron_ok" \
