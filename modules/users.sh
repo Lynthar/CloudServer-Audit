@@ -919,7 +919,7 @@ users_audit() {
         check_json=$(create_check_json \
             "users.system_with_shell" \
             "users" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'users.system_with_shell' 2>/dev/null || echo 'System Users with Login Shells'): $sys_shell_count" \
             "$user_list" \
@@ -991,10 +991,10 @@ users_audit() {
         done <<< "$nopasswd"
         nopasswd_list="${nopasswd_list%; }"
 
-        local sev="high"
+        local sev="medium"
         local title_key="users.nopasswd_sudo"
         if _nopasswd_is_cloudinit_only "$nopasswd"; then
-            sev="medium"
+            sev="low"
             title_key="users.nopasswd_sudo_cloudinit"
         fi
 
@@ -1136,7 +1136,7 @@ users_audit() {
         check_json=$(create_check_json \
             "users.password_policy_weak" \
             "users" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'users.password_policy_weak' 2>/dev/null || echo 'Weak Password Policy'): $policy_count issues" \
             "$policy_list" \
@@ -1217,7 +1217,7 @@ users_audit() {
         check_json=$(create_check_json \
             "users.duplicate_uids" \
             "users" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'users.duplicate_uids' 2>/dev/null || echo 'Duplicate UIDs in /etc/passwd')" \
             "$dup_list" \
@@ -1239,7 +1239,7 @@ users_audit() {
         check_json=$(create_check_json \
             "users.weak_hash_method" \
             "users" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'users.weak_hash_method' 2>/dev/null || echo 'Weak password hashing detected')" \
             "$hash_list" \
@@ -1299,7 +1299,7 @@ users_audit() {
         check_json=$(create_check_json \
             "users.sudoers_syntax_invalid" \
             "users" \
-            "high" \
+            "medium" \
             "failed" \
             "$(i18n 'users.sudoers_syntax_invalid' 2>/dev/null || echo 'sudoers file has syntax errors')" \
             "$su_list" \
