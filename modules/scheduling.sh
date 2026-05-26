@@ -141,7 +141,7 @@ _sched_audit_cron_anomalies() {
         local check=$(create_check_json \
             "scheduling.cron_fetches_internet" \
             "scheduling" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")" \
             "Sample: ${sample}" \
@@ -149,7 +149,7 @@ _sched_audit_cron_anomalies() {
             "")
         state_add_check "$check"
         log_info "Cron internet-fetch entries: $hits"
-        print_severity "medium" "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")"
+        print_severity "low" "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")"
     else
         local check=$(create_check_json \
             "scheduling.cron_clean" \

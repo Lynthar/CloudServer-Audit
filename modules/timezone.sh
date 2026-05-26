@@ -59,7 +59,7 @@ _timezone_check_current() {
         local check=$(create_check_json \
             "timezone.not_configured" \
             "timezone" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'timezone.not_configured')" \
             "$(i18n 'timezone.not_configured_desc')" \
@@ -184,7 +184,7 @@ _timezone_check_ntp() {
         local check=$(create_check_json \
             "timezone.ntp_not_synced" \
             "timezone" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'timezone.ntp_not_synced')" \
             "$(i18n 'timezone.ntp_not_synced_desc' "service=$ntp_service")" \
@@ -196,7 +196,7 @@ _timezone_check_ntp() {
         local check=$(create_check_json \
             "timezone.ntp_disabled" \
             "timezone" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'timezone.ntp_disabled')" \
             "$(i18n 'timezone.ntp_disabled_desc')" \
@@ -269,7 +269,7 @@ _timezone_check_drift() {
         local check=$(create_check_json \
             "timezone.time_drift" \
             "timezone" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'timezone.time_drift' "seconds=$drift_seconds")" \
             "$(i18n 'timezone.time_drift_desc')" \

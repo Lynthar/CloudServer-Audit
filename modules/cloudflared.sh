@@ -179,14 +179,14 @@ _cloudflared_audit_service() {
         local check=$(create_check_json \
             "cloudflared.service_inactive" \
             "cloudflared" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'cloudflared.service_not_running')" \
             "$(i18n 'cloudflared.no_tunnel_detected')" \
             "$(i18n 'cloudflared.fix_start_service')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'cloudflared.service_not_running')"
+        print_severity "low" "$(i18n 'cloudflared.service_not_running')"
     fi
 }
 
@@ -195,14 +195,14 @@ _cloudflared_audit_config() {
         local check=$(create_check_json \
             "cloudflared.no_config" \
             "cloudflared" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'cloudflared.config_not_found')" \
             "$(i18n 'cloudflared.config_not_found_desc')" \
             "$(i18n 'cloudflared.fix_create_config')" \
             "cloudflared.generate_config")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'cloudflared.config_not_found')"
+        print_severity "low" "$(i18n 'cloudflared.config_not_found')"
         return
     fi
 
@@ -217,14 +217,14 @@ _cloudflared_audit_config() {
             local check=$(create_check_json \
                 "cloudflared.config_issues" \
                 "cloudflared" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'cloudflared.config_has_issues')" \
                 "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
                 "$(i18n 'cloudflared.fix_review_config')" \
                 "cloudflared.generate_config")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
+            print_severity "low" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
         else
             local check=$(create_check_json \
                 "cloudflared.config_ok" \

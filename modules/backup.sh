@@ -95,14 +95,14 @@ _backup_audit_tools() {
         local check=$(create_check_json \
             "backup.no_tools" \
             "backup" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'backup.no_tools')" \
             "$(i18n 'backup.no_tools_desc')" \
             "$(i18n 'backup.fix_install_tool')" \
             "backup.generate_templates")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'backup.no_tools')"
+        print_severity "low" "$(i18n 'backup.no_tools')"
     else
         local check=$(create_check_json \
             "backup.tools_installed" \
@@ -134,14 +134,14 @@ _backup_audit_scheduled() {
         local check=$(create_check_json \
             "backup.no_schedule" \
             "backup" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'backup.no_scheduled')" \
             "$(i18n 'backup.no_scheduled_desc')" \
             "$(i18n 'backup.fix_setup_schedule')" \
             "backup.generate_templates")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'backup.no_scheduled')"
+        print_severity "low" "$(i18n 'backup.no_scheduled')"
     else
         local check=$(create_check_json \
             "backup.scheduled" \

@@ -52,7 +52,7 @@ _preflight_check_os() {
         local check=$(create_check_json \
             "preflight.os_unsupported" \
             "preflight" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'preflight.os_unsupported')" \
             "${os} ${version} - $(i18n 'preflight.os_unsupported')" \
@@ -98,7 +98,7 @@ _preflight_check_network() {
         local check=$(create_check_json \
             "preflight.network_fail" \
             "preflight" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'preflight.network_fail')" \
             "Cannot reach external network" \
@@ -125,7 +125,7 @@ _preflight_check_deps() {
         local check=$(create_check_json \
             "preflight.deps_missing" \
             "preflight" \
-            "high" \
+            "low" \
             "failed" \
             "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
             "Required: ${missing_required[*]}" \
@@ -168,43 +168,21 @@ _preflight_check_ports() {
     local ports=$(get_listening_ports)
     local port_count=$(echo "$ports" | wc -w)
 
-    # Common dangerous ports to flag
-    local dangerous_ports=(21 23 25 110 143 3306 5432 6379 27017)
-    local exposed_dangerous=()
-
-    for port in $ports; do
-        for dport in "${dangerous_ports[@]}"; do
-            if [[ "$port" == "$dport" ]]; then
-                exposed_dangerous+=("$port")
-            fi
-        done
-    done
-
-    if [[ ${#exposed_dangerous[@]} -gt 0 ]]; then
-        local check=$(create_check_json \
-            "preflight.dangerous_ports" \
-            "preflight" \
-            "medium" \
-            "failed" \
-            "$(i18n 'preflight.dangerous_ports' "ports=${exposed_dangerous[*]}")" \
-            "" \
-            "$(i18n 'ufw.fix_allow_ssh')" \
-            "ufw.add_rules")
-        state_add_check "$check"
-        print_warn "$(i18n 'preflight.listening_ports' "count=$port_count") - Dangerous: ${exposed_dangerous[*]}"
-    else
-        local check=$(create_check_json \
-            "preflight.ports_ok" \
-            "preflight" \
-            "low" \
-            "passed" \
-            "$(i18n 'preflight.listening_ports' "count=$port_count")" \
-            "No commonly dangerous ports exposed" \
-            "" \
-            "")
-        state_add_check "$check"
-        print_ok "$(i18n 'preflight.listening_ports' "count=$port_count")"
-    fi
+    # Dangerous-port exposure is audited authoritatively by the networking
+    # module (networking.exposed_dangerous_ports), which is wildcard-aware
+    # (public vs loopback) rather than a crude port-number match. Preflight
+    # only reports the listening-port count for context.
+    local check=$(create_check_json \
+        "preflight.ports_ok" \
+        "preflight" \
+        "low" \
+        "passed" \
+        "$(i18n 'preflight.listening_ports' "count=$port_count")" \
+        "" \
+        "" \
+        "")
+    state_add_check "$check"
+    print_ok "$(i18n 'preflight.listening_ports' "count=$port_count")"
 
     # Log all ports for reference
     log_info "Listening ports: $ports"

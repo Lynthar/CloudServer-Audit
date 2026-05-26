@@ -19,6 +19,8 @@
 # documented public services (22/80/443/53) deliberately omitted; intent
 # for those is operator-specific.
 declare -ga NET_DANGEROUS_PUBLIC_PORTS=(
+    21      # FTP (cleartext credentials)
+    23      # Telnet (cleartext credentials/session) — merged from preflight
     2375    # Docker daemon (unencrypted!) — direct root RCE
     2376    # Docker daemon (TLS, but still mgmt plane on public is risky)
     3306    # MySQL / MariaDB
