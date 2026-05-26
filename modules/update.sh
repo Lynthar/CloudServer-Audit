@@ -151,40 +151,6 @@ _update_reboot_packages() {
     fi
 }
 
-# Check time synchronization status
-_update_check_timesync() {
-    local issues=()
-
-    # Check if timesyncd is active
-    if systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
-        # Check if time is synchronized
-        if timedatectl show 2>/dev/null | grep -q "NTPSynchronized=yes"; then
-            echo "synced:timesyncd"
-            return 0
-        else
-            issues+=("timesyncd active but not synchronized")
-        fi
-    # Check if ntpd is running
-    elif systemctl is-active --quiet ntp 2>/dev/null || \
-         systemctl is-active --quiet ntpd 2>/dev/null; then
-        echo "synced:ntpd"
-        return 0
-    # Check if chronyd is running
-    elif systemctl is-active --quiet chronyd 2>/dev/null; then
-        if chronyc tracking 2>/dev/null | grep -q "Leap status.*Normal"; then
-            echo "synced:chronyd"
-            return 0
-        else
-            issues+=("chronyd active but not synchronized")
-        fi
-    else
-        issues+=("No NTP service running")
-    fi
-
-    printf '%s\n' "${issues[@]}"
-    return 1
-}
-
 # ==============================================================================
 # Update Audit
 # ==============================================================================
@@ -207,10 +173,9 @@ update_audit() {
     # Check if reboot is required
     print_item "$(i18n 'update.check_reboot')"
     _update_audit_reboot
-
-    # Check time synchronization
-    print_item "$(i18n 'update.check_timesync')"
-    _update_audit_timesync
+    # NTP / time-sync is audited authoritatively by the timezone module
+    # (_timezone_check_ntp). It used to be duplicated here; removed so a
+    # single module owns the NTP score signal.
 }
 
 _update_audit_apt_lock() {
@@ -440,39 +405,6 @@ _update_audit_reboot() {
             "")
         state_add_check "$check"
         print_ok "$(i18n 'update.no_reboot')"
-    fi
-}
-
-_update_audit_timesync() {
-    local sync_status
-    sync_status=$(_update_check_timesync)
-    local result=$?
-
-    if [[ $result -eq 0 ]]; then
-        local service="${sync_status#*:}"
-        local check=$(create_check_json \
-            "update.timesync_ok" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.timesync_ok')" \
-            "Time synchronized via $service" \
-            "" \
-            "")
-        state_add_check "$check"
-        print_ok "$(i18n 'update.timesync_ok') ($service)"
-    else
-        local check=$(create_check_json \
-            "update.timesync_failed" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.timesync_failed')" \
-            "$sync_status" \
-            "Enable time synchronization: timedatectl set-ntp true" \
-            "update.enable_timesync")
-        state_add_check "$check"
-        print_severity "low" "$(i18n 'update.timesync_failed')"
     fi
 }
 

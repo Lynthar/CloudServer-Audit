@@ -515,8 +515,6 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["timezone.ntp_synced"]="recommended"
     ["timezone.ntp_not_synced"]="recommended"
     ["timezone.ntp_disabled"]="recommended"
-    ["timezone.time_accurate"]="info"
-    ["timezone.time_drift"]="info"
     ["timezone.rtc_local"]="info"
     ["timezone.locale_ok"]="info"
     ["timezone.locale_not_set"]="info"
@@ -545,6 +543,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.nginx_security_headers"]="conditional"
     ["webapp.nginx_security_headers_ok"]="conditional"
     ["webapp.nginx_hsts_missing"]="conditional"
+    ["webapp.nginx_hsts_weak"]="conditional"
     ["webapp.nginx_directory_listing"]="conditional"
     ["webapp.nginx_weak_ssl"]="required"
     ["webapp.nginx_weak_ciphers"]="required"
@@ -594,8 +593,6 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ufw.ipv6_no_traffic"]="info"
     # Dedup — counted by the authoritative sibling check
     ["kernel.kernel_params_high"]="info"      # ASLR-off already counted by kernel.aslr_disabled
-    ["update.timesync_failed"]="info"         # NTP counted by timezone.ntp_*
-    ["update.timesync_ok"]="info"
     ["update.unattended_unsupported"]="info"  # Arch passed-context state
     # Genuine posture gaps → count
     ["filesystem.dangerous_caps"]="recommended"

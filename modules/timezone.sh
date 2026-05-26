@@ -209,74 +209,32 @@ _timezone_check_ntp() {
     log_info "NTP status: $ntp_status (service: $ntp_service)"
 }
 
-# Check time drift from network time
+# Check that the hardware clock is kept in UTC.
+#
+# The former network time-drift probe (curl to worldtimeapi.org) was
+# removed: that service is defunct, the call went over plaintext HTTP,
+# it stalled every audit up to 5s, and on failure it silently always
+# reported "time accurate". Clock correctness is already covered locally
+# and authoritatively by the NTP-sync check above (_timezone_check_ntp);
+# a read-only security audit should not phone a third-party endpoint.
 _timezone_check_drift() {
-    local drift_seconds=0
-    local drift_ok=1
+    command -v timedatectl &>/dev/null || return 0
 
-    # Try to get network time and compare
-    if command -v curl &>/dev/null; then
-        # Use HTTP Date header to check approximate time
-        local remote_time=$(curl -sI --max-time 5 http://worldtimeapi.org/api/ip 2>/dev/null | grep -i "^date:" | sed 's/date: //i' | tr -d '\r')
-
-        if [[ -n "$remote_time" ]]; then
-            local remote_epoch=$(date -d "$remote_time" +%s 2>/dev/null)
-            local local_epoch=$(date +%s)
-
-            if [[ -n "$remote_epoch" ]]; then
-                drift_seconds=$((local_epoch - remote_epoch))
-                # Allow up to 60 seconds drift (network latency considered)
-                if [[ ${drift_seconds#-} -gt 60 ]]; then
-                    drift_ok=0
-                fi
-            fi
-        fi
-    fi
-
-    # Alternative: check using timedatectl if available
-    if command -v timedatectl &>/dev/null; then
-        local rtc_in_local=$(timedatectl show --property=LocalRTC --value 2>/dev/null)
-        if [[ "$rtc_in_local" == "yes" ]]; then
-            # RTC in local time is generally not recommended for servers
-            local check=$(create_check_json \
-                "timezone.rtc_local" \
-                "timezone" \
-                "low" \
-                "failed" \
-                "$(i18n 'timezone.rtc_local')" \
-                "$(i18n 'timezone.rtc_local_desc')" \
-                "$(i18n 'timezone.fix_rtc_utc')" \
-                "timezone.set_rtc_utc")
-            state_add_check "$check"
-            print_warn "$(i18n 'timezone.rtc_local')"
-            return
-        fi
-    fi
-
-    if [[ "$drift_ok" == "1" ]]; then
+    local rtc_in_local
+    rtc_in_local=$(timedatectl show --property=LocalRTC --value 2>/dev/null)
+    if [[ "$rtc_in_local" == "yes" ]]; then
+        # RTC in local time is generally not recommended for servers.
         local check=$(create_check_json \
-            "timezone.time_accurate" \
-            "timezone" \
-            "low" \
-            "passed" \
-            "$(i18n 'timezone.time_accurate')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
-        print_ok "$(i18n 'timezone.time_accurate')"
-    else
-        local check=$(create_check_json \
-            "timezone.time_drift" \
+            "timezone.rtc_local" \
             "timezone" \
             "low" \
             "failed" \
-            "$(i18n 'timezone.time_drift' "seconds=$drift_seconds")" \
-            "$(i18n 'timezone.time_drift_desc')" \
-            "$(i18n 'timezone.fix_sync_time')" \
-            "timezone.sync_time")
+            "$(i18n 'timezone.rtc_local')" \
+            "$(i18n 'timezone.rtc_local_desc')" \
+            "$(i18n 'timezone.fix_rtc_utc')" \
+            "timezone.set_rtc_utc")
         state_add_check "$check"
-        print_warn "$(i18n 'timezone.time_drift' "seconds=$drift_seconds")"
+        print_warn "$(i18n 'timezone.rtc_local')"
     fi
 }
 

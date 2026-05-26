@@ -873,7 +873,7 @@ webapp_audit() {
             # implicitly applies add_header to. Error responses still
             # leak.
             check_json=$(create_check_json \
-                "webapp.nginx_hsts_missing" \
+                "webapp.nginx_hsts_weak" \
                 "webapp" \
                 "low" \
                 "failed" \

@@ -58,7 +58,9 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv6.conf.all.dad_transmits:0:low:Duplicate address detection transmits"
 
     # Kernel security
-    "kernel.randomize_va_space:2:high:ASLR (Address Space Layout Randomization)"
+    # NB: ASLR (kernel.randomize_va_space) is intentionally NOT listed here.
+    # It has a dedicated check (_kernel_audit_aslr / kernel.aslr_disabled);
+    # listing it again double-counted ASLR-off in the score.
     "kernel.dmesg_restrict:1:medium:Restrict dmesg access"
     "kernel.kptr_restrict:2:medium:Restrict kernel pointer exposure"
     "kernel.yama.ptrace_scope:1:medium:Restrict ptrace"
@@ -832,7 +834,9 @@ _kernel_audit_kernel_params() {
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
-    # Report high-severity kernel issues separately (userns, bpf)
+    # Report any high-severity kernel params separately. (Currently none in
+    # KERNEL_SECURITY_PARAMS are tagged high — ASLR has its own check — so
+    # this branch is dormant; kept for forward-compat if a high param is added.)
     if [[ ${#issues_high[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
         local check=$(create_check_json \
