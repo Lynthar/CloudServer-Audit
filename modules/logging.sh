@@ -168,14 +168,14 @@ _logging_audit_journald() {
         local check=$(create_check_json \
             "logging.journald_volatile" \
             "logging" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'logging.journald_volatile')" \
             "$(i18n 'logging.journald_volatile_desc')" \
             "$(i18n 'logging.fix_enable_persistent')" \
             "logging.enable_persistent_journal")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'logging.journald_volatile')"
+        print_severity "low" "$(i18n 'logging.journald_volatile')"
     fi
 }
 
@@ -229,14 +229,14 @@ _logging_audit_logrotate() {
         local check=$(create_check_json \
             "logging.logrotate_not_configured" \
             "logging" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'logging.logrotate_missing')" \
             "$(i18n 'logging.logrotate_missing_desc')" \
             "$(i18n 'logging.fix_configure_logrotate')" \
             "logging.setup_logrotate")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'logging.logrotate_missing')"
+        print_severity "low" "$(i18n 'logging.logrotate_missing')"
     fi
 }
 
@@ -259,27 +259,27 @@ _logging_audit_auditd() {
                 local check=$(create_check_json \
                     "logging.auditd_no_rules" \
                     "logging" \
-                    "medium" \
+                    "low" \
                     "failed" \
                     "$(i18n 'logging.auditd_no_rules')" \
                     "$(i18n 'logging.auditd_no_rules_desc')" \
                     "$(i18n 'logging.fix_configure_auditd')" \
                     "logging.setup_audit_rules")
                 state_add_check "$check"
-                print_severity "medium" "$(i18n 'logging.auditd_no_rules')"
+                print_severity "low" "$(i18n 'logging.auditd_no_rules')"
             fi
         else
             local check=$(create_check_json \
                 "logging.auditd_inactive" \
                 "logging" \
-                "medium" \
+                "low" \
                 "failed" \
                 "$(i18n 'logging.auditd_not_running')" \
                 "$(i18n 'logging.auditd_not_running_desc')" \
                 "$(i18n 'logging.fix_enable_auditd')" \
                 "logging.enable_auditd")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'logging.auditd_not_running')"
+            print_severity "low" "$(i18n 'logging.auditd_not_running')"
         fi
     else
         local check=$(create_check_json \
@@ -303,26 +303,26 @@ _logging_audit_ssh_logs() {
         local check=$(create_check_json \
             "logging.ssh_many_failures" \
             "logging" \
-            "high" \
+            "low" \
             "failed" \
             "$(i18n 'logging.ssh_logs_warning')" \
             "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
             "" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'logging.ssh_logs_high' "count=$failed_logins")"
+        print_severity "low" "$(i18n 'logging.ssh_logs_high' "count=$failed_logins")"
     elif ((failed_logins > 20)); then
         local check=$(create_check_json \
             "logging.ssh_some_failures" \
             "logging" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")" \
             "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
             "" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")"
+        print_severity "low" "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")"
     else
         local check=$(create_check_json \
             "logging.ssh_logs_ok" \

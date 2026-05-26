@@ -651,7 +651,7 @@
     "maxretry_high": "SSH jail maxretry is too high",
     "custom_config": "Custom configuration found",
     "default_config": "Using default configuration only",
-    "fix_install": "Install fail2ban",
+    "fix_install": "Install fail2ban (recommended if SSH password authentication is enabled)",
     "fix_enable": "Enable fail2ban service",
     "fix_enable_ssh_jail": "Enable SSH jail",
     "installing": "Installing fail2ban...",

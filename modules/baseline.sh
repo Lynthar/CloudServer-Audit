@@ -403,14 +403,14 @@ _baseline_audit_selinux() {
         local check=$(create_check_json \
             "baseline.selinux_permissive" \
             "baseline" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'baseline.selinux_permissive')" \
             "SELinux is in permissive mode - violations are logged but not enforced" \
             "Set SELinux to enforcing: setenforce 1" \
             "baseline.selinux_set_enforcing")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'baseline.selinux_permissive')"
+        print_severity "low" "$(i18n 'baseline.selinux_permissive')"
 
         # Check if configured as disabled (will be disabled on reboot)
         if [[ "$config" == "disabled" ]]; then
@@ -425,14 +425,14 @@ _baseline_audit_selinux_disabled() {
     local check=$(create_check_json \
         "baseline.selinux_disabled" \
         "baseline" \
-        "medium" \
+        "low" \
         "failed" \
         "$(i18n 'baseline.selinux_disabled')" \
         "SELinux is installed but disabled (config: ${config})" \
         "Enable SELinux in /etc/selinux/config and reboot" \
         "baseline.selinux_enable")
     state_add_check "$check"
-    print_severity "medium" "$(i18n 'baseline.selinux_disabled')"
+    print_severity "low" "$(i18n 'baseline.selinux_disabled')"
 }
 
 # ------------------------------------------------------------------------------
@@ -480,28 +480,28 @@ _baseline_audit_apparmor_disabled() {
     local check=$(create_check_json \
         "baseline.apparmor_disabled" \
         "baseline" \
-        "medium" \
+        "low" \
         "failed" \
         "$(i18n 'baseline.apparmor_disabled')" \
         "AppArmor is installed but not enabled" \
         "Enable AppArmor for additional security" \
         "baseline.enable_apparmor")
     state_add_check "$check"
-    print_severity "medium" "$(i18n 'baseline.apparmor_disabled')"
+    print_severity "low" "$(i18n 'baseline.apparmor_disabled')"
 }
 
 _baseline_audit_no_mac() {
     local check=$(create_check_json \
         "baseline.no_mac_system" \
         "baseline" \
-        "medium" \
+        "low" \
         "failed" \
         "$(i18n 'baseline.no_mac_system')" \
         "No Mandatory Access Control system (SELinux/AppArmor) detected" \
         "Install and enable AppArmor or SELinux" \
         "baseline.enable_apparmor")
     state_add_check "$check"
-    print_severity "medium" "$(i18n 'baseline.no_mac_system')"
+    print_severity "low" "$(i18n 'baseline.no_mac_system')"
 }
 
 _baseline_audit_unused_services() {

@@ -651,7 +651,7 @@
     "maxretry_high": "SSH jail maxretry 设置过高",
     "custom_config": "发现自定义配置",
     "default_config": "仅使用默认配置",
-    "fix_install": "安装 fail2ban",
+    "fix_install": "安装 fail2ban（启用 SSH 密码认证时建议安装）",
     "fix_enable": "启用 fail2ban 服务",
     "fix_enable_ssh_jail": "启用 SSH jail",
     "installing": "正在安装 fail2ban...",

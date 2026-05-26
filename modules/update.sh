@@ -218,14 +218,14 @@ _update_audit_apt_lock() {
         local check=$(create_check_json \
             "update.apt_locked" \
             "update" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'update.apt_locked')" \
             "APT is locked by another process" \
             "Wait for other process to finish or remove lock" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'update.apt_locked')"
+        print_severity "low" "$(i18n 'update.apt_locked')"
     else
         local check=$(create_check_json \
             "update.apt_available" \
@@ -358,14 +358,14 @@ _update_audit_unattended() {
         local check=$(create_check_json \
             "update.unattended_not_installed" \
             "update" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'update.unattended_disabled')" \
             "no automatic-update mechanism installed (unattended-upgrades / dnf-automatic)" \
             "$(i18n 'update.fix_install_unattended')" \
             "update.install_unattended")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'update.unattended_disabled')"
+        print_severity "low" "$(i18n 'update.unattended_disabled')"
         return
     fi
 
@@ -397,14 +397,14 @@ _update_audit_unattended() {
         local check=$(create_check_json \
             "update.unattended_disabled" \
             "update" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'update.unattended_disabled')" \
             "$reason_desc" \
             "$(i18n 'update.fix_install_unattended')" \
             "update.enable_unattended")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'update.unattended_disabled')"
+        print_severity "low" "$(i18n 'update.unattended_disabled')"
     fi
 }
 
@@ -465,14 +465,14 @@ _update_audit_timesync() {
         local check=$(create_check_json \
             "update.timesync_failed" \
             "update" \
-            "medium" \
+            "low" \
             "failed" \
             "$(i18n 'update.timesync_failed')" \
             "$sync_status" \
             "Enable time synchronization: timedatectl set-ntp true" \
             "update.enable_timesync")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'update.timesync_failed')"
+        print_severity "low" "$(i18n 'update.timesync_failed')"
     fi
 }
 
