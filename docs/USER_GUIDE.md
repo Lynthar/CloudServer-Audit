@@ -122,11 +122,12 @@ usermod -s /sbin/nologin <账户名>
 **通过条件**: sudoers 配置中不存在 NOPASSWD 选项（或仅用于自动化场景）
 
 **严重性分级**:
-- 单一用户且属于已知云镜像默认用户（如 `debian` / `ubuntu` /
-  `ec2-user` / `centos` / `admin` / `azureuser` / `opc` 等）：中危。
-  几乎所有云厂商出厂镜像都给 cloud-init 默认用户配了 NOPASSWD，
-  这是事实标准，单独标 high 没有信号增益。
-- 多用户、`%group`、`Cmnd_Alias`、`User_Alias` 或带通配的条目：高危。
+- 仅云镜像 cloud-init 默认用户（如 `debian` / `ubuntu` / `ec2-user` /
+  `centos` / `admin` / `azureuser` / `opc` 等）的 NOPASSWD：低危。
+  几乎所有云厂商出厂镜像都给 cloud-init 默认用户配了 NOPASSWD，是事实
+  标准、普遍且预期内，单独标高危没有信号增益。
+- 其它 NOPASSWD 条目：中危。免密 sudo 可直接提权到 root，但需先拿到
+  该账户才能利用（提权放大器，并非"当下已暴露"），故为中危而非高危。
 
 **修复方法**:
 ```bash
@@ -1044,8 +1045,8 @@ score   = clamp(0, 100, base − penalty)
 |---|---|---|
 | 0 | 100 | 优秀 |
 | 1 medium | 97 | 优秀 |
-| 1 high | 93 | 良好 |
-| 3 high | 79 | 一般 |
+| 1 high | 93 | 优秀 |
+| 3 high | 79 | 良好 |
 | 3 high + 6 medium + 3 low | 53 | 一般 |
 | 10 high + 20 medium + 30 low | 0 | 较差 |
 
@@ -1251,7 +1252,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Security Audit
-        run: sudo ./vpssec audit --json-only
+        # 用 --yes 让审计非交互地保存全部报告格式（md/json/sarif）——
+        # 审计是只读的，没有破坏性操作需要确认。--json-only 只会写 summary.json，
+        # 不会生成下一步要上传的 summary.sarif。
+        run: sudo ./vpssec audit --yes
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2

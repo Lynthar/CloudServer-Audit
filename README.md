@@ -9,7 +9,7 @@ English | [简体中文](README_zh.md) | [User Guide](docs/USER_GUIDE.md)
 
 ## Quick start
 
-One-line install (downloads, runs, copies report to `/tmp/vpssec-report-*`):
+One-line install (downloads, runs; a saved report is copied to `/tmp/vpssec-report-*`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -23,7 +23,7 @@ cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
-Reports land in `reports/summary.{md,json,sarif}`.
+After an interactive audit you're prompted to save the report; if you accept, `reports/summary.{md,json,sarif}` are written. `--json-only` writes just `reports/summary.json` (and prints it to stdout).
 
 **Audit (read-only):** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 family (Rocky / Alma / CentOS Stream) · Arch
 
@@ -111,8 +111,8 @@ live in the [**User Guide**](docs/USER_GUIDE.md).
 ─── Access Control ──────────────────────────────────────────────
   User Security                  │  SSH Security
     ✓ No extra UID 0 accounts    │    ✓ Password auth disabled
-    ✗ Empty password users       │    ● MaxAuthTries too high
-    ✓ System accounts secured    │    ● No access control configured
+    ✗ Empty password users       │    ● Authorized_keys perms loose
+    ✓ System accounts secured    │    ○ MaxAuthTries above 4
 
 ─── Security Scanning ───────────────────────────────────────────
   Malware Detection

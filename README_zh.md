@@ -9,7 +9,7 @@
 
 ## 快速开始
 
-一行命令安装（下载执行，报告复制到 `/tmp/vpssec-report-*`）：
+一行命令安装（下载执行；若选择保存，报告会复制到 `/tmp/vpssec-report-*`）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -23,7 +23,7 @@ cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
-报告生成在 `reports/summary.{md,json,sarif}`。
+交互式审计结束后会提示是否保存；选择保存才会写入 `reports/summary.{md,json,sarif}`。`--json-only` 只写 `reports/summary.json`（并打印到标准输出）。
 
 **审计(只读)：** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 家族(Rocky / Alma / CentOS Stream) · Arch
 
@@ -105,8 +105,8 @@ sudo ./vpssec audit --include=ssh,ufw,networking
 ─── 访问控制 ────────────────────────────────────────────────────
   用户安全                       │  SSH 安全
     ✓ 无额外 UID 0 账户          │    ✓ 密码登录已禁用
-    ✗ 检测到空密码账户           │    ● MaxAuthTries 过高
-    ✓ 系统账户已锁定             │    ● 未配置 SSH 访问控制
+    ✗ 检测到空密码账户           │    ● authorized_keys 权限过松
+    ✓ 系统账户已锁定             │    ○ MaxAuthTries 超过 4
 
 ─── 安全扫描 ────────────────────────────────────────────────────
   恶意软件检测

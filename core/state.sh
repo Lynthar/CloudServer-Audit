@@ -604,8 +604,8 @@ calculate_score() {
     # Expected outcomes (all on a 50-check scored total):
     #   0 failures                   → 100 (Excellent)
     #   1 medium only                → 97  (Excellent)
-    #   1 high only                  → 93  (Good)
-    #   3 high only                  → 79  (Fair)
+    #   1 high only                  → 93  (Excellent)
+    #   3 high only                  → 79  (Good)
     #   3 high + 6 medium + 3 low    → 53  (Needs work)
     #   7 high + 11 medium + 3 low (the typical fresh-VPS shape after
     #    the v3 classification trim drops 5 spurious highs to ≈2 high)
