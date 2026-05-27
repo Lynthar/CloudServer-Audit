@@ -1071,7 +1071,7 @@ webapp_audit() {
                 "$(i18n 'webapp.dangerous_functions' 2>/dev/null || echo 'Dangerous PHP Functions Enabled'): $not_disabled_count" \
                 "$(echo "$not_disabled" | head -5 | tr '\n' ', ' | sed 's/,$//')" \
                 "$(i18n 'webapp.disable_functions' 2>/dev/null || echo 'Add dangerous functions to disable_functions in php.ini')" \
-                "webapp.php_disable_functions")
+                "webapp.php_dangerous_functions")
             state_add_check "$check_json"
         fi
 

@@ -209,6 +209,18 @@ declare -gA FIX_ALERT_ONLY=(
     ["webapp.ssl_cert_expiry"]="Renew SSL certificates"
     ["webapp.sensitive_files"]="Remove or protect sensitive files"
     ["webapp.backup_files"]="Remove backup files from web root"
+
+    # === Review-only findings (previously emitted unclassified fix_ids that
+    # resolved to "unknown"). Their dispatch handlers, where present, only
+    # print guidance and return 1 — no mutation — so they belong in the
+    # alert-only set: shown in the report, filtered out of the auto-fix UI. ===
+    ["ssh.configure_access_control"]="Restrict access with AllowUsers/AllowGroups manually (wrong values can lock you out)"
+    ["filesystem.review_caps"]="Review file capabilities; remove if not needed"
+    ["ufw.review_rules"]="Review and tighten overly-permissive firewall rules manually"
+    ["users.nopasswd_sudo"]="Review NOPASSWD sudoers entries manually (do not auto-modify sudoers)"
+    ["users.history"]="Shell history hardening is an operator preference"
+    ["users.password_policy"]="Tune password policy in /etc/login.defs manually"
+    ["users.pwquality"]="Install/configure libpam-pwquality manually"
 )
 
 # ==============================================================================
