@@ -541,9 +541,11 @@ _f2b_fix_enable_ssh_jail() {
 _f2b_fix_configure_ssh_jail() {
     print_info "$(i18n 'fail2ban.configuring_ssh_jail')"
 
-    # Backup existing config
+    # Backup existing config, capturing the path so we can restore it if the
+    # new config fails validation below.
+    local f2b_bak=""
     if [[ -f "$F2B_JAIL_LOCAL" ]]; then
-        backup_file "$F2B_JAIL_LOCAL"
+        f2b_bak=$(backup_file "$F2B_JAIL_LOCAL")
     fi
 
     # Get SSH port and detect log path/backend/banaction
@@ -614,6 +616,19 @@ findtime = 10m
 EOF
 
     chmod 644 "$F2B_JAIL_LOCAL"
+
+    # Validate the config before (re)loading. A broken jail.local would make
+    # fail2ban fail to start on the next boot; restore the previous config (or
+    # remove the new one) and abort instead of leaving it live.
+    if command -v fail2ban-client >/dev/null 2>&1 && ! fail2ban-client -t >/dev/null 2>&1; then
+        print_error "$(i18n 'fail2ban.config_test_failed' 2>/dev/null || echo 'fail2ban configuration test failed')"
+        if [[ -n "$f2b_bak" && -f "$f2b_bak" ]]; then
+            cp -p "$f2b_bak" "$F2B_JAIL_LOCAL"
+        else
+            rm -f "$F2B_JAIL_LOCAL"
+        fi
+        return 1
+    fi
 
     # Reload fail2ban
     if _f2b_service_active; then

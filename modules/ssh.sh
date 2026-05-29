@@ -10,7 +10,11 @@
 SSH_CONFIG="/etc/ssh/sshd_config"
 SSH_DROPIN_DIR="/etc/ssh/sshd_config.d"
 SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/99-vpssec-hardening.conf"
-SSH_RESCUE_PORT=2222
+SSH_RESCUE_PORT=2222     # preferred rescue port; replaced with a free port at open time
+SSH_RESCUE_PID=""        # pid of the rescue sshd we launched (the only kill target)
+SSH_RESCUE_CONFIG=""     # temp rescue config path
+SSH_RESCUE_PIDFILE=""    # temp rescue pidfile path
+SSH_RESCUE_FW_RULE=""    # firewall rule added for the rescue port, for exact teardown
 
 # ==============================================================================
 # SSH Helper Functions
@@ -1146,65 +1150,189 @@ ssh_fix() {
     esac
 }
 
-# Open rescue port for safety
-_ssh_open_rescue_port() {
-    print_info "$(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
+# ==============================================================================
+# Rescue SSH daemon
+#
+# Before any change that can cut SSH access (disable password auth, disable
+# root login) we start a SECOND, independent sshd on a temporary port with
+# permissive auth, so the operator always has a way back in if the change
+# breaks the main daemon. Invariants below each fix a real lockout bug:
+#   - The rescue port is chosen dynamically and must be free AND different from
+#     the live SSH port. A fixed 2222 silently collided when the audit's own
+#     "use a non-default port" advice had already put sshd on 2222.
+#   - Success is verified by confirming OUR daemon (tracked by pid) bound the
+#     port, not merely that something is listening — otherwise a pre-existing
+#     listener (e.g. the production sshd on 2222) reads as a false success.
+#   - On an active firewall the port is allowed (scoped to the operator's
+#     current IP when known) so the rescue is actually reachable.
+#   - Teardown kills only our tracked pid (a port grep could match and kill the
+#     production sshd) and removes exactly the firewall rule it added.
+# Guide/fix runs are Debian/Ubuntu-only (engine gate), so ufw is auto-managed
+# here; other backends degrade to a reachability warning that the mandatory
+# pre-change confirmation (operator tests `ssh -p <port>`) backs.
+# ==============================================================================
 
-    # Create temporary sshd config with secure permissions
-    local rescue_config
-    rescue_config=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
-        print_error "$(i18n 'common.temp_file_failed')"
-        return 1
-    }
-    chmod 600 "$rescue_config"
-    SSH_RESCUE_CONFIG="$rescue_config"  # Store for cleanup
-
-    cat > "$rescue_config" <<EOF
-Port $SSH_RESCUE_PORT
-Include /etc/ssh/sshd_config
-EOF
-
-    # Start rescue sshd. sshd daemonises after parsing the config, so
-    # the parent process returns before the child has called bind().
-    # Give the child a short retry window to open the listening socket
-    # before declaring failure.
-    /usr/sbin/sshd -f "$rescue_config" 2>/dev/null
-
-    local _wait_attempts=20  # 20 * 0.1s = 2s total
-    local _i
-    for ((_i=0; _i<_wait_attempts; _i++)); do
-        if check_port_open "$SSH_RESCUE_PORT"; then
-            print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
-            print_warn "$(i18n 'ssh.rescue_port_test' "port=$SSH_RESCUE_PORT")"
-            return 0
-        fi
-        sleep 0.1
+# Pick a free TCP port for the rescue daemon: never the live SSH port, never an
+# already-listening port. Prefer 2222, then scan small high-port ranges.
+_ssh_pick_rescue_port() {
+    local live_port listening candidate
+    live_port=$(get_ssh_port 2>/dev/null || echo 22)
+    listening=$(get_listening_ports 2>/dev/null || echo "")
+    for candidate in 2222 $(seq 2200 2299) $(seq 22000 22099); do
+        [[ "$candidate" == "$live_port" ]] && continue
+        grep -qx "$candidate" <<<"$listening" && continue
+        echo "$candidate"
+        return 0
     done
-
-    # Bind never succeeded within the wait window. If the child
-    # eventually does bind after we return, _ssh_close_rescue_port
-    # (called by the caller below) will still find it via `ss -tlnp`,
-    # so we invoke it here as defensive cleanup even on the failure
-    # path rather than leaving a potential zombie rescue sshd.
-    print_error "$(i18n 'ssh.rescue_port_failed')"
-    _ssh_close_rescue_port
-    rm -f "$rescue_config"
     return 1
 }
 
-# Close rescue port
+# True when the rescue daemon we launched is alive AND owns the listening
+# socket on the rescue port (verified by pid, so a coincidental listener on
+# that port cannot read as success).
+_ssh_rescue_is_up() {
+    [[ -n "${SSH_RESCUE_PID:-}" ]] || return 1
+    kill -0 "$SSH_RESCUE_PID" 2>/dev/null || return 1
+    ss -tlnp 2>/dev/null \
+        | grep -E "LISTEN.*:${SSH_RESCUE_PORT}[[:space:]]" \
+        | grep -q "pid=${SSH_RESCUE_PID}\b"
+}
+
+# Allow the rescue port through the firewall, scoped to the operator's current
+# SSH client IP when known. Records what we added so close removes exactly it.
+# Only ufw is auto-managed; other active backends warn and lean on the
+# reachability confirmation.
+_ssh_rescue_allow_firewall() {
+    local backend ip
+    backend=$(fw_backend 2>/dev/null || echo none)
+    ip=$(get_current_ssh_ip)
+
+    case "$backend" in
+        ufw)
+            if [[ -n "$ip" ]]; then
+                if ufw allow from "$ip" to any port "$SSH_RESCUE_PORT" proto tcp comment "vpssec rescue" >/dev/null 2>&1; then
+                    SSH_RESCUE_FW_RULE="ufw:${ip}:${SSH_RESCUE_PORT}"
+                fi
+            elif ufw allow "$SSH_RESCUE_PORT/tcp" comment "vpssec rescue" >/dev/null 2>&1; then
+                SSH_RESCUE_FW_RULE="ufw::${SSH_RESCUE_PORT}"
+            fi
+            if [[ -n "$SSH_RESCUE_FW_RULE" ]]; then
+                print_ok "$(i18n 'ssh.rescue_fw_allowed' "port=$SSH_RESCUE_PORT")"
+            else
+                print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+            fi
+            ;;
+        none)
+            : # no active firewall: the rescue port is reachable, nothing to do
+            ;;
+        *)
+            # firewalld / nftables / iptables: don't manipulate rules blind.
+            print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+            ;;
+    esac
+}
+
+# Remove exactly the firewall rule added by _ssh_rescue_allow_firewall.
+_ssh_rescue_remove_firewall() {
+    [[ -n "${SSH_RESCUE_FW_RULE:-}" ]] || return 0
+    local kind ip port
+    IFS=':' read -r kind ip port <<<"$SSH_RESCUE_FW_RULE"
+    case "$kind" in
+        ufw)
+            if [[ -n "$ip" ]]; then
+                ufw delete allow from "$ip" to any port "$port" proto tcp >/dev/null 2>&1 || true
+            else
+                ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+    SSH_RESCUE_FW_RULE=""
+}
+
+# Open the rescue daemon (see header). Returns 0 only when our daemon is
+# verified listening; on any failure it tears down whatever it created.
+_ssh_open_rescue_port() {
+    local port
+    if ! port=$(_ssh_pick_rescue_port); then
+        print_error "$(i18n 'ssh.rescue_no_free_port')"
+        return 1
+    fi
+    SSH_RESCUE_PORT="$port"
+    print_info "$(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
+
+    SSH_RESCUE_CONFIG=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
+        print_error "$(i18n 'common.temp_file_failed')"
+        return 1
+    }
+    SSH_RESCUE_PIDFILE=$(mktemp -t vpssec-sshd-rescue-pid.XXXXXX) || {
+        print_error "$(i18n 'common.temp_file_failed')"
+        rm -f "$SSH_RESCUE_CONFIG"; SSH_RESCUE_CONFIG=""
+        return 1
+    }
+    chmod 600 "$SSH_RESCUE_CONFIG"
+
+    # Minimal, standalone config — deliberately NOT Include-ing the live
+    # sshd_config: the include re-imports its Port (causing a duplicate bind
+    # that aborts the daemon) and any restrictive/in-flux directive that could
+    # block the rescue login. Auth is permissive on purpose: the rescue exists
+    # precisely so the operator can get back in if the change breaks their
+    # normal auth. It is temporary, firewall-scoped to their IP, and torn down
+    # immediately after.
+    cat > "$SSH_RESCUE_CONFIG" <<EOF
+Port $SSH_RESCUE_PORT
+PidFile $SSH_RESCUE_PIDFILE
+PermitRootLogin yes
+PasswordAuthentication yes
+PubkeyAuthentication yes
+UsePAM yes
+EOF
+
+    # Validate the rescue config in isolation before launching.
+    if ! sshd -t -f "$SSH_RESCUE_CONFIG" 2>/dev/null; then
+        print_error "$(i18n 'ssh.rescue_port_failed')"
+        _ssh_close_rescue_port
+        return 1
+    fi
+
+    # Launch in the foreground (-D) and background it, so $! is the master sshd
+    # pid (a daemonising sshd double-forks and loses the pid). Output is dropped:
+    # the config was validated above and the bind is verified below.
+    /usr/sbin/sshd -D -f "$SSH_RESCUE_CONFIG" >/dev/null 2>&1 &
+    SSH_RESCUE_PID=$!
+
+    # Wait (up to ~3s) for OUR daemon to bind the rescue port.
+    local _i
+    for ((_i=0; _i<30; _i++)); do
+        if _ssh_rescue_is_up; then
+            print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
+            _ssh_rescue_allow_firewall
+            return 0
+        fi
+        # If our daemon already exited, stop waiting.
+        kill -0 "$SSH_RESCUE_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+
+    print_error "$(i18n 'ssh.rescue_port_failed')"
+    _ssh_close_rescue_port
+    return 1
+}
+
+# Tear down the rescue daemon: kill ONLY our tracked pid, remove our firewall
+# rule, clean temps. Safe to call multiple times / after a failed open.
 _ssh_close_rescue_port() {
-    # Kill sshd listening on rescue port
-    local pid
-    pid=$(ss -tlnp | grep ":${SSH_RESCUE_PORT}" | grep -oP 'pid=\K\d+' | head -1) || true
-    if [[ -n "$pid" ]]; then
-        kill "$pid" 2>/dev/null || true
-        log_info "Closed rescue port $SSH_RESCUE_PORT (pid: $pid)"
+    _ssh_rescue_remove_firewall
+
+    if [[ -n "${SSH_RESCUE_PID:-}" ]] && kill -0 "$SSH_RESCUE_PID" 2>/dev/null; then
+        kill "$SSH_RESCUE_PID" 2>/dev/null || true
+        log_info "Closed rescue sshd on port ${SSH_RESCUE_PORT} (pid: $SSH_RESCUE_PID)"
     fi
-    # Clean up temp config file if it exists
-    if [[ -n "${SSH_RESCUE_CONFIG:-}" ]] && [[ -f "$SSH_RESCUE_CONFIG" ]]; then
-        rm -f "$SSH_RESCUE_CONFIG"
-    fi
+    SSH_RESCUE_PID=""
+
+    [[ -n "${SSH_RESCUE_CONFIG:-}" && -f "$SSH_RESCUE_CONFIG" ]] && rm -f "$SSH_RESCUE_CONFIG"
+    [[ -n "${SSH_RESCUE_PIDFILE:-}" && -f "$SSH_RESCUE_PIDFILE" ]] && rm -f "$SSH_RESCUE_PIDFILE"
+    SSH_RESCUE_CONFIG=""
+    SSH_RESCUE_PIDFILE=""
 }
 
 # Track the backup path of the drop-in that was overwritten by the most
@@ -1352,15 +1480,18 @@ _ssh_fix_disable_password_auth() {
         return 1
     fi
 
-    # Critical confirmation
-    if ! confirm_critical "$(i18n 'ssh.confirm_ssh_change')"; then
+    # Open the rescue daemon BEFORE confirming, so the operator can actually
+    # test it during the confirmation below. MANDATORY for SSH access changes.
+    if ! _ssh_open_rescue_port; then
+        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
         return 1
     fi
 
-    # Open rescue port - MANDATORY for SSH changes
-    if ! _ssh_open_rescue_port; then
-        print_error "$(i18n 'ssh.rescue_port_failed')"
-        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
+    # Critical confirmation = verify the rescue path works before we touch the
+    # live config. confirm_critical ignores --yes and needs a typed "yes" on a
+    # tty; declining tears the rescue down and changes nothing.
+    if ! confirm_critical "$(i18n 'ssh.rescue_port_verify' "port=$SSH_RESCUE_PORT")"; then
+        _ssh_close_rescue_port
         return 1
     fi
 
@@ -1397,15 +1528,18 @@ _ssh_fix_disable_root_login() {
         return 1
     fi
 
-    # Critical confirmation
-    if ! confirm_critical "$(i18n 'ssh.confirm_ssh_change')"; then
+    # Open the rescue daemon BEFORE confirming, so the operator can actually
+    # test it during the confirmation below. MANDATORY for SSH access changes.
+    if ! _ssh_open_rescue_port; then
+        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
         return 1
     fi
 
-    # Open rescue port - MANDATORY for SSH changes
-    if ! _ssh_open_rescue_port; then
-        print_error "$(i18n 'ssh.rescue_port_failed')"
-        print_warn "$(i18n 'ssh.rescue_port_check' "port=$SSH_RESCUE_PORT")"
+    # Critical confirmation = verify the rescue path works before we touch the
+    # live config. confirm_critical ignores --yes and needs a typed "yes" on a
+    # tty; declining tears the rescue down and changes nothing.
+    if ! confirm_critical "$(i18n 'ssh.rescue_port_verify' "port=$SSH_RESCUE_PORT")"; then
+        _ssh_close_rescue_port
         return 1
     fi
 

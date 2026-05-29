@@ -1347,8 +1347,11 @@ _webapp_fix_nginx_server_tokens() {
         return 0
     fi
 
-    # Backup
-    backup_file "$NGINX_CONF"
+    # Backup, capturing the path so we can restore it if the edit fails to
+    # validate. NGINX_CONF exists (we grep'd it above), so backup_file echoes
+    # the backup path.
+    local bak
+    bak=$(backup_file "$NGINX_CONF")
 
     # Add to http block
     if grep -q "^http\s*{" "$NGINX_CONF" 2>/dev/null; then
@@ -1358,13 +1361,19 @@ _webapp_fix_nginx_server_tokens() {
         sed -i '/http\s*{/a\    server_tokens off;' "$NGINX_CONF"
     fi
 
-    # Test and reload
+    # Test and reload. On failure, restore the backup before returning: this
+    # fix is auto-applied (FIX_SAFE), so a broken nginx.conf left live would
+    # silently fail the next reload/restart/reboot.
     if nginx -t 2>/dev/null; then
         systemctl reload nginx
         print_ok "$(i18n 'webapp.server_tokens_fixed' 2>/dev/null || echo 'server_tokens off added and Nginx reloaded')"
         return 0
     else
         print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+        if [[ -n "$bak" && -f "$bak" ]]; then
+            cp -p "$bak" "$NGINX_CONF" && \
+                print_warn "$(i18n 'webapp.nginx_restored' 2>/dev/null || echo 'Restored Nginx configuration from backup after the change failed validation')"
+        fi
         return 1
     fi
 }
@@ -1376,10 +1385,18 @@ _webapp_fix_nginx_security_headers() {
     # Create a drop-in configuration
     local headers_conf="$NGINX_CONFD/security-headers.conf"
 
-    # Backup if exists
-    [[ -f "$headers_conf" ]] && backup_file "$headers_conf"
+    # Track whether the file pre-existed (and back it up) so we can restore the
+    # prior version, or remove the one we write, if validation fails below.
+    # This drop-in lives in conf.d which nginx auto-includes, so a broken file
+    # left behind would fail the next reload — and this fix is auto-applied.
+    local pre_existed="false" bak=""
+    if [[ -f "$headers_conf" ]]; then
+        pre_existed="true"
+        bak=$(backup_file "$headers_conf")
+    fi
 
-    cat > "$headers_conf" << 'EOF'
+    local content
+    content=$(cat << 'EOF'
 # Security headers - added by vpssec
 # Add to server blocks or include in http block
 
@@ -1398,8 +1415,15 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 # Note: Add Content-Security-Policy based on your application needs
 # add_header Content-Security-Policy "default-src 'self';" always;
 EOF
+)
 
-    # Test and reload
+    if ! write_file_atomic "$headers_conf" "$content"; then
+        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        return 1
+    fi
+
+    # Test and reload. On failure, restore the prior drop-in or remove the one
+    # we just wrote so an auto-included broken file can't fail the next reload.
     if nginx -t 2>/dev/null; then
         systemctl reload nginx
         print_ok "$(i18n 'webapp.headers_added' 2>/dev/null || echo 'Security headers configuration created'): $headers_conf"
@@ -1407,6 +1431,12 @@ EOF
         return 0
     else
         print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+        if [[ "$pre_existed" == "true" && -n "$bak" && -f "$bak" ]]; then
+            cp -p "$bak" "$headers_conf"
+        else
+            rm -f "$headers_conf"
+        fi
+        print_warn "$(i18n 'webapp.nginx_restored' 2>/dev/null || echo 'Restored Nginx configuration from backup after the change failed validation')"
         return 1
     fi
 }

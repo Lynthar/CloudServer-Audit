@@ -479,12 +479,12 @@ _update_fix_install_unattended() {
 _update_fix_enable_unattended() {
     print_info "$(i18n 'update.configuring_unattended')"
 
-    # Create auto-upgrades config
-    cat > /etc/apt/apt.conf.d/20auto-upgrades <<EOF
-APT::Periodic::Update-Package-Lists "1";
+    # Create auto-upgrades config (back it up first — it previously had none —
+    # and write it atomically).
+    [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]] && backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null 2>&1 || true
+    write_file_atomic /etc/apt/apt.conf.d/20auto-upgrades 'APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::AutocleanInterval "7";
-EOF
+APT::Periodic::AutocleanInterval "7";'
 
     # Configure unattended-upgrades for security only
     local uu_config="/etc/apt/apt.conf.d/50unattended-upgrades"

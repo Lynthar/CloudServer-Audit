@@ -21,12 +21,12 @@ setup() {
 @test "_help_collect_fixes: ssh module collects expected counts" {
     _help_collect_fixes "ssh"
     # SSH module ships a known mix per security_levels.sh:
-    #   5 safe, 1 confirm, 2 risky, 3 alert_only (+ a handful of
+    #   5 safe, 1 confirm, 2 risky, 4 alert_only (+ a handful of
     #   passed-state checks that aren't fix_ids — those don't count)
     [ "$(count_lines "${_help_fix_table[safe]}")"        = "5" ]
     [ "$(count_lines "${_help_fix_table[confirm]}")"     = "1" ]
     [ "$(count_lines "${_help_fix_table[risky]}")"       = "2" ]
-    [ "$(count_lines "${_help_fix_table[alert_only]}")"  = "3" ]
+    [ "$(count_lines "${_help_fix_table[alert_only]}")"  = "4" ]
 }
 
 @test "_help_collect_fixes: preflight is audit-only (zero fixes)" {

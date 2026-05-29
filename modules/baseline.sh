@@ -575,11 +575,21 @@ _baseline_fix_selinux_enforcing() {
         if [[ "$(_baseline_selinux_get_status)" == "enforcing" ]]; then
             print_ok "$(i18n 'baseline.selinux_enforcing_set')"
 
-            # Update config file for persistence
+            # Update config file for persistence. Verify the edit produced the
+            # intended SELINUX=enforcing line; if it did not (e.g. an unexpected
+            # config layout with no SELINUX= line), restore the backup so we
+            # never leave a half-edited /etc/selinux/config that could
+            # mis-initialise SELinux on the next boot.
             if [[ -f /etc/selinux/config ]]; then
-                backup_file /etc/selinux/config
+                local sel_bak
+                sel_bak=$(backup_file /etc/selinux/config)
                 sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-                print_ok "$(i18n 'baseline.selinux_config_updated')"
+                if grep -qE '^SELINUX=enforcing[[:space:]]*$' /etc/selinux/config; then
+                    print_ok "$(i18n 'baseline.selinux_config_updated')"
+                else
+                    print_error "$(i18n 'baseline.selinux_config_restore' 2>/dev/null || echo 'Unexpected /etc/selinux/config layout; restored from backup - set SELINUX=enforcing manually')"
+                    [[ -n "$sel_bak" && -f "$sel_bak" ]] && cp -p "$sel_bak" /etc/selinux/config
+                fi
             fi
             return 0
         else

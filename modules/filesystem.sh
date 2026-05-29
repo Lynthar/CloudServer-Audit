@@ -1233,6 +1233,9 @@ _fs_fix_sensitive_perms() {
         local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
         if (( extra_bits != 0 )); then
             print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$expected")"
+            # Back up before chmod so the prior mode can be restored on rollback
+            # (backup_file uses cp -p, preserving the original mode bits).
+            backup_file "$file" >/dev/null 2>&1 || true
             if chmod "$expected" "$file" 2>/dev/null; then
                 ((fixed++))
                 print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"

@@ -223,6 +223,21 @@ declare -gA FIX_ALERT_ONLY=(
     ["users.pwquality"]="Install/configure libpam-pwquality manually"
 )
 
+# Fixes that perform their own confirmation. Each is also in FIX_CONFIRM or
+# FIX_RISKY, but the module runs confirm_critical itself at a more precise
+# point than the engine can — after its own precondition checks (SSH key /
+# admin-user presence, current firewall rules) and with a fully translated
+# prompt. execute_fix therefore skips its central confirm/risky gate for these
+# to avoid prompting twice; every OTHER confirm/risky fix is gated by the
+# engine. Removing a module's confirm_critical means removing it here too
+# (guarded by tests/test_security_levels.bats).
+declare -gA FIX_SELF_CONFIRMED=(
+    ["ssh.disable_password_auth"]="true"        # confirm_critical after SSH-key precondition (modules/ssh.sh)
+    ["ssh.disable_root_login"]="true"           # confirm_critical after admin-user precondition (modules/ssh.sh)
+    ["ufw.enable"]="true"                        # confirm_critical after showing current rules (modules/ufw.sh)
+    ["docker.enable_no_new_privileges"]="true"  # confirm_critical before daemon restart (modules/docker.sh)
+)
+
 # ==============================================================================
 # Check Score Categories
 # ==============================================================================
@@ -687,6 +702,19 @@ fix_is_risky() {
     safety=$(get_fix_safety "$fix_id")
 
     [[ "$safety" == "risky" ]]
+}
+
+# True when execute_fix itself must prompt before applying this fix.
+#
+# A fix needs the engine to confirm it when it is confirm- or risky-class
+# (fix_requires_confirmation) AND it does not confirm itself. Fixes listed in
+# FIX_SELF_CONFIRMED call confirm_critical from their own module at a more
+# precise point, so the engine must not also prompt or the user would be asked
+# twice. This is the single predicate execute_fix branches on.
+fix_needs_engine_confirmation() {
+    local fix_id="$1"
+    fix_requires_confirmation "$fix_id" || return 1
+    [[ -z "${FIX_SELF_CONFIRMED[$fix_id]:-}" ]]
 }
 
 # ==============================================================================

@@ -1126,12 +1126,9 @@ _kernel_fix_core_dump() {
 
     # Configure systemd-coredump if present
     if [[ -d /etc/systemd/coredump.conf.d ]]; then
-        mkdir -p /etc/systemd/coredump.conf.d
-        cat > /etc/systemd/coredump.conf.d/99-vpssec.conf <<'EOF'
-[Coredump]
+        write_file_atomic /etc/systemd/coredump.conf.d/99-vpssec.conf '[Coredump]
 Storage=none
-ProcessSizeMax=0
-EOF
+ProcessSizeMax=0'
     fi
 
     print_ok "$(i18n 'kernel.core_dump_disabled')"
@@ -1172,20 +1169,23 @@ _kernel_write_sysctl() {
         local param_re="${param//./\\.}"
         existing=$(grep -vE '^[[:space:]]*(#|$)' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \
                    | grep -vE "^${param_re}[[:space:]]*=" || true)
+        # Back up the prior drop-in so a wrong value can be rolled back.
+        backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
     fi
 
-    # Write config
-    {
-        echo "# vpssec kernel hardening configuration"
-        echo "# Generated: $(date -Iseconds)"
-        echo ""
-        if [[ -n "$existing" ]]; then
-            echo "$existing"
-        fi
-        echo "$param = $value"
-    } > "$VPSSEC_SYSCTL_CONF"
+    # Build the full drop-in and write it atomically — never a partial file:
+    # this is persisted hardening replayed on every boot. write_file_atomic
+    # sets 0644 for a new file and preserves the mode of an existing one.
+    local content
+    content="# vpssec kernel hardening configuration"$'\n'
+    content+="# Generated: $(date -Iseconds)"$'\n'
+    content+=$'\n'
+    if [[ -n "$existing" ]]; then
+        content+="$existing"$'\n'
+    fi
+    content+="$param = $value"
 
-    chmod 644 "$VPSSEC_SYSCTL_CONF"
+    write_file_atomic "$VPSSEC_SYSCTL_CONF" "$content"
 }
 
 # Reload the vpssec sysctl drop-in so the persisted values are effective

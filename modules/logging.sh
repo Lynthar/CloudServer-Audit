@@ -406,17 +406,18 @@ _logging_fix_enable_persistent_journal() {
     mkdir -p /var/log/journal
     systemd-tmpfiles --create --prefix /var/log/journal
 
-    # Create drop-in configuration
+    # Create drop-in configuration atomically; back up any prior drop-in so a
+    # bad restart can be rolled back. A partial file here could degrade
+    # journald on the restart below.
     mkdir -p "$JOURNALD_CONF_D"
-    cat > "${JOURNALD_CONF_D}/99-vpssec.conf" <<'EOF'
-# vpssec journald configuration
+    [[ -f "${JOURNALD_CONF_D}/99-vpssec.conf" ]] && backup_file "${JOURNALD_CONF_D}/99-vpssec.conf" >/dev/null 2>&1 || true
+    write_file_atomic "${JOURNALD_CONF_D}/99-vpssec.conf" '# vpssec journald configuration
 [Journal]
 Storage=persistent
 Compress=yes
 SystemMaxUse=500M
 SystemMaxFileSize=50M
-MaxRetentionSec=1month
-EOF
+MaxRetentionSec=1month'
 
     # Restart journald
     systemctl restart systemd-journald

@@ -138,3 +138,85 @@ setup() {
         fi
     done
 }
+
+# ---- fix_needs_engine_confirmation ----------------------------------
+#
+# This predicate is the single switch execute_fix branches on to decide
+# whether to prompt for a fix itself. It must be true for every confirm/
+# risky fix EXCEPT the ones that confirm themselves (FIX_SELF_CONFIRMED),
+# and false for safe/alert-only fixes.
+
+@test "fix_needs_engine_confirmation: confirm-class fix is gated by the engine" {
+    run fix_needs_engine_confirmation "ufw.set_default_deny"
+    [ "$status" -eq 0 ]
+}
+
+@test "fix_needs_engine_confirmation: risky non-self-confirming fix is gated by the engine" {
+    # update.apply_security is FIX_RISKY but has no confirm_critical of its
+    # own — the engine MUST gate it (the gap this change closes).
+    run fix_needs_engine_confirmation "update.apply_security"
+    [ "$status" -eq 0 ]
+}
+
+@test "fix_needs_engine_confirmation: self-confirming risky fix is NOT gated by the engine" {
+    run fix_needs_engine_confirmation "ssh.disable_password_auth"
+    [ "$status" -ne 0 ]
+}
+
+@test "fix_needs_engine_confirmation: self-confirming confirm fix is NOT gated by the engine" {
+    run fix_needs_engine_confirmation "docker.enable_no_new_privileges"
+    [ "$status" -ne 0 ]
+}
+
+@test "fix_needs_engine_confirmation: safe fix is NOT gated" {
+    run fix_needs_engine_confirmation "ssh.disable_empty_password"
+    [ "$status" -ne 0 ]
+}
+
+@test "fix_needs_engine_confirmation: alert-only fix is NOT gated" {
+    run fix_needs_engine_confirmation "malware.crypto_miner"
+    [ "$status" -ne 0 ]
+}
+
+# ---- FIX_SELF_CONFIRMED invariants ----------------------------------
+
+@test "FIX_SELF_CONFIRMED: every entry is confirm- or risky-class" {
+    # A safe/alert-only fix in the skip set would mean the engine never
+    # gates it AND it has no business self-confirming — a silent hole.
+    local id safety
+    for id in "${!FIX_SELF_CONFIRMED[@]}"; do
+        safety=$(get_fix_safety "$id")
+        if [[ "$safety" != "confirm" && "$safety" != "risky" ]]; then
+            printf 'FIX_SELF_CONFIRMED entry %s is %s, expected confirm/risky\n' \
+                "$id" "$safety" >&2
+            return 1
+        fi
+    done
+}
+
+@test "FIX_SELF_CONFIRMED: the four known self-confirming fixes are present" {
+    local id
+    for id in ssh.disable_password_auth ssh.disable_root_login \
+              ufw.enable docker.enable_no_new_privileges; do
+        [[ -n "${FIX_SELF_CONFIRMED[$id]:-}" ]] || {
+            printf 'expected %s in FIX_SELF_CONFIRMED\n' "$id" >&2
+            return 1
+        }
+    done
+}
+
+@test "FIX_SELF_CONFIRMED: each listed module still calls confirm_critical" {
+    # Drift guard: if a module's confirm_critical is removed, the fix no
+    # longer self-confirms and must be dropped from FIX_SELF_CONFIRMED, or
+    # the engine will never gate it. Catch that here at PR time.
+    local root id module
+    root=$(_vpssec_repo_root)
+    for id in "${!FIX_SELF_CONFIRMED[@]}"; do
+        module="${id%%.*}"
+        if ! grep -q 'confirm_critical' "$root/modules/$module.sh"; then
+            printf '%s is in FIX_SELF_CONFIRMED but modules/%s.sh has no confirm_critical\n' \
+                "$id" "$module" >&2
+            return 1
+        fi
+    done
+}

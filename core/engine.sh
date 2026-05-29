@@ -504,15 +504,35 @@ execute_fix() {
     if [[ "$skip_safety_check" != "true" ]]; then
         local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
 
-        case "$safety" in
-            alert_only)
-                local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
-                print_warn "$(i18n 'fix.alert_only' 2>/dev/null || echo "Alert only"): $warning"
-                return 1
-                ;;
-            # risky, confirm, safe - all allowed in guide mode
-            # Confirmation is handled elsewhere in guide_mode
-        esac
+        # Alert-only fixes are never auto-applied — filtered from the selection
+        # UI in get_available_fixes, rejected here as defense-in-depth.
+        if [[ "$safety" == "alert_only" ]]; then
+            local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
+            print_warn "$(i18n 'fix.alert_only' 2>/dev/null || echo "Alert only"): $warning"
+            return 1
+        fi
+
+        # Enforce confirmation for confirm/risky fixes centrally so none can be
+        # applied without acknowledgement. Fixes in FIX_SELF_CONFIRMED prompt
+        # themselves at a more precise point and are skipped here to avoid a
+        # double prompt (see fix_needs_engine_confirmation). Risky fixes use
+        # confirm_critical (ignores --yes, requires a typed "yes" + tty);
+        # confirm-class fixes use confirm (honors --yes for non-critical runs).
+        if fix_needs_engine_confirmation "$fix_id"; then
+            local warning
+            warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
+            if fix_is_risky "$fix_id"; then
+                if ! confirm_critical "$(i18n 'fix.risky'): $warning"; then
+                    print_warn "$(i18n 'fix.risky_skipped')"
+                    return 1
+                fi
+            else
+                if ! confirm "$(i18n 'fix.confirm'): $warning"; then
+                    print_warn "$(i18n 'fix.confirm_skipped')"
+                    return 1
+                fi
+            fi
+        fi
     fi
 
     # Call module's fix function
@@ -893,7 +913,21 @@ guide_mode() {
     echo "" >> "$plan_preview"
     echo "## $(i18n 'guide.select_fixes')" >> "$plan_preview"
     echo "" >> "$plan_preview"
-    echo "$plan" | jq -r '.fixes[] | "- [\(.severity)] \(.title) (\(.fix_id))"' >> "$plan_preview"
+    # List each fix; append the safety warning for confirm/risky fixes so the
+    # operator sees what will need acknowledgement before the per-fix prompts.
+    local pp_fix pp_id pp_sev pp_title pp_safety pp_warn
+    while read -r pp_fix; do
+        pp_id=$(echo "$pp_fix" | jq -r '.fix_id')
+        pp_sev=$(echo "$pp_fix" | jq -r '.severity')
+        pp_title=$(echo "$pp_fix" | jq -r '.title')
+        pp_safety=$(get_fix_safety "$pp_id" 2>/dev/null || echo "unknown")
+        if [[ "$pp_safety" == "risky" || "$pp_safety" == "confirm" ]]; then
+            pp_warn=$(get_fix_warning "$pp_id" 2>/dev/null || echo "")
+            echo "- [$pp_sev] $pp_title ($pp_id) [$pp_safety${pp_warn:+: $pp_warn}]" >> "$plan_preview"
+        else
+            echo "- [$pp_sev] $pp_title ($pp_id)" >> "$plan_preview"
+        fi
+    done < <(echo "$plan" | jq -c '.fixes[]')
 
     if tui_available; then
         ui_review_plan "$plan_preview"
