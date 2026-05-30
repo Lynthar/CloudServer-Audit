@@ -270,6 +270,28 @@ tier1() {
     unset -f fail2ban-client systemctl
     restore_fn "$s_lp"; restore_fn "$s_be"; restore_fn "$s_ba"
     restore_fn "$s_act"; restore_fn "$s_en"; restore_fn "$s_gp2"
+
+    section "Tier 1.7: filesystem backs up before chmod (mode recoverable)"
+    # NOTE: _fs_fix_sensitive_perms also scans /etc/sudoers.d and
+    # /etc/ssh/sshd_config.d; on a correctly-configured box those are already
+    # tight, so it changes nothing there. We point it at one sandbox file.
+    local s_fsf; s_fsf=$(declare -p FS_SENSITIVE_FILES 2>/dev/null)
+    local fakefile="$SANDBOX/fake-sensitive"
+    : > "$fakefile"; chmod 0666 "$fakefile"
+    FS_SENSITIVE_FILES=( ["$fakefile"]="600" )
+    _fs_fix_sensitive_perms >/dev/null 2>&1
+    local mode; mode=$(stat -c '%a' "$fakefile" 2>/dev/null)
+    if [[ "$mode" == "600" ]]; then
+        ok "sensitive file chmod applied (0666 -> 0$mode)"
+    else
+        no "sensitive file not chmod'd (mode=$mode)"
+    fi
+    if [[ -n "$(find "$VPSSEC_BACKUPS" -name 'fake-sensitive' 2>/dev/null)" ]]; then
+        ok "sensitive file backed up before chmod (prior mode recoverable on rollback)"
+    else
+        no "no backup created before chmod"
+    fi
+    [[ -n "$s_fsf" ]] && eval "$s_fsf"
 }
 
 # ============================================================================
@@ -322,29 +344,55 @@ tier2() {
 
     _ssh_open_rescue_port >/dev/null 2>&1
     local opened=$?
-    if [[ $opened -eq 0 && "${SSH_RESCUE_PORT:-}" != "$prod_port" ]]; then
-        ok "rescue port ($SSH_RESCUE_PORT) differs from the live SSH port ($prod_port)"
-    else
-        no "rescue open failed or collided with live port (rc=$opened, rescue=${SSH_RESCUE_PORT:-none})"
+    if [[ $opened -ne 0 ]]; then
+        no "rescue open failed (rc=$opened); skipping remaining rescue assertions"
+        restore_fn "$s_gp"; restore_fn "$s_fw"
+        kill "$prod_pid" 2>/dev/null || true
+        return
     fi
 
-    if [[ $opened -eq 0 ]] && _ssh_rescue_is_up; then
+    if [[ "${SSH_RESCUE_PORT:-}" != "$prod_port" ]]; then
+        ok "rescue port ($SSH_RESCUE_PORT) differs from the live SSH port ($prod_port)"
+    else
+        no "rescue port collided with the live port ($prod_port)"
+    fi
+
+    # Directly verify the config-content fix: a standalone config with NO
+    # Include of the live sshd_config (the Include re-imported the live Port and
+    # caused the EADDRINUSE no-op), declaring our chosen Port.
+    if [[ -f "${SSH_RESCUE_CONFIG:-/nonexistent}" ]]; then
+        if ! grep -qiE '^[[:space:]]*Include' "$SSH_RESCUE_CONFIG" \
+           && grep -qE "^Port ${SSH_RESCUE_PORT}\$" "$SSH_RESCUE_CONFIG"; then
+            ok "rescue config is standalone (no Include) and declares Port $SSH_RESCUE_PORT"
+        else
+            no "rescue config unexpected (Include present, or Port missing)"
+        fi
+    else
+        no "rescue config file not found for inspection"
+    fi
+
+    if _ssh_rescue_is_up; then
         ok "rescue daemon is up and OUR pid ($SSH_RESCUE_PID) owns the listening socket"
     else
         no "rescue daemon not verified up via our pid"
     fi
 
-    # Capture the rescue pid before close so we can confirm it died.
+    # Capture identifiers before teardown.
     local rescue_pid="${SSH_RESCUE_PID:-}" rescue_port="${SSH_RESCUE_PORT:-}"
     _ssh_close_rescue_port >/dev/null 2>&1
 
+    # kill(1) is asynchronous — poll (<=3s) for the daemon to exit and the port
+    # to free before asserting, so a slow teardown doesn't cause a false fail.
+    local i
+    for ((i=0; i<30; i++)); do kill -0 "$rescue_pid" 2>/dev/null || break; sleep 0.1; done
     if [[ -n "$rescue_pid" ]] && ! kill -0 "$rescue_pid" 2>/dev/null; then
         ok "close killed the rescue daemon (pid $rescue_pid gone)"
     else
         no "rescue daemon still alive after close (pid $rescue_pid)"
     fi
+    for ((i=0; i<30; i++)); do ss -tln 2>/dev/null | grep -qE ":${rescue_port}[[:space:]]" || break; sleep 0.1; done
     if [[ -n "$rescue_port" ]] && ! ss -tln 2>/dev/null | grep -qE ":${rescue_port}[[:space:]]"; then
-        ok "rescue port $rescue_port is no longer listening after close"
+        ok "rescue port $rescue_port no longer listening after close"
     else
         no "rescue port $rescue_port still listening after close"
     fi
