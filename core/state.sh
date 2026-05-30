@@ -257,27 +257,16 @@ backup_get_latest() {
     backup_list | head -n1
 }
 
-# Create a new backup session
+# Create a new backup session directory. execute_plan assigns the returned
+# path to the global VPSSEC_BACKUP_SESSION, so every backup_file call during the
+# plan lands here and a rollback can restore the whole plan. (The former
+# backup_file_to_session helper was unused — backup_file is now session-aware.)
 backup_create_session() {
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
     echo "$backup_dir"
-}
-
-# Backup a file in current session
-backup_file_to_session() {
-    local file="$1"
-    local session_dir="$2"
-
-    if [[ -f "$file" ]]; then
-        local relative_path="${file#/}"
-        local backup_path="${session_dir}/${relative_path}"
-        mkdir -p "$(dirname "$backup_path")"
-        cp -p "$file" "$backup_path"
-        log_info "Backed up: $file -> $backup_path"
-        echo "$backup_path"
-    fi
 }
 
 # Restore from a specific backup.

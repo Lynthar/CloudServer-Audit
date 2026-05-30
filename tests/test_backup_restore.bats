@@ -190,3 +190,48 @@ _make_backup_session() {
     [ -f "$TEST_HOST_ROOT/sshd_config" ]
     [ "$(cat "$TEST_HOST_ROOT/sshd_config")" = "expected" ]
 }
+
+# ---- Backup session (whole-plan rollback) ----------------------------
+#
+# Regression for the split-across-timestamp-dirs bug: with a session open,
+# every backup_file lands in the SAME directory, so restoring it brings back
+# the WHOLE plan — not just the files touched in the last wall-clock second.
+# backup_file's base_dir validation uses `realpath -m` (GNU only), so guard.
+
+@test "backup session: all backups share one dir and restore together" {
+    _vpssec_require_gnu_realpath
+
+    local host="$BATS_TEST_TMPDIR/host"
+    mkdir -p "$host/etc"
+    echo "orig-a" > "$host/etc/a.conf"
+    echo "orig-b" > "$host/etc/b.conf"
+
+    VPSSEC_BACKUP_SESSION=$(backup_create_session)
+    backup_file "$host/etc/a.conf" >/dev/null
+    backup_file "$host/etc/b.conf" >/dev/null
+
+    # Both backups live under the SAME session directory.
+    [ -f "${VPSSEC_BACKUP_SESSION}/${host#/}/etc/a.conf" ]
+    [ -f "${VPSSEC_BACKUP_SESSION}/${host#/}/etc/b.conf" ]
+
+    # Mutate the live files, then restore the whole session.
+    echo "changed-a" > "$host/etc/a.conf"
+    echo "changed-b" > "$host/etc/b.conf"
+    run backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")"
+    [ "$status" -eq 0 ]
+
+    [ "$(cat "$host/etc/a.conf")" = "orig-a" ]
+    [ "$(cat "$host/etc/b.conf")" = "orig-b" ]
+    VPSSEC_BACKUP_SESSION=""
+}
+
+@test "backup_file without a session uses a per-call timestamp dir" {
+    _vpssec_require_gnu_realpath
+    VPSSEC_BACKUP_SESSION=""
+    local host="$BATS_TEST_TMPDIR/host"
+    mkdir -p "$host/etc"
+    echo x > "$host/etc/c.conf"
+    local out
+    out=$(backup_file "$host/etc/c.conf")
+    [[ "$out" =~ /backups/[0-9]{8}_[0-9]{6}/ ]]
+}

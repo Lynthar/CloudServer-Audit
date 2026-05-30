@@ -566,8 +566,11 @@ execute_plan() {
     local completed=()
     local failed=()
 
-    # Create backup session
-    local backup_dir=$(backup_create_session)
+    # Open a backup session: every backup_file call by the fixes below lands in
+    # this one directory (VPSSEC_BACKUP_SESSION), so a rollback restores the
+    # whole plan, not just the files backed up in the last wall-clock second.
+    VPSSEC_BACKUP_SESSION=$(backup_create_session)
+    local backup_dir="$VPSSEC_BACKUP_SESSION"
     log_info "Backup session created: $backup_dir"
 
     local i=0
@@ -622,9 +625,11 @@ execute_plan() {
                         fi
                         ;;
                     3)
-                        # Rollback and exit
+                        # Rollback and exit. Restore THIS plan's session (which
+                        # holds every fix's backup), not merely the latest dir.
                         print_warn "$(i18n 'backup.restoring')"
-                        backup_restore_latest
+                        backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")"
+                        VPSSEC_BACKUP_SESSION=""
                         state_clear_progress
                         return 1
                         ;;
@@ -660,6 +665,9 @@ execute_plan() {
     print_msg ""
     print_info "$(i18n 'guide.rollback_available')"
 
+    # Close the session so any later standalone backup_file call timestamps
+    # its own directory again.
+    VPSSEC_BACKUP_SESSION=""
     return 0
 }
 

@@ -16,6 +16,11 @@ VPSSEC_MODULES="${VPSSEC_ROOT}/modules"
 VPSSEC_STATE="${VPSSEC_ROOT}/state"
 VPSSEC_REPORTS="${VPSSEC_ROOT}/reports"
 VPSSEC_BACKUPS="${VPSSEC_ROOT}/backups"
+# Active backup session directory. When non-empty (set by backup_create_session
+# at the start of execute_plan), backup_file writes every backup of that plan
+# into this one directory so a rollback can restore the whole plan. Empty means
+# standalone per-call timestamped backups.
+VPSSEC_BACKUP_SESSION=""
 VPSSEC_LOGS="${VPSSEC_ROOT}/logs"
 VPSSEC_TEMPLATES="${VPSSEC_ROOT}/templates"
 
@@ -583,9 +588,19 @@ backup_file() {
         return 1
     fi
 
-    local timestamp
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
+    # When a backup session is active (set by backup_create_session at the
+    # start of execute_plan), every fix in the plan backs up into that ONE
+    # directory, so a rollback restores the whole plan rather than only the
+    # files touched in the last wall-clock second. Standalone callers get a
+    # per-call timestamped directory, as before.
+    local backup_dir
+    if [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]]; then
+        backup_dir="$VPSSEC_BACKUP_SESSION"
+    else
+        local timestamp
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
+    fi
 
     # Create backup directory with secure permissions
     mkdir -p "$backup_dir"
