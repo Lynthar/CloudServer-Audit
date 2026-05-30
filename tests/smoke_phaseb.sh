@@ -28,6 +28,14 @@
 #   ./tests/smoke_phaseb.sh --help
 #
 # EXIT: 0 if no test FAILED (skips are OK), 1 if any FAILED, 2 on bad usage.
+#
+# SC2329 ("function never invoked") is disabled file-wide: this harness defines
+# many functions ShellCheck sees as uncalled because they are invoked
+# INDIRECTLY — the stubs (nginx/systemctl/fail2ban-client/confirm/…) are called
+# by the sourced production code, _cleanup runs via `trap`, and the tiers via
+# `want_tier N && tierN`. Scoped here (not in .shellcheckrc) so SC2329 still
+# guards real code in core/ and modules/.
+# shellcheck disable=SC2329
 
 set -uo pipefail   # NOT -e: the harness inspects non-zero results itself, which
                    # also matches how execute_fix runs fixes in production (in an
