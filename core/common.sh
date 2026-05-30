@@ -517,7 +517,11 @@ validate_path() {
         local resolved_base
         resolved_base=$(realpath -m "$base_dir" 2>/dev/null) || return 1
 
-        if [[ "$resolved_path" != "$resolved_base"* ]]; then
+        # Require the path to BE the base or sit under "base/". A bare
+        # "$resolved_base"* prefix match would accept a sibling whose name
+        # merely starts with the base (e.g. base=/a/backups would accept
+        # /a/backups-evil/x) — a prefix-escape in a security primitive.
+        if [[ "$resolved_path" != "$resolved_base" && "$resolved_path" != "$resolved_base"/* ]]; then
             log_warn "Path $path is not under base directory $base_dir"
             return 1
         fi
@@ -780,6 +784,28 @@ count_lines() {
     # pipeline above fails for an unrelated reason.
     [[ "$n" =~ ^[0-9]+$ ]] || n=0
     echo "$n"
+}
+
+# Count the public keys in an authorized_keys file.
+#
+# A "key" is a non-comment, non-blank line whose key-type token (ssh-*,
+# ecdsa-*, sk-* for FIDO) appears at the start of the line or after the
+# optional options prefix (e.g. `from="..." ssh-ed25519 AAAA...`). Comment
+# lines (leading `#`, INCLUDING a rotated-out `# ssh-ed25519 ...`) are skipped
+# so a commented-out key is never counted as usable — the inline grep that
+# ssh.sh and users.sh used previously matched `# ssh-...` (the `#`-then-space
+# let `[[:space:]]ssh-` hit) and could report a key when only a comment
+# remained, risking a password-auth lockout / a false audit. awk (not
+# `grep -c ... || echo 0`) avoids the "0\n0" zero-match pitfall noted above.
+count_authorized_keys() {
+    local file="$1"
+    [[ -f "$file" ]] || { echo 0; return 0; }
+    awk '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*$/ { next }
+        /(^|[[:space:]])(ssh-|ecdsa-|sk-)/ { c++ }
+        END { print c + 0 }
+    ' "$file" 2>/dev/null || echo 0
 }
 
 # ==============================================================================

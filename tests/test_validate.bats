@@ -112,6 +112,24 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
+@test "validate_path: sibling sharing the base name prefix is rejected" {
+    # Regression: a bare "$base"* prefix match accepted /…/base-evil/x as
+    # being "under" /…/base. The boundary must be "$base" or "$base/".
+    _vpssec_require_gnu_realpath
+    local base="$BATS_TEST_TMPDIR/base"
+    mkdir -p "${base}-evil"
+    run validate_path "${base}-evil/x" "$base"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_path: the base directory itself is accepted" {
+    _vpssec_require_gnu_realpath
+    local base="$BATS_TEST_TMPDIR/base"
+    mkdir -p "$base"
+    run validate_path "$base" "$base"
+    [ "$status" -eq 0 ]
+}
+
 # ---- validate_input --------------------------------------------------
 
 @test "validate_input: empty pattern accepts within length limit" {

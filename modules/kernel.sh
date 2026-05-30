@@ -738,6 +738,12 @@ _kernel_audit_network_params() {
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
+    # Severity cap (deliberate, per the project's mitigation rubric): kernel
+    # sysctl hardening is defence-in-depth, so a missing one is never "host
+    # already exploitable now". The finding is therefore recorded ONE tier
+    # below the parameter's intrinsic weight — the high-weight group emits a
+    # MEDIUM check, the medium-weight group a LOW check. The *_high / *_medium
+    # check_ids name the source parameter group, not the emitted severity.
     if [[ ${#issues_high[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_high[@]}" | head -3 | tr '\n' '; ')
         local check=$(create_check_json \
@@ -1039,6 +1045,19 @@ _kernel_fix_network_params() {
             continue
         fi
 
+        # Mirror the audit's rp_filter exception: on a forwarding host (router /
+        # container bridge / k8s node) rp_filter=2 (loose mode) is correct —
+        # strict mode (1) drops asymmetric-return packets — so don't "fix" it
+        # back to 1 there. Without this, harden_network triggered for some other
+        # parameter would break exactly the config the audit deliberately
+        # accepted.
+        if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
+           && _kernel_ip_forward_needed; then
+            local rp_val
+            rp_val=$(_kernel_get_sysctl "$param" 2>/dev/null)
+            [[ "$rp_val" == "2" ]] && continue
+        fi
+
         local actual
         actual=$(_kernel_check_param "$param" "$expected")
         if [[ $? -eq 1 ]]; then
@@ -1076,8 +1095,11 @@ _kernel_fix_kernel_params() {
         local rest="${entry#*:}"
         local expected="${rest%%:*}"
 
-        # Only kernel.* and fs.* params
-        if [[ ! "$param" =~ ^(kernel\.|fs\.) ]]; then
+        # Only kernel.* / fs.* / dev.* params — must match the audit scope in
+        # _kernel_audit_kernel_params (which includes dev.*, e.g.
+        # dev.tty.ldisc_autoload); otherwise that param is audited but the fix
+        # silently skips it and the finding persists after "harden".
+        if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
             continue
         fi
 

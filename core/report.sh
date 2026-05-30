@@ -21,23 +21,46 @@ report_generate_json() {
 
     local modules_checked="${VPSSEC_INCLUDE:-all}"
 
-    cat > "$output_file" <<EOF
-{
-  "meta": {
-    "version": "${VPSSEC_VERSION}",
-    "timestamp": "$(date -Iseconds)",
-    "os": "${os}",
-    "os_version": "${os_version}",
-    "hostname": "${hostname}",
-    "virtualization": "${virt}",
-    "lang": "${VPSSEC_LANG}",
-    "modules": "${modules_checked}"
-  },
-  "score": ${score},
-  "stats": ${stats},
-  "checks": ${checks}
-}
-EOF
+    # Build via jq so every string field (hostname, os, os-release values, …)
+    # is correctly escaped. The previous hand-written heredoc inlined these raw;
+    # a hostname or os-release field containing a quote, backslash or control
+    # char would make summary.json invalid JSON or allow field injection.
+    # score/stats/checks are already valid JSON from jq-based producers, so they
+    # go in as --argjson (with empty-guards in case a producer returned nothing).
+    [[ -n "$score" ]]  || score=0
+    [[ -n "$stats" ]]  || stats='{}'
+    [[ -n "$checks" ]] || checks='[]'
+
+    local json
+    json=$(jq -n \
+        --arg version "${VPSSEC_VERSION:-}" \
+        --arg timestamp "$(date -Iseconds)" \
+        --arg os "$os" \
+        --arg os_version "$os_version" \
+        --arg hostname "$hostname" \
+        --arg virt "$virt" \
+        --arg lang "${VPSSEC_LANG:-}" \
+        --arg modules "$modules_checked" \
+        --argjson score "$score" \
+        --argjson stats "$stats" \
+        --argjson checks "$checks" \
+        '{
+            meta: {
+                version: $version,
+                timestamp: $timestamp,
+                os: $os,
+                os_version: $os_version,
+                hostname: $hostname,
+                virtualization: $virt,
+                lang: $lang,
+                modules: $modules
+            },
+            score: $score,
+            stats: $stats,
+            checks: $checks
+        }') || { log_error "Failed to build JSON report"; return 1; }
+
+    write_file_atomic "$output_file" "$json"
 
     log_info "JSON report generated: $output_file"
     echo "$output_file"

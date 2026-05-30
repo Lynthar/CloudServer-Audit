@@ -451,15 +451,12 @@ _analyze_ssh_keys() {
         local authkeys="$home/.ssh/authorized_keys"
         [[ -f "$authkeys" ]] || continue
 
-        # Count keys. Using awk because the legacy idiom
-        #   grep -c '^ssh-' file 2>/dev/null || echo 0
-        # produces the literal "0\n0" when the file has zero matches
-        # (grep -c prints "0" *and* exits 1, so the fallback runs and
-        # appends a second "0"); bash arithmetic on that two-line
-        # string then aborts the audit under set -e. awk's `c+0`
-        # always yields a single integer and never exits non-zero.
+        # Count keys via the shared helper, which skips comment/blank lines and
+        # recognises ssh-/ecdsa-/sk- keys (including options-prefixed). The old
+        # `^ssh-`-only awk here missed ECDSA/FIDO/options keys and could
+        # under-count, skipping users that actually had keys.
         local key_count
-        key_count=$(awk '/^ssh-/ {c++} END {print c+0}' "$authkeys" 2>/dev/null) || key_count=0
+        key_count=$(count_authorized_keys "$authkeys")
         [[ "$key_count" -eq 0 ]] && continue
 
         # Check permissions
@@ -472,7 +469,8 @@ _analyze_ssh_keys() {
         # Check for suspicious key comments
         local suspicious_keys=0
         while read -r line; do
-            [[ "$line" =~ ^ssh- ]] || continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ "$line" =~ (^|[[:space:]])(ssh-|ecdsa-|sk-) ]] || continue
             local comment=$(echo "$line" | awk '{print $NF}')
             # Check for suspicious patterns in comments
             if [[ "$comment" =~ (test|temp|backup|admin@|root@unknown) ]]; then

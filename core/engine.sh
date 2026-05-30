@@ -304,12 +304,18 @@ audit_module() {
         log_info "Running audit: $module"
         print_subheader "$(i18n "${module}.title")"
 
-        # Execute audit with error capture
+        # Execute audit, capturing the module's REAL exit code. `if ! fn; then
+        # r=$?` would capture the status of `!` (always 0), so the warning
+        # always logged "returned non-zero: 0". `if fn; then : ; else r=$?`
+        # records the actual non-zero in the else branch, and the `if` still
+        # suppresses set -e so one module's failure can't abort the whole audit.
         local audit_result=0
-        if ! "$audit_func"; then
+        if "$audit_func"; then
+            :
+        else
             audit_result=$?
             log_warn "Audit function $audit_func returned non-zero: $audit_result"
-            # Don't fail the whole audit for individual module failures
+            # Don't fail the whole audit for individual module failures.
         fi
 
         return 0  # Module audit completed (even if with warnings)

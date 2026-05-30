@@ -165,22 +165,21 @@ _ssh_get_admin_users() {
 
 # Check if user has at least one usable key in authorized_keys.
 #
-# The previous `-s` (non-empty) check accepted files that contained
-# only comments or whitespace — if someone rotated all keys out but
-# left the "# keys rotated 2026-04" line, this function would still
-# report success and _ssh_fix_disable_password_auth would blindly
-# cut off password auth, locking the user out. Require at least one
-# line whose algorithm prefix (`ssh-`, `ecdsa-`, or `sk-` for FIDO
-# tokens) appears at line start or after the optional-options prefix
-# commonly used (`from="..." ssh-ed25519 AAAA...`).
+# The previous `-s` (non-empty) check accepted files that contained only
+# comments or whitespace; a later inline grep still matched a rotated-out
+# `# ssh-ed25519 ...` comment line (the `#`-then-space let `[[:space:]]ssh-`
+# hit), so a comment-only file was reported as "has key" and
+# _ssh_fix_disable_password_auth would cut off password auth and lock the user
+# out. Delegate to count_authorized_keys (core/common.sh), which skips
+# comment/blank lines and matches ssh-/ecdsa-/sk- at line start or after the
+# optional-options prefix (`from="..." ssh-ed25519 AAAA...`).
 _ssh_user_has_key() {
     local user="$1"
     local home_dir
     home_dir=$(getent passwd "$user" | cut -d: -f6)
     local auth_keys="${home_dir}/.ssh/authorized_keys"
 
-    [[ -f "$auth_keys" ]] || return 1
-    grep -qE '(^|[[:space:]])(ssh-|ecdsa-|sk-)' "$auth_keys" 2>/dev/null
+    [[ "$(count_authorized_keys "$auth_keys")" -gt 0 ]]
 }
 
 # Check if SSH access control is configured (AllowUsers/DenyUsers/AllowGroups/DenyGroups)
