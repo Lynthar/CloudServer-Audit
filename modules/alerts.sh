@@ -64,8 +64,16 @@ _alerts_audit_config() {
         [[ -n "$email" ]] && { ((configured++)) || true; }
 
         if ((configured > 0)); then
-            local webhook_status="${webhook:+yes}${webhook:-no}"
-            local email_status="${email:+yes}${email:-no}"
+            # Report only PRESENCE (yes/no), never the secret values. A
+            # webhook URL (Slack/Discord/Telegram bot token) and an email
+            # address are bearer secrets; the previous
+            # `${var:+yes}${var:-no}` expansion silently expanded to
+            # "yes<the-full-URL>" whenever the var was set, leaking the
+            # secret into reports/summary.{md,json,sarif} (and the copy
+            # run.sh drops in /tmp).
+            local webhook_status="no" email_status="no"
+            [[ -n "$webhook" ]] && webhook_status="yes"
+            [[ -n "$email" ]] && email_status="yes"
             local check=$(create_check_json \
                 "alerts.configured" \
                 "alerts" \

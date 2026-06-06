@@ -10,6 +10,16 @@ name: release
 # trust root from github.com, so a compromised upstream can't forge a
 # signature without compromising sigstore itself.
 
+# SECURITY (repo-settings, can't be enforced from this file alone): the
+# end-user trust chain (run.sh's cosign verify-blob) ultimately reduces to
+# "who can push a v* tag here". Harden it in repo settings:
+#   1. A tag protection ruleset on refs/tags/v* that blocks tag
+#      create/update/delete by non-maintainers (and blocks force-moving an
+#      existing tag — complements the in-workflow immutability guard below).
+#   2. A GitHub Environment (e.g. `release`) with required reviewers, then add
+#      `environment: release` to the job, so signing+publishing needs an
+#      explicit human approval. Without this, any collaborator with write can
+#      mint a validly-signed release indistinguishable from a legitimate one.
 on:
   push:
     tags:
@@ -29,9 +39,13 @@ jobs:
           fetch-depth: 0
 
       - name: Install cosign
-        # Pin a specific cosign version so a sigstore release doesn't
-        # silently change the signing surface area. Bump when reviewed.
-        uses: sigstore/cosign-installer@v3.7.0
+        # Pin the action to a full commit SHA, NOT the mutable @v3.7.0 tag:
+        # this job holds id-token:write, so a re-pointed installer tag could
+        # exfiltrate/abuse the OIDC token or alter the signing step while
+        # still producing a release that passes downstream verification. The
+        # SHA below is v3.7.0; bump (resolve the new tag to its commit SHA)
+        # only after review. `cosign-release` separately pins the cosign binary.
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
         with:
           cosign-release: 'v2.4.1'
 
@@ -74,6 +88,19 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           ARCHIVE="${{ steps.build.outputs.archive }}"
 
+          # Immutability guard: refuse to overwrite a release that ALREADY
+          # carries the signed tarball. Re-running this workflow on an
+          # existing tag with different code would re-sign it under the same
+          # workflow identity, so it would still pass run.sh's cosign
+          # verify-blob — silently swapping code a user already audited under
+          # that version. A first run (or a re-run before the tarball landed)
+          # still works. To ship new code, push a NEW version tag.
+          if gh release view "$TAG" --json assets \
+                --jq '.assets[].name' 2>/dev/null | grep -qx "$ARCHIVE"; then
+              echo "::error::Release $TAG already has $ARCHIVE; refusing to overwrite a published, signed asset. Cut a new version tag instead."
+              exit 1
+          fi
+
           # Idempotent: if a release for this tag already exists
           # (maintainer pre-created via `gh release create`), reuse it;
           # otherwise create one with auto-generated notes.
@@ -83,7 +110,9 @@ jobs:
                   --generate-notes
           fi
 
-          # --clobber lets workflow re-runs replace assets without erroring.
+          # --clobber now only applies to a re-run BEFORE the tarball was
+          # published (the guard above blocks the post-publish case), so it
+          # just keeps partial-upload re-runs idempotent for .sha256/.sig.json.
           gh release upload "$TAG" \
               "$ARCHIVE" \
               "${ARCHIVE}.sha256" \

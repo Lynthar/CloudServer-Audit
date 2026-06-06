@@ -57,6 +57,8 @@ $(i18n 'cli.options')
   $(i18n 'cli.opt_no_color')
   $(i18n 'cli.opt_json_only')
   $(i18n 'cli.opt_yes')
+  $(i18n 'cli.opt_strict')
+  $(i18n 'cli.opt_debug')
   $(i18n 'cli.opt_include')
   $(i18n 'cli.opt_exclude')
   $(i18n 'cli.opt_help')
@@ -126,6 +128,15 @@ parse_args() {
                 ;;
             --debug)
                 VPSSEC_DEBUG=1
+                shift
+                ;;
+            --strict)
+                # Strict scoring: count the `optional`-category checks (weak
+                # SSH algorithms, weak SGID, nginx DoS hardening, ...) toward
+                # the score. (This pass runs in a $(...) subshell so the
+                # export happens in the parent-shell pass below; the case here
+                # just keeps --strict from hitting the unknown-option error.)
+                VPSSEC_SECURITY_LEVEL=strict
                 shift
                 ;;
             --help|-h)
@@ -233,6 +244,13 @@ main() {
             --debug)
                 VPSSEC_DEBUG=1
                 export VPSSEC_DEBUG
+                ;;
+            --strict)
+                # Parent-shell pass: export so modules' _check_counts_in_score
+                # (which reads ${VPSSEC_SECURITY_LEVEL:-standard}) sees it and
+                # counts optional-category checks toward the score.
+                VPSSEC_SECURITY_LEVEL=strict
+                export VPSSEC_SECURITY_LEVEL
                 ;;
             audit|guide|rollback|status)
                 VPSSEC_MODE="$arg"

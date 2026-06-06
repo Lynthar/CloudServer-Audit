@@ -104,9 +104,11 @@ setup() {
     [ "$output" = "info" ]
 }
 
-@test "get_check_score_category: unknown defaults to recommended" {
+@test "get_check_score_category: unknown defaults to info (fail-safe, non-scoring)" {
+    # An unclassified id must NOT move the score until deliberately promoted —
+    # a forgotten/heuristic check should never silently penalize a host.
     run get_check_score_category "totally.fake"
-    [ "$output" = "recommended" ]
+    [ "$output" = "info" ]
 }
 
 # ---- Coverage invariants --------------------------------------------
@@ -146,7 +148,9 @@ setup() {
 # risky fix EXCEPT the ones that confirm themselves (FIX_SELF_CONFIRMED),
 # and false for safe/alert-only fixes.
 
-@test "fix_needs_engine_confirmation: confirm-class fix is gated by the engine" {
+@test "fix_needs_engine_confirmation: risky non-self-confirming fix is gated by the engine (ufw.set_default_deny)" {
+    # ufw.set_default_deny is RISKY (confirm_critical, ignores --yes) and not
+    # self-confirmed, so the engine MUST gate it.
     run fix_needs_engine_confirmation "ufw.set_default_deny"
     [ "$status" -eq 0 ]
 }

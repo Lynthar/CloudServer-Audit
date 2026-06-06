@@ -162,6 +162,8 @@ _find_system_users_with_shells() {
     local suspicious=()
 
     while IFS=: read -r user pass uid gid gecos home shell; do
+        # Skip malformed lines (non-numeric UID would abort under set -u).
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip non-system users (UID >= 1000) and root
         [[ "$uid" -ge 1000 || "$user" == "root" ]] && continue
 
@@ -288,7 +290,7 @@ _find_nopasswd_sudo() {
             [[ -z "$line" ]] && continue
 
             # Check for NOPASSWD
-            if [[ "$line" =~ NOPASSWD ]]; then
+            if [[ "$line" =~ NOPASSWD: ]]; then
                 # Extract user/group
                 local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
                 findings+=("/etc/sudoers: $entry")
@@ -310,7 +312,7 @@ _find_nopasswd_sudo() {
                 [[ "$line" =~ ^[[:space:]]*# ]] && continue
                 [[ -z "$line" ]] && continue
 
-                if [[ "$line" =~ NOPASSWD ]]; then
+                if [[ "$line" =~ NOPASSWD: ]]; then
                     local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
                     findings+=("$f: $entry")
                 fi
@@ -422,6 +424,7 @@ _find_recent_users() {
     local cutoff_date=$(date -d "$RECENT_USER_DAYS days ago" +%s 2>/dev/null || date -v-${RECENT_USER_DAYS}d +%s 2>/dev/null)
 
     while IFS=: read -r user pass uid gid gecos home shell; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip system users
         [[ "$uid" -lt 1000 ]] && continue
 
@@ -444,6 +447,7 @@ _analyze_ssh_keys() {
     local findings=()
 
     while IFS=: read -r user pass uid gid gecos home shell; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip system users without login shells
         [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
         ! _has_login_shell "$shell" && continue
@@ -474,7 +478,7 @@ _analyze_ssh_keys() {
             local comment=$(echo "$line" | awk '{print $NF}')
             # Check for suspicious patterns in comments
             if [[ "$comment" =~ (test|temp|backup|admin@|root@unknown) ]]; then
-                ((suspicious_keys++))
+                ((suspicious_keys++)) || true
             fi
         done < "$authkeys"
 
@@ -489,6 +493,7 @@ _find_suspicious_users() {
     local suspicious=()
 
     while IFS=: read -r user pass uid gid gecos home shell; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Only check regular users
         [[ "$uid" -lt 1000 ]] && continue
 
@@ -507,6 +512,7 @@ _find_unusual_home() {
     local unusual=()
 
     while IFS=: read -r user pass uid gid gecos home shell; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip system users
         [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
 
@@ -797,7 +803,10 @@ _check_hash_rounds() {
     rmin=$(grep -E '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs 2>/dev/null | awk '{print $2}')
     if [[ -z "$rmin" ]]; then
         echo "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended for SHA-512)"
-    elif (( rmin < 10000 )); then
+    elif [[ "$rmin" =~ ^[0-9]+$ ]] && (( rmin < 10000 )); then
+        # Numeric guard before (( )): a non-numeric value in login.defs would
+        # otherwise be treated as an arithmetic variable name and abort the
+        # users audit under `set -u` (skipping the later sudoers-syntax check).
         echo "SHA_CRYPT_MIN_ROUNDS=$rmin (>= 10000 recommended)"
     fi
 }
@@ -1040,9 +1049,9 @@ users_audit() {
 
     while IFS='|' read -r user key_count perms perms_ok sus_count path; do
         [[ -z "$user" ]] && continue
-        ((users_with_keys++))
-        [[ "$perms_ok" == "no" ]] && ((bad_perms++))
-        ((suspicious_keys += sus_count))
+        ((users_with_keys++)) || true
+        [[ "$perms_ok" == "no" ]] && { ((bad_perms++)) || true; }
+        ((suspicious_keys += sus_count)) || true
     done <<< "$ssh_keys"
 
     if [[ "$bad_perms" -gt 0 ]]; then

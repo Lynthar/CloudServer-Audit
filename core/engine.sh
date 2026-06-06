@@ -962,7 +962,15 @@ guide_mode() {
     print_header "$(i18n 'guide.executing')"
     execute_plan
 
-    # Final report
+    # Re-audit before rendering the final report. execute_plan has applied
+    # (or rolled back) changes, so the checks.json from the pre-fix audit is
+    # now stale: without a fresh pass, fixes that just succeeded still show as
+    # "failed" and the score / summary.sarif misrepresent the post-hardening
+    # state (a CI/dashboard consuming the SARIF would see false-positive open
+    # findings). _run_audit_pass calls state_init to reset and refill it.
+    _run_audit_pass
+
+    # Final report (now reflects the post-fix state)
     report_generate_all
 }
 

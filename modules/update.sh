@@ -493,17 +493,24 @@ APT::Periodic::AutocleanInterval "7";'
         backup_file "$uu_config"
     fi
 
-    # Get OS info for proper origin pattern
-    local os=$(detect_os)
-    local codename=$(detect_os_codename)
-
-    cat > "$uu_config" <<EOF
-// vpssec unattended-upgrades configuration
+    # unattended-upgrades resolves ${distro_id}/${distro_codename} itself, so
+    # they are written literally (single-quoted, NOT expanded here) — the
+    # detect_os/detect_os_codename locals this previously computed were dead.
+    #
+    # SECURITY ONLY: the bare "${distro_id}:${distro_codename}" main pocket is
+    # deliberately omitted. Including it makes unattended-upgrades (and the
+    # apply_security fix, which runs `unattended-upgrade -d` against this same
+    # config) auto-install ALL updates, not just security ones — contrary to
+    # this function's stated contract and Debian's default.
+    #
+    # Written atomically (matching the 20auto-upgrades write above): an
+    # interrupted `cat >` could leave a half-written 50unattended-upgrades
+    # that fails to parse and breaks every apt/apt-get operation host-wide.
+    write_file_atomic "$uu_config" '// vpssec unattended-upgrades configuration (security only)
 Unattended-Upgrade::Allowed-Origins {
-    "\${distro_id}:\${distro_codename}";
-    "\${distro_id}:\${distro_codename}-security";
-    "\${distro_id}ESMApps:\${distro_codename}-apps-security";
-    "\${distro_id}ESM:\${distro_codename}-infra-security";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
 };
 
 // Remove unused dependencies
@@ -517,8 +524,7 @@ Unattended-Upgrade::Automatic-Reboot "false";
 // Unattended-Upgrade::MailReport "on-change";
 
 // Logging
-Unattended-Upgrade::SyslogEnable "true";
-EOF
+Unattended-Upgrade::SyslogEnable "true";'
 
     # Enable and start service
     systemctl enable unattended-upgrades

@@ -492,18 +492,25 @@ EOF
         ln -sf "$NGINX_CATCHALL_CONF" "${NGINX_SITES_ENABLED}/99-catchall.conf"
     fi
 
-    # Test config
-    if _nginx_test_config; then
-        print_ok "$(i18n 'nginx.catchall_created' "path=$NGINX_CATCHALL_CONF")"
-
-        # Reload nginx
-        if systemctl reload nginx 2>/dev/null; then
-            print_ok "$(i18n 'nginx.nginx_reloaded')"
-            return 0
-        fi
-    else
+    # Test config first; on failure remove the staged files and bail.
+    if ! _nginx_test_config; then
         print_error "$(i18n 'nginx.nginx_test_failed')"
         rm -f "$NGINX_CATCHALL_CONF" "${NGINX_SITES_ENABLED}/99-catchall.conf"
         return 1
     fi
+    print_ok "$(i18n 'nginx.catchall_created' "path=$NGINX_CATCHALL_CONF")"
+
+    # Reload nginx. The config tested clean, but if the reload itself fails
+    # the catch-all is staged on disk yet NOT live, so the host is still
+    # exposed to the hostname/cert leak this fix is meant to close. Report
+    # that as a failure (return 1) instead of the previous silent success:
+    # the old `if reload; then return 0; fi` fell through with no return, so
+    # bash returned 0 (the `if` completes successfully even when the
+    # condition is false) and the fix was recorded as done.
+    if systemctl reload nginx 2>/dev/null; then
+        print_ok "$(i18n 'nginx.nginx_reloaded')"
+        return 0
+    fi
+    print_error "$(i18n 'nginx.reload_failed_staged')"
+    return 1
 }

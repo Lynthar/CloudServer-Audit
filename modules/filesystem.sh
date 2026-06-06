@@ -87,9 +87,17 @@ declare -gA FS_SENSITIVE_FILES=(
     # TCP wrappers (public, read-only)
     ["/etc/hosts.allow"]="644"
     ["/etc/hosts.deny"]="644"
-    # Boot loader config — write access here changes kernel cmdline
-    ["/boot/grub/grub.cfg"]="600"
-    ["/boot/grub2/grub.cfg"]="600"
+    # Boot loader config — the real risk is WRITE access (it changes the
+    # kernel cmdline), not read: grub.cfg's contents are non-secret and are
+    # already exposed world-readable via /proc/cmdline. Debian/Ubuntu ship
+    # grub.cfg mode 444, so demanding 600 produced a false positive on every
+    # stock host (and a FIX_SAFE auto-chmod that silently rewrote the distro
+    # default). Expect 644: accept 444/600/644, flag only world/group-WRITABLE.
+    # (Limitation: a grub.cfg carrying a `password_pbkdf2` hash is better at
+    # 600 since the hash is crackable offline; that rare case is not tightened
+    # here to avoid the common-case FP.)
+    ["/boot/grub/grub.cfg"]="644"
+    ["/boot/grub2/grub.cfg"]="644"
     # Legacy r-* trust files: if present, lax perms are a remote-trust leak
     ["/root/.rhosts"]="600"
     ["/root/.shosts"]="600"
@@ -116,6 +124,56 @@ _fs_sanitize_count() {
     echo "${val:-0}"
 }
 
+# True when the package manager reports that PATH's on-disk MODE differs
+# from what its owning package shipped — i.e. the permission bits (including
+# a freshly chmod-added SUID/SGID) were changed after install. This is what
+# lets the SUID/SGID audit stop trusting package ownership blindly: an
+# attacker who SUID-roots a distro binary (e.g. `chmod u+s /usr/bin/find`)
+# leaves the content untouched but the mode changed, and is now caught.
+#
+# rpm and pacman record per-file modes and can verify them. dpkg does NOT
+# track pathname metadata (`dpkg --verify` only checks md5sums, never mode),
+# so on Debian/Ubuntu this can only return "not tampered" and the explicit
+# whitelists remain the guard there. Returns non-zero (not tampered / can't
+# tell) on any error so a failed query never turns into a finding.
+_fs_pkg_mode_tampered() {
+    local path="$1" out
+    case "${VPSSEC_PKG_MGR:-}" in
+        dnf|yum)
+            command -v rpm >/dev/null 2>&1 || return 1
+            # `rpm -Vf` prints one line per failed check; field 1 is the
+            # 9-char status string whose 2nd character is 'M' on a mode
+            # mismatch. $NF is the path (a 'c'/'d' type tag may sit between).
+            #
+            # rpm -V EXITS NON-ZERO whenever it finds any discrepancy (which
+            # is exactly the case we care about), so it must NOT be the last
+            # command in a pipe under `set -o pipefail` — its expected
+            # non-zero exit would mask awk's verdict and the function would
+            # always report "not tampered". Capture the output first, then
+            # let awk's exit status be the function's result.
+            out=$(rpm -Vf "$path" 2>/dev/null)
+            awk -v p="$path" '
+                $NF == p && substr($1,2,1) == "M" { t=1 }
+                END { exit(t ? 0 : 1) }' <<<"$out"
+            ;;
+        pacman)
+            command -v pacman >/dev/null 2>&1 || return 1
+            local pkg
+            pkg=$(pacman -Qoq -- "$path" 2>/dev/null) || return 1
+            [[ -n "$pkg" ]] || return 1
+            # `pacman -Qkk` reports a permission/mode mismatch line naming the
+            # path; it also exits non-zero on any mismatch, so capture first
+            # (same pipefail reasoning as rpm above). Match tolerantly: a
+            # format change just yields "not tampered" (fail-safe).
+            out=$(pacman -Qkk -- "$pkg" 2>/dev/null)
+            grep -F -- "$path" <<<"$out" | grep -qi "permission"
+            ;;
+        *)
+            return 1   # apt/dpkg cannot verify modes; treat as not tampered
+            ;;
+    esac
+}
+
 # Check if path is in whitelist (supports glob patterns)
 _fs_is_whitelisted() {
     local path="$1"
@@ -139,8 +197,18 @@ _fs_is_whitelisted() {
     # this is what lets us stop hand-maintaining per-release path
     # whitelists. Orphaned (unowned) SUID files still fall through to a
     # finding. No-op when the pkg manager can't answer (non-zero rc).
+    #
+    # BUT ownership alone is not enough: an attacker can `chmod u+s` a
+    # package-owned binary that is NOT normally SUID (find/vim/python/...),
+    # and the content — hence package ownership — is unchanged. Where the
+    # package manager can verify modes (rpm/pacman), refuse the exemption
+    # when the mode was tampered so the added SUID bit surfaces as a finding.
+    # On Debian dpkg cannot verify modes, so the explicit whitelists above
+    # remain the only guard there (documented limitation).
     if declare -f file_owned_by_package >/dev/null 2>&1; then
-        file_owned_by_package "$path" && return 0
+        if file_owned_by_package "$path" && ! _fs_pkg_mode_tampered "$path"; then
+            return 0
+        fi
     fi
     return 1
 }
@@ -162,7 +230,7 @@ _fs_find_suid_files() {
     while IFS= read -r -d '' file; do
         if ! _fs_is_whitelisted "$file"; then
             results+=("$file")
-            ((count++))
+            ((count++)) || true
             # Limit output
             if ((count >= FS_MAX_REPORT_ITEMS)); then
                 break
@@ -212,16 +280,20 @@ _fs_find_sgid_files() {
             done < <(distro_sgid_whitelist)
         fi
 
-        # Package-ownership fallback (same rationale as SUID): an SGID
-        # binary owned by an installed package is distro-shipped, not an
-        # anomaly. Orphaned ones still get reported.
+        # Package-ownership fallback (same rationale and caveat as SUID):
+        # exempt a package-owned SGID binary UNLESS the package manager can
+        # prove its mode was tampered (a chmod-added SGID bit), in which case
+        # let it surface. dpkg can't verify modes, so this only tightens
+        # RHEL/Arch; the explicit SGID whitelist guards Debian.
         if (( skip == 0 )) && declare -f file_owned_by_package >/dev/null 2>&1; then
-            file_owned_by_package "$file" && skip=1
+            if file_owned_by_package "$file" && ! _fs_pkg_mode_tampered "$file"; then
+                skip=1
+            fi
         fi
 
         if ((skip == 0)); then
             results+=("$file")
-            ((count++))
+            ((count++)) || true
             if ((count >= FS_MAX_REPORT_ITEMS)); then
                 break
             fi
@@ -246,7 +318,7 @@ _fs_find_world_writable() {
 
     while IFS= read -r -d '' file; do
         results+=("$file")
-        ((count++))
+        ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
@@ -275,7 +347,7 @@ _fs_find_world_writable_dirs() {
 
     while IFS= read -r -d '' dir; do
         results+=("$dir")
-        ((count++))
+        ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
@@ -305,7 +377,7 @@ _fs_find_no_owner() {
 
     while IFS= read -r -d '' file; do
         results+=("$file")
-        ((count++))
+        ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
         fi
@@ -515,6 +587,19 @@ _fs_find_caps_files() {
         local caps="${line#* }"
         caps="${caps#= }"
 
+        # getcap has no -xdev/-prune, so explicitly skip container-image and
+        # snap storage that lives on the root fs (mirrors the SUID/SGID/
+        # world-writable walks). Otherwise cap-bearing binaries inside
+        # Docker/containerd/snap images are reported as host-level findings.
+        local pruned=false pp
+        for pp in "${_FS_PRUNE_PATHS[@]}"; do
+            if [[ "$file" == "$pp" || "$file" == "$pp"/* ]]; then
+                pruned=true
+                break
+            fi
+        done
+        [[ "$pruned" == true ]] && continue
+
         # Check if in whitelist
         local whitelisted=false
         for entry in "${FS_CAPS_WHITELIST[@]}"; do
@@ -555,12 +640,12 @@ _fs_find_caps_files() {
                 results+=("$file:$caps")
             fi
 
-            ((count++))
+            ((count++)) || true
             if ((count >= FS_MAX_REPORT_ITEMS)); then
                 break
             fi
         fi
-    done < <(getcap -r / 2>/dev/null | grep -v "^$")
+    done < <(_fs_run_find "caps" getcap -r / 2>/dev/null | grep -v "^$")
 
     printf '%s\n' "${results[@]}"
 }
@@ -1237,10 +1322,10 @@ _fs_fix_sensitive_perms() {
             # (backup_file uses cp -p, preserving the original mode bits).
             backup_file "$file" >/dev/null 2>&1 || true
             if chmod "$expected" "$file" 2>/dev/null; then
-                ((fixed++))
+                ((fixed++)) || true
                 print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"
             else
-                ((failed++))
+                ((failed++)) || true
                 print_error "$(i18n 'filesystem.file_fix_failed' "file=$file")"
             fi
         fi

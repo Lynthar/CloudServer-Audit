@@ -18,7 +18,11 @@ set -euo pipefail
 VPSSEC_REPO="Lynthar/CloudServer-Audit"
 VPSSEC_VERSION="${VPSSEC_VERSION:-latest}"
 VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
-VPSSEC_TMP="/tmp/vpssec-$$"
+# Populated by a root-owned `mktemp -d` in download_and_verify (mode 0700).
+# A predictable /tmp/vpssec-$$ path let a local attacker pre-plant a symlink
+# and win a race against root's curl -o / cd; mktemp picks an unguessable
+# name and fails if it already exists, closing that window.
+VPSSEC_TMP=""
 
 # Sigstore identity check: only signatures issued to THIS repo's
 # release workflow at a v* tag are accepted. The cosign cert embeds
@@ -176,7 +180,10 @@ check_requirements() {
 
     if (( ${#missing[@]} > 0 )); then
         print_warn "Installing missing dependencies: ${missing[*]}"
-        apt-get update -qq 2>/dev/null || yum update -q 2>/dev/null || true
+        # Refresh package metadata only — NOT `yum update` (which upgrades
+        # every package, or stalls on a y/N prompt with no tty). makecache is
+        # the metadata-only equivalent on both yum and dnf.
+        apt-get update -qq 2>/dev/null || yum -q makecache 2>/dev/null || dnf -q makecache 2>/dev/null || true
         apt-get install -y "${missing[@]}" 2>/dev/null \
             || yum install -y "${missing[@]}" 2>/dev/null \
             || { print_error "Failed to install: ${missing[*]}"; exit 1; }
@@ -205,8 +212,22 @@ check_requirements() {
 # Resolve "latest" to a concrete tag via the GitHub API. This is the
 # latest *published* release (matches what shows on the Releases page),
 # not the highest git tag.
+# Reject a release tag that is not a clean vX.Y.Z[.-suffix] string before it
+# flows into download URLs and local filenames. The tarball is still
+# cosign-verified before extraction, so this is defense-in-depth: it stops a
+# malicious GitHub API response or an attacker-chosen VPSSEC_VERSION from
+# steering a root-owned curl -o into an unexpected path.
+_validate_version_tag() {
+    local tag="$1"
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+        print_error "Refusing suspicious release tag: '$tag'"
+        exit 1
+    fi
+}
+
 resolve_version() {
     if [[ "$VPSSEC_VERSION" != "latest" ]]; then
+        _validate_version_tag "$VPSSEC_VERSION"
         return 0
     fi
     print_info "Resolving latest release..."
@@ -216,6 +237,7 @@ resolve_version() {
         print_error "Could not resolve latest release tag from GitHub API"
         exit 1
     fi
+    _validate_version_tag "$VPSSEC_VERSION"
 }
 
 # Download tarball + signature bundle from the release, verify against
@@ -229,8 +251,11 @@ download_and_verify() {
     local archive="vpssec-${ver}.tar.gz"
     local base="https://github.com/${VPSSEC_REPO}/releases/download/${ver_tag}"
 
-    mkdir -p "$VPSSEC_TMP"
-    cd "$VPSSEC_TMP"
+    # Create a root-owned, 0700, unguessable temp dir. The name still starts
+    # with /tmp/vpssec- so the cleanup() trap's path guard matches it.
+    VPSSEC_TMP=$(mktemp -d "/tmp/vpssec-XXXXXX") \
+        || { print_error "Failed to create temporary directory"; exit 1; }
+    cd "$VPSSEC_TMP" || { print_error "Failed to enter $VPSSEC_TMP"; exit 1; }
 
     print_info "Downloading vpssec ${ver_tag}..."
     curl -fsSL "${base}/${archive}" -o "$archive" \
@@ -278,11 +303,15 @@ main() {
         esac
     done
 
+    # Install the cleanup trap BEFORE anything creates the temp dir, so a
+    # failure in check_requirements/resolve_version/download_and_verify
+    # (offline host, signature mismatch, GitHub outage) can't leak a
+    # /tmp/vpssec-* directory holding a downloaded, unverified tarball.
+    trap cleanup EXIT
+
     check_requirements
     resolve_version
     download_and_verify
-
-    trap cleanup EXIT
 
     if [[ -n "$mode" ]]; then
         print_info "Running vpssec $mode..."

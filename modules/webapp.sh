@@ -63,8 +63,11 @@ SENSITIVE_PATHS=(
     "adminer.php"
     ".DS_Store"
     "Thumbs.db"
-    "composer.json"
-    "package.json"
+    # composer.json / package.json were removed: they are dependency
+    # MANIFESTS, not secrets, and are routinely present in a PHP/Node app's
+    # web root. Flagging them as a HIGH (required-category) "sensitive file"
+    # was a frequent false positive that penalized the score and diluted the
+    # genuinely-dangerous entries above (.env, *.sql, *.bak credentials).
     ".env.local"
     ".env.production"
 )
@@ -429,11 +432,18 @@ _webapp_nginx_ssl_protocols() {
     # every occurrence and scan for weak entries.
     while IFS= read -r protocols; do
         [[ -z "$protocols" ]] && continue
-        local weak_proto
-        for weak_proto in "${WEAK_SSL_PROTOCOLS[@]}"; do
-            if echo "$protocols" | grep -qi "$weak_proto"; then
-                weak+=("$weak_proto enabled")
-            fi
+        # Compare each whitespace-separated token EXACTLY (case-insensitive).
+        # The previous `grep -qi "$weak_proto"` was a substring match, so the
+        # weak token "TLSv1" also matched the strong "TLSv1.2"/"TLSv1.3" and
+        # flagged every correctly-hardened server. webapp.nginx_weak_ssl is a
+        # required-category check, so that was a hard, undeserved score hit.
+        local tok wl
+        for tok in $protocols; do
+            for wl in "${WEAK_SSL_PROTOCOLS[@]}"; do
+                if [[ "${tok,,}" == "${wl,,}" ]]; then
+                    weak+=("$wl enabled")
+                fi
+            done
         done
     done < <(echo "$dump" | grep -oP 'ssl_protocols\s+\K[^;]+')
 

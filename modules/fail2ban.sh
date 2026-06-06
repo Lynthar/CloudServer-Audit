@@ -412,8 +412,11 @@ _f2b_audit_ssh_jail() {
         state_add_check "$check"
         print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
 
-        # Check if maxretry is too high
-        if [[ "$maxretry" -gt 5 ]]; then
+        # Check if maxretry is too high. Guard numerically first: a
+        # non-numeric token (e.g. a mis-parsed inline comment) in `[[ -gt ]]`
+        # is evaluated as an arithmetic variable name and, under `set -u`,
+        # aborts the whole audit with "unbound variable".
+        if [[ "$maxretry" =~ ^[0-9]+$ ]] && [[ "$maxretry" -gt 5 ]]; then
             local check=$(create_check_json \
                 "fail2ban.maxretry_high" \
                 "fail2ban" \

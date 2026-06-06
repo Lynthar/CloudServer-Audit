@@ -195,7 +195,11 @@ _logging_audit_logrotate() {
         fi
 
         for log in $logs; do
-            if [[ -f "/var/log/$log" ]] && ! grep -rq "$log" "$LOGROTATE_D" 2>/dev/null; then
+            # Search BOTH /etc/logrotate.conf and /etc/logrotate.d: many
+            # distros configure core logs (wtmp/btmp, and on some setups
+            # syslog) directly in logrotate.conf, so searching only the .d
+            # directory falsely reported rotation as missing.
+            if [[ -f "/var/log/$log" ]] && ! grep -rq "$log" "$LOGROTATE_CONF" "$LOGROTATE_D" 2>/dev/null; then
                 missing+=("$log")
             fi
         done

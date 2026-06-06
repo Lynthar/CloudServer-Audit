@@ -49,8 +49,8 @@ _timezone_check_current() {
         if [[ -L /etc/localtime ]]; then
             current_tz=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
             tz_source="/etc/localtime"
-        elif [[ -n "$TZ" ]]; then
-            current_tz="$TZ"
+        elif [[ -n "${TZ:-}" ]]; then
+            current_tz="${TZ:-}"
             tz_source="TZ env"
         fi
     fi
@@ -141,6 +141,12 @@ _timezone_check_ntp() {
             else
                 ntp_status="active_not_synced"
             fi
+        else
+            # chrony unit is active but chronyc could not be queried (not
+            # installed in PATH, socket perms, etc.). The daemon IS running,
+            # so never fall through to the "NTP disabled" branch — that was a
+            # false positive that told operators to enable already-running NTP.
+            ntp_status="active_not_synced"
         fi
     fi
 

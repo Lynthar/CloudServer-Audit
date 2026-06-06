@@ -655,13 +655,18 @@ _ufw_fix_enable() {
     # Safety: ensure SSH is allowed before enabling
     print_info "$(i18n 'ufw.fix_allow_ssh') (port $ssh_port)"
 
-    # Allow SSH first
-    ufw allow "$ssh_port/tcp" comment "SSH (vpssec)" 2>/dev/null
+    # Allow SSH first. If this fails we MUST NOT enable the firewall:
+    # enabling with a default-deny policy and no SSH rule locks the
+    # operator out. (The failure was previously swallowed by 2>/dev/null.)
+    if ! ufw allow "$ssh_port/tcp" comment "SSH (vpssec)"; then
+        print_error "$(i18n 'ufw.ssh_rule_failed')"
+        return 1
+    fi
 
-    # If we have current connection IP, whitelist it
+    # If we have current connection IP, whitelist it as a rescue rule
     if [[ -n "$current_ip" ]]; then
         print_info "$(i18n 'ufw.current_ip_whitelisted' "ip=$current_ip")"
-        ufw allow from "$current_ip" comment "Current session (vpssec temp)" 2>/dev/null
+        ufw allow from "$current_ip" comment "Current session (vpssec rescue)" 2>/dev/null || true
     fi
 
     # Critical confirmation
@@ -682,9 +687,14 @@ _ufw_fix_enable() {
     if echo "y" | ufw enable; then
         print_ok "$(i18n 'ufw.ufw_enabled')"
 
-        # Remove temporary IP whitelist (SSH rule should be enough)
+        # Do NOT auto-delete the current-session rescue rule. If the SSH
+        # port rule does not actually cover the live connection (wrong
+        # detected port, NAT, a non-default sshd port), deleting the rescue
+        # rule is exactly what locks the operator out. Leave it in place and
+        # tell the user to remove it once a fresh SSH login on the
+        # firewalled port is confirmed working.
         if [[ -n "$current_ip" ]]; then
-            ufw delete allow from "$current_ip" 2>/dev/null
+            print_warn "$(i18n 'ufw.rescue_rule_kept' "ip=$current_ip")"
         fi
 
         return 0
@@ -697,10 +707,15 @@ _ufw_fix_enable() {
 _ufw_fix_default_deny() {
     local ssh_port=$(get_ssh_port)
 
-    # Ensure SSH is allowed first
+    # Ensure SSH is allowed first. If it is not, and we cannot add the rule,
+    # abort BEFORE flipping to deny-all incoming — otherwise the deny policy
+    # cuts the live SSH session. (The add failure was previously swallowed.)
     if ! _ufw_ssh_allowed; then
         print_info "$(i18n 'ufw.adding_ssh_rule')"
-        ufw allow "$ssh_port/tcp" comment "SSH (vpssec)" 2>/dev/null
+        if ! ufw allow "$ssh_port/tcp" comment "SSH (vpssec)"; then
+            print_error "$(i18n 'ufw.ssh_rule_failed')"
+            return 1
+        fi
     fi
 
     # Set default deny incoming
@@ -708,7 +723,7 @@ _ufw_fix_default_deny() {
         print_ok "$(i18n 'ufw.default_deny_set')"
 
         # Set default allow outgoing (standard)
-        ufw default allow outgoing 2>/dev/null
+        ufw default allow outgoing 2>/dev/null || true
 
         return 0
     else

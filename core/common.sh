@@ -9,7 +9,7 @@ set -euo pipefail
 # Global Variables
 # ==============================================================================
 
-VPSSEC_VERSION="1.0.0"
+VPSSEC_VERSION="1.1.0"
 VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VPSSEC_CORE="${VPSSEC_ROOT}/core"
 VPSSEC_MODULES="${VPSSEC_ROOT}/modules"
@@ -1002,8 +1002,14 @@ _fs_run_find() {
     local label="$1"
     shift
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$_FS_FIND_TIMEOUT" "$@"
-        local rc=$?
+        # Capture the status via `|| rc=$?` rather than a bare call + `$?`.
+        # This function runs inside a process-substitution subshell where
+        # errexit is active; a bare failing `timeout` (exit 124 on timeout,
+        # or the tool's own non-zero) would abort the subshell before the
+        # warning could log — silently presenting truncated scan results as
+        # complete. The `|| rc=$?` makes the failure a tested expression.
+        local rc=0
+        timeout "$_FS_FIND_TIMEOUT" "$@" || rc=$?
         if (( rc == 124 )); then
             log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend."
         fi

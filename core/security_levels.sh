@@ -16,19 +16,22 @@
 
 # Safe fixes - can be auto-applied in guide mode
 declare -gA FIX_SAFE=(
-    # Fail2ban - service management and config
+    # Fail2ban - service management and config.
+    # configure_ssh_jail is intentionally NOT here: it overwrites the whole
+    # jail.local, which can clobber an operator's hand-written multi-jail /
+    # ignoreip config — it is CONFIRM-class so the user is warned first.
     ["fail2ban.install"]="true"
     ["fail2ban.enable_service"]="true"
     ["fail2ban.enable_ssh_jail"]="true"
-    ["fail2ban.configure_ssh_jail"]="true"
 
     # Update - package management
     ["update.install_unattended"]="true"
     ["update.enable_unattended"]="true"
 
-    # Baseline - security services
-    ["baseline.enable_apparmor"]="true"
-    ["baseline.disable_unused"]="true"
+    # Baseline - security services. enable_apparmor and disable_unused are
+    # NOT auto-safe: enforcing all packaged AppArmor profiles can confine a
+    # running service, and stopping "unused" services can kill one the
+    # operator depends on (mDNS, printing). Both are CONFIRM-class.
 
     # Logging - logging configuration
     ["logging.enable_persistent_journal"]="true"
@@ -37,11 +40,14 @@ declare -gA FIX_SAFE=(
     ["logging.enable_auditd"]="true"
     ["logging.setup_audit_rules"]="true"
 
-    # Kernel - sysctl hardening
+    # Kernel - sysctl hardening. harden_ipv6 is NOT here: it disables
+    # accept_ra, which drops the SLAAC default route + global address on
+    # RA-configured hosts (the common cloud-VPS case) — on an IPv6-only box
+    # that cuts the live session. It is CONFIRM-class, and the fix itself
+    # additionally skips the RA-disabling params when the host relies on RA.
     ["kernel.enable_aslr"]="true"
     ["kernel.harden_kernel"]="true"
     ["kernel.disable_core_dump"]="true"
-    ["kernel.harden_ipv6"]="true"
 
     # Filesystem - permission fixes
     ["filesystem.fix_sensitive_perms"]="true"
@@ -86,17 +92,28 @@ declare -gA FIX_CONFIRM=(
     # Network params may conflict with Docker/containers
     ["kernel.harden_network"]="May affect container networking if Docker/LXC is in use"
 
+    # IPv6 RA hardening can drop the IPv6 default route/address on hosts that
+    # configure IPv6 via Router Advertisements (SLAAC) — the fix detects RA
+    # and skips those params, but warn anyway.
+    ["kernel.harden_ipv6"]="May drop IPv6 connectivity on hosts that obtain their address/route via Router Advertisements (SLAAC)"
+
     # SELinux - can cause service issues if policies not configured
     ["baseline.selinux_set_enforcing"]="May cause service denials if SELinux policies not configured properly"
+
+    # AppArmor enforce loads all packaged profiles -> can confine a running service
+    ["baseline.enable_apparmor"]="Enforces all installed AppArmor profiles immediately; may cause denials against a running service"
+
+    # Stopping "unused" services can disrupt ones the operator relies on
+    ["baseline.disable_unused"]="Stops/disables services flagged as unused (e.g. avahi/cups); review before applying"
+
+    # Overwrites jail.local wholesale
+    ["fail2ban.configure_ssh_jail"]="Overwrites /etc/fail2ban/jail.local; a hand-written multi-jail or ignoreip config will be replaced"
 
     # Requires service restart
     ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"
 
     # Modifies web server config
     ["nginx.add_catchall"]="Modifies Nginx configuration"
-
-    # Could affect running services
-    ["ufw.set_default_deny"]="May block services not explicitly allowed"
 
     # Could break old SSH clients
     ["ssh.harden_algorithms"]="May break connections from older SSH clients"
@@ -115,6 +132,12 @@ declare -gA FIX_RISKY=(
 
     # Can lock user out of server
     ["ufw.enable"]="Can lock you out if SSH not allowed"
+
+    # Flips the firewall to deny-all inbound on an already-active firewall:
+    # can drop running services (web/db/app) not explicitly allowed, and can
+    # lock you out if the SSH rule is wrong. Honoring --yes here is unsafe,
+    # so it is RISKY (confirm_critical ignores --yes), not CONFIRM.
+    ["ufw.set_default_deny"]="Flips the firewall to deny-all inbound; can drop running services not explicitly allowed, and can lock you out if the SSH rule is wrong"
 
     # Can break system packages
     ["update.apply_security"]="May break system packages or services"
@@ -518,7 +541,11 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["users.recent_users"]="info"
     ["users.ssh_keys_perms"]="recommended"
     ["users.ssh_keys_info"]="info"
-    ["users.suspicious_names"]="recommended"
+    # Heuristic name match (bare admin/test/oracle/service/support, etc.) is
+    # shown for operator review but must NOT move the score: these names are
+    # frequently legitimate, so a match is a likely false positive and a
+    # security score should never drop on one. (Detection itself is unchanged.)
+    ["users.suspicious_names"]="info"
     ["users.unusual_home"]="recommended"
     # pwquality not installed / bash history protection are operator
     # preferences (pam_pwquality is not Debian-default; HISTCONTROL is
@@ -603,6 +630,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.container_detected"]="info"
     ["cloudflared.tunnel_list_unavailable"]="info"
     # Tool-prerequisite / context (preflight audits vpssec itself, not the host)
+    # _internal.malformed_check is emitted (state.sh) only when a module
+    # produces malformed check JSON — a vpssec bug, not a host posture gap.
+    # info so a tool diagnostic never docks the user's score.
+    ["_internal.malformed_check"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"
     ["preflight.network_ok"]="info"
@@ -721,10 +752,18 @@ fix_needs_engine_confirmation() {
 # Score Category Helper Functions
 # ==============================================================================
 
-# Get score category for a check
+# Get score category for a check.
+#
+# Default for an UNLISTED id is "info" (does not affect the score), not
+# "recommended". This is fail-safe and matches the module scoring philosophy
+# documented above ("a false positive must not lower the score"): a check_id
+# someone forgot to classify — or a future heuristic IOC — must not silently
+# drag the score down until it is deliberately promoted to a scoring tier.
+# Every id vpssec currently emits IS classified (enforced by the CI manifest
+# + the emitted-id audit), so this default only guards future additions.
 get_check_score_category() {
     local check_id="$1"
-    echo "${CHECK_SCORE_CATEGORY[$check_id]:-recommended}"
+    echo "${CHECK_SCORE_CATEGORY[$check_id]:-info}"
 }
 
 # Check if a check should be included in score

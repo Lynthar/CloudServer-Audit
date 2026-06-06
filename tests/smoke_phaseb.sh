@@ -178,14 +178,24 @@ tier1() {
     else no "self-confirming fix was gated by engine (rc=$rc)"; fi
 
     # CONFIRM-class fix -> gated by confirm(); decline blocks, accept runs.
+    # ssh.harden_algorithms is a genuine CONFIRM fix dispatched via the
+    # stubbed ssh_fix (ufw.set_default_deny was reclassified to RISKY).
     confirm() { return 1; }
-    rm -f "$sentinel"; execute_fix "ufw.set_default_deny" >/dev/null 2>&1; rc=$?
+    rm -f "$sentinel"; execute_fix "ssh.harden_algorithms" >/dev/null 2>&1; rc=$?
     if [[ ! -e "$sentinel" && $rc -ne 0 ]]; then ok "confirm-class fix blocked when declined"
     else no "confirm-class fix not blocked on decline (rc=$rc)"; fi
     confirm() { return 0; }
-    rm -f "$sentinel"; execute_fix "ufw.set_default_deny" >/dev/null 2>&1; rc=$?
+    rm -f "$sentinel"; execute_fix "ssh.harden_algorithms" >/dev/null 2>&1; rc=$?
     if [[ -e "$sentinel" && $rc -eq 0 ]]; then ok "confirm-class fix runs when confirmed"
     else no "confirm-class fix did not run when confirmed (rc=$rc)"; fi
+
+    # RISKY reclassification: ufw.set_default_deny must be gated by
+    # confirm_critical (which ignores --yes), NOT by confirm(). With confirm
+    # accepting but confirm_critical declining, the fix must be blocked.
+    confirm() { return 0; }; confirm_critical() { return 1; }
+    rm -f "$sentinel"; execute_fix "ufw.set_default_deny" >/dev/null 2>&1; rc=$?
+    if [[ ! -e "$sentinel" && $rc -ne 0 ]]; then ok "ufw.set_default_deny gated by confirm_critical, not confirm"
+    else no "ufw.set_default_deny not gated by confirm_critical (rc=$rc)"; fi
 
     restore_fn "$s_smfc"; restore_fn "$s_cc"; restore_fn "$s_cf"
     restore_fn "$s_uf"; restore_fn "$s_sf"; restore_fn "$s_uw"

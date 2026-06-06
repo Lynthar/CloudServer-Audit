@@ -1260,11 +1260,11 @@ _ssh_open_rescue_port() {
     print_info "$(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
 
     SSH_RESCUE_CONFIG=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
-        print_error "$(i18n 'common.temp_file_failed')"
+        print_error "$(i18n 'error.temp_file_failed')"
         return 1
     }
     SSH_RESCUE_PIDFILE=$(mktemp -t vpssec-sshd-rescue-pid.XXXXXX) || {
-        print_error "$(i18n 'common.temp_file_failed')"
+        print_error "$(i18n 'error.temp_file_failed')"
         rm -f "$SSH_RESCUE_CONFIG"; SSH_RESCUE_CONFIG=""
         return 1
     }
@@ -1361,7 +1361,7 @@ _ssh_write_hardening_config() {
 
     # Write to temp file first with secure permissions
     temp_file=$(mktemp -t vpssec-sshd.XXXXXX) || {
-        print_error "$(i18n 'common.temp_file_failed')"
+        print_error "$(i18n 'error.temp_file_failed')"
         return 1
     }
     chmod 600 "$temp_file"

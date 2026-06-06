@@ -963,22 +963,50 @@ kernel_fix() {
 # IPv6 Fix Function
 # ==============================================================================
 
+# Returns success (0) when the host's IPv6 default route is installed by
+# Router Advertisements (SLAAC) — OR when we cannot determine it (`ip`
+# missing). Disabling accept_ra on such a host drops the SLAAC default
+# route + global address, cutting IPv6 (on an IPv6-only VPS that severs the
+# live session before rollback can run). The kernel tags RA-installed
+# routes with `proto ra`. Fail-safe: if we cannot probe, assume RA so the
+# caller SKIPS accept_ra rather than risking connectivity. A positively
+# determined non-RA host (static / no IPv6 default route) returns non-zero,
+# and only then does the caller apply accept_ra=0.
+_kernel_ipv6_uses_ra() {
+    command -v ip >/dev/null 2>&1 || return 0
+    ip -6 route show default 2>/dev/null | grep -q 'proto ra'
+}
+
 _kernel_fix_ipv6() {
     print_info "$(i18n 'kernel.hardening_ipv6')"
 
+    # Always-safe params: these harden IPv6 without changing how the host
+    # obtains its address or default route.
     local ipv6_params=(
         "net.ipv6.conf.all.accept_redirects=0"
         "net.ipv6.conf.default.accept_redirects=0"
         "net.ipv6.conf.all.accept_source_route=0"
         "net.ipv6.conf.default.accept_source_route=0"
-        "net.ipv6.conf.all.accept_ra=0"
-        "net.ipv6.conf.default.accept_ra=0"
         "net.ipv6.conf.all.use_tempaddr=2"
         "net.ipv6.conf.default.use_tempaddr=2"
-        "net.ipv6.conf.all.accept_ra_defrtr=0"
-        "net.ipv6.conf.all.accept_ra_pinfo=0"
-        "net.ipv6.conf.all.accept_ra_rtr_pref=0"
     )
+
+    # RA-disabling params remove the SLAAC default route + global address.
+    # Apply them ONLY when the host does not rely on RA for its default
+    # route; otherwise skip them (and never pair accept_ra=0 with the
+    # tempaddr change) so IPv6 connectivity is preserved.
+    if _kernel_ipv6_uses_ra; then
+        print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
+        log_warn "kernel.harden_ipv6: host uses RA/SLAAC for its IPv6 default route; skipping accept_ra=0 to preserve connectivity"
+    else
+        ipv6_params+=(
+            "net.ipv6.conf.all.accept_ra=0"
+            "net.ipv6.conf.default.accept_ra=0"
+            "net.ipv6.conf.all.accept_ra_defrtr=0"
+            "net.ipv6.conf.all.accept_ra_pinfo=0"
+            "net.ipv6.conf.all.accept_ra_rtr_pref=0"
+        )
+    fi
 
     local fixed=0
 

@@ -127,16 +127,15 @@ install_vpssec() {
         mv "/tmp/${repo_name}-${VPSSEC_VERSION}" "$INSTALL_DIR"
     fi
 
-    # Make executable
-    chmod +x "$INSTALL_DIR/vpssec"
-
-    # Create symlink
-    ln -sf "$INSTALL_DIR/vpssec" "$BIN_LINK"
-
     # Create required directories
     mkdir -p "$INSTALL_DIR"/{state,reports,backups,logs,templates}
 
-    print_ok "vpssec installed to $INSTALL_DIR"
+    # NOTE: chmod +x and the /usr/local/bin symlink are intentionally NOT
+    # done here. They run in post_install, AFTER verify_integrity has
+    # confirmed the extracted tree matches the manifest — otherwise a
+    # tamper detected by the integrity check would already have left a live,
+    # executable vpssec in PATH (reachable via `sudo vpssec`).
+    print_ok "vpssec extracted to $INSTALL_DIR (pending integrity check)"
 }
 
 # Create uninstall script
@@ -213,6 +212,13 @@ verify_integrity() {
 # Post-install setup
 post_install() {
     print_info "Running post-install setup..."
+
+    # Expose the binary ONLY now — main() runs verify_integrity before this,
+    # so the integrity check has already passed. Making it executable and
+    # symlinking it into PATH here (rather than in install_vpssec) means a
+    # failed integrity check leaves nothing executable in /usr/local/bin.
+    chmod +x "$INSTALL_DIR/vpssec"
+    ln -sf "$INSTALL_DIR/vpssec" "$BIN_LINK"
 
     # Verify installation
     if "$BIN_LINK" --version &>/dev/null; then

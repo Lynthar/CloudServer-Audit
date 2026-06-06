@@ -502,7 +502,12 @@ _check_counts_in_score() {
             esac
             ;;
         optional)
-            # Only count in strict mode
+            # Count only in strict mode. Strict mode is opt-in via the
+            # `--strict` CLI flag (sets/exports VPSSEC_SECURITY_LEVEL=strict);
+            # in the default "standard" mode these checks (weak SSH algorithms,
+            # weak SGID, nginx DoS hardening, ...) are shown but do not move the
+            # score. Previously no flag set this var, so the tier was inert —
+            # `--strict` makes it reachable.
             [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]]
             ;;
         info)
