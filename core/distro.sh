@@ -152,8 +152,12 @@ pkg_update_count() {
             # Count only real package lines: they start in column 0 (long-NEVRA
             # continuation lines are indented) and stop at the trailing
             # "Obsoleting Packages" section. NF>=3 = "name.arch  ver  repo".
+            # -C (cacheonly): the audit is read-only and MUST NOT refresh the
+            # repo metadata (network I/O, can stall on dead mirrors, and would
+            # defeat pkg_index_age_days by touching the very cache it ages).
+            # Counts come from the existing cache; a cold cache yields rc=1 → 0.
             local rc=0
-            if out=$(LC_ALL=C dnf -q check-update 2>/dev/null); then rc=0; else rc=$?; fi
+            if out=$(LC_ALL=C dnf -q -C check-update 2>/dev/null); then rc=0; else rc=$?; fi
             if [[ "$rc" -eq 100 ]]; then
                 n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out")
             else
@@ -176,7 +180,15 @@ pkg_security_update_count() {
     local n out
     case "$VPSSEC_PKG_MGR" in
         apt)
-            n=$(apt-get -s upgrade 2>/dev/null | grep -c 'security') || true
+            # Count only the install lines. `apt-get -s upgrade` prints both
+            # an "Inst" and a "Conf" line per package, so a bare `grep -c
+            # security` double-counted. Anchor on "^Inst " (mirrors the total
+            # count) and require "security" to appear INSIDE the origin
+            # parenthetical — case-insensitive, since Debian shows the origin
+            # as "Debian-Security" while Ubuntu shows "<codename>-security" —
+            # so a package merely NAMED *security* (its name precedes the "(")
+            # is not miscounted.
+            n=$(apt-get -s upgrade 2>/dev/null | grep -ciE '^Inst .*\(.*security') || true
             ;;
         dnf)
             # No dnf command cleanly yields "installed packages that have a
@@ -188,7 +200,7 @@ pkg_security_update_count() {
             # has-security-updates signal though (>0 iff any apply — verified
             # non-empty on dnf4 with security updates, 0 on dnf5 with none).
             # Callers: use as ">0?" only; clamp any displayed figure to the total.
-            out=$(LC_ALL=C dnf -q updateinfo list --security --available 2>/dev/null) || true
+            out=$(LC_ALL=C dnf -q -C updateinfo list --security --available 2>/dev/null) || true
             n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || true
             ;;
         pacman)
@@ -320,7 +332,12 @@ auto_update_installed() {
 auto_update_status() {
     case "$VPSSEC_PKG_MGR" in
         apt)
-            if ! systemctl is-enabled unattended-upgrades &>/dev/null; then
+            # apt-daily-upgrade.timer is the periodic driver; the
+            # unattended-upgrades service only flushes at shutdown. Checking
+            # the service let a masked timer read as enabled (false pass).
+            # is-enabled returns 0 for enabled/static, non-zero for
+            # masked/disabled — the correct gate.
+            if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
                 echo "service_disabled"; return 1
             fi
             command -v apt-config >/dev/null 2>&1 || { echo "unknown"; return 1; }
@@ -416,13 +433,13 @@ file_owned_by_package() {
 distro_insecure_packages() {
     case "$VPSSEC_DISTRO_FAMILY" in
         debian)
-            echo "telnetd inetutils-telnetd telnet-server rsh-server rsh-redone-server inetutils-inetd openbsd-inetd xinetd fingerd nis ypbind ypserv tftpd tftpd-hpa atftpd talkd ntalkd rwhod"
+            echo "telnetd inetutils-telnetd telnet-server rsh-server rsh-redone-server fingerd nis ypbind ypserv tftpd tftpd-hpa atftpd talkd ntalkd rwhod"
             ;;
         rhel)
-            echo "telnet-server rsh-server xinetd ypserv ypbind tftp-server talk-server finger-server rusers-server rwho"
+            echo "telnet-server rsh-server ypserv ypbind tftp-server talk-server finger-server rusers-server rwho"
             ;;
         arch)
-            echo "inetutils xinetd rsh tftp-hpa"
+            echo "rsh tftp-hpa"
             ;;
         *) echo "" ;;
     esac
@@ -436,7 +453,10 @@ distro_insecure_packages() {
 # order as ufw.sh's _detect_firewall (which this is meant to replace). Probes
 # are standard across distros; each is guarded with `command -v`.
 fw_backend() {
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    # LC_ALL=C: ufw gettext-translates "Status: active" under a non-C locale
+    # (e.g. zh_CN "状态： 激活"); without it an active UFW is misdetected and
+    # the probe falls through to "nftables" (ufw's chains make nft non-empty).
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
         echo "ufw"
     elif systemctl is-active --quiet firewalld 2>/dev/null; then
         echo "firewalld"

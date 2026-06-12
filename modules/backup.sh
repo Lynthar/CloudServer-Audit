@@ -26,7 +26,13 @@ _backup_rclone_installed() {
 }
 
 _backup_check_cron_job() {
-    crontab -l 2>/dev/null | grep -qE "(restic|borg|backup)"
+    # root's personal crontab...
+    crontab -l 2>/dev/null | grep -qE "(restic|borg|backup)" && return 0
+    # ...and the system cron locations a backup job is at least as likely to
+    # live in (/etc/cron.d, the cron.{daily,weekly,monthly} dirs, /etc/crontab).
+    # Missing paths just make grep skip them (2>/dev/null).
+    grep -rqsE "(restic|borg|backup)" \
+        /etc/crontab /etc/cron.d /etc/cron.daily /etc/cron.weekly /etc/cron.monthly 2>/dev/null
 }
 
 _backup_check_systemd_timer() {

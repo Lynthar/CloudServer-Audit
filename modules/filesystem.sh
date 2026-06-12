@@ -163,9 +163,14 @@ _fs_pkg_mode_tampered() {
             [[ -n "$pkg" ]] || return 1
             # `pacman -Qkk` reports a permission/mode mismatch line naming the
             # path; it also exits non-zero on any mismatch, so capture first
-            # (same pipefail reasoning as rpm above). Match tolerantly: a
-            # format change just yields "not tampered" (fail-safe).
-            out=$(pacman -Qkk -- "$pkg" 2>/dev/null)
+            # (same pipefail reasoning as rpm above). Capture 2>&1, NOT
+            # 2>/dev/null: pacman emits the per-file mismatch as a WARNING on
+            # stderr (e.g. "warning: <pkg>: /path (Permissions mismatch)"), so
+            # discarding stderr made this detection inert on Arch — the
+            # tolerant `permission` grep already handles the "warning:" prefix.
+            # Match tolerantly otherwise: a format change yields "not tampered"
+            # (fail-safe).
+            out=$(pacman -Qkk -- "$pkg" 2>&1)
             grep -F -- "$path" <<<"$out" | grep -qi "permission"
             ;;
         *)

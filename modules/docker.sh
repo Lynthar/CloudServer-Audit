@@ -19,7 +19,21 @@ _docker_installed() {
 }
 
 _docker_get_exposed_ports() {
-    docker ps --format '{{.Ports}}' 2>/dev/null | grep -oE '0\.0\.0\.0:[0-9]+' | cut -d: -f2 | sort -u
+    # Publicly-published host ports: the number immediately before "->" for any
+    # binding that is NOT loopback. The old `0\.0\.0\.0:` regex caught ONLY the
+    # IPv4-wildcard form and missed IPv6 wildcard (":::PORT"), bracketed IPv6
+    # ("[2001:db8::1]:PORT") and specific-public-IP binds ("203.0.113.5:PORT") —
+    # all of which are reachable from off-host. Loopback binds (127.0.0.0/8,
+    # ::1) are intentionally excluded: they are not exposed.
+    docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | awk '
+        /->/ {
+            hp = $0; sub(/->.*/, "", hp); gsub(/[[:space:]]/, "", hp)
+            port = hp; sub(/.*:/, "", port)
+            addr = hp; sub(/:[0-9]+$/, "", addr); gsub(/[][]/, "", addr)
+            if (addr ~ /^127\./ || addr == "::1") next
+            if (port ~ /^[0-9]+$/) print port
+        }
+    ' | sort -u
 }
 
 _docker_get_privileged_containers() {

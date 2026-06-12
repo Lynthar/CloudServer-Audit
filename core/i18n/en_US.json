@@ -290,6 +290,8 @@
   },
   "update": {
     "title": "System Updates",
+    "unattended_unsupported": "No native auto-update mechanism (distribution default)",
+    "unattended_dryrun_warn": "unattended-upgrades dry-run reported an issue; verify the security update origins are matched",
     "desc": "Check system updates and automatic update configuration",
     "check_apt_lock": "Checking APT lock status",
     "check_updates": "Checking available updates",
@@ -477,6 +479,7 @@
   },
   "logging": {
     "title": "Logging & Audit",
+    "audit_rules_pending": "Audit rules written but not loaded yet (auditd inactive); they apply at next auditd start or reboot",
     "desc": "Check system logging and audit configuration",
     "check_journald": "Checking journald persistence",
     "check_logrotate": "Checking log rotation",
@@ -849,6 +852,7 @@
   },
   "users": {
     "title": "User Security",
+    "review_nopasswd": "NOPASSWD allows privilege escalation without a password - review if necessary",
     "desc": "Audit system users and privileges",
     "uid0_found": "UID 0 Users Found (Besides root)",
     "uid0_ok": "No Extra UID 0 Users",
@@ -1153,6 +1157,7 @@
   },
   "webapp": {
     "title": "Web Application Security",
+    "hsts_weak": "HSTS set without the 'always' flag (not sent on error responses)",
     "desc": "Check web server and application security configuration",
     "checking_nginx": "Checking Nginx security configuration...",
     "checking_apache": "Checking Apache security configuration...",

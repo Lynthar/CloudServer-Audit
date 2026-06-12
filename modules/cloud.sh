@@ -603,6 +603,28 @@ _cloud_imds_get_user_data() {
             body=$(curl -sS --max-time 2 --connect-timeout 1 \
                 "http://metadata.tencentyun.com/latest/user-data" 2>/dev/null)
             ;;
+        huawei|ovh)
+            # Both are OpenStack-based; user-data lives at the standard
+            # OpenStack metadata path (plaintext).
+            body=$(curl -sS --max-time 2 --connect-timeout 1 \
+                "http://169.254.169.254/openstack/latest/user_data" 2>/dev/null)
+            ;;
+        oracle)
+            # OCI: base64-encoded user_data behind the mandatory v2 auth header.
+            local enc
+            enc=$(curl -sS --max-time 2 --connect-timeout 1 \
+                -H "Authorization: Bearer Oracle" \
+                "http://169.254.169.254/opc/v2/instance/metadata/user_data" 2>/dev/null)
+            [[ -n "$enc" ]] && body=$(printf '%s' "$enc" | base64 -d 2>/dev/null)
+            ;;
+        scaleway)
+            # Scaleway's IMDS is at 169.254.42.42 and only serves user_data to
+            # requests from a privileged source port (<1024); vpssec runs as
+            # root, so bind one. --local-port fails closed (empty body) on a
+            # curl without the flag or when the port is unavailable.
+            body=$(curl -sS --max-time 2 --connect-timeout 1 --local-port 1-1023 \
+                "http://169.254.42.42/user_data" 2>/dev/null)
+            ;;
     esac
     printf '%s' "$body"
 }

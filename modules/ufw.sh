@@ -12,9 +12,15 @@ _ufw_installed() {
     check_command ufw
 }
 
-# Check if UFW is enabled
+# Check if UFW is enabled.
+# LC_ALL=C pins the output against a translated system locale: ufw
+# gettext-translates "Status: active" (zh_CN renders it "状态： 激活"),
+# and this tool defaults to zh_CN and targets Chinese-locale servers.
+# Without it an active UFW reads as inactive, then _detect_firewall
+# falls through to "nftables" (ufw's own chains make `nft list tables`
+# non-empty) and every UFW-specific check is silently skipped.
 _ufw_enabled() {
-    ufw status 2>/dev/null | grep -q "Status: active"
+    LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"
 }
 
 # Check if iptables has rules (beyond default)
@@ -63,14 +69,23 @@ _detect_firewall() {
     fi
 }
 
-# Get UFW default incoming policy
+# Get UFW default incoming/outgoing policy.
+#
+# The verbose line is: "Default: deny (incoming), allow (outgoing), disabled (routed)"
+# — the policy WORD PRECEDES "(incoming)". The previous pattern
+# `incoming\s+\K\w+` looked for a word AFTER "incoming" and so matched
+# nothing on every real host: _ufw_audit_default_policy then emitted no
+# check at all, silently passing the worst UFW misconfig (default allow
+# incoming) and leaving the set_default_deny fix unreachable from guide.
+# Parse the word before the "(incoming)" paren instead. LC_ALL=C: see
+# _ufw_enabled (ufw translates "Default:").
 _ufw_get_default_incoming() {
-    ufw status verbose 2>/dev/null | grep "Default:" | grep -oP 'incoming\s+\K\w+'
+    LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(incoming\))'
 }
 
 # Get UFW default outgoing policy
 _ufw_get_default_outgoing() {
-    ufw status verbose 2>/dev/null | grep "Default:" | grep -oP 'outgoing\s+\K\w+'
+    LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(outgoing\))'
 }
 
 # Check if SSH port is allowed.
@@ -81,20 +96,26 @@ _ufw_get_default_outgoing() {
 # variant (recommended for SSH against brute force) and used to be
 # misreported as "no SSH rule", which then routed users to fix_allow_ssh
 # — silently downgrading their LIMIT to a plain ALLOW.
+# An OUTBOUND rule (`ufw allow out 22/tcp` → "22/tcp ALLOW OUT Anywhere")
+# must NOT count as "SSH allowed inbound": the old pattern stopped at
+# (ALLOW|LIMIT) and so accepted "ALLOW OUT", which could make
+# _ufw_fix_default_deny skip adding the inbound rule and then flip
+# default-deny — a lockout. Require what follows the action to be the
+# optional "IN" plus a source (Anywhere / an IP), never "OUT".
 _ufw_ssh_allowed() {
     local ssh_port=$(get_ssh_port)
-    ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+(ALLOW|LIMIT)"
+    LC_ALL=C ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+(ALLOW|LIMIT)([[:space:]]+IN)?[[:space:]]+(Anywhere|[0-9A-Fa-f:.])"
 }
 
 # Get current UFW rules
 _ufw_get_rules() {
-    ufw status numbered 2>/dev/null
+    LC_ALL=C ufw status numbered 2>/dev/null
 }
 
 # Check if a port is allowed
 _ufw_port_allowed() {
     local port="$1"
-    ufw status 2>/dev/null | grep -qE "^${port}(/tcp)?\s+ALLOW"
+    LC_ALL=C ufw status 2>/dev/null | grep -qE "^${port}(/tcp)?\s+ALLOW"
 }
 
 # Pure-data variant of _ufw_get_ipv6_setting for tests. $1 is the text
@@ -156,9 +177,10 @@ _ufw_find_permissive_rules() {
         "5900:VNC"
     )
 
-    # Get UFW status
+    # Get UFW status (LC_ALL=C: ufw translates "Anywhere"/"ALLOW" under a
+    # non-C locale, which would defeat the matches below).
     local ufw_output
-    ufw_output=$(ufw status 2>/dev/null)
+    ufw_output=$(LC_ALL=C ufw status 2>/dev/null)
 
     # Check for sensitive ports open to Anywhere
     for entry in "${sensitive_ports[@]}"; do
@@ -177,7 +199,12 @@ _ufw_find_permissive_rules() {
     # Check for overly broad rules (allow all from specific IP with no port)
     # This is less critical but worth noting
     while read -r line; do
-        if echo "$line" | grep -qE "ALLOW\s+IN\s+Anywhere\s*$" && ! echo "$line" | grep -qE "^(22|80|443)"; then
+        # Plain `ufw status` prints inbound rules as "ALLOW Anywhere" (no
+        # literal "IN") and v6 lines end "Anywhere (v6)", so the previous
+        # "ALLOW\s+IN\s+Anywhere\s*$" matched nothing — every non-sensitive
+        # port open to the world was silently uncovered. Make IN optional,
+        # drop the end-anchor, and exclude outbound (OUT) rules.
+        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)"; then
             # Non-standard port open to anywhere
             local rule_port=$(echo "$line" | awk '{print $1}')
             if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then

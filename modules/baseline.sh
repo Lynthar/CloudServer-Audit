@@ -226,12 +226,16 @@ _baseline_audit_insecure_services() {
 
     # Active services / sockets. Includes both service units and the
     # .socket form of activated daemons (telnet.socket etc).
+    # NB: the generic super-servers (inetd/openbsd-inetd/xinetd) are NOT
+    # listed — a running supervisor is not itself insecure (CIS flags the
+    # specific protocols it might serve, which ARE listed below), so flagging
+    # its mere presence was a high/required false positive on hosts that use
+    # xinetd for legitimate services.
     for svc in \
         telnet telnet.socket telnetd telnetd.socket \
         rsh rsh.socket rlogin rlogin.socket rexec rexec.socket \
         rsh-server rlogin-server rexec-server \
         finger fingerd \
-        inetd openbsd-inetd xinetd \
         ypbind ypserv ypxfrd \
         tftpd tftpd-hpa tftp.socket \
         talk talkd ntalk \

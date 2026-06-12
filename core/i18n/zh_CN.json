@@ -290,6 +290,8 @@
   },
   "update": {
     "title": "系统更新",
+    "unattended_unsupported": "无原生自动更新机制（发行版默认）",
+    "unattended_dryrun_warn": "unattended-upgrades 试运行报告异常，请确认安全更新源是否匹配",
     "desc": "检查系统更新和自动更新配置",
     "check_apt_lock": "检查 APT 锁状态",
     "check_updates": "检查可用更新",
@@ -477,6 +479,7 @@
   },
   "logging": {
     "title": "日志与审计",
+    "audit_rules_pending": "审计规则已写入但尚未加载（auditd 未运行），将在 auditd 启动或重启后生效",
     "desc": "检查系统日志和审计配置",
     "check_journald": "检查 journald 持久化",
     "check_logrotate": "检查日志轮转",
@@ -849,6 +852,7 @@
   },
   "users": {
     "title": "用户安全",
+    "review_nopasswd": "NOPASSWD 允许无密码提权——请确认是否必要",
     "desc": "审计系统用户和权限",
     "uid0_found": "发现 UID 0 用户 (除 root 外)",
     "uid0_ok": "无额外 UID 0 用户",
@@ -1153,6 +1157,7 @@
   },
   "webapp": {
     "title": "Web 应用安全",
+    "hsts_weak": "HSTS 未设置 always 参数（错误响应不发送该头）",
     "desc": "检查 Web 服务器和应用程序安全配置",
     "checking_nginx": "检查 Nginx 安全配置...",
     "checking_apache": "检查 Apache 安全配置...",

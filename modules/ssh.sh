@@ -608,7 +608,12 @@ _ssh_audit_login_grace_time() {
         seconds="${grace_time%s}"
     fi
 
-    if [[ "$seconds" -le 60 ]]; then
+    # A grace time of 0 means UNLIMITED (no unauthenticated-session timeout) —
+    # a weakness, not a pass. The safe range is 1..60s; 0, anything >60, or a
+    # non-numeric value falls through to the "too long / disabled" branch. The
+    # regex guard also stops a non-numeric value from aborting the audit under
+    # set -u (the bare `-le` would treat it as a variable name).
+    if [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 )); then
         local check=$(create_check_json \
             "ssh.login_grace_time_ok" \
             "ssh" \
@@ -1003,7 +1008,10 @@ _ssh_audit_algorithms() {
         # Check for weak MACs
         local macs
         macs=$(sshd -T 2>/dev/null | grep "^macs " | cut -d' ' -f2-)
-        local weak_macs=("hmac-md5" "hmac-md5-96" "hmac-sha1-96")
+        # Substring match, so "hmac-md5" also catches hmac-md5-96 and
+        # "hmac-sha1" catches hmac-sha1-96 / hmac-sha1-etm@openssh.com — every
+        # SHA-1/MD5 MAC is deprecated. (Previously hmac-sha1 itself was missed.)
+        local weak_macs=("hmac-md5" "hmac-sha1")
         for weak in "${weak_macs[@]}"; do
             if [[ "$macs" == *"$weak"* ]]; then
                 issues+=("mac:$weak")
@@ -1013,7 +1021,10 @@ _ssh_audit_algorithms() {
         # Check for weak KEX algorithms
         local kex
         kex=$(sshd -T 2>/dev/null | grep "^kexalgorithms " | cut -d' ' -f2-)
-        local weak_kex=("diffie-hellman-group1-sha1" "diffie-hellman-group-exchange-sha1")
+        # group14-sha1 was missing: SHA-1 KEX is deprecated (RFC 8732 / OpenSSH
+        # 8.8 disabled it by default). group14-sha256 is NOT a substring match
+        # of "...-sha1", so the strong variant is not falsely flagged.
+        local weak_kex=("diffie-hellman-group1-sha1" "diffie-hellman-group-exchange-sha1" "diffie-hellman-group14-sha1")
         for weak in "${weak_kex[@]}"; do
             if [[ "$kex" == *"$weak"* ]]; then
                 issues+=("kex:$weak")

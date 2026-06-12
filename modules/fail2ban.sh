@@ -511,11 +511,14 @@ _f2b_fix_install() {
     if apt-get update -qq && apt-get install -y fail2ban; then
         print_ok "$(i18n 'fail2ban.install_success')"
 
-        # Enable and configure
-        _f2b_fix_enable_service
-        _f2b_fix_configure_ssh_jail
-
-        return 0
+        # Enable and configure. Propagate failures: a successful `apt install`
+        # must not be reported as overall success if the service then fails to
+        # start or the generated jail.local fails validation (errexit is
+        # suppressed in the if-dispatch tree, so capture explicitly).
+        local rc=0
+        _f2b_fix_enable_service || rc=1
+        _f2b_fix_configure_ssh_jail || rc=1
+        return $rc
     else
         print_error "$(i18n 'fail2ban.install_failed')"
         return 1
@@ -569,8 +572,12 @@ _f2b_fix_configure_ssh_jail() {
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
     print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
 
-    # Create jail.local with SSH configuration
-    cat > "$F2B_JAIL_LOCAL" <<EOF
+    # Create jail.local with SSH configuration. Build the content first, then
+    # write atomically (write_file_atomic = tempfile + rename): an interrupted
+    # `cat >` could leave a truncated jail.local that breaks fail2ban on the
+    # next reload/boot, and the bare redirect's failure went unchecked.
+    local jail_content
+    jail_content=$(cat <<EOF
 # vpssec fail2ban configuration
 # Generated: $(date -Iseconds)
 # Detected logpath: $ssh_logpath
@@ -617,8 +624,15 @@ findtime = 10m
 # maxretry = 1
 # bantime = 1w
 EOF
+)
 
-    chmod 644 "$F2B_JAIL_LOCAL"
+    if ! write_file_atomic "$F2B_JAIL_LOCAL" "$jail_content"; then
+        print_error "$(i18n 'fail2ban.config_test_failed' 2>/dev/null || echo 'failed to write jail.local')"
+        if [[ -n "$f2b_bak" && -f "$f2b_bak" ]]; then
+            cp -p "$f2b_bak" "$F2B_JAIL_LOCAL"
+        fi
+        return 1
+    fi
 
     # Validate the config before (re)loading. A broken jail.local would make
     # fail2ban fail to start on the next boot; restore the previous config (or

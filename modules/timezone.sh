@@ -480,12 +480,17 @@ _timezone_fix_set_locale() {
 
     local target_locale="en_US.UTF-8"
 
-    # Generate locale if needed
+    # Generate locale if needed. Build the edited file in memory and write it
+    # atomically rather than `sed -i` in place: an interrupted in-place edit
+    # could truncate /etc/locale.gen.
     if [[ -f /etc/locale.gen ]]; then
         if ! grep -q "^${target_locale}" /etc/locale.gen; then
-            backup_file "/etc/locale.gen"
-            sed -i "s/^# *${target_locale}/${target_locale}/" /etc/locale.gen
-            locale-gen &>/dev/null
+            backup_file "/etc/locale.gen" >/dev/null 2>&1 || true
+            local gen_content
+            gen_content=$(sed "s/^# *${target_locale}/${target_locale}/" /etc/locale.gen)
+            if write_file_atomic "/etc/locale.gen" "$gen_content"; then
+                locale-gen &>/dev/null
+            fi
         fi
     fi
 
@@ -497,12 +502,13 @@ _timezone_fix_set_locale() {
         fi
     fi
 
-    # Manual method
+    # Manual method (atomic write instead of a bare redirect).
     if [[ -f /etc/default/locale ]]; then
-        backup_file "/etc/default/locale"
-        echo "LANG=$target_locale" > /etc/default/locale
-        print_ok "$(i18n 'timezone.locale_set' "locale=$target_locale")"
-        return 0
+        backup_file "/etc/default/locale" >/dev/null 2>&1 || true
+        if write_file_atomic "/etc/default/locale" "LANG=$target_locale"; then
+            print_ok "$(i18n 'timezone.locale_set' "locale=$target_locale")"
+            return 0
+        fi
     fi
 
     print_error "$(i18n 'timezone.locale_set_failed')"

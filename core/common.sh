@@ -131,6 +131,11 @@ _vpssec_scan_secrets_in_content() {
     n=$(grep -cE 'gh[posu]_[A-Za-z0-9]{36}' <<<"$content" 2>/dev/null) || n=0
     (( n > 0 )) && found+=("github_token(x$n)")
 
+    # GitHub fine-grained PAT (2022+): github_pat_<base62>_<base62>, a distinct
+    # prefix the classic gh[posu]_ pattern above does not cover.
+    n=$(grep -cE 'github_pat_[A-Za-z0-9_]{22,}' <<<"$content" 2>/dev/null) || n=0
+    (( n > 0 )) && found+=("github_pat(x$n)")
+
     # GitLab PAT.
     n=$(grep -cE 'glpat-[A-Za-z0-9_-]{20}' <<<"$content" 2>/dev/null) || n=0
     (( n > 0 )) && found+=("gitlab_token(x$n)")
@@ -614,6 +619,21 @@ backup_file() {
         if ! validate_path "$backup_path" "$VPSSEC_BACKUPS"; then
             log_error "Unsafe backup path: $backup_path"
             return 1
+        fi
+
+        # First-write-wins WITHIN a backup session: if this file was already
+        # backed up earlier in the same plan, keep that copy (the pre-plan
+        # original) rather than overwriting it. A fix that re-backs-up the
+        # same file once per item — e.g. kernel.sh writing the sysctl drop-in
+        # per parameter — would otherwise leave only the N-1th intermediate as
+        # the "backup", so a rollback would restore a still-mostly-hardened
+        # file instead of the original (breaking the whole-plan rollback
+        # contract). Standalone (no session) keeps its prior overwrite
+        # behavior: each call already gets its own timestamped directory.
+        if [[ -n "${VPSSEC_BACKUP_SESSION:-}" && -e "$backup_path" ]]; then
+            log_info "Backup already present this session, keeping original: $backup_path"
+            echo "$backup_path"
+            return 0
         fi
 
         mkdir -p "$(dirname "$backup_path")"

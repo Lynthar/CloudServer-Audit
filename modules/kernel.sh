@@ -82,7 +82,7 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     # kernel — keep at medium.
     "kernel.unprivileged_bpf_disabled:1:medium:Disable unprivileged BPF (exploit prevention)"
     "net.core.bpf_jit_harden:2:medium:BPF JIT hardening"
-    "kernel.sysrq:0:medium:Disable Magic SysRq key (or use 176 for safe subset)"
+    "kernel.sysrq:0|176:medium:Disable Magic SysRq key (0, or 176 for the safe subset)"
     "kernel.perf_event_paranoid:3:medium:Restrict perf events"
     "fs.protected_fifos:2:low:FIFO protection"
     "fs.protected_regular:2:low:Regular file protection"
@@ -178,12 +178,19 @@ _kernel_check_param() {
         return 2  # Parameter not available
     fi
 
-    if [[ "$actual" == "$expected" ]]; then
-        return 0  # Correct
-    else
-        echo "$actual"
-        return 1  # Incorrect
-    fi
+    # `expected` may be a |-separated set of acceptable values (e.g.
+    # sysrq "0|176": both the fully-disabled value and the safe-subset
+    # value are acceptable — flagging Ubuntu's hardened default 176 as
+    # "weak" was a false positive). A plain single value (no '|') splits
+    # into one token, so all other params behave exactly as before.
+    local exp
+    local IFS='|'
+    for exp in $expected; do
+        [[ "$actual" == "$exp" ]] && return 0  # Correct
+    done
+
+    echo "$actual"
+    return 1  # Incorrect
 }
 
 # Check ASLR status
@@ -334,8 +341,15 @@ _kernel_ipv6_check_security() {
 _kernel_ipv6_firewall_check() {
     local result="unknown"
 
-    # Check if UFW is managing IPv6
-    if check_command ufw; then
+    # Check if UFW is managing IPv6 — but only when ufw is actually ACTIVE.
+    # An installed-but-inactive ufw (the stock Ubuntu Server state) has
+    # IPV6=yes in /etc/default/ufw by default, yet filters nothing; treating
+    # that as "IPv6 firewall ok" was a false pass that also contradicted the
+    # ufw module's own "firewall inactive" finding. When ufw is inactive we
+    # fall through to the raw ip6tables / nft probes below, which correctly
+    # report an empty ruleset as "missing". LC_ALL=C pins the parsed output
+    # against translated locales (zh_CN renders "Status:" as "状态：").
+    if check_command ufw && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
         if grep -q "IPV6=yes" /etc/default/ufw 2>/dev/null; then
             result="ufw_ipv6_enabled"
         else
@@ -687,6 +701,14 @@ _kernel_audit_network_params() {
     local issues_low=()
     local passed=0
 
+    # Compute once: does this host obtain its IPv6 default route / global
+    # address via Router Advertisements (SLAAC)? If so, accept_ra=1 /
+    # autoconf=1 are the CORRECT values, not weaknesses — skip them below
+    # (and harden_network skips them too) instead of flagging a finding
+    # the fix must not act on.
+    local host_uses_ra=false
+    _kernel_ipv6_uses_ra && host_uses_ra=true
+
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
         local param="${entry%%:*}"
         local rest="${entry#*:}"
@@ -718,6 +740,11 @@ _kernel_audit_network_params() {
             local rp_val
             rp_val=$(_kernel_get_sysctl "$param" 2>/dev/null)
             [[ "$rp_val" == "2" ]] && continue
+        fi
+
+        # On RA/SLAAC hosts the RA-dependent params are correct as-is.
+        if [[ "$host_uses_ra" == "true" ]] && _kernel_param_is_ra_dependent "$param"; then
+            continue
         fi
 
         local actual
@@ -977,6 +1004,29 @@ _kernel_ipv6_uses_ra() {
     ip -6 route show default 2>/dev/null | grep -q 'proto ra'
 }
 
+# True for the IPv6 params that, on a host configured via Router
+# Advertisements (SLAAC), would tear down the default route / global
+# address if disabled. Both the network-params audit and harden_network
+# skip these on RA hosts, so a generic "harden network" can no longer
+# drop IPv6 connectivity. Previously the RA guard lived ONLY in the
+# dedicated _kernel_fix_ipv6; the same accept_ra=0 reached the wire via
+# _kernel_fix_network_params (fix_id kernel.harden_network) unguarded —
+# re-introducing the SLAAC lockout this guard exists to prevent.
+_kernel_param_is_ra_dependent() {
+    case "$1" in
+        net.ipv6.conf.*.accept_ra|\
+        net.ipv6.conf.*.accept_ra_defrtr|\
+        net.ipv6.conf.*.accept_ra_pinfo|\
+        net.ipv6.conf.*.accept_ra_rtr_pref|\
+        net.ipv6.conf.*.autoconf|\
+        net.ipv6.conf.*.max_addresses|\
+        net.ipv6.conf.*.dad_transmits)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
 _kernel_fix_ipv6() {
     print_info "$(i18n 'kernel.hardening_ipv6')"
 
@@ -1058,6 +1108,14 @@ _kernel_fix_network_params() {
 
     local params_to_set=()
 
+    # Same RA guard as _kernel_fix_ipv6: on a host that gets its IPv6
+    # route/address from Router Advertisements (SLAAC), disabling accept_ra
+    # / autoconf here would drop IPv6 connectivity — exactly the lockout
+    # the dedicated harden_ipv6 fix avoids. Skip those params on RA hosts.
+    local host_uses_ra=false
+    _kernel_ipv6_uses_ra && host_uses_ra=true
+    local ra_skipped=false
+
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
         local param="${entry%%:*}"
         local rest="${entry#*:}"
@@ -1086,12 +1144,22 @@ _kernel_fix_network_params() {
             [[ "$rp_val" == "2" ]] && continue
         fi
 
+        # Skip RA-dependent params on SLAAC hosts (see top of function).
+        if [[ "$host_uses_ra" == "true" ]] && _kernel_param_is_ra_dependent "$param"; then
+            ra_skipped=true
+            continue
+        fi
+
         local actual
         actual=$(_kernel_check_param "$param" "$expected")
+        # `expected` may be a |-set (e.g. sysrq 0|176); set the canonical
+        # (first) value, never the literal "0|176".
         if [[ $? -eq 1 ]]; then
-            params_to_set+=("$param=$expected")
+            params_to_set+=("$param=${expected%%|*}")
         fi
     done
+
+    [[ "$ra_skipped" == "true" ]] && print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
 
     if [[ ${#params_to_set[@]} -eq 0 ]]; then
         print_ok "$(i18n 'kernel.network_already_hardened')"
@@ -1133,8 +1201,9 @@ _kernel_fix_kernel_params() {
 
         local actual
         actual=$(_kernel_check_param "$param" "$expected")
+        # Set the canonical (first) value of a |-set (e.g. sysrq 0|176 → 0).
         if [[ $? -eq 1 ]]; then
-            params_to_set+=("$param=$expected")
+            params_to_set+=("$param=${expected%%|*}")
         fi
     done
 

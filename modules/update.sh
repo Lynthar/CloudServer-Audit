@@ -47,7 +47,12 @@ _update_unattended_origins_from_dump() {
 
 # Echoes ok|service_disabled|periodic_off|no_origins|unknown; returns 0 iff ok.
 _update_unattended_status() {
-    if ! systemctl is-enabled unattended-upgrades &>/dev/null; then
+    # The periodic driver is apt-daily-upgrade.timer, NOT the
+    # unattended-upgrades service (which only flushes pending upgrades at
+    # shutdown). A masked timer with the service still enabled used to read
+    # as "ok" — a false pass. `is-enabled` returns 0 for enabled/static and
+    # non-zero only for masked/disabled, so this is the correct gate.
+    if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
         echo "service_disabled"
         return 1
     fi
@@ -486,49 +491,70 @@ _update_fix_enable_unattended() {
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";'
 
-    # Configure unattended-upgrades for security only
-    local uu_config="/etc/apt/apt.conf.d/50unattended-upgrades"
-
-    if [[ -f "$uu_config" ]]; then
-        backup_file "$uu_config"
+    # Security-only origins.
+    #
+    # We deliberately DO NOT overwrite the distro's 50unattended-upgrades
+    # conffile (it carries operator settings: Mail, Package-Blacklist,
+    # Automatic-Reboot, ...). Instead we drop a 52-prefixed fragment, read
+    # AFTER 50, that #clears the inherited origin lists and sets a
+    # security-only Origins-Pattern.
+    #
+    # The previous code overwrote 50unattended-upgrades with an
+    # Allowed-Origins "Debian:<codename>-security" entry. On Debian that
+    # matched NOTHING — the security archive's Suite is "stable-security",
+    # not "<codename>-security", and Allowed-Origins matches on the Suite —
+    # so security auto-updates silently stopped while the audit still
+    # reported them enabled. Origins-Pattern with an explicit
+    # codename=<codename>-security,label=Debian-Security entry is the form
+    # Debian's own default ships and the only one that matches; Ubuntu's
+    # security Suite IS <codename>-security, so archive= matches there.
+    # ${distro_id}/${distro_codename} are written literally (single-quoted
+    # below); unattended-upgrades expands them, not the shell.
+    local uu_dropin="/etc/apt/apt.conf.d/52vpssec-unattended-security"
+    local origins
+    if [[ "$(detect_os)" == "ubuntu" ]]; then
+        origins='    "origin=${distro_id},archive=${distro_codename}-security";
+    "origin=${distro_id}ESMApps,archive=${distro_codename}-apps-security";
+    "origin=${distro_id}ESM,archive=${distro_codename}-infra-security";'
+    else
+        origins='    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
     fi
 
-    # unattended-upgrades resolves ${distro_id}/${distro_codename} itself, so
-    # they are written literally (single-quoted, NOT expanded here) — the
-    # detect_os/detect_os_codename locals this previously computed were dead.
-    #
-    # SECURITY ONLY: the bare "${distro_id}:${distro_codename}" main pocket is
-    # deliberately omitted. Including it makes unattended-upgrades (and the
-    # apply_security fix, which runs `unattended-upgrade -d` against this same
-    # config) auto-install ALL updates, not just security ones — contrary to
-    # this function's stated contract and Debian's default.
-    #
-    # Written atomically (matching the 20auto-upgrades write above): an
-    # interrupted `cat >` could leave a half-written 50unattended-upgrades
-    # that fails to parse and breaks every apt/apt-get operation host-wide.
-    write_file_atomic "$uu_config" '// vpssec unattended-upgrades configuration (security only)
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
-    "${distro_id}ESMApps:${distro_codename}-apps-security";
-    "${distro_id}ESM:${distro_codename}-infra-security";
+    [[ -f "$uu_dropin" ]] && backup_file "$uu_dropin" >/dev/null 2>&1 || true
+    # Double-quoted so ${origins} interpolates; the literal ${distro_id} /
+    # ${distro_codename} inside $origins were single-quoted at assignment
+    # and are inserted verbatim (bash does a single expansion pass), so
+    # there is no set -u risk from those unbound names.
+    write_file_atomic "$uu_dropin" "// vpssec: automatic SECURITY upgrades only.
+// Dropped after 50unattended-upgrades so the distro conffile and operator
+// settings (Mail, Package-Blacklist, ...) in it are preserved; #clear resets
+// the inherited origin lists so only the security patterns below are active.
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Origins-Pattern {
+${origins}
 };
+Unattended-Upgrade::Remove-Unused-Dependencies \"true\";
+Unattended-Upgrade::Automatic-Reboot \"false\";
+Unattended-Upgrade::SyslogEnable \"true\";"
 
-// Remove unused dependencies
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    # Verify the merged config actually parses and selects packages before
+    # claiming success: --dry-run exercises the real origin match, which is
+    # exactly what silently broke before. A non-zero result is surfaced, not
+    # swallowed (the fix's success gate below is the authority).
+    if command -v unattended-upgrade >/dev/null 2>&1; then
+        unattended-upgrade --dry-run -d >/dev/null 2>&1 \
+            || print_warn "$(i18n 'update.unattended_dryrun_warn')"
+    fi
 
-// Automatically reboot if required (disabled by default for safety)
-Unattended-Upgrade::Automatic-Reboot "false";
-
-// Mail report (optional)
-// Unattended-Upgrade::Mail "root";
-// Unattended-Upgrade::MailReport "on-change";
-
-// Logging
-Unattended-Upgrade::SyslogEnable "true";'
-
-    # Enable and start service
-    systemctl enable unattended-upgrades
-    systemctl start unattended-upgrades
+    # Enable the periodic driver (apt-daily-upgrade.timer) AND the shutdown
+    # flusher service. The timer is what actually runs unattended-upgrade on
+    # a schedule; enabling only the service (as before) left a masked timer
+    # undetected.
+    systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl enable unattended-upgrades 2>/dev/null || true
+    systemctl start unattended-upgrades 2>/dev/null || true
 
     if _update_unattended_enabled; then
         print_ok "$(i18n 'update.unattended_configured')"

@@ -65,6 +65,14 @@ _preflight_check_os() {
 
 # Check network connectivity
 _preflight_check_network() {
+    # If neither curl nor wget exists we genuinely cannot test reachability —
+    # don't emit a "network OK" check (which would be a false, untested
+    # success). Skip silently; this is an info-only context check.
+    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+        log_debug "preflight: no curl/wget available; skipping network reachability check"
+        return 0
+    fi
+
     local network_ok=1
 
     # Check if we can reach common endpoints

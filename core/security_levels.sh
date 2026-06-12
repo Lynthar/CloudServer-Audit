@@ -20,13 +20,17 @@ declare -gA FIX_SAFE=(
     # configure_ssh_jail is intentionally NOT here: it overwrites the whole
     # jail.local, which can clobber an operator's hand-written multi-jail /
     # ignoreip config — it is CONFIRM-class so the user is warned first.
+    # enable_ssh_jail is NOT here: it is an alias for configure_ssh_jail and
+    # overwrites jail.local wholesale (it fires on hosts that have a custom
+    # jail.local without an sshd jail — exactly the config worth warning
+    # about), so it is CONFIRM-class alongside configure_ssh_jail.
     ["fail2ban.install"]="true"
     ["fail2ban.enable_service"]="true"
-    ["fail2ban.enable_ssh_jail"]="true"
 
-    # Update - package management
-    ["update.install_unattended"]="true"
-    ["update.enable_unattended"]="true"
+    # Update - package management. install/enable_unattended are NOT here:
+    # they turn on automatic, unattended installation of packages (a real
+    # behaviour change an operator should consent to), so they are
+    # CONFIRM-class.
 
     # Baseline - security services. enable_apparmor and disable_unused are
     # NOT auto-safe: enforcing all packaged AppArmor profiles can confine a
@@ -45,8 +49,12 @@ declare -gA FIX_SAFE=(
     # RA-configured hosts (the common cloud-VPS case) — on an IPv6-only box
     # that cuts the live session. It is CONFIRM-class, and the fix itself
     # additionally skips the RA-disabling params when the host relies on RA.
+    # harden_kernel is NOT auto-safe: it disables unprivileged user
+    # namespaces (breaks Docker rootless / podman / snap / the Chrome &
+    # Electron sandbox / bwrap tooling) and restricts SysRq. Both are
+    # defence-in-depth on a hardened host but can silently break running
+    # workloads, so it is CONFIRM-class (surfaces a warning first).
     ["kernel.enable_aslr"]="true"
-    ["kernel.harden_kernel"]="true"
     ["kernel.disable_core_dump"]="true"
 
     # Filesystem - permission fixes
@@ -89,8 +97,14 @@ declare -gA FIX_SAFE=(
 
 # Fixes requiring confirmation - medium risk
 declare -gA FIX_CONFIRM=(
-    # Network params may conflict with Docker/containers
-    ["kernel.harden_network"]="May affect container networking if Docker/LXC is in use"
+    # Network params may conflict with Docker/containers. On SLAAC hosts the
+    # IPv6 RA params (accept_ra/autoconf/...) are skipped automatically to
+    # preserve connectivity, but warn anyway.
+    ["kernel.harden_network"]="May affect container networking (Docker/LXC); IPv6 RA settings are skipped on SLAAC hosts to preserve connectivity"
+
+    # Disables unprivileged user namespaces (breaks Docker rootless / podman /
+    # snap / Chrome sandbox) and restricts SysRq — review before applying.
+    ["kernel.harden_kernel"]="Disables unprivileged user namespaces (breaks Docker rootless / podman / Chrome sandbox) and restricts SysRq"
 
     # IPv6 RA hardening can drop the IPv6 default route/address on hosts that
     # configure IPv6 via Router Advertisements (SLAAC) — the fix detects RA
@@ -106,8 +120,13 @@ declare -gA FIX_CONFIRM=(
     # Stopping "unused" services can disrupt ones the operator relies on
     ["baseline.disable_unused"]="Stops/disables services flagged as unused (e.g. avahi/cups); review before applying"
 
-    # Overwrites jail.local wholesale
+    # Overwrites jail.local wholesale (enable_ssh_jail is the same writer)
     ["fail2ban.configure_ssh_jail"]="Overwrites /etc/fail2ban/jail.local; a hand-written multi-jail or ignoreip config will be replaced"
+    ["fail2ban.enable_ssh_jail"]="Overwrites /etc/fail2ban/jail.local; a hand-written multi-jail or ignoreip config will be replaced"
+
+    # Enables unattended, automatic installation of (security) updates
+    ["update.install_unattended"]="Installs and enables automatic unattended security updates"
+    ["update.enable_unattended"]="Enables automatic unattended installation of security updates"
 
     # Requires service restart
     ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"

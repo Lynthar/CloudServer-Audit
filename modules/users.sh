@@ -90,16 +90,32 @@ declare -gA PWQUALITY_POLICY=(
 # ==============================================================================
 
 # Check if user has a login shell
+# Check if user has a login shell.
+# NOTE: an EMPTY 7th passwd field is NOT "no login" — login(1)/sshd fall back
+# to /bin/sh, so an account like `evil::1001:1001::/home/evil:` (empty password
+# AND empty shell) is fully login-capable. Treating "" as no-login (as before)
+# let exactly that backdoor shape slip past the empty-password / shell checks,
+# so empty now falls through to the login-shell branch.
 _has_login_shell() {
     local shell="$1"
     case "$shell" in
-        */nologin|*/false|""|/bin/sync)
+        */nologin|*/false|/bin/sync)
             return 1
             ;;
         *)
             return 0
             ;;
     esac
+}
+
+# True if a /etc/sudoers.d drop-in is one sudo IGNORES: sudoers(5) @includedir
+# skips any file whose name contains a '.' or ends in '~'. Auditing those
+# yields false findings — a broken *.dpkg-old fails `visudo -c` (false
+# syntax-invalid), a NOPASSWD line in foo.disabled is never loaded — so every
+# sudoers.d scanner skips them.
+_sudoers_dropin_ignored() {
+    local base="${1##*/}"
+    [[ "$base" == *.* || "$base" == *'~' ]]
 }
 
 # Check if username is in system accounts list
@@ -242,7 +258,7 @@ _find_sudo_users() {
     if [[ -d /etc/sudoers.d ]]; then
         for f in /etc/sudoers.d/*; do
             [[ -f "$f" && -r "$f" ]] || continue
-            [[ "$f" =~ ~$ || "$f" =~ \.bak$ ]] && continue
+            _sudoers_dropin_ignored "$f" && continue
             sudoers_files+=("$f")
         done
     fi
@@ -304,9 +320,8 @@ _find_nopasswd_sudo() {
             [[ -f "$f" ]] || continue
             [[ -r "$f" ]] || continue
 
-            # Skip backup files
-            [[ "$f" =~ ~$ ]] && continue
-            [[ "$f" =~ \.bak$ ]] && continue
+            # Skip drop-ins sudo itself ignores (see _sudoers_dropin_ignored)
+            _sudoers_dropin_ignored "$f" && continue
 
             while IFS= read -r line; do
                 [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -546,7 +561,10 @@ _check_password_policy() {
     local pass_max=$(grep -E "^PASS_MAX_DAYS" "$login_defs" 2>/dev/null | awk '{print $2}')
     if [[ -z "$pass_max" ]]; then
         issues+=("PASS_MAX_DAYS not set")
-    elif [[ "$pass_max" == "99999" || "$pass_max" -gt 365 ]]; then
+    elif [[ "$pass_max" == "99999" ]] || { [[ "$pass_max" =~ ^[0-9]+$ ]] && (( pass_max > 365 )); }; then
+        # Guard the arithmetic: a non-numeric admin-edited value (e.g.
+        # "PASS_MAX_DAYS unlimited") in `[[ x -gt N ]]` is treated as a
+        # variable name and, if unbound, aborts the WHOLE audit under set -u.
         issues+=("PASS_MAX_DAYS=$pass_max (no expiry or too long)")
     fi
 
@@ -558,13 +576,13 @@ _check_password_policy() {
 
     # Check PASS_MIN_LEN (may be deprecated in favor of pam)
     local pass_len=$(grep -E "^PASS_MIN_LEN" "$login_defs" 2>/dev/null | awk '{print $2}')
-    if [[ -n "$pass_len" && "$pass_len" -lt 8 ]]; then
+    if [[ "$pass_len" =~ ^[0-9]+$ ]] && (( pass_len < 8 )); then
         issues+=("PASS_MIN_LEN=$pass_len (too short)")
     fi
 
-    # Check PASS_WARN_AGE
+    # Check PASS_WARN_AGE (guard the arithmetic against non-numeric values)
     local pass_warn=$(grep -E "^PASS_WARN_AGE" "$login_defs" 2>/dev/null | awk '{print $2}')
-    if [[ -z "$pass_warn" || "$pass_warn" -lt 7 ]]; then
+    if [[ -z "$pass_warn" ]] || { [[ "$pass_warn" =~ ^[0-9]+$ ]] && (( pass_warn < 7 )); }; then
         issues+=("PASS_WARN_AGE=$pass_warn (should be at least 7)")
     fi
 
@@ -629,9 +647,14 @@ _check_pwquality() {
     # semantics so drop-in policies (the recommended layout on Debian 11+
     # and Ubuntu 22.04+) are honored.
     if [[ -f /etc/security/pwquality.conf || -d /etc/security/pwquality.conf.d ]]; then
+        # All three comparisons guard the arithmetic with a numeric-regex
+        # test first: a non-numeric pwquality.conf value would otherwise be
+        # evaluated as a variable name in [[ x -lt/-ge N ]] and abort the
+        # whole audit under set -u. dcredit/ucredit are legitimately NEGATIVE
+        # (e.g. -1 = "require one"), so their guard allows a leading '-'.
         local minlen
         minlen=$(_pwquality_get_directive minlen)
-        if [[ -z "$minlen" || "$minlen" -lt 8 ]]; then
+        if [[ -z "$minlen" ]] || { [[ "$minlen" =~ ^[0-9]+$ ]] && (( minlen < 8 )); }; then
             issues+=("minlen=$minlen (should be at least 12)")
         fi
 
@@ -640,10 +663,10 @@ _check_pwquality() {
         ucredit=$(_pwquality_get_directive ucredit)
 
         # Negative values mean required, 0 or positive means not enforced
-        if [[ -z "$dcredit" || "$dcredit" -ge 0 ]]; then
+        if [[ -z "$dcredit" ]] || { [[ "$dcredit" =~ ^-?[0-9]+$ ]] && (( dcredit >= 0 )); }; then
             issues+=("dcredit not enforcing digit requirement")
         fi
-        if [[ -z "$ucredit" || "$ucredit" -ge 0 ]]; then
+        if [[ -z "$ucredit" ]] || { [[ "$ucredit" =~ ^-?[0-9]+$ ]] && (( ucredit >= 0 )); }; then
             issues+=("ucredit not enforcing uppercase requirement")
         fi
     fi
@@ -704,14 +727,17 @@ _check_history_security() {
 # another privileged user's, UID). Either way the audit should
 # surface it. Output format: "UID:user1,user2".
 _find_duplicate_uids() {
-    awk -F: '$3 != "" {
+    # Read via getent, not /etc/passwd directly, so a duplicate UID injected
+    # through an NSS backend (LDAP/SSSD) — the same backdoor vector
+    # _find_uid0_users deliberately uses getent for — is visible too.
+    getent passwd 2>/dev/null | awk -F: '$3 != "" {
         if (uids[$3]) uids[$3] = uids[$3] "," $1
         else          uids[$3] = $1
         count[$3]++
     }
     END {
         for (u in count) if (count[u] > 1) print u ":" uids[u]
-    }' /etc/passwd 2>/dev/null
+    }'
 }
 
 # Lynis AUTH-9229 — weak password hash methods. Two-source check:
@@ -747,7 +773,7 @@ _check_hash_method() {
     local pam_method="" f
     for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
         [[ -f "$f" ]] || continue
-        pam_method=$(grep -E '^password[[:space:]]+\S+[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
+        pam_method=$(grep -E '^password[[:space:]]+(\[[^]]*\]|\S+)[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
             | grep -oiE '\b(yescrypt|sha512|sha256|md5|blowfish|bigcrypt|des)\b' \
             | head -1 | tr '[:upper:]' '[:lower:]')
         [[ -n "$pam_method" ]] && break
@@ -783,7 +809,7 @@ _check_hash_rounds() {
     local pam_method="" f
     for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
         [[ -f "$f" ]] || continue
-        pam_method=$(grep -E '^password[[:space:]]+\S+[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
+        pam_method=$(grep -E '^password[[:space:]]+(\[[^]]*\]|\S+)[[:space:]]+pam_unix\.so' "$f" 2>/dev/null \
             | grep -oiE '\b(yescrypt|sha512|sha256|md5|blowfish|bigcrypt|des)\b' \
             | head -1 | tr '[:upper:]' '[:lower:]')
         [[ -n "$pam_method" ]] && break
@@ -838,9 +864,7 @@ _check_sudoers_syntax() {
     fi
     for drop in /etc/sudoers.d/*; do
         [[ -f "$drop" ]] || continue
-        case "$drop" in
-            */README*|*.bak|*~) continue ;;
-        esac
+        _sudoers_dropin_ignored "$drop" && continue
         if ! visudo -c -f "$drop" >/dev/null 2>&1; then
             issues+=("$drop syntax invalid")
         fi

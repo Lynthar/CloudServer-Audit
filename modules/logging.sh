@@ -492,8 +492,12 @@ _logging_fix_setup_audit_rules() {
 
     mkdir -p "$AUDIT_RULES_D"
 
-    # Create security-focused audit rules
-    cat > "${AUDIT_RULES_D}/99-vpssec.rules" <<'EOF'
+    # Build the rules content, then write atomically (tempfile + rename). The
+    # bare `cat >` could leave a truncated 99-vpssec.rules on an interrupted
+    # write — which auditd would then reject on the next load — and its write
+    # failure went unchecked.
+    local rules_content
+    rules_content=$(cat <<'EOF'
 # vpssec audit rules for security monitoring
 
 # Delete all existing rules
@@ -543,13 +547,27 @@ _logging_fix_setup_audit_rules() {
 # environment can accept that operational cost.
 # -e 2
 EOF
+)
 
-    # Load rules
-    augenrules --load 2>/dev/null || auditctl -R "${AUDIT_RULES_D}/99-vpssec.rules" 2>/dev/null
+    if ! write_file_atomic "${AUDIT_RULES_D}/99-vpssec.rules" "$rules_content"; then
+        print_error "$(i18n 'logging.audit_rules_failed')"
+        return 1
+    fi
 
-    if _logging_check_audit_rules; then
+    # Load the rules, then report honestly whether the KERNEL actually took
+    # them (auditctl -l) rather than declaring success merely because the file
+    # exists. augenrules/auditctl can fail (auditd inactive, syntax error,
+    # already immutable via -e 2) while the file sits on disk looking fine.
+    augenrules --load 2>/dev/null || auditctl -R "${AUDIT_RULES_D}/99-vpssec.rules" 2>/dev/null || true
+
+    if auditctl -l 2>/dev/null | grep -q '.'; then
         print_ok "$(i18n 'logging.audit_rules_configured')"
         print_info "$(i18n 'logging.audit_immutable_hint')"
+        return 0
+    elif _logging_check_audit_rules; then
+        # File correctly persisted but not live yet (e.g. auditd not running in
+        # this environment); it applies at next auditd start / reboot.
+        print_warn "$(i18n 'logging.audit_rules_pending')"
         return 0
     else
         print_error "$(i18n 'logging.audit_rules_failed')"
