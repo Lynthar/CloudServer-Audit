@@ -1470,6 +1470,13 @@ _ssh_write_hardening_config() {
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
         SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN" 2>/dev/null) || SSH_LAST_DROPIN_BACKUP=""
     else
+        # New drop-in. SSH_LAST_DROPIN_BACKUP="NEW" drives this module's own
+        # reload-failure rollback (_ssh_rollback_dropin deletes the file). ALSO
+        # call backup_file so, inside a plan backup session, the file is recorded
+        # as fix-created and a later plan-level rollback (backup_restore) deletes
+        # it too — without this the created drop-in survived "rollback" and left
+        # SSH hardening applied after the user asked to undo it.
+        backup_file "$SSH_HARDENING_DROPIN" >/dev/null 2>&1 || true
         SSH_LAST_DROPIN_BACKUP="NEW"
     fi
 
