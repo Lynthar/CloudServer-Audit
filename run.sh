@@ -41,13 +41,13 @@ COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 # cosign v3.x verifies bundles signed by older v2.x cosign (sigstore
 # bundle verification is backwards compatible across majors), so this
 # pin can move independently of release.yml's signer pin.
-COSIGN_PIN_VERSION="3.0.6"
+COSIGN_PIN_VERSION="3.1.1"
 # .deb assets — Debian/Ubuntu (installed via dpkg)
-COSIGN_PIN_SHA256_AMD64="e16e8eb815f8b1b3cee3e678874393c286f19dd59e9ac5da95e428f970ef00f3"
-COSIGN_PIN_SHA256_ARM64="93f382c7476e3effabff8a2c3561239381d55dc2b21b2ccbeaf70e460acfeaaa"
+COSIGN_PIN_SHA256_AMD64="b62db813c4e1c47580196aa59e90d0938630c9843d6eea8ae2cc03dcefc00709"
+COSIGN_PIN_SHA256_ARM64="972a57a3a2cca9387993571d535ae374efcd0045f017d64be9e88453125d8512"
 # static binaries — RHEL/Arch and any other non-dpkg distro
-COSIGN_PIN_SHA256_BIN_AMD64="c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
-COSIGN_PIN_SHA256_BIN_ARM64="bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8"
+COSIGN_PIN_SHA256_BIN_AMD64="ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"
+COSIGN_PIN_SHA256_BIN_ARM64="2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
