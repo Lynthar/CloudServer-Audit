@@ -625,7 +625,7 @@ _baseline_fix_enable_apparmor() {
 
     # Install if needed
     if ! check_command aa-status; then
-        apt-get install -y apparmor apparmor-utils 2>/dev/null
+        DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null
     fi
 
     # Enable and start

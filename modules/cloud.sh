@@ -949,6 +949,9 @@ cloud_fix() {
             echo ""
 
             local known_agents=$(_find_known_agents)
+            # Feed the loop from the data, not stdin: a bare `while read` here
+            # reads the process's stdin (in guide mode, the remaining plan), so
+            # it must be redirected from $known_agents explicitly.
             while IFS='|' read -r proc_name service_name vendor desc can_disable status; do
                 [[ -z "$proc_name" ]] && continue
                 echo "  • $proc_name"
@@ -963,7 +966,7 @@ cloud_fix() {
                     echo "    $(i18n 'cloud.optional' 2>/dev/null || echo 'Optional'): $(i18n 'cloud.review_before_disable' 2>/dev/null || echo 'Review before disabling')"
                 fi
                 echo ""
-            done
+            done <<< "$known_agents"
 
             return 1  # Alert only, no auto-fix
             ;;
@@ -975,6 +978,7 @@ cloud_fix() {
             echo ""
 
             local suspicious=$(_find_suspicious_agents)
+            # Redirect from the data, not stdin (see cloud.agents_found above).
             while IFS='|' read -r proc pid user cmdline; do
                 [[ -z "$proc" ]] && continue
                 echo "  • $proc (PID: $pid)"
@@ -982,7 +986,7 @@ cloud_fix() {
                 echo "    Command: ${cmdline:0:100}..."
                 echo "    $(i18n 'cloud.investigate' 2>/dev/null || echo 'Investigate'): ps aux | grep $proc"
                 echo ""
-            done
+            done <<< "$suspicious"
 
             return 1  # Alert only, no auto-fix
             ;;

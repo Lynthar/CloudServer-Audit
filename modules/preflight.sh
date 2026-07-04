@@ -83,8 +83,10 @@ _preflight_check_network() {
             fi
         fi
     elif command -v wget &>/dev/null; then
-        if ! wget -q --timeout=5 -O /dev/null https://www.google.com 2>&1; then
-            if ! wget -q --timeout=5 -O /dev/null https://www.baidu.com 2>&1; then
+        # --tries=1: without it wget retries a black-holed host up to 20 times,
+        # so the 5s timeout could stall the audit for minutes.
+        if ! wget -q --tries=1 --timeout=5 -O /dev/null https://www.google.com 2>&1; then
+            if ! wget -q --tries=1 --timeout=5 -O /dev/null https://www.baidu.com 2>&1; then
                 network_ok=0
             fi
         fi

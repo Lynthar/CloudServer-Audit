@@ -9,7 +9,20 @@
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 SSH_DROPIN_DIR="/etc/ssh/sshd_config.d"
-SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/99-vpssec-hardening.conf"
+# sshd uses the FIRST obtained value for each keyword, and processes
+# Include globs in LEXICAL order (see sshd_config(5)). On Debian/Ubuntu the
+# `Include /etc/ssh/sshd_config.d/*.conf` sits at the top of sshd_config, and
+# cloud images ship `50-cloud-init.conf` (often `PasswordAuthentication yes`).
+# A `99-` drop-in is read AFTER `50-`, so its value is NOT the first obtained
+# and is silently ignored — our hardening would never take effect. Sort BEFORE
+# `50-cloud-init.conf` (and any higher-numbered drop-in) with a `00-` prefix so
+# our values win. This is the opposite of sysctl.d (last-wins), where kernel.sh
+# correctly uses `99-`. Post-reload we additionally assert the effective value
+# with `sshd -T` (_ssh_verify_effective) rather than trusting file precedence.
+SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening.conf"
+# Older vpssec releases wrote the losing `99-` file; migrate it to the new name
+# on first fix so prior settings carry over and the stale (ignored) file goes.
+SSH_HARDENING_DROPIN_LEGACY="${SSH_DROPIN_DIR}/99-vpssec-hardening.conf"
 SSH_RESCUE_PORT=2222     # preferred rescue port; replaced with a free port at open time
 SSH_RESCUE_PID=""        # pid of the rescue sshd we launched (the only kill target)
 SSH_RESCUE_CONFIG=""     # temp rescue config path
@@ -163,23 +176,78 @@ _ssh_get_admin_users() {
     printf '%s\n' "${admin_users[@]}" | sort -u
 }
 
-# Check if user has at least one usable key in authorized_keys.
-#
-# The previous `-s` (non-empty) check accepted files that contained only
-# comments or whitespace; a later inline grep still matched a rotated-out
-# `# ssh-ed25519 ...` comment line (the `#`-then-space let `[[:space:]]ssh-`
-# hit), so a comment-only file was reported as "has key" and
-# _ssh_fix_disable_password_auth would cut off password auth and lock the user
-# out. Delegate to count_authorized_keys (core/common.sh), which skips
-# comment/blank lines and matches ssh-/ecdsa-/sk- at line start or after the
-# optional-options prefix (`from="..." ssh-ed25519 AAAA...`).
-_ssh_user_has_key() {
+# Resolve the EFFECTIVE AuthorizedKeysFile paths for a user. Honors a
+# customized `AuthorizedKeysFile` (read from sshd -T, the merged config) with
+# sshd's token expansion (%h=home, %u=user, %%=%); relative paths are taken
+# under the user's home, exactly as sshd resolves them. Echoes one absolute
+# path per line. Empty output means "no static key files apply" — either
+# `AuthorizedKeysFile none`, or an unresolvable home. This is what lets
+# _ssh_user_has_key check the file sshd will ACTUALLY read: the old hardcoded
+# ~/.ssh/authorized_keys both missed keys in a relocated file AND falsely
+# counted a stale default-path file when AuthorizedKeysFile pointed elsewhere.
+_ssh_effective_authorizedkeysfiles() {
     local user="$1"
     local home_dir
-    home_dir=$(getent passwd "$user" | cut -d: -f6)
-    local auth_keys="${home_dir}/.ssh/authorized_keys"
+    home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+    [[ -z "$home_dir" ]] && return 0
 
-    [[ "$(count_authorized_keys "$auth_keys")" -gt 0 ]]
+    # Capture sshd -T first, THEN awk over a herestring. Piping `sshd -T | awk
+    # '...exit'` makes awk close the pipe early, sshd takes SIGPIPE, and under
+    # `set -o pipefail` the command substitution returns non-zero — which, when
+    # this runs inside a process-substitution subshell (as _ssh_user_has_key
+    # calls it) with set -e active, aborts the function before it prints anything
+    # (found via container test: the key check silently returned "no key").
+    local akf sshd_dump
+    sshd_dump=$(sshd -T 2>/dev/null || true)
+    akf=$(awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^[[:space:]]+/,""); print; exit}' <<<"$sshd_dump")
+    # sshd's built-in default when unset.
+    [[ -z "$akf" ]] && akf=".ssh/authorized_keys .ssh/authorized_keys2"
+    [[ "${akf,,}" == "none" ]] && return 0
+
+    local tok path
+    for tok in $akf; do
+        path="${tok//%%/$'\x01'}"   # protect literal %% before %h/%u
+        path="${path//%h/$home_dir}"
+        path="${path//%u/$user}"
+        path="${path//$'\x01'/%}"
+        [[ "$path" != /* ]] && path="$home_dir/$path"
+        echo "$path"
+    done
+}
+
+# Check if a user has at least one usable key in the file(s) sshd will read.
+#
+# Delegates to count_authorized_keys (core/common.sh), which skips comment/blank
+# lines and matches ssh-/ecdsa-/sk- at line start or after the optional-options
+# prefix (`from="..." ssh-ed25519 AAAA...`) — this closed an earlier lockout bug
+# where a rotated-out `# ssh-ed25519 ...` comment line read as "has key". Now
+# also honors the effective AuthorizedKeysFile so a relocated key file is found
+# and a stale default-path file is not miscounted (see resolver above).
+_ssh_user_has_key() {
+    local user="$1"
+    local total=0 path n
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        n=$(count_authorized_keys "$path")
+        total=$(( total + n ))
+    done < <(_ssh_effective_authorizedkeysfiles "$user")
+    [[ "$total" -gt 0 ]]
+}
+
+# True when $user can log in via a public key under the CURRENT effective
+# config. For root this additionally requires PermitRootLogin to permit key
+# auth: "no" blocks root entirely (so root's key is useless and must NOT count
+# toward the disable-password-auth safety gate), whereas "prohibit-password" /
+# "without-password" / "forced-commands-only" all still allow key login. For
+# non-root users PermitRootLogin is irrelevant.
+_ssh_can_login_with_key() {
+    local user="$1"
+    if [[ "$user" == "root" ]]; then
+        local prl
+        prl=$(_ssh_get_config "PermitRootLogin" "prohibit-password")
+        [[ "${prl,,}" == "no" ]] && return 1
+    fi
+    _ssh_user_has_key "$user"
 }
 
 # Check if SSH access control is configured (AllowUsers/DenyUsers/AllowGroups/DenyGroups)
@@ -1128,6 +1196,10 @@ _ssh_audit_port() {
 ssh_fix() {
     local fix_id="$1"
 
+    # Migrate any legacy `99-` drop-in to the new `00-` name before a fix reads
+    # or writes it, so prior settings are preserved and the losing file is gone.
+    _ssh_migrate_legacy_dropin
+
     case "$fix_id" in
         ssh.disable_password_auth)
             _ssh_fix_disable_password_auth
@@ -1352,6 +1424,37 @@ _ssh_close_rescue_port() {
 # no call has run yet.
 SSH_LAST_DROPIN_BACKUP=""
 
+# Migrate the legacy `99-vpssec-hardening.conf` (which loses to 50-cloud-init)
+# to the new `00-` name. Only acts when the legacy file exists and the new one
+# does not, so a fresh install or an already-migrated host is a no-op. Best
+# effort: a failure just leaves the legacy file (still harmless — 00- wins over
+# it once written), so we don't abort the fix.
+_ssh_migrate_legacy_dropin() {
+    [[ -f "$SSH_HARDENING_DROPIN_LEGACY" ]] || return 0
+    [[ -e "$SSH_HARDENING_DROPIN" ]] && return 0
+    if mv "$SSH_HARDENING_DROPIN_LEGACY" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
+        log_info "Migrated legacy SSH hardening drop-in to $SSH_HARDENING_DROPIN"
+    fi
+}
+
+# Assert that sshd's EFFECTIVE value for a keyword matches what we intended,
+# using `sshd -T` (the fully-merged config). This is the real guard against the
+# drop-in-precedence trap: even if file ordering is wrong or another drop-in /
+# Match block overrides us, we detect that the value did not actually change and
+# report failure instead of a false success. Keyword and values are compared
+# case-insensitively (sshd -T lowercases keywords and most boolean values).
+_ssh_verify_effective() {
+    local key="${1,,}"
+    local expected="${2,,}"
+    # Capture then awk-over-herestring, not `sshd -T | awk ...exit`: the early
+    # awk exit SIGPIPEs sshd and, under pipefail+set -e in a subshell, would
+    # abort before returning (same trap as _ssh_effective_authorizedkeysfiles).
+    local sshd_dump effective
+    sshd_dump=$(sshd -T 2>/dev/null || true)
+    effective=$(awk -v k="$key" 'tolower($1)==k{print tolower($2); exit}' <<<"$sshd_dump")
+    [[ "$effective" == "$expected" ]]
+}
+
 # Write SSH hardening config
 _ssh_write_hardening_config() {
     local content="$1"
@@ -1447,6 +1550,10 @@ _ssh_rollback_dropin() {
 # drop-in left on disk will prevent sshd from starting on the next
 # service restart or reboot, which is exactly the lockout scenario
 # the rescue port is supposed to prevent.
+# Optional trailing args are (key expected) pairs asserted with sshd -T AFTER
+# the reload — e.g. `_ssh_reload_safe PasswordAuthentication no`. A mismatch
+# means our drop-in did not win the merge (precedence trap / Match override), so
+# we roll back and report failure rather than claim a change that never landed.
 _ssh_reload_safe() {
     # Test config first
     if sshd -t 2>/dev/null; then
@@ -1454,6 +1561,19 @@ _ssh_reload_safe() {
 
         if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null; then
             print_ok "$(i18n 'ssh.sshd_reloaded')"
+
+            # Verify effective values actually changed. Skipped only when sshd
+            # is unavailable to answer (verify returns non-zero → treated as
+            # mismatch), which correctly surfaces "could not confirm".
+            local _k _v
+            while [[ $# -ge 2 ]]; do
+                _k="$1"; _v="$2"; shift 2
+                if ! _ssh_verify_effective "$_k" "$_v"; then
+                    print_error "$(i18n 'ssh.effective_mismatch' "key=$_k" "value=$_v")"
+                    _ssh_rollback_dropin
+                    return 1
+                fi
+            done
             return 0
         else
             print_error "$(i18n 'ssh.reload_failed')"
@@ -1473,7 +1593,12 @@ _ssh_fix_disable_password_auth() {
         print_info "$(i18n 'ssh.current_connection' "ip=$current_ip")"
     fi
 
-    # Check for admin with SSH key
+    # Safety gate: at least one account that can ACTUALLY log in via key must
+    # survive the password-off change. A non-root admin with a usable key is the
+    # safest guarantee (it survives even if root login is disabled too). Only
+    # fall back to root's key when root login still permits key auth — the old
+    # gate counted root's key unconditionally, so on PermitRootLogin=no with a
+    # keyless sudo admin it passed and then locked everyone out.
     local admin_users=$(_ssh_get_admin_users)
     local has_key_user=""
 
@@ -1484,10 +1609,19 @@ _ssh_fix_disable_password_auth() {
         fi
     done
 
-    if [[ -z "$has_key_user" ]] && ! _ssh_user_has_key "root"; then
-        print_error "$(i18n 'ssh.no_key_user')"
-        print_warn "$(i18n 'ssh.add_key_first')"
-        return 1
+    if [[ -z "$has_key_user" ]]; then
+        if _ssh_can_login_with_key "root"; then
+            # Root's key is the only way back in. Legitimate on a fresh cloud
+            # image with no admin yet, but fragile: warn, and note that also
+            # disabling root login would remove this last path (the
+            # disable_root_login gate enforces a non-root admin key when
+            # password auth is off).
+            print_warn "$(i18n 'ssh.only_root_key_warning')"
+        else
+            print_error "$(i18n 'ssh.no_key_user')"
+            print_warn "$(i18n 'ssh.add_key_first')"
+            return 1
+        fi
     fi
 
     # Open the rescue daemon BEFORE confirming, so the operator can actually
@@ -1519,7 +1653,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe PasswordAuthentication no
         local result=$?
         _ssh_close_rescue_port
         return $result
@@ -1536,6 +1670,27 @@ _ssh_fix_disable_root_login() {
         print_error "$(i18n 'ssh.no_admin_for_root')"
         print_warn "$(i18n 'ssh.create_admin_first')"
         return 1
+    fi
+
+    # Joint-lockout guard: if password auth is already off (e.g. an earlier fix
+    # in this same plan disabled it), then removing root login leaves ONLY the
+    # non-root admins' keys as a way in — so at least one of them must actually
+    # have a usable key. With password auth still on, admins can log in by
+    # password, so this extra requirement doesn't apply. This makes the
+    # disable_password + disable_root combination safe in either apply order.
+    if ! _ssh_password_auth_enabled; then
+        local root_key_admin=""
+        for user in $admin_users; do
+            if _ssh_user_has_key "$user"; then
+                root_key_admin="$user"
+                break
+            fi
+        done
+        if [[ -z "$root_key_admin" ]]; then
+            print_error "$(i18n 'ssh.no_admin_key_pw_off')"
+            print_warn "$(i18n 'ssh.add_key_first')"
+            return 1
+        fi
     fi
 
     # Open the rescue daemon BEFORE confirming, so the operator can actually
@@ -1567,7 +1722,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe PermitRootLogin no
         local result=$?
         _ssh_close_rescue_port
         return $result
@@ -1592,7 +1747,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe PubkeyAuthentication yes
     else
         return 1
     fi
@@ -1613,7 +1768,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe PermitEmptyPasswords no
     else
         return 1
     fi
@@ -1634,7 +1789,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe MaxAuthTries 4
     else
         return 1
     fi
@@ -1655,7 +1810,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe LoginGraceTime 60
     else
         return 1
     fi
@@ -1676,7 +1831,7 @@ $content"
     fi
 
     if _ssh_write_hardening_config "$content"; then
-        _ssh_reload_safe
+        _ssh_reload_safe X11Forwarding no
     else
         return 1
     fi

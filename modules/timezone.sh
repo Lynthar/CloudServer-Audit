@@ -416,7 +416,7 @@ _timezone_fix_enable_ntp() {
     fi
 
     # Try to install and enable chrony as alternative
-    if apt-get install -y chrony &>/dev/null; then
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y chrony &>/dev/null; then
         systemctl enable chrony &>/dev/null
         systemctl start chrony &>/dev/null
         print_ok "$(i18n 'timezone.chrony_installed')"
@@ -477,6 +477,23 @@ _timezone_fix_rtc_utc() {
 # Fix: Set locale
 _timezone_fix_set_locale() {
     print_info "$(i18n 'timezone.setting_locale')"
+
+    # Do NOT override an already-valid locale. This fix is offered even on the
+    # PASSED locale_ok check (so a user CAN opt to change locale in guide) and it
+    # is FIX_SAFE (auto-applied under select-all). Forcing en_US.UTF-8 onto a
+    # host whose zh_CN.UTF-8 / de_DE.UTF-8 is perfectly fine would silently
+    # change the operator's language — not a safe auto-fix. Only set a default
+    # when the locale is genuinely unset (C / POSIX / empty), mirroring the
+    # audit's own locale_not_set condition.
+    local current_locale=""
+    if command -v localectl &>/dev/null; then
+        current_locale=$(localectl status 2>/dev/null | grep "System Locale" | sed 's/.*LANG=//' | cut -d' ' -f1)
+    fi
+    [[ -z "$current_locale" ]] && current_locale="${LANG:-C}"
+    if [[ "$current_locale" != "C" && "$current_locale" != "POSIX" && -n "$current_locale" ]]; then
+        print_ok "$(i18n 'timezone.locale_already_set' "locale=$current_locale")"
+        return 0
+    fi
 
     local target_locale="en_US.UTF-8"
 

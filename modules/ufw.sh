@@ -204,7 +204,12 @@ _ufw_find_permissive_rules() {
         # "ALLOW\s+IN\s+Anywhere\s*$" matched nothing — every non-sensitive
         # port open to the world was silently uncovered. Make IN optional,
         # drop the end-anchor, and exclude outbound (OUT) rules.
-        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)"; then
+        # The exclusion must be ANCHORED to the whole port token: the old
+        # `^(22|80|443)` (no trailing boundary) also swallowed 2222, 8080, 4430
+        # etc. as "starts with 22/80/443", so those world-open ports were never
+        # flagged. Require the match to end at a `/`, whitespace, or EOL. The
+        # exact-match `case` below is the authoritative web-port skip.
+        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then
             # Non-standard port open to anywhere
             local rule_port=$(echo "$line" | awk '{print $1}')
             if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then
@@ -666,7 +671,7 @@ ufw_fix() {
 _ufw_fix_install() {
     print_info "$(i18n 'ufw.installing_ufw')"
 
-    if apt-get update -qq && apt-get install -y ufw; then
+    if apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then
         print_ok "$(i18n 'ufw.ufw_installed')"
         return 0
     else
@@ -676,19 +681,22 @@ _ufw_fix_install() {
 }
 
 _ufw_fix_enable() {
-    local ssh_port=$(get_ssh_port)
     local current_ip=$(get_current_ssh_ip)
 
-    # Safety: ensure SSH is allowed before enabling
-    print_info "$(i18n 'ufw.fix_allow_ssh') (port $ssh_port)"
-
-    # Allow SSH first. If this fails we MUST NOT enable the firewall:
-    # enabling with a default-deny policy and no SSH rule locks the
-    # operator out. (The failure was previously swallowed by 2>/dev/null.)
-    if ! ufw allow "$ssh_port/tcp" comment "SSH (vpssec)"; then
-        print_error "$(i18n 'ufw.ssh_rule_failed')"
-        return 1
-    fi
+    # Allow EVERY sshd port before enabling. Enabling ufw with a default-deny
+    # policy and a missing SSH rule locks the operator out; get_ssh_port returns
+    # only the first port, so a sshd listening on several ports (e.g. 22 + a
+    # custom port the operator is actually on) needs all of them opened first.
+    # Any failure here MUST abort before the firewall comes up.
+    local _p
+    while read -r _p; do
+        [[ -n "$_p" ]] || continue
+        print_info "$(i18n 'ufw.fix_allow_ssh') (port $_p)"
+        if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
+            print_error "$(i18n 'ufw.ssh_rule_failed')"
+            return 1
+        fi
+    done < <(get_ssh_ports)
 
     # If we have current connection IP, whitelist it as a rescue rule
     if [[ -n "$current_ip" ]]; then
@@ -732,18 +740,21 @@ _ufw_fix_enable() {
 }
 
 _ufw_fix_default_deny() {
-    local ssh_port=$(get_ssh_port)
-
-    # Ensure SSH is allowed first. If it is not, and we cannot add the rule,
-    # abort BEFORE flipping to deny-all incoming — otherwise the deny policy
-    # cuts the live SSH session. (The add failure was previously swallowed.)
-    if ! _ufw_ssh_allowed; then
-        print_info "$(i18n 'ufw.adding_ssh_rule')"
-        if ! ufw allow "$ssh_port/tcp" comment "SSH (vpssec)"; then
-            print_error "$(i18n 'ufw.ssh_rule_failed')"
-            return 1
+    # Ensure EVERY sshd port is allowed before flipping to deny-all incoming —
+    # otherwise the deny policy cuts the live SSH session on any port that lacks
+    # a rule. Add a rule per port (idempotent); abort on any failure BEFORE
+    # changing the default policy.
+    local _p
+    while read -r _p; do
+        [[ -n "$_p" ]] || continue
+        if ! _ufw_port_allowed "$_p"; then
+            print_info "$(i18n 'ufw.adding_ssh_rule')"
+            if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
+                print_error "$(i18n 'ufw.ssh_rule_failed')"
+                return 1
+            fi
         fi
-    fi
+    done < <(get_ssh_ports)
 
     # Set default deny incoming
     if ufw default deny incoming; then
@@ -760,15 +771,21 @@ _ufw_fix_default_deny() {
 }
 
 _ufw_fix_allow_ssh() {
-    local ssh_port=$(get_ssh_port)
-
-    if ufw allow "$ssh_port/tcp" comment "SSH (vpssec)"; then
-        print_ok "$(i18n 'ufw.rule_added' "rule=${ssh_port}/tcp ALLOW")"
-        return 0
-    else
-        print_error "$(i18n 'ufw.ssh_rule_failed')"
-        return 1
-    fi
+    # Allow every sshd port, not just the first (a multi-port sshd otherwise
+    # keeps only one port reachable once ufw is enforcing).
+    local _p rc=0 any=0
+    while read -r _p; do
+        [[ -n "$_p" ]] || continue
+        any=1
+        if ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
+            print_ok "$(i18n 'ufw.rule_added' "rule=${_p}/tcp ALLOW")"
+        else
+            print_error "$(i18n 'ufw.ssh_rule_failed')"
+            rc=1
+        fi
+    done < <(get_ssh_ports)
+    [[ "$any" == 1 ]] && return $rc
+    return 1
 }
 
 _ufw_fix_review_rules() {

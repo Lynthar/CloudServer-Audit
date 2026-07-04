@@ -517,6 +517,20 @@ vpssec_alert "Test Alert" "This is a test notification" "info"
 ```
 EOF
 
+    # Bake the RUNTIME paths into the generated artifacts. They are authored
+    # with a `/var/lib/vpssec/...` literal so the quoted heredocs don't expand
+    # $WEBHOOK_URL / $1 etc., but vpssec actually keeps state and templates under
+    # $VPSSEC_STATE / $VPSSEC_TEMPLATES (e.g. /opt/vpssec/... when installed) —
+    # and install.sh even `rm -rf /var/lib/vpssec`. Without this rewrite the
+    # generated monitors/cron/README point at a path that does not exist, so
+    # `source .../alert-lib.sh` fails and every alert silently never fires. The
+    # `state|templates` order matters (templates lives under neither, state is a
+    # distinct tree), and | is a safe sed delimiter since paths contain /.
+    find "$ALERTS_TEMPLATES_DIR" -type f -exec sed -i \
+        -e "s|/var/lib/vpssec/templates|${VPSSEC_TEMPLATES}|g" \
+        -e "s|/var/lib/vpssec/state|${VPSSEC_STATE}|g" \
+        {} + 2>/dev/null || true
+
     print_item "$(i18n 'alerts.hook_created' "name=README.md")"
     print_ok "$(i18n 'alerts.templates_generated' "path=$ALERTS_TEMPLATES_DIR")"
 

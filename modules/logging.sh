@@ -103,10 +103,17 @@ _logging_get_failed_logins() {
     # silently returned zero on every Debian/Ubuntu host, hiding
     # active brute-force activity.
     #
+    # Match BOTH _COMM=sshd and _COMM=sshd-session. OpenSSH >= 9.8 (Debian 13,
+    # Ubuntu 24.10+) split per-session work — including the authentication
+    # failure log lines — into a separate `sshd-session` process, so filtering
+    # on `_COMM=sshd` alone returns zero even during an active brute-force (this
+    # is the same change fail2ban had to make). journalctl ORs repeated matches
+    # of the same field, so listing both COMM values is the correct union.
+    #
     # Note: grep -c outputs "0" AND exits with code 1 when no matches.
     # Using || true prevents double output from || echo "0".
     local count
-    count=$(journalctl _COMM=sshd --since "24 hours ago" 2>/dev/null | \
+    count=$(journalctl _COMM=sshd _COMM=sshd-session --since "24 hours ago" 2>/dev/null | \
         grep -c "Failed password\|authentication failure" 2>/dev/null) || true
     echo "${count:-0}"
 }
@@ -438,7 +445,7 @@ MaxRetentionSec=1month'
 _logging_fix_setup_logrotate() {
     print_info "$(i18n 'logging.configuring_logrotate')"
 
-    apt-get install -y logrotate 2>/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null
 
     # Ensure default config exists
     if [[ ! -f "$LOGROTATE_CONF" ]]; then
@@ -461,7 +468,7 @@ EOF
 _logging_fix_install_auditd() {
     print_info "$(i18n 'logging.installing_auditd')"
 
-    if apt-get install -y auditd audispd-plugins 2>/dev/null; then
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
         print_ok "$(i18n 'logging.auditd_installed')"
         _logging_fix_enable_auditd
         _logging_fix_setup_audit_rules
@@ -500,8 +507,12 @@ _logging_fix_setup_audit_rules() {
     rules_content=$(cat <<'EOF'
 # vpssec audit rules for security monitoring
 
-# Delete all existing rules
--D
+# NOTE: intentionally NO `-D` here. augenrules concatenates rules.d/*.rules in
+# lexical order, and this file sorts LAST (99-). A `-D` (delete-all) at the top
+# of the last file wipes every rule loaded from earlier files — including a
+# hand-written 10-*/20-* ruleset and the base audit.rules. The base audit.rules
+# already carries the single `-D` that resets the set at the start of the load,
+# so vpssec's rules are purely additive.
 
 # Set buffer size
 -b 8192

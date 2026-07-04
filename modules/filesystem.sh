@@ -360,7 +360,9 @@ _fs_find_world_writable_dirs() {
         find / -xdev "${prune_args[@]}" \
         -type d -perm -0002 ! -perm -1000 \
         ! -path "/tmp" \
+        ! -path "/tmp/*" \
         ! -path "/var/tmp" \
+        ! -path "/var/tmp/*" \
         ! -path "/dev/*" \
         ! -path "/proc/*" \
         ! -path "/sys/*" \

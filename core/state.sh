@@ -374,7 +374,32 @@ backup_restore() {
         cp -p "$backup_file" "$original_path"
         log_info "Restored: $backup_file -> $original_path"
         ((restored++)) || true
-    done < <(find "$backup_dir" -type f -print0)
+    done < <(find "$backup_dir" -type f ! -name '.vpssec_created' -print0)
+
+    # Delete files that fixes CREATED during this plan (they had no prior
+    # version, so restoring is not enough — the file must be removed). Paths are
+    # recorded by backup_track_created. Apply the same symlink-safety as restore:
+    # never delete through a symlinked target or parent, and only remove a
+    # regular file that still exists.
+    local created_manifest="${backup_dir}/.vpssec_created"
+    if [[ -f "$created_manifest" ]]; then
+        local created_path created_parent
+        while IFS= read -r created_path; do
+            [[ -n "$created_path" ]] || continue
+            [[ "$created_path" == /* ]] || continue   # absolute paths only
+            [[ -e "$created_path" ]] || continue       # already gone
+            created_parent=$(dirname "$created_path")
+            if [[ -L "$created_parent" || -L "$created_path" ]]; then
+                log_warn "Skipping delete of created file (symlink in path): $created_path"
+                ((skipped++)) || true
+                continue
+            fi
+            if [[ -f "$created_path" ]] && rm -f "$created_path"; then
+                log_info "Removed fix-created file on rollback: $created_path"
+                ((restored++)) || true
+            fi
+        done < "$created_manifest"
+    fi
 
     if (( skipped > 0 )); then
         log_warn "Restore complete with skips: ${restored} restored, ${skipped} skipped (see logs/vpssec.log)"

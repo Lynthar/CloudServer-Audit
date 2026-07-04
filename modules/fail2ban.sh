@@ -93,8 +93,13 @@ _f2b_detect_backend() {
 # isn't the packet filter in use.
 _f2b_detect_banaction() {
     # Prefer ufw when it's the active manager — its action handles
-    # both IPv4 and IPv6 and respects the user's ruleset.
-    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    # both IPv4 and IPv6 and respects the user's ruleset. LC_ALL=C: ufw
+    # localizes "Status: active" (e.g. under zh_CN, the project's default
+    # audience), so without the locale lock the match silently fails on a
+    # translated host and fail2ban picks the wrong banaction (nftables), writing
+    # bans into a table that bypasses the live ufw ruleset. Same guard already
+    # exists in ufw.sh / distro.sh.
+    if command -v ufw &>/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
         echo "ufw"
         return
     fi
@@ -517,7 +522,19 @@ _f2b_fix_install() {
         # suppressed in the if-dispatch tree, so capture explicitly).
         local rc=0
         _f2b_fix_enable_service || rc=1
-        _f2b_fix_configure_ssh_jail || rc=1
+        # Auto-configure the ssh jail ONLY when there is no existing jail.local
+        # to overwrite. `install` is FIX_SAFE (auto-applied, no engine confirm),
+        # whereas `configure_ssh_jail` is CONFIRM-class precisely because it
+        # rewrites the whole jail.local — running it transitively from install
+        # would bypass that gate and silently wipe a hand-written multi-jail /
+        # ignoreip config. On a fresh install (no jail.local) there is nothing to
+        # lose, so configure; otherwise preserve it and point the user at the
+        # separate, confirmed fix.
+        if [[ -e "$F2B_JAIL_LOCAL" ]]; then
+            print_warn "$(i18n 'fail2ban.jail_local_exists')"
+        else
+            _f2b_fix_configure_ssh_jail || rc=1
+        fi
         return $rc
     else
         print_error "$(i18n 'fail2ban.install_failed')"
@@ -568,6 +585,16 @@ _f2b_fix_configure_ssh_jail() {
         *) f2b_banaction_allports="iptables-allports" ;;
     esac
 
+    # Never ban the operator's own address. Always whitelist loopback; add the
+    # current SSH source IP when we can determine it (get_current_ssh_ip now
+    # falls back to `who am i` when sudo has stripped SSH_CONNECTION). Without
+    # this, maxretry=3/findtime=10m means three fat-fingered passwords lock the
+    # admin out of their own box for an hour via the tool's own jail.
+    local f2b_ignoreip="127.0.0.1/8 ::1"
+    local f2b_current_ip
+    f2b_current_ip=$(get_current_ssh_ip)
+    [[ -n "$f2b_current_ip" ]] && f2b_ignoreip+=" $f2b_current_ip"
+
     print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
     print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
@@ -584,6 +611,9 @@ _f2b_fix_configure_ssh_jail() {
 # Detected backend: $f2b_backend
 
 [DEFAULT]
+# Never ban these addresses (operator loopback + current SSH source).
+ignoreip = $f2b_ignoreip
+
 # Ban duration (default: 10 minutes, increase for production)
 bantime = 1h
 

@@ -399,9 +399,15 @@ _kernel_check_core_dump() {
         fi
     fi
 
-    # Check systemd coredump
-    if [[ -f /etc/systemd/coredump.conf ]]; then
-        if ! grep -qE "^Storage=none" /etc/systemd/coredump.conf 2>/dev/null; then
+    # Check systemd coredump. Storage=none may live in the main coredump.conf
+    # OR in a drop-in under coredump.conf.d/ — which is exactly where
+    # _kernel_fix_core_dump writes it, and how systemd merges the setting. The
+    # old check read only the main file, so after the (auto-applied) fix the
+    # audit kept flagging it forever. Look in both; only check when some config
+    # is present (preserves the prior "don't flag a host without the file").
+    if [[ -f /etc/systemd/coredump.conf || -d /etc/systemd/coredump.conf.d ]]; then
+        if ! grep -rqsE "^[[:space:]]*Storage=none" \
+                /etc/systemd/coredump.conf /etc/systemd/coredump.conf.d/ 2>/dev/null; then
             issues+=("systemd_coredump")
         fi
     fi
@@ -786,19 +792,28 @@ _kernel_audit_network_params() {
         print_severity "medium" "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")"
     fi
 
-    if [[ ${#issues_medium[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues_medium[@]}" | head -3 | tr '\n' '; ')
+    # Report medium AND low tiers together as the "weak" finding. Both are
+    # defence-in-depth sysctls (the severity cap keeps this at LOW), and
+    # _kernel_fix_network_params applies every net.* param regardless of tier,
+    # so one finding + one fix covers them. This also closes a real gap: the low
+    # tier previously had NO emit branch at all, yet counted toward total_issues
+    # — so a host with ONLY low-tier deviations produced zero output (no finding
+    # AND the OK branch suppressed), and ~13 params (log_martians,
+    # secure_redirects, tcp_timestamps, ...) were never surfaced or offered.
+    local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
+    if [[ ${#issues_weak[@]} -gt 0 ]]; then
+        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | head -5 | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.network_params_medium" \
             "kernel" \
             "low" \
             "failed" \
-            "$(i18n 'kernel.network_params_weak' "count=${#issues_medium[@]}")" \
+            "$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")" \
             "Issues: $issue_list" \
             "$(i18n 'kernel.fix_network_params')" \
             "kernel.harden_network")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'kernel.network_params_weak' "count=${#issues_medium[@]}")"
+        print_severity "low" "$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")"
     fi
 
     if [[ $total_issues -eq 0 ]]; then
@@ -885,20 +900,23 @@ _kernel_audit_kernel_params() {
         print_severity "medium" "Critical kernel hardening issues: ${#issues_high[@]}"
     fi
 
-    # Report medium-severity issues
-    if [[ ${#issues_medium[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues_medium[@]}" | head -5 | tr '\n' '; ')
+    # Report medium AND low tiers together (see _kernel_audit_network_params for
+    # the rationale): the low tier had no emit branch yet counted toward
+    # total_issues, so low-only deviations went completely silent.
+    local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
+    if [[ ${#issues_weak[@]} -gt 0 ]]; then
+        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | head -5 | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.kernel_params_weak" \
             "kernel" \
             "low" \
             "failed" \
-            "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")" \
+            "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")" \
             "Issues: $issue_list" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_medium[@]}")"
+        print_severity "low" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")"
     fi
 
     # Report unavailable parameters (info only, not penalized)
@@ -1243,8 +1261,11 @@ _kernel_fix_core_dump() {
         fi
     fi
 
-    # Configure systemd-coredump if present
+    # Configure systemd-coredump if present. Back up first so a rollback removes
+    # this drop-in when it is newly created (backup_file records it as
+    # fix-created when absent).
     if [[ -d /etc/systemd/coredump.conf.d ]]; then
+        backup_file /etc/systemd/coredump.conf.d/99-vpssec.conf >/dev/null 2>&1 || true
         write_file_atomic /etc/systemd/coredump.conf.d/99-vpssec.conf '[Coredump]
 Storage=none
 ProcessSizeMax=0'
@@ -1288,9 +1309,15 @@ _kernel_write_sysctl() {
         local param_re="${param//./\\.}"
         existing=$(grep -vE '^[[:space:]]*(#|$)' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \
                    | grep -vE "^${param_re}[[:space:]]*=" || true)
-        # Back up the prior drop-in so a wrong value can be rolled back.
-        backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
     fi
+    # Back up the drop-in BEFORE writing. Call this unconditionally (not only
+    # when the file exists): backup_file snapshots a pre-existing file so a wrong
+    # value can be rolled back, and — when the file does NOT exist yet — records
+    # it as fix-created so a rollback DELETES it. Without the latter, the very
+    # first hardening run left this drop-in with no backup, and choosing
+    # "rollback" after harden_network broke container networking left the file
+    # in place to re-apply the bad values on reboot.
+    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
 
     # Build the full drop-in and write it atomically — never a partial file:
     # this is persisted hardening replayed on every boot. write_file_atomic

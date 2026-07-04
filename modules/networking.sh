@@ -52,6 +52,9 @@ declare -ga NET_PUBLIC_PORTS_OK=(
     80      # HTTP
     443     # HTTPS
     53      # DNS (when host runs a resolver)
+    68      # DHCP client (bootpc) — udp/68 on 0.0.0.0 is the DHCP client on
+            # virtually every cloud image using isc-dhcp/dhcpcd; flagging it as
+            # a "non-standard public listener" was a scored false positive.
 )
 
 # Processes whose listeners are always considered "expected public"

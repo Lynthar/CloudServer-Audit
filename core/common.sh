@@ -584,6 +584,38 @@ validate_ip() {
 # ==============================================================================
 
 # Create a timestamped backup of a file
+# Name of the per-session manifest listing files that fixes CREATED (had no
+# prior version). Lives at the top of the backup session dir. backup_restore
+# deletes the listed paths on rollback, and excludes this file from the
+# restore walk.
+VPSSEC_CREATED_MANIFEST=".vpssec_created"
+
+# True if $1 is already recorded as created this session.
+backup_is_tracked_created() {
+    local path="$1"
+    [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]] || return 1
+    local manifest="${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}"
+    [[ -f "$manifest" ]] && grep -qxF "$path" "$manifest" 2>/dev/null
+}
+
+# Record that a fix is about to CREATE $path (it does not exist yet), so a
+# rollback DELETES it. No-op outside a plan backup session. This closes the
+# rollback gap where backup_file — which only snapshots files that already
+# exist — left a first-run drop-in (e.g. the kernel sysctl hardening file) with
+# no backup entry, so "rollback" restored nothing and the file survived to
+# re-apply its (possibly network-breaking) values on the next boot.
+backup_track_created() {
+    local path="$1"
+    [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]] || return 0
+    validate_path "$path" || return 0
+    mkdir -p "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
+    chmod 700 "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
+    if ! backup_is_tracked_created "$path"; then
+        echo "$path" >> "${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}"
+        chmod 600 "${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}" 2>/dev/null || true
+    fi
+}
+
 backup_file() {
     local file="$1"
 
@@ -636,11 +668,27 @@ backup_file() {
             return 0
         fi
 
+        # If we already recorded this path as CREATED this session, it is ours —
+        # do not snapshot an intermediate copy. A fix that writes the same file
+        # once per parameter (kernel.sh's sysctl drop-in) would otherwise, on the
+        # 2nd+ call, back up its own half-written output as the "original", so a
+        # rollback would restore that instead of deleting the file. Rollback
+        # deletes tracked-created files; leave it untouched here.
+        if backup_is_tracked_created "$file"; then
+            return 0
+        fi
+
         mkdir -p "$(dirname "$backup_path")"
         cp -p "$file" "$backup_path"
         chmod 600 "$backup_path"
         log_info "Backed up: $file -> $backup_path"
         echo "$backup_path"
+    else
+        # File does not exist yet: the caller is about to CREATE it. Record it so
+        # a rollback can delete it (session only; standalone callers have nothing
+        # to roll back to). Echo nothing — there is no backup path.
+        backup_track_created "$file"
+        return 0
     fi
 }
 
@@ -754,11 +802,28 @@ get_current_ssh_ip() {
     # Get the IP from SSH_CONNECTION or SSH_CLIENT
     if [[ -n "${SSH_CONNECTION:-}" ]]; then
         echo "${SSH_CONNECTION%% *}"
+        return
     elif [[ -n "${SSH_CLIENT:-}" ]]; then
         echo "${SSH_CLIENT%% *}"
-    else
-        echo ""
+        return
     fi
+
+    # Fallback: sudo's default env_reset STRIPS SSH_CONNECTION/SSH_CLIENT, which
+    # is exactly how the documented `sudo ./vpssec guide` runs — so above we get
+    # nothing and every caller that scopes a firewall rule to "the operator's
+    # IP" would otherwise fall back to a world-open rule or no rescue rule at
+    # all. Recover the source address from utmp via `who am i` (sudo does not
+    # rewrite utmp): its last field is "(host)". Accept it only when it is an IP
+    # literal — a reverse-resolved hostname or a blank/local login is not usable
+    # as a `ufw allow from` source, and guessing wrong is worse than empty.
+    local from
+    from=$(LC_ALL=C who am i 2>/dev/null | sed -n 's/.*(\(.*\)).*/\1/p')
+    if [[ -n "$from" ]] && validate_ip "$from" >/dev/null 2>&1; then
+        echo "$from"
+        return
+    fi
+
+    echo ""
 }
 
 get_ssh_port() {
@@ -785,6 +850,25 @@ get_ssh_port() {
             tail -1 | awk '{print $2}')
     fi
     echo "${port:-22}"
+}
+
+# ALL SSH ports sshd is configured to listen on (deduped, ascending). sshd can
+# bind several `Port` lines; get_ssh_port returns only the first, so a firewall
+# fix that allows just that one and then flips to default-deny cuts the operator
+# off if they are on a different sshd port. Firewall fixes should open every
+# port this returns, not just the first.
+get_ssh_ports() {
+    local ports=""
+    if command -v sshd &>/dev/null; then
+        ports=$(sshd -T 2>/dev/null | awk '/^port /{print $2}')
+    fi
+    if [[ -z "$ports" ]]; then
+        ports=$(grep -hE "^[[:space:]]*Port[[:space:]]+" \
+            /etc/ssh/sshd_config \
+            /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}')
+    fi
+    [[ -z "$ports" ]] && ports=22
+    printf '%s\n' $ports | sort -nu
 }
 
 get_listening_ports() {
@@ -1185,13 +1269,18 @@ select_modules() {
 
     # Module categories with descriptions
     # Format: category_id:en_name:zh_name:modules
+    # Every selectable module must appear in exactly one category, or it becomes
+    # unreachable from this menu (only "all modules" / --include= could pick it).
+    # networking, cloud, scheduling and timezone were previously omitted.
+    # preflight is intentionally excluded: it is a foundational pre-check that
+    # always runs, not an opt-in module.
     local -a categories=(
         "access:Access Control:访问控制:users,ssh"
-        "network:Network Security:网络安全:ufw,fail2ban"
+        "network:Network Security:网络安全:ufw,fail2ban,networking"
         "system:System Hardening:系统加固:update,kernel,filesystem,baseline"
         "services:Service Security:服务安全:docker,nginx,cloudflared,webapp"
-        "security:Security Scanning:安全扫描:malware"
-        "ops:Operations:运维合规:logging,backup,alerts"
+        "security:Security Scanning:安全扫描:malware,cloud"
+        "ops:Operations:运维合规:logging,backup,alerts,scheduling,timezone"
     )
 
     local is_en=0

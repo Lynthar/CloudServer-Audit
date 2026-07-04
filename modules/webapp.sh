@@ -22,6 +22,12 @@ NGINX_CONF="/etc/nginx/nginx.conf"
 NGINX_CONFD="/etc/nginx/conf.d"
 NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
 NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
+# Snippets are NOT auto-included by nginx (unlike conf.d/*, which nginx pulls
+# into http{}). SSL directives like ssl_protocols belong in a server{} block;
+# writing them to conf.d duplicates the ones the Debian default nginx.conf
+# already sets in http{} → "duplicate directive" emerg on the next reload.
+# We stage them here and instruct the operator to `include` the snippet.
+NGINX_SNIPPETS="/etc/nginx/snippets"
 
 # Apache configuration paths
 APACHE_CONF="/etc/apache2/apache2.conf"
@@ -445,7 +451,7 @@ _webapp_nginx_ssl_protocols() {
                 fi
             done
         done
-    done < <(echo "$dump" | grep -oP 'ssl_protocols\s+\K[^;]+')
+    done < <(echo "$dump" | grep -oP '^[^#]*ssl_protocols\s+\K[^;]+')
 
     printf '%s\n' "${weak[@]}" | sort -u
 }
@@ -459,13 +465,22 @@ _webapp_nginx_ssl_ciphers() {
     local ciphers
     while IFS= read -r ciphers; do
         [[ -z "$ciphers" ]] && continue
+        # Drop EXCLUDED cipher tokens before matching. OpenSSL cipher strings use
+        # `!FOO` (and `-FOO`) to remove ciphers, so a Mozilla-recommended list
+        # like `ECDHE-...:!aNULL:!MD5:!RC4:!3DES` actually DISABLES those weak
+        # ciphers — matching "MD5"/"RC4" as a substring there flagged a correctly
+        # hardened server (and webapp.nginx_weak_ciphers is a scored, required
+        # check). Split on ':' and keep only the ciphers that are actually
+        # offered (tokens not starting with '!' or '-').
+        local filtered
+        filtered=$(echo "$ciphers" | tr ':' '\n' | grep -vE '^[!-]' | paste -sd':' -)
         local weak_cipher
         for weak_cipher in "${WEAK_CIPHER_PATTERNS[@]}"; do
-            if echo "$ciphers" | grep -qi "$weak_cipher"; then
+            if echo "$filtered" | grep -qi "$weak_cipher"; then
                 weak+=("$weak_cipher")
             fi
         done
-    done < <(echo "$dump" | grep -oP 'ssl_ciphers\s+["\047]?\K[^"\047;]+')
+    done < <(echo "$dump" | grep -oP '^[^#]*ssl_ciphers\s+["\047]?\K[^"\047;]+')
 
     printf '%s\n' "${weak[@]}" | sort -u
 }
@@ -474,46 +489,67 @@ _webapp_nginx_ssl_ciphers() {
 # Apache Security Check Functions
 # ==============================================================================
 
-# Get Apache configuration file
+# Get Apache main configuration file (single-file callers)
 _webapp_get_apache_conf() {
     [[ -f "$APACHE_CONF" ]] && echo "$APACHE_CONF" && return
     [[ -f "$APACHE_CONF_ALT" ]] && echo "$APACHE_CONF_ALT" && return
     echo ""
 }
 
-# Check ServerSignature
-_webapp_apache_server_signature() {
-    local conf=$(_webapp_get_apache_conf)
-    [[ -z "$conf" ]] && return
-
-    if grep -qi "ServerSignature\s*On" "$conf" 2>/dev/null; then
-        echo "on"
-    elif grep -qi "ServerSignature\s*Off" "$conf" 2>/dev/null; then
-        echo "off"
-    else
-        echo "default"  # Default is On
-    fi
+# All Apache config files where the global hardening directives may live. On
+# Debian, ServerTokens / TraceEnable / ServerSignature are conventionally set in
+# conf-enabled/security.conf (the canonical location), NOT apache2.conf — so
+# reading only the main file made these checks permanently false-positive on a
+# correctly hardened Debian host. Emits one existing path per line, main file
+# first, includes after (later includes win, matching Apache's last-match rule).
+_webapp_apache_conf_files() {
+    local files=()
+    [[ -f "$APACHE_CONF" ]] && files+=("$APACHE_CONF")
+    [[ -f "$APACHE_CONF_ALT" ]] && files+=("$APACHE_CONF_ALT")
+    local d f
+    for d in /etc/apache2/conf-enabled /etc/apache2/conf.d /etc/httpd/conf.d; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*.conf; do
+            [[ -f "$f" ]] && files+=("$f")
+        done
+    done
+    printf '%s\n' "${files[@]}"
 }
 
-# Check ServerTokens
-_webapp_apache_server_tokens() {
-    local conf=$(_webapp_get_apache_conf)
-    [[ -z "$conf" ]] && return
+# Check ServerSignature (last uncommented value across all config files wins)
+_webapp_apache_server_signature() {
+    local result="default"  # Apache default is On
+    local f v
+    while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        v=$(grep -ioP '^[^#]*ServerSignature\s+\K\w+' "$f" 2>/dev/null | tail -1)
+        [[ -n "$v" ]] && result="${v,,}"
+    done < <(_webapp_apache_conf_files)
+    echo "$result"
+}
 
-    local tokens=$(grep -ioP 'ServerTokens\s+\K\w+' "$conf" 2>/dev/null)
+# Check ServerTokens (last uncommented value across all config files wins)
+_webapp_apache_server_tokens() {
+    local tokens="" f v
+    while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        v=$(grep -ioP '^[^#]*ServerTokens\s+\K\w+' "$f" 2>/dev/null | tail -1)
+        [[ -n "$v" ]] && tokens="$v"
+    done < <(_webapp_apache_conf_files)
     echo "${tokens:-Full}"  # Default is Full
 }
 
-# Check TraceEnable
+# Check TraceEnable — off if any config file disables it (uncommented)
 _webapp_apache_trace() {
-    local conf=$(_webapp_get_apache_conf)
-    [[ -z "$conf" ]] && return
-
-    if grep -qi "TraceEnable\s*Off" "$conf" 2>/dev/null; then
-        echo "off"
-    else
-        echo "on"  # Default is On
-    fi
+    local f
+    while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        if grep -qiE '^[^#]*TraceEnable\s+Off' "$f" 2>/dev/null; then
+            echo "off"
+            return
+        fi
+    done < <(_webapp_apache_conf_files)
+    echo "on"  # Default is On
 }
 
 # Check directory indexing
@@ -582,6 +618,15 @@ _webapp_php_expose() {
     echo "${val:-On}"
 }
 
+# True when a PHP boolean ini value is enabled. PHP accepts On/True/Yes/1 in
+# ANY case (and Off/False/No/0/'' as disabled), so a case-sensitive `== "On"`
+# check both missed `display_errors = on` (a real exposure) and misread
+# `session.cookie_httponly = on` as unset (a false positive).
+_webapp_php_is_true() {
+    local v="${1,,}"
+    [[ "$v" == "1" || "$v" == "on" || "$v" == "true" || "$v" == "yes" ]]
+}
+
 # Check display_errors
 _webapp_php_display_errors() {
     local val=$(_webapp_get_php_config "display_errors")
@@ -640,19 +685,19 @@ _webapp_php_session_security() {
 
     # session.cookie_httponly
     local httponly=$(_webapp_get_php_config "session.cookie_httponly")
-    if [[ "$httponly" != "1" && "$httponly" != "On" ]]; then
+    if ! _webapp_php_is_true "$httponly"; then
         issues+=("session.cookie_httponly not enabled")
     fi
 
     # session.cookie_secure
     local secure=$(_webapp_get_php_config "session.cookie_secure")
-    if [[ "$secure" != "1" && "$secure" != "On" ]]; then
+    if ! _webapp_php_is_true "$secure"; then
         issues+=("session.cookie_secure not enabled (for HTTPS sites)")
     fi
 
     # session.use_strict_mode
     local strict=$(_webapp_get_php_config "session.use_strict_mode")
-    if [[ "$strict" != "1" && "$strict" != "On" ]]; then
+    if ! _webapp_php_is_true "$strict"; then
         issues+=("session.use_strict_mode not enabled")
     fi
 
@@ -686,7 +731,12 @@ _webapp_ssl_cert_expiry() {
             elif [[ $days_left -lt $CERT_EXPIRY_WARNING_DAYS ]]; then
                 findings+=("$cert|expiring|$days_left days left")
             fi
-        done < <(find "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" \) -type f -print0 2>/dev/null)
+        # `find -L` follows symlinks so `-type f` tests the TARGET: Let's
+        # Encrypt (the most common VPS cert source) stores the real cert in
+        # /etc/letsencrypt/archive and exposes /etc/letsencrypt/live/<domain>/
+        # *.pem as SYMLINKS. Without -L, `-type f` rejected those symlinks and
+        # every LE certificate — including expired ones — was silently skipped.
+        done < <(find -L "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" \) -type f -print0 2>/dev/null)
     done
 
     printf '%s\n' "${findings[@]}"
@@ -1045,7 +1095,7 @@ webapp_audit() {
 
         # 13. display_errors
         local display=$(_webapp_php_display_errors)
-        if [[ "$display" == "On" || "$display" == "1" ]]; then
+        if _webapp_php_is_true "$display"; then
             php_issues+=("display_errors=On")
         fi
 
@@ -1351,8 +1401,13 @@ webapp_fix() {
 _webapp_fix_nginx_server_tokens() {
     print_info "$(i18n 'webapp.fixing_server_tokens' 2>/dev/null || echo 'Adding server_tokens off...')"
 
-    # Check if already in main nginx.conf http block
-    if grep -q "server_tokens\s*off" "$NGINX_CONF" 2>/dev/null; then
+    # Check if already ACTIVE (uncommented) in nginx.conf. The old
+    # `server_tokens\s*off` also matched the `# server_tokens off;` line that
+    # ships commented in Debian's default nginx.conf, so this FIX_SAFE fix
+    # reported "already configured", changed nothing, and the audit (which reads
+    # the effective config via nginx -T) re-flagged it forever. Require the
+    # directive to be uncommented: no `#` may precede it on the line.
+    if grep -qE '^[^#]*server_tokens[[:space:]]+off' "$NGINX_CONF" 2>/dev/null; then
         print_ok "$(i18n 'webapp.already_configured' 2>/dev/null || echo 'Already configured')"
         return 0
     fi
@@ -1476,16 +1531,34 @@ EOF
 }
 
 # Fix: Nginx SSL configuration
+#
+# Writes a hardened SSL snippet the operator includes inside their SSL
+# server{} block. It is deliberately placed in snippets/ (NOT conf.d/): the
+# directives here — ssl_protocols, ssl_prefer_server_ciphers — are already set
+# in the Debian default nginx.conf http{} block, and conf.d/* is auto-included
+# into that same http{}, so dropping them there produces a "duplicate
+# directive" emerg that breaks the next reload/restart. Because the snippet is
+# not auto-included it cannot affect the live config until the operator wires
+# it in, so this fix reports a manual step (return 1) rather than a false
+# "resolved" — the weak-SSL finding stays until the include is added.
 _webapp_fix_nginx_ssl() {
     print_info "$(i18n 'webapp.updating_ssl' 2>/dev/null || echo 'Creating secure SSL configuration...')"
 
-    local ssl_conf="$NGINX_CONFD/ssl-security.conf"
+    if ! mkdir -p "$NGINX_SNIPPETS" 2>/dev/null; then
+        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        return 1
+    fi
+    local ssl_conf="$NGINX_SNIPPETS/ssl-security.conf"
 
-    [[ -f "$ssl_conf" ]] && backup_file "$ssl_conf"
+    [[ -f "$ssl_conf" ]] && backup_file "$ssl_conf" >/dev/null 2>&1 || true
 
-    cat > "$ssl_conf" << 'EOF'
+    local content
+    content=$(cat << 'EOF'
 # Secure SSL configuration - added by vpssec
-# Include in your SSL server blocks
+# Include inside each SSL server{} block:  include snippets/ssl-security.conf;
+# Do NOT include at http{} level: nginx.conf already sets ssl_protocols /
+# ssl_prefer_server_ciphers there, and a second copy in the same context is a
+# fatal "duplicate directive" error.
 
 # Only use TLS 1.2 and 1.3
 ssl_protocols TLSv1.2 TLSv1.3;
@@ -1510,10 +1583,26 @@ resolver_timeout 5s;
 # DH parameters (generate with: openssl dhparam -out /etc/nginx/dhparam.pem 2048)
 # ssl_dhparam /etc/nginx/dhparam.pem;
 EOF
+)
+
+    if ! write_file_atomic "$ssl_conf" "$content"; then
+        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        return 1
+    fi
+
+    # Sanity-check the whole nginx config still parses. The snippet is not
+    # included anywhere yet, so this only confirms we did not disturb the live
+    # config; if nginx -t is available and fails, surface it.
+    if command -v nginx >/dev/null 2>&1 && ! nginx -t 2>/dev/null; then
+        print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+        return 1
+    fi
 
     print_ok "$(i18n 'webapp.ssl_config_created' 2>/dev/null || echo 'Secure SSL configuration created'): $ssl_conf"
-    print_info "$(i18n 'webapp.include_in_ssl' 2>/dev/null || echo 'Include in SSL server blocks'): include $ssl_conf;"
-    return 0
+    print_warn "$(i18n 'webapp.include_in_ssl' 2>/dev/null || echo 'Include in each SSL server block, then reload nginx'): include snippets/ssl-security.conf;"
+    # Manual step required: the snippet is inert until included, so do not report
+    # the weak-SSL finding as resolved.
+    return 1
 }
 
 # Fix: Apache security settings

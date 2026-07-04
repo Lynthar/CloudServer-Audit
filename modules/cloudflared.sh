@@ -78,7 +78,10 @@ _cloudflared_has_config() {
 # query that returned zero tunnels.
 _cloudflared_get_tunnels() {
     local out
-    if ! out=$(cloudflared tunnel list 2>/dev/null); then
+    # Wrap in `timeout`: `cloudflared tunnel list` is a Cloudflare API call and
+    # will hang on a black-holed network — the read-only audit must never stall.
+    # (The IMDS probes in cloud.sh are bounded the same way.)
+    if ! out=$(timeout 8 cloudflared tunnel list 2>/dev/null); then
         return 1
     fi
     echo "$out" | tail -n +2 | awk '{print $1, $2}'

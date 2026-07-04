@@ -573,8 +573,21 @@ execute_plan() {
     local backup_dir="$VPSSEC_BACKUP_SESSION"
     log_info "Backup session created: $backup_dir"
 
+    # Read the whole plan into an array FIRST, then iterate. Feeding the loop
+    # from `< <(jq ...)` would make that pipe the stdin of every fix body, so a
+    # fix that reads stdin (an apt/debconf prompt, or a `while read` without its
+    # own redirect) would swallow the remaining plan JSON and silently skip the
+    # rest of the fixes. Buffering here frees stdin so fix bodies inherit the
+    # real terminal instead.
+    local -a fix_lines=()
+    local _line
+    while IFS= read -r _line; do
+        [[ -n "$_line" ]] && fix_lines+=("$_line")
+    done < <(echo "$fixes" | jq -c '.[]')
+
     local i=0
-    while read -r fix; do
+    local fix
+    for fix in "${fix_lines[@]}"; do
         local fix_id=$(echo "$fix" | jq -r '.fix_id')
         local title=$(echo "$fix" | jq -r '.title')
 
@@ -639,7 +652,7 @@ execute_plan() {
                 esac
             fi
         fi
-    done < <(echo "$fixes" | jq -c '.[]')
+    done
 
     # Clear progress
     state_clear_progress

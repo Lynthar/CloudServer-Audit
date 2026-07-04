@@ -170,7 +170,20 @@ _find_empty_password_users() {
         done < /etc/shadow
     fi
 
-    printf '%s\n' "${users[@]}"
+    # Also catch INLINE empty passwords in passwd/NSS. A truly empty second
+    # field in a passwd entry (`evil::1001:...`, not the usual `x`/`*`/`!`) means
+    # the account needs no password to log in, and such an entry never appears
+    # in /etc/shadow — so the shadow-only scan above misses this backdoor form
+    # entirely. getent walks the full NSS chain (also covers LDAP/SSSD).
+    while IFS=: read -r user pass _ _ _ _ shell; do
+        [[ -z "$pass" ]] || continue
+        if _has_login_shell "$shell"; then
+            users+=("$user")
+        fi
+    done < <(getent passwd 2>/dev/null)
+
+    # Dedup: an account could surface from both scans.
+    printf '%s\n' "${users[@]}" | grep -v '^$' | sort -u
 }
 
 # Get system users with interactive shells
@@ -276,7 +289,12 @@ _find_sudo_users() {
             # with `%` (group) or an alphanumeric identifier (user).
             # Require whitespace + another token + `=` somewhere so we
             # don't misread #include / @include directives.
-            if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]+[^=]+= ]]; then
+            # The token class includes `.` (and `\` for AD-style `DOMAIN\user`):
+            # LDAP/AD/Ansible commonly grant sudo to `john.doe` or `dom\alice`,
+            # and omitting the dot truncated the match so those admins were not
+            # counted — which could wrongly clear the "no non-root admin" gate
+            # that guards disabling root login.
+            if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9._\\-]*)[[:space:]]+[^=]+= ]]; then
                 local token="${BASH_REMATCH[1]}"
                 if [[ "$token" == %* ]]; then
                     local group_name="${token#%}"
