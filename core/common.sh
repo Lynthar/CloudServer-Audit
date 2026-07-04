@@ -868,7 +868,9 @@ get_ssh_ports() {
             /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}')
     fi
     [[ -z "$ports" ]] && ports=22
-    printf '%s\n' $ports | sort -nu
+    # $ports is newline-separated (awk print per Port line); quoting keeps that
+    # exact output while satisfying shellcheck SC2086.
+    printf '%s\n' "$ports" | sort -nu
 }
 
 get_listening_ports() {
