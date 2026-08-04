@@ -35,12 +35,28 @@ APACHE_CONF_ALT="/etc/httpd/conf/httpd.conf"
 APACHE_MODS_ENABLED="/etc/apache2/mods-enabled"
 APACHE_SITES_ENABLED="/etc/apache2/sites-enabled"
 
-# SSL certificate paths
+# SSL certificate paths — SERVER certificates only.
+#
+# /etc/ssl/certs is deliberately NOT here. It is the system CA trust
+# store, populated by the `ca-certificates` package, and it is normal
+# and correct for it to contain expired roots (Baltimore CyberTrust,
+# E-Tugra, Hongkong Post Root CA 1, ...). Scanning it made
+# webapp.ssl_cert_expiry fire on EVERY Debian/Ubuntu host — including
+# hosts with no web server at all, so the module printed "no web server
+# detected" and "4 certificates expired" in adjacent lines — and the
+# attached remediation ("renew your SSL certificates") is not something
+# an operator can act on for a root CA.
+#
+# _webapp_cert_is_ca below is the second line of defence: it skips any
+# CA certificate found in these directories too (Let's Encrypt's
+# chain.pem is the intermediate, renewed by certbot, not by the
+# operator), and covers /etc/pki/tls/certs on RHEL, which mixes the
+# httpd server cert with ca-bundle.crt.
 SSL_CERT_PATHS=(
-    "/etc/ssl/certs"
     "/etc/nginx/ssl"
     "/etc/letsencrypt/live"
     "/etc/apache2/ssl"
+    "/etc/pki/tls/certs"       # RHEL-family: httpd's localhost.crt lives here
 )
 
 # Web root directories
@@ -708,6 +724,26 @@ _webapp_php_session_security() {
 # SSL/TLS Security Check Functions
 # ==============================================================================
 
+# True if $1 is a CA certificate (basicConstraints CA:TRUE).
+#
+# An expired CA in a trust store or a chain file is not an operator
+# action item — trust stores are package-managed and intermediates are
+# renewed by the ACME client. Only end-entity (server) certificates
+# belong in webapp.ssl_cert_expiry.
+#
+# `openssl x509 -ext basicConstraints` needs OpenSSL 1.1.1+; on older
+# builds it errors out and we fall back to grepping the full text dump.
+_webapp_cert_is_ca() {
+    local cert="$1"
+    local bc
+    bc=$(openssl x509 -noout -ext basicConstraints -in "$cert" 2>/dev/null) || bc=""
+    if [[ -z "$bc" ]]; then
+        bc=$(openssl x509 -noout -text -in "$cert" 2>/dev/null \
+             | grep -A1 'X509v3 Basic Constraints' || true)
+    fi
+    [[ "$bc" == *"CA:TRUE"* ]]
+}
+
 # Check certificate expiry
 _webapp_ssl_cert_expiry() {
     local findings=()
@@ -717,6 +753,8 @@ _webapp_ssl_cert_expiry() {
 
         # Find certificate files
         while IFS= read -r -d '' cert; do
+            _webapp_cert_is_ca "$cert" && continue
+
             local expiry=$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)
             [[ -z "$expiry" ]] && continue
 
@@ -742,29 +780,14 @@ _webapp_ssl_cert_expiry() {
     printf '%s\n' "${findings[@]}"
 }
 
-# Check for self-signed certificates in production
-_webapp_ssl_self_signed() {
-    local findings=()
-
-    for dir in "${SSL_CERT_PATHS[@]}"; do
-        [[ -d "$dir" ]] || continue
-
-        while IFS= read -r -d '' cert; do
-            # Check if self-signed (issuer == subject)
-            local issuer=$(openssl x509 -issuer -noout -in "$cert" 2>/dev/null | sed 's/issuer=//')
-            local subject=$(openssl x509 -subject -noout -in "$cert" 2>/dev/null | sed 's/subject=//')
-
-            if [[ "$issuer" == "$subject" ]]; then
-                # Skip if it's in a "test" or "dev" path
-                if [[ ! "$cert" =~ (test|dev|staging|localhost) ]]; then
-                    findings+=("$cert")
-                fi
-            fi
-        done < <(find "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" \) -type f -print0 2>/dev/null)
-    done
-
-    printf '%s\n' "${findings[@]}"
-}
+# NOTE: a `_webapp_ssl_self_signed` helper used to live here with zero
+# call sites anywhere in the repo. It was removed rather than wired up:
+# its test was `issuer == subject`, which is the DEFINITION of a root
+# CA, so enabling it would have reported the entire trust store as
+# "self-signed certificates in production" — a worse version of the
+# false positive that _webapp_cert_is_ca now guards against. A real
+# self-signed-server-cert check needs to start from the certificate the
+# web server is actually configured to serve, not from a directory walk.
 
 # ==============================================================================
 # Sensitive File Exposure Check Functions

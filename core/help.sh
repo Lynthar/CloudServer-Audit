@@ -128,8 +128,8 @@ _help_show_overview() {
 # Module detail
 # ----------------------------------------------------------------------
 
-# Print one safety-class section of fix_ids, with the warning text
-# from the corresponding FIX_* map.
+# Print one safety-class section of fix_ids, with each fix's warning
+# text underneath.
 _help_print_class_section() {
     local heading="$1"   # already-translated heading
     local list="$2"      # newline-separated fix_ids (may be empty)
@@ -143,12 +143,16 @@ _help_print_class_section() {
     while IFS= read -r id; do
         [[ -z "$id" ]] && continue
         printf "    %s\n" "$id"
-        # FIX_SAFE values are just "true"; CONFIRM/RISKY/ALERT_ONLY
-        # values carry the human reason. Skip the placeholder for
-        # SAFE; print the reason indented under others.
+        # FIX_SAFE values are just the placeholder "true"; the other
+        # three maps carry the human reason. Fetch it via
+        # get_fix_warning rather than indexing the map directly, so
+        # this renders the TRANSLATED warning — reading the map gave
+        # the English source string even in zh_CN, which is precisely
+        # the text a user consults before deciding what the wizard is
+        # allowed to touch.
         if [[ "$map_name" != "FIX_SAFE" ]]; then
-            local -n _map="$map_name"
-            local reason="${_map[$id]:-}"
+            local reason
+            reason=$(get_fix_warning "$id")
             if [[ -n "$reason" ]]; then
                 printf "      ${DIM}⚠ %s${NC}\n" "$reason"
             fi

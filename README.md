@@ -23,7 +23,9 @@ cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
-After an interactive audit you're prompted to save the report; if you accept, `reports/summary.{md,json,sarif}` are written. `--json-only` writes just `reports/summary.json` (and prints it to stdout).
+After an interactive audit you're prompted to save the report; if you accept, `reports/summary.{md,json,sarif}` are written. `--json-only` writes all three too — only the JSON goes to stdout — so a CI job that publishes the Markdown or feeds the SARIF to a dashboard never picks up a stale file from an earlier run.
+
+`--json-only` and `--yes` both imply a non-interactive run: the language / mode / module menus are skipped and their defaults used (audit, all modules).
 
 **Audit (read-only):** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 family (Rocky / Alma / CentOS Stream) · Arch
 
@@ -180,6 +182,14 @@ Categories: `90+ Excellent · 75–89 Good · 50–74 Fair · <50 Poor`.
 `info`-category checks (e.g. cloud-provider detection) don't move the
 score. See [User Guide → 安全评分](docs/USER_GUIDE.md#附录-b-安全评分计算)
 for the full model.
+
+**Only compare scores from runs over the same module set.** `base` scales
+with the number of scored checks, `penalty` does not — so a narrow
+`--include=` subset is a harsher denominator, and a subset in which every
+scored check fails floors at 0 no matter how mild the findings are. Runs
+that used `--include`/`--exclude` say so explicitly next to the number
+("Partial score: computed over N scored checks…"), and `summary.json`
+carries `meta.partial_scope` plus `stats.scored_total` for the same reason.
 
 ---
 

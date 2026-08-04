@@ -41,7 +41,7 @@ tui_msgbox() {
         whiptail --title "$title" --msgbox "$message" $TUI_HEIGHT $TUI_WIDTH
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --msgbox "$message" $TUI_HEIGHT $TUI_WIDTH
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -66,7 +66,7 @@ tui_yesno() {
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" $default_opt --yesno "$message" $TUI_HEIGHT $TUI_WIDTH
         local result=$?
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
         return $result
     fi
 }
@@ -81,7 +81,7 @@ tui_inputbox() {
         whiptail --title "$title" --inputbox "$message" $TUI_HEIGHT $TUI_WIDTH "$default" 3>&1 1>&2 2>&3
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --inputbox "$message" $TUI_HEIGHT $TUI_WIDTH "$default" 3>&1 1>&2 2>&3
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -96,7 +96,7 @@ tui_menu() {
         whiptail --title "$title" --menu "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --menu "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -112,7 +112,7 @@ tui_checklist() {
         whiptail --title "$title" --checklist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --checklist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -126,7 +126,7 @@ tui_radiolist() {
         whiptail --title "$title" --radiolist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --radiolist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -139,7 +139,7 @@ tui_textbox() {
         whiptail --title "$title" --scrolltext --textbox "$file" $TUI_HEIGHT $TUI_WIDTH
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --textbox "$file" $TUI_HEIGHT $TUI_WIDTH
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 
@@ -165,7 +165,7 @@ tui_gauge_pipe() {
         whiptail --title "$title" --gauge "Processing..." 6 $TUI_WIDTH 0
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --gauge "Processing..." 6 $TUI_WIDTH 0
-        clear >/dev/tty 2>/dev/null || true
+        clear 2>/dev/null >/dev/tty || true
     fi
 }
 

@@ -23,7 +23,9 @@ cd CloudServer-Audit
 sudo ./vpssec audit
 ```
 
-交互式审计结束后会提示是否保存；选择保存才会写入 `reports/summary.{md,json,sarif}`。`--json-only` 只写 `reports/summary.json`（并打印到标准输出）。
+交互式审计结束后会提示是否保存；选择保存才会写入 `reports/summary.{md,json,sarif}`。`--json-only` 同样会重写这三个文件，只是仅把 JSON 打印到标准输出——这样 CI 里发布 Markdown 或消费 SARIF 的环节不会读到上一轮跑剩下的旧文件。
+
+`--json-only` 与 `--yes` 都意味着非交互运行：语言 / 模式 / 模块三个菜单会被跳过，直接采用默认值（审计、全部模块）。
 
 **审计(只读)：** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 家族(Rocky / Alma / CentOS Stream) · Arch
 
@@ -173,6 +175,13 @@ score   = clamp(0, 100, base − penalty)
 
 `info` 类检查项（如云厂商识别）不计入评分。完整模型见
 [用户指南 → 安全评分](docs/USER_GUIDE.md#附录-b-安全评分计算)。
+
+**只有模块范围相同的两次运行，分数才可比。** `base` 随计分检查数缩放，
+`penalty` 不随之缩放——因此 `--include=` 选的范围越窄，惩罚占比越重；
+若子集里被计分的检查恰好全部失败，无论问题多轻，分数都会落到 0。
+用了 `--include`/`--exclude` 的运行会在分数旁明确标注（"部分评分：仅基于
+… 项计分检查"），`summary.json` 里也会带上 `meta.partial_scope` 与
+`stats.scored_total`。
 
 ---
 

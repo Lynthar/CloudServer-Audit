@@ -4,10 +4,15 @@
 # Safety: the phantom account is created with /usr/sbin/nologin shell
 # and a non-existent home; even if restore fails it cannot log in.
 # Still: this case writes /etc/passwd. Run on a disposable host.
+# Severity: medium, deliberately. A duplicate UID 0 (the actual
+# backdoor pattern) is reported separately and at high by
+# users.uid0_found; a duplicate among regular UIDs is an ambiguous-
+# ownership misconfiguration, which the project's rubric rates medium.
+# This expectation said "high" and drifted red for months.
 TEST_DESC="Two /etc/passwd entries with the same UID trigger users.duplicate_uids"
 EXPECT_ID="users.duplicate_uids"
 EXPECT_STATUS="failed"
-EXPECT_SEVERITY="high"
+EXPECT_SEVERITY="medium"
 MODULE="users"
 
 _BACKUP="/etc/passwd.vpssec-mutation-bak"

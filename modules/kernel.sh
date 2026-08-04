@@ -777,8 +777,16 @@ _kernel_audit_network_params() {
     # below the parameter's intrinsic weight — the high-weight group emits a
     # MEDIUM check, the medium-weight group a LOW check. The *_high / *_medium
     # check_ids name the source parameter group, not the emitted severity.
+    # `desc` lists EVERY offending parameter. It used to be cut to the
+    # first 3 (network high) / 5 (the weak tiers) with no marker, while
+    # the title kept reporting the true total — so a report reading
+    # "23 network parameters are weak" showed 5 of them and an operator
+    # who fixed the listed ones believed they were done. desc is a data
+    # field: it is never printed in the terminal (which shows the title
+    # only), it goes to summary.md / summary.json / summary.sarif, and
+    # its length is bounded by KERNEL_SECURITY_PARAMS, a fixed table.
     if [[ ${#issues_high[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues_high[@]}" | head -3 | tr '\n' '; ')
+        local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.network_params_high" \
             "kernel" \
@@ -802,7 +810,7 @@ _kernel_audit_network_params() {
     # secure_redirects, tcp_timestamps, ...) were never surfaced or offered.
     local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
     if [[ ${#issues_weak[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | head -5 | tr '\n' '; ')
+        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.network_params_medium" \
             "kernel" \
@@ -905,7 +913,7 @@ _kernel_audit_kernel_params() {
     # total_issues, so low-only deviations went completely silent.
     local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
     if [[ ${#issues_weak[@]} -gt 0 ]]; then
-        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | head -5 | tr '\n' '; ')
+        local issue_list=$(printf '%s\n' "${issues_weak[@]}" | tr '\n' '; ')
         local check=$(create_check_json \
             "kernel.kernel_params_weak" \
             "kernel" \

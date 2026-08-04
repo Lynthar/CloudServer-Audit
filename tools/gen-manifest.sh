@@ -39,11 +39,19 @@ while IFS= read -r f; do files+=("$f"); done < <(find modules -type f -name '*.s
 # as Linux. install.sh runs `sha256sum -c` on Linux targets only —
 # files there are LF, so a CR-stripped hash matches the byte-for-byte
 # hash on-disk. Sorted by path for stable diff output.
+#
+# LC_ALL=C on the sort is load-bearing, not decoration. Under a UTF-8
+# locale glibc's collation ignores punctuation at the primary level, so
+# `modules/cloud.sh` sorts AFTER `modules/cloudflared.sh` ('.' is
+# skipped, then 's' > 'f'); under C it sorts before ('.' = 0x2E < 'f').
+# Without the pin, regenerating the manifest on a machine whose locale
+# differs from CI's reorders two lines and fails the
+# "integrity manifest up-to-date" job with a pure no-op diff.
 {
     for f in "${files[@]}"; do
         hash=$(tr -d '\r' < "$f" | "${HASH_CMD[@]}" | awk '{print $1}')
         printf '%s  %s\n' "$hash" "$f"
     done
-} | sort -k 2 > manifest.sha256
+} | LC_ALL=C sort -k 2 > manifest.sha256
 
 echo "manifest.sha256 regenerated (${#files[@]} files)"

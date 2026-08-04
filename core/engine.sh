@@ -404,11 +404,23 @@ _run_audit_pass() {
     vpssec_cloud_provider >/dev/null
     vpssec_cloud_tier >/dev/null
 
+    # Progress ticker. It has to bypass print_msg (it needs \r and no
+    # newline), which is exactly why it also bypassed print_msg's
+    # --json-only guard: under `--json-only` these lines were written to
+    # STDOUT ahead of the JSON document, so `vpssec audit --json-only |
+    # jq .` failed with "Invalid numeric literal" — the one thing that
+    # flag exists to make possible. Suppress it in JSON mode.
+    _progress() {
+        [[ "${VPSSEC_JSON_ONLY:-0}" == "1" ]] && return 0
+        # shellcheck disable=SC2059  # caller supplies the format string
+        printf "$@"
+    }
+
     local mod_title
     for module in "${modules[@]}"; do
         ((current++)) || true
         mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-        printf "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
+        _progress "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
 
         audit_module "$module"
     done
@@ -417,13 +429,13 @@ _run_audit_pass() {
         if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
             ((current++)) || true
             mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-            printf "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
+            _progress "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
         fi
     done
     _record_unavailable_modules
 
     # Clear progress line
-    printf "\r                                                              \r"
+    _progress "\r                                                              \r"
 
     export VPSSEC_QUIET_SCAN=0
 }
@@ -615,7 +627,7 @@ execute_plan() {
                 echo "  2) $(i18n 'common.retry')"
                 echo "  3) $(i18n 'common.rollback')"
                 echo -n "  > "
-                read -r choice </dev/tty 2>/dev/null || choice="1"
+                read -r choice 2>/dev/null </dev/tty || choice="1"
 
                 case "$choice" in
                     2)
@@ -640,8 +652,15 @@ execute_plan() {
                     3)
                         # Rollback and exit. Restore THIS plan's session (which
                         # holds every fix's backup), not merely the latest dir.
+                        # backup_restore now returns 1 (nothing restored) / 2
+                        # (partial) — swallow it here so `set -e` doesn't kill
+                        # the run mid-rollback, but tell the user which it was.
                         print_warn "$(i18n 'backup.restoring')"
-                        backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")"
+                        local _rb_rc=0
+                        backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")" || _rb_rc=$?
+                        if (( _rb_rc == 1 )); then
+                            print_error "$(i18n 'error.rollback_failed')"
+                        fi
                         VPSSEC_BACKUP_SESSION=""
                         state_clear_progress
                         return 1
@@ -793,7 +812,7 @@ guide_mode() {
         echo -n "  > "
 
         local _choice
-        if ! read -r _choice </dev/tty 2>/dev/null; then
+        if ! read -r _choice 2>/dev/null </dev/tty; then
             _choice=3
         fi
 
@@ -899,7 +918,7 @@ guide_mode() {
         echo ""
         echo "$(i18n 'guide.enter_numbers')"
         echo -n "> "
-        read -r selection </dev/tty 2>/dev/null || selection=""
+        read -r selection 2>/dev/null </dev/tty || selection=""
 
         if [[ "$selection" == "all" ]]; then
             selected_fixes=$(echo "$fixes" | jq -r '.[].fix_id' | tr '\n' ' ')
@@ -1022,7 +1041,7 @@ rollback_mode() {
         local choice
         # Always print prompt first
         echo -n "$(i18n 'common.enter_choice') [1-${#backup_array[@]}] > "
-        if ! read -r choice </dev/tty 2>/dev/null; then
+        if ! read -r choice 2>/dev/null </dev/tty; then
             echo ""
             print_error "$(i18n 'error.cannot_read_input')"
             return 1
@@ -1055,21 +1074,33 @@ rollback_mode() {
         return 0
     fi
 
-    # Execute rollback
-    if backup_restore "$timestamp"; then
-        print_ok "$(i18n 'backup.restored')"
+    # Execute rollback.
+    #
+    # backup_restore distinguishes three outcomes; collapsing them into
+    # a boolean is what made a rollback that touched zero files print a
+    # green "restored". 2 (partial) still reloads services — the files
+    # that DID come back need to take effect — but reports honestly.
+    local restore_rc=0
+    backup_restore "$timestamp" || restore_rc=$?
 
-        # Reload affected services
-        print_info "Reloading services..."
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl reload ssh 2>/dev/null || true
-        systemctl reload nginx 2>/dev/null || true
-
-        return 0
-    else
+    if (( restore_rc == 1 )); then
         print_error "$(i18n 'error.rollback_failed')"
         return 1
     fi
+
+    if (( restore_rc == 0 )); then
+        print_ok "$(i18n 'backup.restored')"
+    else
+        print_warn "$(i18n 'backup.restored_partial')"
+    fi
+
+    # Reload affected services
+    print_info "Reloading services..."
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reload ssh 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+
+    return "$restore_rc"
 }
 
 # ==============================================================================

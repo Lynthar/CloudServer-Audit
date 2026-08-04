@@ -349,7 +349,7 @@ _timezone_fix_set_timezone() {
     print_msg ""
     echo -n "$(i18n 'common.enter_choice') [1-$i]: "
     local choice
-    read -r choice </dev/tty 2>/dev/null || choice=""
+    read -r choice 2>/dev/null </dev/tty || choice=""
 
     local selected_tz=""
     if [[ "$choice" =~ ^[0-9]+$ ]]; then
@@ -357,7 +357,7 @@ _timezone_fix_set_timezone() {
             selected_tz="${common_timezones[$((choice-1))]}"
         elif ((choice == i)); then
             echo -n "$(i18n 'timezone.enter_timezone'): "
-            read -r selected_tz </dev/tty 2>/dev/null || selected_tz=""
+            read -r selected_tz 2>/dev/null </dev/tty || selected_tz=""
         fi
     fi
 

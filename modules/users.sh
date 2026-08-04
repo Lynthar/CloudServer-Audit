@@ -993,10 +993,13 @@ users_audit() {
     if [[ -n "$sudo_users" && "$sudo_count" -gt 0 ]]; then
         local label="$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users')"
         local title
+        # The qualifier used to be an English literal appended to a
+        # translated label, producing "✓ 特权用户: 1 (root only — no
+        # non-root admin)" in Chinese output.
         if [[ "$non_root_count" -eq 0 ]]; then
-            title="${label}: ${sudo_count} (root only — no non-root admin)"
+            title="${label}: ${sudo_count} ($(i18n 'users.sudo_root_only'))"
         else
-            title="${label}: ${sudo_count} (${non_root_count} non-root)"
+            title="${label}: ${sudo_count} ($(i18n 'users.sudo_non_root' "count=${non_root_count}"))"
         fi
         check_json=$(create_check_json \
             "users.sudo_users" \
@@ -1253,7 +1256,12 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 12. Duplicate UIDs in /etc/passwd (Lynis AUTH-9208) - HIGH
+    # 12. Duplicate UIDs in /etc/passwd (Lynis AUTH-9208) - MEDIUM.
+    # The comment used to say HIGH while the emit below said medium;
+    # the mutation case pinned HIGH and had been failing ever since.
+    # Medium is the right call: a duplicate UID 0 — the actual backdoor
+    # pattern — is reported separately, and at high, by users.uid0_found.
+    # A collision among regular UIDs is ambiguous file ownership.
     local dup_uids
     dup_uids=$(_find_duplicate_uids)
     if [[ -n "$dup_uids" ]]; then
@@ -1335,7 +1343,10 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 16. Sudoers syntax integrity (Lynis AUTH-9250) - HIGH
+    # 16. Sudoers syntax integrity (Lynis AUTH-9250) - MEDIUM.
+    # Same comment-vs-code drift as #12. sudo logs and skips a malformed
+    # drop-in rather than failing open, so this is a configuration-
+    # integrity finding, not an exploitable one.
     local sudoers_issues
     sudoers_issues=$(_check_sudoers_syntax)
     if [[ -n "$sudoers_issues" ]]; then

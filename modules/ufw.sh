@@ -307,27 +307,45 @@ ufw_audit() {
             return
             ;;
         none)
-            # No firewall active - this is a security issue. The remediation
-            # hint is distro-aware: UFW is only the right front-end on
-            # Debian/Ubuntu. RHEL ships firewalld and Arch typically uses
-            # nftables, so steer those users away from "install UFW".
-            local nf_suggestion
-            if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
-                nf_suggestion=$(i18n 'ufw.fix_install')
+            # No firewall active. Report it ONCE.
+            #
+            # Every other branch above returns, so control only reaches
+            # _ufw_audit_enabled (and therefore ufw.disabled) when the
+            # active firewall is "none". That made ufw.no_firewall and
+            # ufw.disabled two medium findings for the same single fact
+            # on every host that has UFW installed but off — and
+            # ufw.no_firewall's fix_id (ufw.install) is simply wrong in
+            # that state, since UFW is already installed.
+            #
+            # So: when UFW is present, let the more specific
+            # ufw.disabled carry the finding (its fix_id, ufw.enable, is
+            # the action that actually resolves it). Emit
+            # ufw.no_firewall only when nothing is there to enable.
+            if _ufw_installed && [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
+                log_debug "No active firewall, but UFW is installed — reported as ufw.disabled"
             else
-                nf_suggestion=$(i18n 'ufw.fix_enable_firewall')
+                # The remediation hint is distro-aware: UFW is only the
+                # right front-end on Debian/Ubuntu. RHEL ships firewalld
+                # and Arch typically uses nftables, so steer those users
+                # away from "install UFW".
+                local nf_suggestion
+                if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
+                    nf_suggestion=$(i18n 'ufw.fix_install')
+                else
+                    nf_suggestion=$(i18n 'ufw.fix_enable_firewall')
+                fi
+                local check=$(create_check_json \
+                    "ufw.no_firewall" \
+                    "ufw" \
+                    "medium" \
+                    "failed" \
+                    "$(i18n 'ufw.no_firewall')" \
+                    "$(i18n 'ufw.no_firewall_desc')" \
+                    "$nf_suggestion" \
+                    "ufw.install")
+                state_add_check "$check"
+                print_severity "medium" "$(i18n 'ufw.no_firewall')"
             fi
-            local check=$(create_check_json \
-                "ufw.no_firewall" \
-                "ufw" \
-                "medium" \
-                "failed" \
-                "$(i18n 'ufw.no_firewall')" \
-                "$(i18n 'ufw.no_firewall_desc')" \
-                "$nf_suggestion" \
-                "ufw.install")
-            state_add_check "$check"
-            print_severity "medium" "$(i18n 'ufw.no_firewall')"
             # Continue to check if UFW is installed but not enabled
             ;;
     esac

@@ -20,6 +20,12 @@ report_generate_json() {
     local virt=$(detect_virtualization)
 
     local modules_checked="${VPSSEC_INCLUDE:-all}"
+    # Machine-readable counterpart of the "partial score" warning shown
+    # in the terminal: a consumer comparing scores across runs needs to
+    # know the denominator changed. stats.scored_total carries the
+    # denominator itself.
+    local partial="false"
+    score_is_partial && partial="true"
 
     # Build via jq so every string field (hostname, os, os-release values, …)
     # is correctly escaped. The previous hand-written heredoc inlined these raw;
@@ -41,6 +47,7 @@ report_generate_json() {
         --arg virt "$virt" \
         --arg lang "${VPSSEC_LANG:-}" \
         --arg modules "$modules_checked" \
+        --argjson partial "$partial" \
         --argjson score "$score" \
         --argjson stats "$stats" \
         --argjson checks "$checks" \
@@ -53,7 +60,8 @@ report_generate_json() {
                 hostname: $hostname,
                 virtualization: $virt,
                 lang: $lang,
-                modules: $modules
+                modules: $modules,
+                partial_scope: $partial
             },
             score: $score,
             stats: $stats,
@@ -71,17 +79,26 @@ report_generate_markdown() {
     local output_file="${1:-${VPSSEC_REPORTS}/summary.md}"
     local checks=$(state_get_checks)
     local score=$(calculate_score)
-    local stats=$(get_check_stats)
 
-    local high=$(echo "$stats" | jq '.high')
-    local medium=$(echo "$stats" | jq '.medium')
-    local low=$(echo "$stats" | jq '.low')
-    local passed=$(echo "$stats" | jq '.passed')
+    _check_metrics_refresh
+    local high="${VPSSEC_METRICS[high]:-0}"
+    local medium="${VPSSEC_METRICS[medium]:-0}"
+    local low="${VPSSEC_METRICS[low]:-0}"
+    local passed="${VPSSEC_METRICS[passed]:-0}"
+    local info="${VPSSEC_METRICS[info]:-0}"
+    local scored_total="${VPSSEC_METRICS[scored_total]:-0}"
 
     local os=$(detect_os)
     local os_version=$(detect_os_version)
     local hostname=$(hostname 2>/dev/null || uname -n)
     local modules_checked="${VPSSEC_INCLUDE:-all}"
+
+    local score_basis
+    if score_is_partial; then
+        score_basis=$(i18n 'report.score_partial' "count=${scored_total}" "modules=${modules_checked}")
+    else
+        score_basis=$(i18n 'report.score_basis' "count=${scored_total}")
+    fi
 
     cat > "$output_file" <<EOF
 # $(i18n 'report.title')
@@ -102,12 +119,17 @@ report_generate_markdown() {
 
 **$(i18n 'report.score'): ${score}/100**
 
+${score_basis}
+
 | $(i18n 'common.warning') | $(i18n 'common.info') |
 |---|---|
 | 🔴 $(i18n 'report.high_issues') | ${high} |
 | 🟡 $(i18n 'report.medium_issues') | ${medium} |
 | 🔵 $(i18n 'report.low_issues') | ${low} |
 | 🟢 $(i18n 'report.passed_checks') | ${passed} |
+| ⚪ $(i18n 'report.advisory_checks') | ${info} |
+
+$(i18n 'report.info_note' "count=${info}")
 
 ---
 
@@ -118,26 +140,19 @@ EOF
     local label_info=$(i18n "common.info")
     local label_recommendations=$(i18n "report.recommendations")
 
-    # High severity issues - organized by category
-    for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
-        local category_modules=$(_get_category_modules "$category")
-
-        local category_highs=""
-        for module in $category_modules; do
-            local mod_highs=$(echo "$checks" | jq -r --arg m "$module" --arg info "$label_info" --arg recs "$label_recommendations" \
-                '.[] | select(.module == $m and .status == "failed" and .severity == "high") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n- **Fix ID**: \(.fix_id)\n"')
-            if [[ -n "$mod_highs" ]]; then
-                category_highs+="$mod_highs"
-            fi
-        done
-
-        if [[ -n "$category_highs" ]]; then
-            echo "### ${category_title}" >> "$output_file"
-            echo "" >> "$output_file"
-            echo "$category_highs" >> "$output_file"
-        fi
-    done
+    # Each of the four sections below used to run one `jq` per
+    # (category × module) — ~84 process spawns to slice a document we
+    # already hold in memory, most of them returning nothing. They are
+    # now one jq per section; _md_section does the whole grouping and
+    # ordering inside jq. See the comment on _md_section for the
+    # ordering contract.
+    #
+    # Heading levels: `##` section (High/Medium/Low/Passed), `###`
+    # category, `####` individual finding. The findings used to be `###`
+    # too, i.e. siblings of the category they belong to, so every
+    # Markdown renderer flattened the structure and the category
+    # headings read as just another finding.
+    _md_section "$checks" high   "$label_info" "$label_recommendations" >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -147,26 +162,7 @@ EOF
 
 EOF
 
-    # Medium severity issues - organized by category
-    for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
-        local category_modules=$(_get_category_modules "$category")
-
-        local category_mediums=""
-        for module in $category_modules; do
-            local mod_mediums=$(echo "$checks" | jq -r --arg m "$module" --arg info "$label_info" --arg recs "$label_recommendations" \
-                '.[] | select(.module == $m and .status == "failed" and .severity == "medium") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n- **Fix ID**: \(.fix_id // "N/A")\n"')
-            if [[ -n "$mod_mediums" ]]; then
-                category_mediums+="$mod_mediums"
-            fi
-        done
-
-        if [[ -n "$category_mediums" ]]; then
-            echo "### ${category_title}" >> "$output_file"
-            echo "" >> "$output_file"
-            echo "$category_mediums" >> "$output_file"
-        fi
-    done
+    _md_section "$checks" medium "$label_info" "$label_recommendations" >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -176,26 +172,7 @@ EOF
 
 EOF
 
-    # Low severity issues - organized by category
-    for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
-        local category_modules=$(_get_category_modules "$category")
-
-        local category_lows=""
-        for module in $category_modules; do
-            local mod_lows=$(echo "$checks" | jq -r --arg m "$module" --arg info "$label_info" --arg recs "$label_recommendations" \
-                '.[] | select(.module == $m and .status == "failed" and .severity == "low") | "### \(.title)\n\n- **ID**: \(.id)\n- **\($info)**: \(.desc)\n- **\($recs)**: \(.suggestion)\n"')
-            if [[ -n "$mod_lows" ]]; then
-                category_lows+="$mod_lows"
-            fi
-        done
-
-        if [[ -n "$category_lows" ]]; then
-            echo "### ${category_title}" >> "$output_file"
-            echo "" >> "$output_file"
-            echo "$category_lows" >> "$output_file"
-        fi
-    done
+    _md_section "$checks" low    "$label_info" "$label_recommendations" >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -205,26 +182,7 @@ EOF
 
 EOF
 
-    # Passed checks - organized by category
-    for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
-        local category_modules=$(_get_category_modules "$category")
-
-        local category_passed=""
-        for module in $category_modules; do
-            local mod_passed=$(echo "$checks" | jq -r --arg m "$module" \
-                '.[] | select(.module == $m and .status == "passed") | "- ✓ \(.title)"')
-            if [[ -n "$mod_passed" ]]; then
-                category_passed+="$mod_passed"$'\n'
-            fi
-        done
-
-        if [[ -n "$category_passed" ]]; then
-            echo "### ${category_title}" >> "$output_file"
-            echo "" >> "$output_file"
-            echo "$category_passed" >> "$output_file"
-        fi
-    done
+    _md_section "$checks" passed "$label_info" "$label_recommendations" >> "$output_file"
 
     cat >> "$output_file" <<EOF
 
@@ -275,6 +233,93 @@ EOF
     echo "$output_file"
 }
 
+# Render one Markdown section (all findings at a given severity, or all
+# passed checks) grouped under `###` category headings.
+#
+# Args: <checks-json> <high|medium|low|passed> <info-label> <recs-label>
+#
+# Ordering contract, preserved from the four hand-rolled loops this
+# replaced: categories in VPSSEC_CATEGORY_ORDER, modules within a
+# category in VPSSEC_MODULE_ORDER, checks within a module in emission
+# order. A category with nothing to show is omitted entirely (no empty
+# heading). That ordering is why this can't just be `group_by(.module)`
+# — jq's group_by sorts, and the display order is deliberate.
+#
+# The category/module order and the translated category titles are
+# resolved in bash (they come from i18n and from arrays engine.sh
+# owns) and handed to jq as data, so the whole section costs ONE jq.
+_md_section() {
+    local checks="$1"
+    local kind="$2"
+    local label_info="$3"
+    local label_recs="$4"
+
+    # [{cat: "<translated title>", modules: ["ssh","users"]}, ...]
+    local groups
+    groups=$(
+        local category module first_cat=1 first_mod
+        printf '['
+        for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
+            (( first_cat )) || printf ','
+            first_cat=0
+            printf '{"cat":%s,"modules":[' \
+                "$(printf '%s' "$(i18n "category.${category}" 2>/dev/null || echo "$category")" | jq -Rs .)"
+            first_mod=1
+            for module in $(_get_category_modules "$category"); do
+                (( first_mod )) || printf ','
+                first_mod=0
+                printf '"%s"' "$module"
+            done
+            printf ']}'
+        done
+        printf ']'
+    )
+
+    echo "$checks" | jq -r \
+        --argjson groups "$groups" \
+        --arg kind "$kind" \
+        --arg info "$label_info" \
+        --arg recs "$label_recs" '
+        . as $checks
+        # One check -> its Markdown block, always ending in exactly one
+        # newline. "passed" is a one-liner; the failure severities get
+        # the full detail block, and only `low` omits the Fix ID line
+        # (matching the previous output).
+        | def render($c):
+            if $kind == "passed" then
+                "- ✓ \($c.title)\n"
+            elif $kind == "low" then
+                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n"
+            else
+                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\n"
+            end;
+        def matches($c):
+            if $kind == "passed"
+            then $c.status == "passed"
+            else $c.status == "failed" and $c.severity == $kind
+            end;
+        # Findings are separated by a blank line; the passed list is a
+        # contiguous bullet list. The old per-module loops appended each
+        # module block with the trailing newline already stripped by
+        # command substitution, so at every module boundary the next
+        # heading was glued onto the previous line
+        # ("...LOG_UNKFAIL_ENAB=yes#### 未发现非 root 的 sudo 用户") and
+        # stopped being a heading at all. Doing the join in jq removes
+        # that whole class of error.
+        (if $kind == "passed" then "" else "\n" end) as $sep
+        | [ $groups[]
+            | .cat as $title
+            | [ .modules[] as $m | $checks[] | select(.module == $m and matches(.)) | render(.) ]
+            | select(length > 0)
+            | "### \($title)\n\n" + join($sep) + "\n"
+          ]
+        | join("")
+        # Leave exactly one trailing newline; the caller'"'"'s heredoc
+        # supplies the blank line before the next "---".
+        | sub("\n+$"; "\n")
+    '
+}
+
 # Get modules for a category in the correct order
 _get_category_modules() {
     local category="$1"
@@ -289,58 +334,9 @@ _get_category_modules() {
     echo "${result[@]}"
 }
 
-# Strip ANSI escape codes for calculating visible width
-_strip_ansi() {
-    echo -e "$1" | sed 's/\x1b\[[0-9;]*m//g'
-}
-
-# Get visible string length (without ANSI codes)
-_visible_len() {
-    local stripped=$(_strip_ansi "$1")
-    echo ${#stripped}
-}
-
-# Get DISPLAY column width (terminal cells) of a string after stripping
-# ANSI codes. CJK Han / Hiragana / Katakana / fullwidth forms render as
-# 2 cells each; bash `${#str}` counts code points, so a string like
-# "✓ 操作系统支持" (8 code points) actually renders as 14 cells. Using
-# the wrong count for column padding made the right-hand `│` separator
-# zigzag whenever rows mixed ASCII-heavy and CJK-heavy content.
-#
-# Strategy: prefer python3's unicodedata.east_asian_width (accurate,
-# handles fullwidth / wide / ambiguous / emoji); fall back to a pure
-# UTF-8 byte heuristic otherwise.
-#   - 1-byte (ASCII)            : 1 cell
-#   - 2-byte (Latin-ext / Greek): 1 cell
-#   - 3-byte starting with E2   : 1 cell  (Dingbats ✓, Geometric Shapes ●,
-#                                          General Punctuation, etc. — all narrow)
-#   - 3-byte starting with E3-E9: 2 cells (CJK Unified, kana, fullwidth)
-#   - 4-byte (CJK Ext B+, emoji): 2 cells
-# This heuristic is correct for the strings vpssec actually emits in
-# zh_CN / en_US (no Indic, no Tibetan, no rare scripts). Off by one
-# only for unusual symbols outside the project's vocabulary.
-_display_width() {
-    local s
-    s=$(_strip_ansi "$1")
-    [[ -z "$s" ]] && { echo 0; return; }
-
-    if command -v python3 &>/dev/null; then
-        python3 - "$s" <<'PYEOF' 2>/dev/null && return
-import sys, unicodedata
-s = sys.argv[1]
-print(sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s))
-PYEOF
-    fi
-
-    # Pure-bash fallback (no python3): walk the UTF-8 byte stream.
-    local n_total n_cjk n_e2 n_2byte
-    n_total=$(printf '%s' "$s" | wc -c)
-    n_cjk=$(printf '%s' "$s" | LC_ALL=C grep -oE $'[\xe3-\xe9]' | wc -l)
-    n_e2=$(printf '%s' "$s" | LC_ALL=C grep -oE $'\xe2[\x80-\xbf][\x80-\xbf]' | wc -l)
-    n_2byte=$(printf '%s' "$s" | LC_ALL=C grep -oE $'[\xc2-\xdf][\x80-\xbf]' | wc -l)
-    # cells = bytes − (1 saved per E3-E9 wide) − (2 saved per E2 narrow-multibyte) − (1 saved per 2-byte char)
-    echo $(( n_total - n_cjk - 2 * n_e2 - n_2byte ))
-}
+# _strip_ansi / _display_width / pad_to_width / truncate_to_width live
+# in core/common.sh — the interactive menus need the same cell-accurate
+# padding and are rendered before this file's functions are reachable.
 
 # Render a single module's checks to an array of lines (clean style, no tree connectors)
 # Usage: _render_module_clean <module> <checks_json> <col_width>
@@ -353,45 +349,37 @@ _render_module_clean() {
     REPLY_LINES=()
 
     local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-    local mod_checks=$(echo "$checks" | jq -c --arg m "$module" '[.[] | select(.module == $m)]')
 
     # Module header - bold cyan, simple style
     REPLY_LINES+=("${BOLD}${CYAN}${mod_title}${NC}")
 
-    # Get checks
-    local -a check_items=()
-    while IFS= read -r check; do
-        [[ -z "$check" ]] && continue
-        check_items+=("$check")
-    done < <(echo "$mod_checks" | jq -c '.[]')
-
-    for check in "${check_items[@]}"; do
-        local status=$(echo "$check" | jq -r '.status')
-        local severity=$(echo "$check" | jq -r '.severity')
-        local title=$(echo "$check" | jq -r '.title')
+    # ONE jq per module, emitting status/severity/title as TSV. This
+    # used to be a `jq -c` to slice the module out, another `jq -c` to
+    # split it into lines, and then THREE `jq -r` per check to read
+    # .status / .severity / .title back out of a JSON object we had
+    # already parsed — ~3 process spawns per check, which made this the
+    # single most expensive function in the whole run.
+    #
+    # Tab is a safe delimiter: create_check_json escapes control
+    # characters, so a literal tab can never appear inside a field.
+    local status severity title
+    while IFS=$'\t' read -r status severity title; do
+        [[ -z "$status" ]] && continue
 
         # Truncate title if too long. Compare against DISPLAY cells so
         # CJK titles (where each char is 2 cells but bash counts 1
         # code point) get truncated correctly instead of overflowing
-        # the column. Slice in a loop because bash string slicing is
-        # code-point-based, not cell-based.
+        # the column.
         local max_title_len=$((col_width - 6))
-        local vis_title
-        vis_title=$(_strip_ansi "$title")
-        local vis_w
-        vis_w=$(_display_width "$vis_title")
-        if (( vis_w > max_title_len )); then
+        if (( $(_display_width "$title") > max_title_len )); then
             local target=$(( max_title_len - 2 ))
             (( target < 0 )) && target=0
-            local trial="$vis_title"
-            # Shrink until it fits. For pure-ASCII titles this hits
-            # the right length in one or two iterations; for CJK
-            # titles each shrink saves 2 cells.
-            while (( $(_display_width "$trial") > target )); do
-                trial="${trial:0:-1}"
-                [[ -z "$trial" ]] && break
+            # Shrink until it fits. Bash slicing is code-point based,
+            # so re-measure each time rather than computing an index.
+            while [[ -n "$title" ]] && (( $(_display_width "$title") > target )); do
+                title="${title:0:-1}"
             done
-            title="${trial}.."
+            title="${title}.."
         fi
 
         # Simple indentation with status icon
@@ -404,7 +392,8 @@ _render_module_clean() {
                 low)    REPLY_LINES+=("  ${BLUE}○${NC} ${title}") ;;
             esac
         fi
-    done
+    done < <(echo "$checks" | jq -r --arg m "$module" \
+        '.[] | select(.module == $m) | [.status, .severity, .title] | @tsv')
 }
 
 # Print two columns side by side (compact style)
@@ -480,6 +469,15 @@ report_print_details() {
     local header_width=$((col_width * 2 + 6))
     ((header_width > term_width - 4)) && header_width=$((term_width - 4))
 
+    # Which modules produced any check? One jq for the whole run,
+    # instead of a `[.[] | select(.module == $m)] | length` per module
+    # per category (21 spawns to answer a question one pass can answer).
+    local -A _module_has_checks=()
+    local _m
+    while IFS= read -r _m; do
+        [[ -n "$_m" ]] && _module_has_checks["$_m"]=1
+    done < <(echo "$checks" | jq -r '[.[].module] | unique | .[]')
+
     # Iterate through categories in order
     for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
         local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
@@ -488,8 +486,7 @@ report_print_details() {
         # Collect modules with results
         local -a active_modules=()
         for module in $category_modules; do
-            local mod_check_count=$(echo "$checks" | jq --arg m "$module" '[.[] | select(.module == $m)] | length')
-            if ((mod_check_count > 0)); then
+            if [[ -n "${_module_has_checks[$module]:-}" ]]; then
                 active_modules+=("$module")
             fi
         done
@@ -548,14 +545,17 @@ report_print_details() {
 
 # Print terminal summary - compact format
 report_print_summary() {
-    local checks=$(state_get_checks)
     local score=$(calculate_score)
-    local stats=$(get_check_stats)
 
-    local high=$(echo "$stats" | jq '.high')
-    local medium=$(echo "$stats" | jq '.medium')
-    local low=$(echo "$stats" | jq '.low')
-    local passed=$(echo "$stats" | jq '.passed')
+    # Read the metrics directly instead of re-parsing get_check_stats'
+    # JSON with four more jq calls — same numbers, no subprocesses.
+    _check_metrics_refresh
+    local high="${VPSSEC_METRICS[high]:-0}"
+    local medium="${VPSSEC_METRICS[medium]:-0}"
+    local low="${VPSSEC_METRICS[low]:-0}"
+    local passed="${VPSSEC_METRICS[passed]:-0}"
+    local info="${VPSSEC_METRICS[info]:-0}"
+    local scored_total="${VPSSEC_METRICS[scored_total]:-0}"
 
     # Score bar
     local score_color
@@ -570,6 +570,17 @@ report_print_summary() {
     print_msg "────────────────────────────────────────────────────────"
     print_msg ""
     print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${BOLD}${score}/100${NC}"
+
+    # The score is a pass rate minus an absolute penalty, so it is only
+    # comparable between runs over the same module set (see the KNOWN
+    # LIMITATION note in calculate_score). Say so, and always print the
+    # denominator — "0/100 over 3 scored checks" is a very different
+    # statement from "0/100 over 60".
+    if score_is_partial; then
+        print_msg "  ${DIM}$(i18n 'report.score_partial' "count=${scored_total}" "modules=${VPSSEC_INCLUDE:-all}")${NC}"
+    else
+        print_msg "  ${DIM}$(i18n 'report.score_basis' "count=${scored_total}")${NC}"
+    fi
     print_msg ""
 
     # Compact stats line
@@ -585,153 +596,131 @@ report_print_summary() {
     fi
     stats_line+="${GREEN}●${NC} ${passed} $(i18n 'common.safe')"
     echo -e "$stats_line"
+
+    # Advisory findings look identical to scoring ones in the body
+    # listing, so the count that DOESN'T move the score was invisible:
+    # a user reading "36 low" next to "score 40" had no way to tell
+    # which of the 36 were dragging the number down. stats.info was
+    # already computed and written to summary.json — it just never
+    # reached a human.
+    if ((info > 0)); then
+        print_msg "  ${DIM}$(i18n 'report.info_note' "count=${info}")${NC}"
+    fi
+    print_msg ""
+
+    # Severity legend. The four glyphs (✗ ● ○ ✓) were used throughout
+    # the run with nothing anywhere explaining them — ● vs ○ in
+    # particular gives a reader no clue which is worse.
+    print_msg "  ${DIM}$(i18n 'report.legend'):${NC} ${RED}✗${NC} $(i18n 'common.high')  ${YELLOW}●${NC} $(i18n 'common.medium')  ${BLUE}○${NC} $(i18n 'common.low')  ${GREEN}✓${NC} $(i18n 'common.safe')"
     print_msg ""
 }
 
-# Generate SARIF report (for CI/CD integration)
+# Generate SARIF report (for CI/CD integration).
+#
+# The whole document is built by ONE jq invocation. It used to be built
+# incrementally in bash: 6 `jq -r` field reads per check, a `jq -n` per
+# result, a `jq -e` existence probe per rule, and — the quadratic part —
+# `results=$(echo "$results" | jq '. += [$r]')`, which re-parsed and
+# re-serialised the entire growing array once per finding. Measured on an
+# 89-check host this single function dominated report generation; at 356
+# checks it took over two minutes.
+#
+# Output shape is unchanged, including rules being derived from ALL
+# checks (not just failures) and de-duplicated first-wins in encounter
+# order — hence the explicit reduce rather than `unique_by(.id)`, which
+# would re-sort them.
 report_generate_sarif() {
     local output_file="${1:-${VPSSEC_REPORTS}/summary.sarif}"
     local checks=$(state_get_checks)
+    [[ -n "$checks" ]] || checks='[]'
 
-    local os=$(detect_os)
-    local os_version=$(detect_os_version)
     local hostname=$(hostname 2>/dev/null || uname -n)
 
-    # Build results array
-    local results="[]"
-    while read -r check; do
-        local id=$(echo "$check" | jq -r '.id')
-        local severity=$(echo "$check" | jq -r '.severity')
-        local status=$(echo "$check" | jq -r '.status')
-        local title=$(echo "$check" | jq -r '.title')
-        local desc=$(echo "$check" | jq -r '.desc // ""')
-        local suggestion=$(echo "$check" | jq -r '.suggestion // ""')
-        local module=$(echo "$check" | jq -r '.module')
-
-        # Map severity to SARIF level
-        local level
-        case "$severity" in
-            high)   level="error" ;;
-            medium) level="warning" ;;
-            low)    level="note" ;;
-            *)      level="none" ;;
-        esac
-
-        # Only include failed checks. Build the JSON with `jq -n` so
-        # characters in any interpolated field (`"`, `\`, newline, CR,
-        # control chars) are escaped correctly; the previous heredoc
-        # path produced invalid JSON whenever a title contained a
-        # quote or a command-output snippet contained CR.
-        if [[ "$status" == "failed" ]]; then
-            local result
-            # `--arg module ...` would create a jq variable named
-            # `$module`, which jq 1.7.0+ rejects because `module` is
-            # a reserved word (modules feature). Use `--arg mod` so
-            # the injected variable is `$mod` instead. See the same
-            # fix in core/common.sh's create_check_json.
-            result=$(jq -n \
-                --arg id         "$id" \
-                --arg level      "$level" \
-                --arg message    "$title. $desc" \
-                --arg host       "$hostname" \
-                --arg mod        "$module" \
-                --arg suggestion "$suggestion" \
-                '{
-                    ruleId: $id,
-                    level: $level,
-                    message: { text: $message },
-                    locations: [{
-                        physicalLocation: {
-                            artifactLocation: {
-                                uri: $host,
-                                uriBaseId: "ROOTPATH"
-                            }
-                        },
-                        logicalLocations: [{
-                            name: $mod,
-                            kind: "module"
+    local sarif
+    sarif=$(jq -n \
+        --argjson checks "$checks" \
+        --arg     version "${VPSSEC_VERSION:-}" \
+        --arg     host    "$hostname" \
+        --arg     endtime "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        def level:
+          if   . == "high"   then "error"
+          elif . == "medium" then "warning"
+          elif . == "low"    then "note"
+          else "none" end;
+        def secsev:
+          if   . == "high"   then "8.0"
+          elif . == "medium" then "5.0"
+          elif . == "low"    then "2.0"
+          else "0.0" end;
+        {
+          "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+          "version": "2.1.0",
+          "runs": [{
+            "tool": {
+              "driver": {
+                "name": "vpssec",
+                "version": $version,
+                "informationUri": "https://github.com/Lynthar/CloudServer-Audit",
+                "rules": (
+                  reduce $checks[] as $c ({seen: {}, out: []};
+                    if (.seen[$c.id] // false) then .
+                    else
+                      .seen[$c.id] = true
+                      | .out += [{
+                          "id":               $c.id,
+                          "name":             $c.title,
+                          "shortDescription": { "text": $c.title },
+                          "fullDescription":  { "text": ($c.desc // "") },
+                          "defaultConfiguration": { "level": ($c.severity | level) },
+                          "properties": { "security-severity": ($c.severity | secsev) }
                         }]
-                    }],
-                    fixes: [{
-                        description: { text: $suggestion }
-                    }]
-                }')
-            results=$(echo "$results" | jq --argjson r "$result" '. += [$r]')
-        fi
-    done < <(echo "$checks" | jq -c '.[]')
+                    end)
+                  | .out
+                )
+              }
+            },
+            "results": [
+              $checks[]
+              | select(.status == "failed")
+              | {
+                  "ruleId":  .id,
+                  "level":   (.severity | level),
+                  "message": { "text": "\(.title). \(.desc // "")" },
+                  "locations": [{
+                    "physicalLocation": {
+                      "artifactLocation": { "uri": $host, "uriBaseId": "ROOTPATH" }
+                    },
+                    "logicalLocations": [{ "name": .module, "kind": "module" }]
+                  }],
+                  "fixes": [{ "description": { "text": (.suggestion // "") } }]
+                }
+            ],
+            "invocations": [{
+              "executionSuccessful": true,
+              "endTimeUtc": $endtime
+            }]
+          }]
+        }') || { log_error "Failed to build SARIF report"; return 1; }
 
-    # Build rules array
-    local rules="[]"
-    while read -r check; do
-        local id=$(echo "$check" | jq -r '.id')
-        local severity=$(echo "$check" | jq -r '.severity')
-        local title=$(echo "$check" | jq -r '.title')
-        local desc=$(echo "$check" | jq -r '.desc // ""')
-
-        local level
-        case "$severity" in
-            high)   level="error" ;;
-            medium) level="warning" ;;
-            low)    level="note" ;;
-            *)      level="none" ;;
-        esac
-
-        # Same JSON-escaping concern as the results block above — use
-        # `jq -n` instead of a heredoc so special characters in title
-        # or desc don't break the SARIF document.
-        local sec_sev
-        case "$severity" in
-            high)   sec_sev="8.0" ;;
-            medium) sec_sev="5.0" ;;
-            low)    sec_sev="2.0" ;;
-            *)      sec_sev="0.0" ;;
-        esac
-        local rule
-        rule=$(jq -n \
-            --arg id      "$id" \
-            --arg name    "$title" \
-            --arg desc    "$desc" \
-            --arg level   "$level" \
-            --arg sec_sev "$sec_sev" \
-            '{
-                id: $id,
-                name: $name,
-                shortDescription: { text: $name },
-                fullDescription:  { text: $desc },
-                defaultConfiguration: { level: $level },
-                properties: { "security-severity": $sec_sev }
-            }')
-        # Check if rule already exists
-        if ! echo "$rules" | jq -e --arg id "$id" '.[] | select(.id == $id)' &>/dev/null; then
-            rules=$(echo "$rules" | jq --argjson r "$rule" '. += [$r]')
-        fi
-    done < <(echo "$checks" | jq -c '.[]')
-
-    # Generate full SARIF document
-    cat > "$output_file" <<EOF
-{
-  "\$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-  "version": "2.1.0",
-  "runs": [{
-    "tool": {
-      "driver": {
-        "name": "vpssec",
-        "version": "${VPSSEC_VERSION}",
-        "informationUri": "https://github.com/Lynthar/CloudServer-Audit",
-        "rules": ${rules}
-      }
-    },
-    "results": ${results},
-    "invocations": [{
-      "executionSuccessful": true,
-      "endTimeUtc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    }]
-  }]
-}
-EOF
+    write_file_atomic "$output_file" "$sarif" || return 1
 
     log_info "SARIF report generated: $output_file"
     echo "$output_file"
+}
+
+# Write all three report files.
+#
+# The report_generate_* functions RETURN their output path on stdout —
+# that is their calling convention. Capturing it here is not cosmetic:
+# calling them bare printed three raw paths to the terminal immediately
+# before the formatted "report saved" lines.
+_report_write_files() {
+    mkdir -p "${VPSSEC_REPORTS}"
+    local rc=0
+    report_generate_json     >/dev/null || rc=1
+    report_generate_markdown >/dev/null || rc=1
+    report_generate_sarif    >/dev/null || rc=1
+    return $rc
 }
 
 # Generate all reports
@@ -749,20 +738,25 @@ report_generate_all() {
 
         local save_prompt=$(i18n 'report.save_prompt' 2>/dev/null || echo "Save report files?")
         if confirm "$save_prompt" "n"; then
-            mkdir -p "${VPSSEC_REPORTS}"
-            report_generate_json
-            report_generate_markdown
-            report_generate_sarif
+            _report_write_files || print_warn "$(i18n 'report.save_failed')"
 
             print_msg ""
+            # All three files are written, so all three are listed. The
+            # .sarif was silently omitted here before, which read as "it
+            # wasn't generated".
             print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.json")"
             print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.md")"
+            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.sarif")"
             print_msg ""
         fi
     else
-        # JSON only mode - always generate and output JSON
-        mkdir -p "${VPSSEC_REPORTS}"
-        report_generate_json
+        # JSON-only mode. Regenerate ALL three files, not just the JSON:
+        # this branch used to refresh summary.json alone and leave the
+        # previous run's summary.md / summary.sarif on disk with no
+        # warning, so a CI job that published the Markdown or fed the
+        # SARIF to a dashboard silently shipped the last run's score and
+        # module list. Only the JSON goes to stdout, as before.
+        _report_write_files || true
         cat "${VPSSEC_REPORTS}/summary.json"
     fi
 }

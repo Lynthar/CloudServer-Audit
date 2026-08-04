@@ -4,10 +4,14 @@
 # Safety: drops into /etc/sudoers.d/ with 0440 perms (the standard).
 # sudo itself ignores malformed drop-ins (logs and skips), so this
 # won't lock the host out of sudo for the duration of the test.
+# Severity: medium, deliberately. sudo skips a malformed drop-in (it
+# logs and moves on, as the safety note below relies on), so this is a
+# configuration-integrity finding rather than an exploitable one. This
+# expectation said "high" and drifted red for months.
 TEST_DESC="Invalid sudoers drop-in triggers users.sudoers_syntax_invalid"
 EXPECT_ID="users.sudoers_syntax_invalid"
 EXPECT_STATUS="failed"
-EXPECT_SEVERITY="high"
+EXPECT_SEVERITY="medium"
 EXPECT_DESC_CONTAINS="vpssec-mutation-test"
 MODULE="users"
 

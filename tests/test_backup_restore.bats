@@ -70,11 +70,17 @@ _make_backup_session() {
     grep -q "Backup not found" "$_log_file"
 }
 
-@test "accepts valid timestamp with empty backup dir" {
+@test "reports failure for a valid but empty backup dir" {
+    # A rollback that restores nothing is a failure from the operator's
+    # point of view: they picked a backup, confirmed, and got their
+    # config back — except they didn't. backup_restore used to `return
+    # 0` unconditionally here, so rollback_mode printed a green
+    # "restored" over a no-op.
     _capture_logs
     mkdir -p "$VPSSEC_BACKUPS/20260501_120000"
     run backup_restore "20260501_120000"
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
+    grep -q "contained no restorable files" "$_log_file"
 }
 
 # ---- Check 2: symlinks inside backup tree ----------------------------
@@ -102,8 +108,12 @@ _make_backup_session() {
     mkdir -p "$VPSSEC_BACKUPS/$ts/etc/ssh"
     ln -s "$secret" "$VPSSEC_BACKUPS/$ts/etc/ssh/sshd_config"
 
+    # Nothing restorable either way, so this is a failed rollback (1).
+    # The status is deliberately NOT asserted as 0: whether GNU find
+    # surfaced the symlink and we skipped it, or BSD find never
+    # produced it, the file count is zero.
     run backup_restore "$ts"
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
 
     # If the production path (Linux GNU find) reached us, the skip
     # message should be in the log. We don't fail the test if it
@@ -136,8 +146,9 @@ _make_backup_session() {
     mkdir -p "$TEST_HOST_ROOT"
     ln -sf "$trap_target" "$TEST_HOST_ROOT/sshd_config"
 
+    # The only entry was skipped, so nothing was restored: status 1.
     run backup_restore "$ts"
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
     grep -q "target path is a symlink" "$_log_file"
 
     # Trap target must remain empty — restore must have refused
@@ -162,8 +173,9 @@ _make_backup_session() {
     mkdir -p "$TEST_HOST_ROOT/foo"
     ln -sfn "$trap_dir" "$TEST_HOST_ROOT/foo/bar"
 
+    # The only entry was skipped, so nothing was restored: status 1.
     run backup_restore "$ts"
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
     grep -q "parent directory is a symlink" "$_log_file"
 
     # trap_dir/file should NOT exist; the restore must have refused.
@@ -223,6 +235,37 @@ _make_backup_session() {
     [ "$(cat "$host/etc/a.conf")" = "orig-a" ]
     [ "$(cat "$host/etc/b.conf")" = "orig-b" ]
     VPSSEC_BACKUP_SESSION=""
+}
+
+# ---- Exit-status contract -------------------------------------------
+#
+# 0 = everything restored, 2 = partial, 1 = nothing restored.
+# rollback_mode branches on all three; collapsing them into a boolean
+# is what let a zero-file rollback print a green "restored".
+
+@test "partial restore (one file, one skipped entry) returns 2" {
+    _capture_logs
+
+    local ts="20260501_120000"
+    local backup_dir="$VPSSEC_BACKUPS/$ts"
+
+    # Entry 1: restores cleanly.
+    local ok_rel="${TEST_HOST_ROOT#/}/good.conf"
+    mkdir -p "$backup_dir/$(dirname "$ok_rel")"
+    echo "restored-content" > "$backup_dir/$ok_rel"
+
+    # Entry 2: destination is a symlink, so the safety check skips it.
+    local bad_rel="${TEST_HOST_ROOT#/}/bad.conf"
+    printf 'never-written' > "$backup_dir/$bad_rel"
+    local trap_target="$BATS_TEST_TMPDIR/trap_partial"
+    : > "$trap_target"
+    ln -sf "$trap_target" "$TEST_HOST_ROOT/bad.conf"
+
+    run backup_restore "$ts"
+    [ "$status" -eq 2 ]
+
+    [ "$(cat "$TEST_HOST_ROOT/good.conf")" = "restored-content" ]
+    [ ! -s "$trap_target" ]
 }
 
 @test "backup_file without a session uses a per-call timestamp dir" {

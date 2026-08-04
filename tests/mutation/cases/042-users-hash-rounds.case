@@ -1,17 +1,59 @@
-# Plant: SHA_CRYPT_MIN_ROUNDS set below the recommended 10000.
-# Verifies AUTH-9230-style detection.
+# Plant: SHA-512 password hashing with SHA_CRYPT_MIN_ROUNDS below the
+# recommended 10000. Verifies AUTH-9230-style detection.
 #
-# Safety: only modifies /etc/login.defs (consulted at password-change
-# time, not session time). Won't affect logins during the test.
-TEST_DESC="SHA_CRYPT_MIN_ROUNDS=5000 triggers users.hash_rounds_low"
+# Why the PAM file is touched too: _check_hash_rounds (modules/users.sh)
+# deliberately returns early unless the active hashing method is
+# sha256/sha512, because SHA_CRYPT_MIN_ROUNDS has no meaning under
+# yescrypt — and yescrypt is the default on Debian 12+ / Ubuntu 24.04+.
+# The original version of this case only edited /etc/login.defs, so on
+# every supported distro the check correctly skipped and the case
+# reported a permanent, unfixable FAIL. The code was right; the case
+# could not reach it. Setting the PAM method is what makes the check
+# applicable.
+#
+# Safety: both files are consulted at PASSWORD-CHANGE time, not at
+# authentication time, so existing logins and existing hashes are
+# unaffected for the duration of the test. Both are backed up and
+# restored verbatim.
+TEST_DESC="SHA-512 + SHA_CRYPT_MIN_ROUNDS=5000 triggers users.hash_rounds_low"
 EXPECT_ID="users.hash_rounds_low"
 EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+EXPECT_DESC_CONTAINS="SHA_CRYPT_MIN_ROUNDS"
 MODULE="users"
 
 _BACKUP="/etc/login.defs.vpssec-mutation-bak"
+_PAM_FILE=""
+_PAM_BACKUP=""
+
+precheck() {
+    # Need a pam_unix password line to retarget. Mirror the same file
+    # list and pattern _check_hash_rounds uses so the case can only run
+    # where the check will actually look.
+    local f
+    for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+        [[ -f "$f" ]] || continue
+        if grep -qE '^password[[:space:]]+(\[[^]]*\]|\S+)[[:space:]]+pam_unix\.so' "$f"; then
+            _PAM_FILE="$f"
+            _PAM_BACKUP="${f}.vpssec-mutation-bak"
+            return 0
+        fi
+    done
+    return 1
+}
 
 mutate() {
     cp /etc/login.defs "$_BACKUP" || return 1
+    cp "$_PAM_FILE" "$_PAM_BACKUP" || return 1
+
+    # Force SHA-512 on the pam_unix password line. Replace an existing
+    # method token if there is one, otherwise append sha512.
+    if grep -qiE '^password.*pam_unix\.so.*\b(yescrypt|sha512|sha256|md5|blowfish|bigcrypt|des)\b' "$_PAM_FILE"; then
+        sed -i -E '/^password.*pam_unix\.so/ s/\b(yescrypt|sha256|md5|blowfish|bigcrypt|des)\b/sha512/I' "$_PAM_FILE"
+    else
+        sed -i -E '/^password.*pam_unix\.so/ s/$/ sha512/' "$_PAM_FILE"
+    fi
+
     if grep -qE '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs; then
         sed -i 's/^SHA_CRYPT_MIN_ROUNDS.*/SHA_CRYPT_MIN_ROUNDS 5000/' /etc/login.defs
     else
@@ -22,5 +64,6 @@ mutate() {
 
 restore() {
     [[ -f "$_BACKUP" ]] && mv "$_BACKUP" /etc/login.defs
+    [[ -n "$_PAM_BACKUP" && -f "$_PAM_BACKUP" ]] && mv "$_PAM_BACKUP" "$_PAM_FILE"
     return 0
 }

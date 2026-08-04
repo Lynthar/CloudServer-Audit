@@ -44,6 +44,10 @@ _write_checks() {
     jq -n "${jq_args[@]}" "$jq_filter" > "$out"
     # Re-export so state.sh's STATE_CHECKS_FILE resolves correctly.
     export STATE_CHECKS_FILE="$out"
+    # Invalidate the metrics memo. In production checks.json only grows,
+    # so (mtime, size) is a sound cache key; a test that rewrites the
+    # same path twice within one second can defeat it.
+    _VPSSEC_METRICS_KEY=""
 }
 
 # ---- calculate_score: boundary cases --------------------------------
@@ -172,4 +176,67 @@ _write_checks() {
     [ "$low" = "1" ]      # x11_forwarding flows into both low AND info
     [ "$passed" = "1" ]
     [ "$info" = "1" ]
+}
+
+@test "get_check_stats: exposes the score denominator" {
+    # scored_total is what calculate_score actually divided by. Without
+    # it a reader cannot tell "40/100 over 60 checks" from "40/100 over
+    # 3", which is the whole reason a single-module run can print 0/100
+    # on a nearly-clean host.
+    _write_checks \
+        "ssh.password_auth_enabled|high|failed" \
+        "fail2ban.installed|medium|failed" \
+        "ssh.x11_forwarding_enabled|low|failed" \
+        "ssh.root_login_disabled|low|passed"
+
+    run get_check_stats
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq '.total')" = "4" ]
+    # x11_forwarding is info-category, so 3 of the 4 are scored.
+    [ "$(echo "$output" | jq '.scored_total')" = "3" ]
+}
+
+# ---- score_is_partial ------------------------------------------------
+
+@test "score_is_partial: false on a full run" {
+    VPSSEC_INCLUDE="" VPSSEC_EXCLUDE=""
+    run score_is_partial
+    [ "$status" -ne 0 ]
+}
+
+@test "score_is_partial: true under --include" {
+    VPSSEC_INCLUDE="ssh" VPSSEC_EXCLUDE=""
+    run score_is_partial
+    [ "$status" -eq 0 ]
+}
+
+@test "score_is_partial: true under --exclude" {
+    # --exclude shrinks the denominator exactly like --include does, so
+    # it has to mark the score partial too.
+    VPSSEC_INCLUDE="" VPSSEC_EXCLUDE="malware"
+    run score_is_partial
+    [ "$status" -eq 0 ]
+}
+
+# ---- optional category / --strict ------------------------------------
+
+@test "calculate_score: optional-category checks are inert by default" {
+    # ssh.weak_algorithms is classified 'optional': reported, but it
+    # must not move the score unless --strict was passed.
+    _write_checks \
+        "ssh.weak_algorithms|medium|failed" \
+        "ssh.root_login_disabled|low|passed"
+    run calculate_score
+    [ "$output" = "100" ]
+}
+
+@test "calculate_score: --strict pulls optional checks into the score" {
+    _write_checks \
+        "ssh.weak_algorithms|medium|failed" \
+        "ssh.root_login_disabled|low|passed"
+    # scored = 2, passed = 1 -> base 50; penalty = 1.5 -> 1. score 49.
+    export VPSSEC_SECURITY_LEVEL=strict
+    run calculate_score
+    unset VPSSEC_SECURITY_LEVEL
+    [ "$output" = "49" ]
 }

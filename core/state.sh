@@ -291,6 +291,15 @@ backup_create_session() {
 #      attacker-chosen location. This is a TOCTOU window between
 #      backup time and restore time; treating any symlink in the
 #      destination path as "abort and skip" is the cheap mitigation.
+#
+# Exit status (callers MUST distinguish these — this used to be an
+# unconditional `return 0`, so a rollback that restored nothing, or
+# skipped every entry on a symlink check, still printed a green
+# "restored" to the user):
+#   0 — every entry restored, nothing skipped
+#   2 — partial: some entries restored, some skipped
+#   1 — nothing restored (empty backup dir, or every entry skipped)
+# Counts are also written to stdout via print_*, not only to the log.
 backup_restore() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -401,12 +410,29 @@ backup_restore() {
         done < "$created_manifest"
     fi
 
-    if (( skipped > 0 )); then
-        log_warn "Restore complete with skips: ${restored} restored, ${skipped} skipped (see logs/vpssec.log)"
-    else
-        log_info "Restore complete: ${restored} files"
+    # Surface the counts to the TERMINAL, not just the log, and let the
+    # exit status carry the outcome. A rollback that restored nothing is
+    # a failure from the operator's point of view — they asked for their
+    # config back and did not get it — so it must not read as success.
+    if (( restored == 0 )); then
+        if (( skipped > 0 )); then
+            log_error "Restore failed: 0 restored, ${skipped} skipped (see logs/vpssec.log)"
+            print_error "$(i18n 'backup.restore_none_skipped' "skipped=${skipped}")"
+        else
+            log_error "Restore failed: backup '${timestamp}' contained no restorable files"
+            print_error "$(i18n 'backup.restore_empty' "timestamp=${timestamp}")"
+        fi
+        return 1
     fi
 
+    if (( skipped > 0 )); then
+        log_warn "Restore complete with skips: ${restored} restored, ${skipped} skipped (see logs/vpssec.log)"
+        print_warn "$(i18n 'backup.restore_partial' "restored=${restored}" "skipped=${skipped}")"
+        return 2
+    fi
+
+    log_info "Restore complete: ${restored} files"
+    print_info "$(i18n 'backup.restore_count' "restored=${restored}")"
     return 0
 }
 
@@ -459,138 +485,200 @@ backup_cleanup() {
 # Score Calculation
 # ==============================================================================
 
-# Detect which conditional components are installed
-# Returns a JSON object with component installation status
-_detect_installed_components() {
-    local checks="$1"
+# Scoring inclusion rules live in the jq program inside
+# _check_metrics_refresh below — a single implementation shared by the
+# score and the summary statistics. There used to be two bash copies of
+# this walk (calculate_score and get_check_stats), and they had already
+# drifted apart on how info-category checks were bucketed.
+#
+# The rules, for reference:
+#   required | recommended  — always scored
+#   conditional             — scored only if the parent component
+#                             (docker / nginx / cloudflared) is present,
+#                             detected from the presence of any
+#                             <module>.* check other than
+#                             <module>.not_installed
+#   optional                — scored only under --strict
+#                             (VPSSEC_SECURITY_LEVEL=strict): weak SSH
+#                             algorithms, weak SGID, nginx DoS
+#                             hardening, ... are shown but do not move
+#                             the score by default
+#   info                    — never scored
+#   unlisted id             — treated as info (fail-safe: a forgotten
+#                             classification must not silently lower
+#                             the score)
 
-    # Check for each conditional component by looking for checks that indicate installation
-    # If we only have a "not_installed" check for a module, the component is not installed
+# ==============================================================================
+# Check Metrics — one jq reduction, memoised
+# ==============================================================================
+#
+# Every number the score / summary / report layers need comes from ONE
+# jq pass over checks.json, cached on (path, mtime, size).
+#
+# Why this exists: calculate_score() and get_check_stats() used to walk
+# the array in bash and spawn three `jq -r` calls PER CHECK just to pull
+# .id / .status / .severity. report_generate_json, report_generate_markdown
+# and report_print_summary each call BOTH functions, so one report re-parsed
+# the same immutable data six times — ~1600 jq process creations on an
+# 89-check host, which measured as several times more wall-clock than the
+# scan itself. The two public functions below are now thin readers over
+# this cache; their outputs are unchanged.
+#
+# Keeping the classification logic in jq (rather than calling the bash
+# helpers per check) also removes the per-check `echo | jq -r '.docker'`
+# inside _check_counts_in_score's `conditional` branch.
 
-    local docker_installed="false"
-    local nginx_installed="false"
-    local cloudflared_installed="false"
+declare -gA VPSSEC_METRICS=()
+_VPSSEC_METRICS_KEY=""
+_VPSSEC_CATMAP_JSON=""
 
-    # Docker: installed if we have any docker.* check that is NOT docker.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.id | startswith("docker.")) | select(.id != "docker.not_installed")] | length > 0' >/dev/null 2>&1; then
-        docker_installed="true"
+# Serialise CHECK_SCORE_CATEGORY (core/security_levels.sh) into a JSON
+# object once per process so jq can classify every check without a
+# round-trip per id. Returns an empty string when the map is not loaded
+# — the caller then falls back to the historical "unlisted = required"
+# default that _check_counts_in_score used in that situation.
+_score_category_map_json() {
+    if [[ -n "$_VPSSEC_CATMAP_JSON" ]]; then
+        printf '%s' "$_VPSSEC_CATMAP_JSON"
+        return 0
     fi
-
-    # Nginx: installed if we have any nginx.* check that is NOT nginx.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.id | startswith("nginx.")) | select(.id != "nginx.not_installed")] | length > 0' >/dev/null 2>&1; then
-        nginx_installed="true"
-    fi
-
-    # Cloudflared: installed if we have any cloudflared.* check that is NOT cloudflared.not_installed
-    if echo "$checks" | jq -e '[.[] | select(.id | startswith("cloudflared.")) | select(.id != "cloudflared.not_installed")] | length > 0' >/dev/null 2>&1; then
-        cloudflared_installed="true"
-    fi
-
-    echo "{\"docker\": $docker_installed, \"nginx\": $nginx_installed, \"cloudflared\": $cloudflared_installed}"
+    declare -p CHECK_SCORE_CATEGORY >/dev/null 2>&1 || return 1
+    local k
+    _VPSSEC_CATMAP_JSON=$(
+        for k in "${!CHECK_SCORE_CATEGORY[@]}"; do
+            printf '%s\t%s\n' "$k" "${CHECK_SCORE_CATEGORY[$k]}"
+        done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
+    ) || { _VPSSEC_CATMAP_JSON=""; return 1; }
+    printf '%s' "$_VPSSEC_CATMAP_JSON"
 }
 
-# Check if a check should be included in score calculation
-# Args: check_id, installed_components_json
-_check_counts_in_score() {
-    local check_id="$1"
-    local installed="$2"
+# Cache key for checks.json. Size alone is not enough (state_init
+# truncates back to "[]"), mtime alone is not enough (1s granularity);
+# together they are, because every state_add_check grows the file.
+# An empty key means "cannot fingerprint" -> never serve from cache.
+_checks_fingerprint() {
+    local file="$STATE_CHECKS_FILE"
+    [[ -f "$file" ]] || { printf '%s|missing' "$file"; return 0; }
+    local s
+    s=$(stat -c '%Y:%s' "$file" 2>/dev/null) \
+        || s=$(stat -f '%m:%z' "$file" 2>/dev/null) \
+        || return 1
+    printf '%s|%s' "$file" "$s"
+}
 
-    # Get category (default to required if not found)
-    local category
-    if declare -f get_check_score_category &>/dev/null; then
-        category=$(get_check_score_category "$check_id")
-    else
-        category="required"
+_check_metrics_refresh() {
+    local key
+    key=$(_checks_fingerprint) || key=""
+
+    if [[ -n "$key" && "$key" == "$_VPSSEC_METRICS_KEY" && ${#VPSSEC_METRICS[@]} -gt 0 ]]; then
+        return 0
     fi
 
-    case "$category" in
-        required|recommended)
-            # Always count
-            return 0
-            ;;
-        conditional)
-            # Only count if parent component is installed
-            local module="${check_id%%.*}"
-            case "$module" in
-                docker)
-                    [[ $(echo "$installed" | jq -r '.docker') == "true" ]]
-                    ;;
-                nginx)
-                    [[ $(echo "$installed" | jq -r '.nginx') == "true" ]]
-                    ;;
-                cloudflared)
-                    [[ $(echo "$installed" | jq -r '.cloudflared') == "true" ]]
-                    ;;
-                *)
-                    return 0  # Unknown module, include
-                    ;;
-            esac
-            ;;
-        optional)
-            # Count only in strict mode. Strict mode is opt-in via the
-            # `--strict` CLI flag (sets/exports VPSSEC_SECURITY_LEVEL=strict);
-            # in the default "standard" mode these checks (weak SSH algorithms,
-            # weak SGID, nginx DoS hardening, ...) are shown but do not move the
-            # score. Previously no flag set this var, so the tier was inert —
-            # `--strict` makes it reachable.
-            [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]]
-            ;;
-        info)
-            # Never count
-            return 1
-            ;;
-        *)
-            # Unknown category, include by default
-            return 0
-            ;;
-    esac
+    local catmap default_cat
+    if catmap=$(_score_category_map_json) && [[ -n "$catmap" ]]; then
+        # Unlisted ids default to "info" — the fail-safe documented on
+        # get_check_score_category (a forgotten classification must not
+        # silently drag the score down).
+        default_cat="info"
+    else
+        # security_levels.sh not loaded: mirror the historical fallback
+        # in _check_counts_in_score, which treated every check as
+        # "required" when get_check_score_category was unavailable.
+        catmap="{}"
+        default_cat="required"
+    fi
+
+    local strict="false"
+    [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]] && strict="true"
+
+    local checks_file="$STATE_CHECKS_FILE"
+    local metrics_out=""
+    if [[ -f "$checks_file" ]]; then
+        metrics_out=$(jq -r \
+            --argjson catmap "$catmap" \
+            --arg     default_cat "$default_cat" \
+            --argjson strict "$strict" '
+            def present($arr; $p):
+              any($arr[]; ((.id // "") | startswith($p + "."))
+                          and ((.id // "") != ($p + ".not_installed")));
+            def category($catmap; $default_cat; $id): ($catmap[$id] // $default_cat);
+            def scored($catmap; $default_cat; $installed; $strict; $id):
+              category($catmap; $default_cat; $id) as $c
+              | if   $c == "required" or $c == "recommended" then true
+                elif $c == "conditional" then
+                  ($id | split(".") | .[0]) as $m
+                  | if   $m == "docker"      then $installed.docker
+                    elif $m == "nginx"       then $installed.nginx
+                    elif $m == "cloudflared" then $installed.cloudflared
+                    else true end
+                elif $c == "optional" then $strict
+                elif $c == "info"     then false
+                else true end;
+            [ .[] | select(((.id // "") | length) > 0) ] as $all
+            | { docker:      present($all; "docker"),
+                nginx:       present($all; "nginx"),
+                cloudflared: present($all; "cloudflared") } as $installed
+            | reduce $all[] as $chk (
+                {total:0, high:0, medium:0, low:0, passed:0, info:0,
+                 scored_total:0, high_failed:0, medium_failed:0, low_failed:0};
+                ($chk.id)                  as $id
+                | ($chk.status   // "")    as $st
+                | ($chk.severity // "low") as $sev
+                | (scored($catmap; $default_cat; $installed; $strict; $id)) as $in
+                | .total += 1
+                # info == "carried in the report but not scored". Tracked as a
+                # SEPARATE dimension: the check still flows into the severity /
+                # passed buckets below so the summary counts match the body,
+                # which filters purely on .severity.
+                | (if $in then . else .info += 1 end)
+                | (if   $st == "passed" then .passed += 1
+                   elif $st == "failed" then
+                          (if   $sev == "high" or $sev == "critical" then .high += 1
+                           elif $sev == "medium"                     then .medium += 1
+                           elif $sev == "low" or $sev == "info"      then .low += 1
+                           else . end)
+                   else . end)
+                | (if $in then
+                     .scored_total += 1
+                     | (if $st == "failed" then
+                          (if   $sev == "high" or $sev == "critical" then .high_failed += 1
+                           elif $sev == "medium"                     then .medium_failed += 1
+                           elif $sev == "low" or $sev == "info"      then .low_failed += 1
+                           else . end)
+                        else . end)
+                   else . end)
+              )
+            | to_entries[] | "\(.key)=\(.value)"
+        ' "$checks_file" 2>/dev/null) || metrics_out=""
+    fi
+
+    VPSSEC_METRICS=()
+    local line k v
+    while IFS='=' read -r k v; do
+        [[ -n "$k" ]] && VPSSEC_METRICS["$k"]="$v"
+    done <<< "$metrics_out"
+
+    # Defensive zero-fill: a malformed/absent checks.json must yield a
+    # complete metric set rather than "unbound variable" downstream.
+    for k in total high medium low passed info scored_total high_failed medium_failed low_failed; do
+        [[ -n "${VPSSEC_METRICS[$k]:-}" ]] || VPSSEC_METRICS["$k"]=0
+    done
+
+    _VPSSEC_METRICS_KEY="$key"
+}
+
+# Read one metric by name (see the bucket list above).
+check_metric() {
+    _check_metrics_refresh
+    echo "${VPSSEC_METRICS[$1]:-0}"
 }
 
 calculate_score() {
-    local checks=$(state_get_checks)
-    local installed=$(_detect_installed_components "$checks")
-
-    # Count failures by severity, but only for checks that should count in score
-    local high_fail=0
-    local medium_fail=0
-    local low_fail=0
-    local scored_total=0
-
-    # Read checks into array and process
-    local check_ids
-    check_ids=$(echo "$checks" | jq -r '.[] | @json')
-
-    while IFS= read -r check_json; do
-        [[ -z "$check_json" ]] && continue
-
-        local check_id status severity
-        check_id=$(echo "$check_json" | jq -r '.id // empty')
-        status=$(echo "$check_json" | jq -r '.status // empty')
-        severity=$(echo "$check_json" | jq -r '.severity // "low"')
-
-        [[ -z "$check_id" ]] && continue
-
-        # Check if this check should be included in score
-        if ! _check_counts_in_score "$check_id" "$installed"; then
-            continue
-        fi
-
-        ((scored_total++)) || true
-
-        if [[ "$status" == "failed" ]]; then
-            case "$severity" in
-                high|critical)
-                    ((high_fail++)) || true
-                    ;;
-                medium)
-                    ((medium_fail++)) || true
-                    ;;
-                low|info)
-                    ((low_fail++)) || true
-                    ;;
-            esac
-        fi
-    done <<< "$(echo "$checks" | jq -c '.[]')"
+    _check_metrics_refresh
+    local scored_total="${VPSSEC_METRICS[scored_total]:-0}"
+    local high_fail="${VPSSEC_METRICS[high_failed]:-0}"
+    local medium_fail="${VPSSEC_METRICS[medium_failed]:-0}"
+    local low_fail="${VPSSEC_METRICS[low_failed]:-0}"
 
     # Score calculation (pass-rate based, with severity penalty on top).
     #
@@ -631,6 +719,23 @@ calculate_score() {
     #                                ≈ ~40 — distinguishable from
     #                                "actually broken"
     #   10 high + 20 medium + 30 low → 0   (Broken)
+    #
+    # KNOWN LIMITATION — the score is only comparable across runs with
+    # the SAME module set. `base` is a rate (scales with scored_total)
+    # but `penalty` is absolute (does not), so on a small subset the
+    # penalty eats a proportionally larger share; and when every scored
+    # check in the subset fails, base is 0 and the score floors at 0
+    # regardless of how mild the findings are. `vpssec audit
+    # --include=ufw` on a host with two medium findings therefore reads
+    # "0/100" — technically correct for that denominator, badly
+    # misleading as an absolute verdict.
+    #
+    # Deliberately NOT fixed by normalising the penalty: that would
+    # move every existing host's score and invalidate the expected
+    # outcomes above (and the README examples / tests that pin them).
+    # Instead the presentation layer labels a filtered run as a PARTIAL
+    # score and prints scored_total alongside it — see
+    # score_is_partial() below and report_print_summary().
 
     if (( scored_total == 0 )); then
         echo 100
@@ -654,59 +759,35 @@ calculate_score() {
     echo "$score"
 }
 
-# Get check statistics (only for scored checks)
+# Summary statistics for the terminal / Markdown / JSON reports.
+#
+# Severity and score-category are ORTHOGONAL dimensions here:
+#   - high/medium/low/passed count every check by `.severity`, so the
+#     summary line matches the body listing (which filters purely on
+#     severity). Info-category checks are included.
+#   - `info` counts checks EXCLUDED from the score (info category, or a
+#     conditional check whose component isn't installed). It overlaps
+#     the buckets above on purpose: it answers "how many of these are
+#     advisory only", not "which bucket do they live in".
+#   - `scored_total` is the denominator calculate_score() actually used.
+#     Exposed so a reader can tell a 40/100 computed over 60 checks
+#     from one computed over 4.
 get_check_stats() {
-    local checks=$(state_get_checks)
-    local installed=$(_detect_installed_components "$checks")
+    _check_metrics_refresh
+    printf '{"high": %d, "medium": %d, "low": %d, "passed": %d, "info": %d, "scored_total": %d, "total": %d}\n' \
+        "${VPSSEC_METRICS[high]:-0}" \
+        "${VPSSEC_METRICS[medium]:-0}" \
+        "${VPSSEC_METRICS[low]:-0}" \
+        "${VPSSEC_METRICS[passed]:-0}" \
+        "${VPSSEC_METRICS[info]:-0}" \
+        "${VPSSEC_METRICS[scored_total]:-0}" \
+        "${VPSSEC_METRICS[total]:-0}"
+}
 
-    local high=0
-    local medium=0
-    local low=0
-    local passed=0
-    local info_count=0
-
-    while IFS= read -r check_json; do
-        [[ -z "$check_json" ]] && continue
-
-        local check_id status severity
-        check_id=$(echo "$check_json" | jq -r '.id // empty')
-        status=$(echo "$check_json" | jq -r '.status // empty')
-        severity=$(echo "$check_json" | jq -r '.severity // "low"')
-
-        [[ -z "$check_id" ]] && continue
-
-        # Track info-category (not-scored) checks as a SEPARATE
-        # dimension. Previously this branched off with `continue`,
-        # excluding info-category checks from every other bucket —
-        # which made the summary table's "Low: N" undercount by ~25
-        # because most ergonomic SSH-option findings, history hygiene,
-        # umask, etc. are classified info. The body filters purely on
-        # `.severity`, so the summary needs the same semantics for the
-        # two numbers to match. Score impact is unaffected: scoring
-        # has its own _check_counts_in_score filter inside
-        # calculate_score().
-        if ! _check_counts_in_score "$check_id" "$installed"; then
-            ((info_count++)) || true
-            # no `continue` — still flow into the severity / passed
-            # buckets below so the displayed count matches the body.
-        fi
-
-        if [[ "$status" == "passed" ]]; then
-            ((passed++)) || true
-        elif [[ "$status" == "failed" ]]; then
-            case "$severity" in
-                high|critical)
-                    ((high++)) || true
-                    ;;
-                medium)
-                    ((medium++)) || true
-                    ;;
-                low|info)
-                    ((low++)) || true
-                    ;;
-            esac
-        fi
-    done <<< "$(echo "$checks" | jq -c '.[]')"
-
-    echo "{\"high\": $high, \"medium\": $medium, \"low\": $low, \"passed\": $passed, \"info\": $info_count}"
+# True when this run only audited part of the module set, so the score
+# is not comparable with a full-run score (see the KNOWN LIMITATION note
+# in calculate_score). Both filters count: --exclude shrinks the
+# denominator exactly the same way --include does.
+score_is_partial() {
+    [[ -n "${VPSSEC_INCLUDE:-}" || -n "${VPSSEC_EXCLUDE:-}" ]]
 }

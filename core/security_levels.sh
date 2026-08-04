@@ -715,15 +715,37 @@ get_fix_safety() {
 # Get fix warning message. Same `${MAP[$key]:-}` discipline as
 # get_fix_safety: missing-key access under `set -u` would otherwise
 # abort the function and let the caller's `2>/dev/null` swallow it.
+#
+# Localisation: the map values are the English source strings AND the
+# fallback. A translation, when one exists, lives under the i18n key
+# `fixwarn.<fix_id>` and wins. This is the single most consequential
+# i18n gap in the tool — these are the strings a user reads in `guide`
+# mode immediately before confirming something that can cut their SSH
+# session ("Can lock you out if SSH key not configured properly"), and
+# a Chinese-locale run showed them in English inside an otherwise
+# translated prompt. Keeping the English in the map rather than
+# replacing it with a bare key means an untranslated or misspelled key
+# degrades to a readable warning instead of printing "fixwarn.ufw.enable".
 get_fix_warning() {
     local fix_id="$1"
+    local fallback=""
 
     if [[ -n "${FIX_CONFIRM[$fix_id]:-}" ]]; then
-        echo "${FIX_CONFIRM[$fix_id]}"
+        fallback="${FIX_CONFIRM[$fix_id]}"
     elif [[ -n "${FIX_RISKY[$fix_id]:-}" ]]; then
-        echo "${FIX_RISKY[$fix_id]}"
+        fallback="${FIX_RISKY[$fix_id]}"
     elif [[ -n "${FIX_ALERT_ONLY[$fix_id]:-}" ]]; then
-        echo "${FIX_ALERT_ONLY[$fix_id]}"
+        fallback="${FIX_ALERT_ONLY[$fix_id]}"
+    else
+        return 0
+    fi
+
+    local key="fixwarn.${fix_id}"
+    local translated="${VPSSEC_I18N[$key]:-}"
+    if [[ -n "$translated" ]]; then
+        echo "$translated"
+    else
+        echo "$fallback"
     fi
 }
 

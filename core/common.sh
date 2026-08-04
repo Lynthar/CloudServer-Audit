@@ -308,6 +308,11 @@ print_progress() {
     local total="$2"
     local width="${3:-40}"
 
+    # Same reason as engine.sh's _progress: this writes to stdout with
+    # printf (it needs \r and no trailing newline), so it must repeat
+    # print_msg's --json-only guard or it corrupts the JSON document.
+    [[ "${VPSSEC_JSON_ONLY:-0}" == "1" ]] && return 0
+
     # Defensive: every real caller passes a positive total (audit_all
     # always includes the preflight/cloud/timezone context modules, so
     # total >= 3), but a future caller or a pathological --include=
@@ -329,6 +334,157 @@ print_progress() {
     bar+="${NC}"
 
     printf "\r  [%s] %3d%% " "$bar" "$percent"
+}
+
+# ==============================================================================
+# Text Width Helpers (terminal cells, CJK-aware)
+# ==============================================================================
+
+# Strip ANSI escape codes before measuring visible width.
+#
+# Pure bash — no `echo -e | sed` pipeline. Two reasons: this runs
+# several times per rendered line (report_print_details calls it ~3×
+# per check via _display_width, so an 89-check audit forked sed
+# hundreds of times), and `echo -e` also expanded backslash escapes
+# that happened to sit inside a check title, corrupting it.
+#
+# Two forms are stripped because the colour variables above are LITERAL
+# strings (RED='\033[0;31m', single-quoted) that only become real
+# escapes when the final `echo -e` prints them:
+#   1. the literal "\033[...m" text
+#   2. a real ESC byte, in case a caller pre-expanded it
+_strip_ansi() {
+    local s="$1"
+    s="${s//\\033\[[0-9;]*m/}"
+    s="${s//$'\033'\[[0-9;]*m/}"
+    printf '%s\n' "$s"
+}
+
+# DISPLAY width (terminal cells) of a string after stripping ANSI codes.
+#
+# CJK Han / kana / fullwidth forms render as 2 cells each, but bash
+# `${#str}` counts code points: "✓ 操作系统支持" is 8 code points and
+# 14 cells. Padding with the wrong number made the report's `│`
+# separator zigzag on CJK-heavy rows, and made the module-selection
+# menu's right border walk off the box entirely.
+#
+# Implementation: decode the UTF-8 byte stream in pure bash and apply
+# the East_Asian_Width W/F ranges (Markus Kuhn's wcwidth table). No
+# subprocess at all.
+#
+# This replaced a python3 fork per call. The fork was the single
+# largest cost in report_print_details, which calls this ~3× per check
+# (title measure, truncation loop, column padding) — an 89-check audit
+# paid ~250 interpreter startups purely to count columns. It also made
+# alignment silently depend on whether python3 happened to be present.
+#
+# Decoding the bytes ourselves (rather than indexing characters) keeps
+# the answer correct regardless of the ambient locale: under LC_ALL=C
+# bash would hand back single bytes and every CJK glyph would measure
+# 3 instead of 2.
+_display_width() {
+    local s="$1"
+    s="${s//\\033\[[0-9;]*m/}"
+    s="${s//$'\033'\[[0-9;]*m/}"
+    [[ -z "$s" ]] && { echo 0; return; }
+
+    # Byte-wise indexing: force the C locale for the ${#s} / ${s:i:1}
+    # expansions below. `local` restores the caller's value on return.
+    local LC_ALL=C
+    local -i n=${#s} i=0 b cp extra w=0 k
+    while (( i < n )); do
+        printf -v b '%d' "'${s:i:1}"
+        (( b < 0 )) && b+=256          # some builds report high bytes signed
+        if   (( b < 0x80 )); then cp=$b;              extra=0
+        elif (( b < 0xC0 )); then cp=0xFFFD;          extra=0   # stray continuation
+        elif (( b < 0xE0 )); then cp=$(( b & 0x1F )); extra=1
+        elif (( b < 0xF0 )); then cp=$(( b & 0x0F )); extra=2
+        else                      cp=$(( b & 0x07 )); extra=3
+        fi
+        for (( k=1; k<=extra && i+k<n; k++ )); do
+            printf -v b '%d' "'${s:i+k:1}"
+            (( b < 0 )) && b+=256
+            cp=$(( (cp << 6) | (b & 0x3F) ))
+        done
+        i=$(( i + extra + 1 ))
+
+        # East_Asian_Width == W or F -> 2 cells, everything else 1.
+        # U+2500-U+27BF (box drawing ─, dingbats ✓, geometric ●)
+        # deliberately fall through to 1: they are Ambiguous/Narrow and
+        # render single-width in the terminals vpssec targets.
+        if (( cp >= 0x1100 && (
+                cp <= 0x115F
+             || cp == 0x2329 || cp == 0x232A
+             || (cp >= 0x2E80 && cp <= 0xA4CF && cp != 0x303F)
+             || (cp >= 0xA960 && cp <= 0xA97F)
+             || (cp >= 0xAC00 && cp <= 0xD7A3)
+             || (cp >= 0xF900 && cp <= 0xFAFF)
+             || (cp >= 0xFE10 && cp <= 0xFE19)
+             || (cp >= 0xFE30 && cp <= 0xFE6F)
+             || (cp >= 0xFF00 && cp <= 0xFF60)
+             || (cp >= 0xFFE0 && cp <= 0xFFE6)
+             || (cp >= 0x17000 && cp <= 0x18AFF)
+             || (cp >= 0x1F300 && cp <= 0x1F64F)
+             || (cp >= 0x1F900 && cp <= 0x1F9FF)
+             || (cp >= 0x20000 && cp <= 0x3FFFD) ) )); then
+            w+=2
+        else
+            w+=1
+        fi
+    done
+    echo "$w"
+}
+
+# Pad $1 with spaces to $2 display cells (no-op if already wider).
+pad_to_width() {
+    local text="$1"
+    local target="$2"
+    local -i pad=$(( target - $(_display_width "$text") ))
+    if (( pad > 0 )); then
+        printf '%s%*s' "$text" "$pad" ''
+    else
+        printf '%s' "$text"
+    fi
+}
+
+# Truncate $1 to at most $2 display cells, appending "…" when it had to
+# cut. Bash slicing is code-point based, so shrink in a loop and
+# re-measure rather than computing an index.
+truncate_to_width() {
+    local text="$1"
+    local target="$2"
+    if (( $(_display_width "$text") <= target )); then
+        printf '%s' "$text"
+        return
+    fi
+    while [[ -n "$text" ]] && (( $(_display_width "$text") > target - 1 )); do
+        text="${text:0:-1}"
+    done
+    printf '%s…' "$text"
+}
+
+# ==============================================================================
+# Menu Box Drawing
+# ==============================================================================
+#
+# The language / mode / module menus used to be hand-padded string
+# literals ("│  [2] 简体中文                           │"). Every CJK
+# label made the trailing space count wrong, so the right border of all
+# three boxes was ragged, and the module menu's longest row
+# ("运维合规 (logging,backup,alerts,scheduling,timezone)") overflowed
+# it outright. Rendering from a single interior width fixes all of them
+# and makes adding a row a one-liner.
+
+_MENU_BOX_WIDTH=70   # interior cells, between the two vertical borders
+
+_menu_box_top()    { printf '┌%s┐\n' "$(printf '─%.0s' $(seq 1 $_MENU_BOX_WIDTH))"; }
+_menu_box_bottom() { printf '└%s┘\n' "$(printf '─%.0s' $(seq 1 $_MENU_BOX_WIDTH))"; }
+_menu_box_sep()    { printf '├%s┤\n' "$(printf '─%.0s' $(seq 1 $_MENU_BOX_WIDTH))"; }
+_menu_box_blank()  { printf '│%*s│\n' "$_MENU_BOX_WIDTH" ''; }
+
+# One content row, indented two cells and padded to the interior width.
+_menu_box_row() {
+    printf '│%s│\n' "$(pad_to_width "  $1" "$_MENU_BOX_WIDTH")"
 }
 
 # ==============================================================================
@@ -998,7 +1154,7 @@ confirm() {
     echo -n "$prompt_text"
 
     # Read from /dev/tty to handle curl|bash piped execution
-    if ! read -r yn </dev/tty 2>/dev/null; then
+    if ! read -r yn 2>/dev/null </dev/tty; then
         echo ""  # Newline after failed read
         yn="$default"
     fi
@@ -1019,7 +1175,7 @@ confirm_critical() {
 
     # For critical operations, we MUST get user confirmation
     # If /dev/tty is not available, return failure (do not proceed)
-    if ! read -r yn </dev/tty 2>/dev/null; then
+    if ! read -r yn 2>/dev/null </dev/tty; then
         echo ""
         print_error "$(i18n 'error.cannot_read_critical')"
         return 1
@@ -1130,6 +1286,33 @@ _fs_run_find() {
 # Initialization
 # ==============================================================================
 
+# True when this process can actually read an interactive answer.
+#
+# The old guard was `[[ ! -t 0 ]] && [[ ! -e /dev/tty ]]`, which asks
+# whether the DEVICE NODE EXISTS. Under cron, a systemd unit or a
+# daemonised CI runner /dev/tty exists but open(2) fails with ENXIO
+# (no controlling terminal), so the guard passed, the menu printed,
+# and the read below failed — leaking bash's own "No such device or
+# address" to stderr on the way. Probing an actual open answers the
+# question that matters.
+_tty_readable() {
+    [[ -t 0 ]] && return 0
+    (exec 3</dev/tty) 2>/dev/null
+}
+
+# True when the caller asked for a non-interactive run.
+#
+# `--yes` documents itself as "auto-confirm non-critical prompts" and
+# `--json-only` is for CI, yet neither suppressed the language / mode /
+# module menus: `vpssec audit --yes` on a real TTY parked on the module
+# selector forever, because the guard above only looked at whether a
+# terminal existed, never at whether the user wanted to be asked. Both
+# flags now select the documented defaults (Chinese-or-$VPSSEC_LANG,
+# audit, all modules) and move on.
+_noninteractive() {
+    [[ "${VPSSEC_YES:-0}" == "1" || "${VPSSEC_JSON_ONLY:-0}" == "1" ]]
+}
+
 # Language selection menu (called before i18n is loaded)
 select_language() {
     # Skip if already specified via --lang or environment
@@ -1137,22 +1320,21 @@ select_language() {
         return 0
     fi
 
-    # Check if we can read from terminal (handle curl|bash piped execution)
-    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
-        # No terminal available, use default
+    # Non-interactive run, or no terminal to read from: keep the default.
+    if _noninteractive || ! _tty_readable; then
         return 0
     fi
 
     echo ""
-    echo "┌─────────────────────────────────────────┐"
-    echo "│     vpssec - VPS Security Audit         │"
-    echo "├─────────────────────────────────────────┤"
-    echo "│  Select language / 选择语言:            │"
-    echo "│                                         │"
-    echo "│  [1] English                            │"
-    echo "│  [2] 简体中文                           │"
-    echo "│                                         │"
-    echo "└─────────────────────────────────────────┘"
+    _menu_box_top
+    _menu_box_row "  vpssec - VPS Security Audit"
+    _menu_box_sep
+    _menu_box_row "Select language / 选择语言:"
+    _menu_box_blank
+    _menu_box_row "[1] English"
+    _menu_box_row "[2] 简体中文"
+    _menu_box_blank
+    _menu_box_bottom
     echo ""
 
     local choice
@@ -1160,7 +1342,7 @@ select_language() {
     echo -n "Enter choice / 输入选项 [1-2] (default: 2) > "
 
     # Read from /dev/tty to handle curl|bash piped execution
-    if ! read -r choice </dev/tty 2>/dev/null; then
+    if ! read -r choice 2>/dev/null </dev/tty; then
         echo ""
         choice="2"  # Default to Chinese
     fi
@@ -1186,9 +1368,9 @@ select_mode() {
         return 0
     fi
 
-    # Check if we can read from terminal
-    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
-        # No terminal available, use default (audit)
+    # Non-interactive run, or no terminal to read from: default to the
+    # read-only audit. Never silently escalate to `guide`, which mutates.
+    if _noninteractive || ! _tty_readable; then
         VPSSEC_MODE="audit"
         export VPSSEC_MODE
         return 0
@@ -1202,25 +1384,21 @@ select_mode() {
     local guide_en="Hardening Guide (interactive fix)"
     local guide_zh="加固向导 (交互式修复)"
 
+    local title audit_label guide_label
     if [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]]; then
-        echo ""
-        echo "┌─────────────────────────────────────────┐"
-        echo "│  ${title_en}:                              │"
-        echo "│                                         │"
-        echo "│  [1] ${audit_en}      │"
-        echo "│  [2] ${guide_en}    │"
-        echo "│                                         │"
-        echo "└─────────────────────────────────────────┘"
+        title="$title_en"; audit_label="$audit_en"; guide_label="$guide_en"
     else
-        echo ""
-        echo "┌─────────────────────────────────────────┐"
-        echo "│  ${title_zh}:                              │"
-        echo "│                                         │"
-        echo "│  [1] ${audit_zh}                  │"
-        echo "│  [2] ${guide_zh}              │"
-        echo "│                                         │"
-        echo "└─────────────────────────────────────────┘"
+        title="$title_zh"; audit_label="$audit_zh"; guide_label="$guide_zh"
     fi
+
+    echo ""
+    _menu_box_top
+    _menu_box_row "${title}:"
+    _menu_box_blank
+    _menu_box_row "[1] ${audit_label}"
+    _menu_box_row "[2] ${guide_label}"
+    _menu_box_blank
+    _menu_box_bottom
     echo ""
 
     local choice
@@ -1235,7 +1413,7 @@ select_mode() {
     fi
 
     # Read from /dev/tty, fall back to default if read fails
-    if ! read -r choice </dev/tty 2>/dev/null; then
+    if ! read -r choice 2>/dev/null </dev/tty; then
         echo ""
         choice="1"  # Default to audit
     fi
@@ -1261,9 +1439,8 @@ select_modules() {
         return 0
     fi
 
-    # Check if we can read from terminal
-    if [[ ! -t 0 ]] && [[ ! -e /dev/tty ]]; then
-        # No terminal available, run all modules
+    # Non-interactive run, or no terminal to read from: run all modules.
+    if _noninteractive || ! _tty_readable; then
         VPSSEC_INCLUDE=""
         export VPSSEC_INCLUDE
         return 0
@@ -1288,32 +1465,43 @@ select_modules() {
     local is_en=0
     [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]] && is_en=1
 
+    # Column layout inside the box: "[N] " (4 cells) + name column +
+    # module column, all measured in DISPLAY cells. The old code padded
+    # with `printf "%-18s"`, which counts BYTES — every CJK glyph (3
+    # bytes, 2 cells) over-counted by one, so the right border walked
+    # left on every Chinese row, and "运维合规 (logging,backup,alerts,
+    # scheduling,timezone)" burst through it entirely.
+    local name_w=18
+    [[ $is_en -eq 1 ]] && name_w=20
+    local mods_w=$(( _MENU_BOX_WIDTH - 2 - 4 - name_w ))
+
     echo ""
+    _menu_box_top
     if [[ $is_en -eq 1 ]]; then
-        echo "┌──────────────────────────────────────────────────────────┐"
-        echo "│  Select modules to check:                                │"
-        echo "│                                                          │"
-        echo "│  [0] All modules (recommended)                           │"
+        _menu_box_row "Select modules to check:"
+        _menu_box_blank
+        _menu_box_row "[0] All modules (recommended)"
     else
-        echo "┌──────────────────────────────────────────────────────────┐"
-        echo "│  选择要检查的模块:                                       │"
-        echo "│                                                          │"
-        echo "│  [0] 全部模块 (推荐)                                     │"
+        _menu_box_row "选择要检查的模块:"
+        _menu_box_blank
+        _menu_box_row "[0] 全部模块 (推荐)"
     fi
 
     local idx=1
     for cat in "${categories[@]}"; do
         IFS=':' read -r cat_id en_name zh_name modules <<< "$cat"
+        local label
         if [[ $is_en -eq 1 ]]; then
-            printf "│  [%d] %-20s %-34s│\n" "$idx" "$en_name" "($modules)"
+            label="$en_name"
         else
-            printf "│  [%d] %-18s %-36s│\n" "$idx" "$zh_name" "($modules)"
+            label="$zh_name"
         fi
+        _menu_box_row "[${idx}] $(pad_to_width "$label" "$name_w")$(truncate_to_width "($modules)" "$mods_w")"
         ((idx++))
     done
 
-    echo "│                                                          │"
-    echo "└──────────────────────────────────────────────────────────┘"
+    _menu_box_blank
+    _menu_box_bottom
     echo ""
 
     local prompt_en="Enter choices (space-separated, e.g., 1 2 3) [default: 0] > "
@@ -1326,7 +1514,7 @@ select_modules() {
     fi
 
     local choice
-    if ! read -r choice </dev/tty 2>/dev/null; then
+    if ! read -r choice 2>/dev/null </dev/tty; then
         echo ""
         choice="0"
     fi

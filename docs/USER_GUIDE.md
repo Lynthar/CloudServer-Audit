@@ -1035,9 +1035,26 @@ score   = clamp(0, 100, base − penalty)
 ```
 
 `scored_total` 只统计分类为 `required`、`recommended`、`conditional`
-（且对应组件已安装）、`optional` 的检查。`info` 类检查（如云厂商
-识别、"Docker 未安装"）既不进分子也不进分母——所以这些项不会影响
-分数。
+（且对应组件已安装）、`optional`（仅 `--strict`）的检查。`info` 类
+检查（如云厂商识别、"Docker 未安装"）既不进分子也不进分母——所以
+这些项不会影响分数。
+
+### 分数只在相同模块范围内可比
+
+`base` 是比率，会随 `scored_total` 缩放；`penalty` 是绝对值，不会。
+两者相加意味着：
+
+- 用 `--include=` 缩小范围时，同样的惩罚落在更小的基数上，分数被压得更低；
+- 若子集里被计分的检查恰好**全部失败**，`base` 就是 0，无论问题多轻，
+  最终分数都会落到 0。
+
+例如某台机器全量跑是 40 分，`--include=preflight,cloud,timezone,ufw`
+单跑却是 0 分——两个数字各自都没算错，但**不能拿来互相比较**。
+
+因此凡是带了 `--include`/`--exclude` 的运行，终端与 Markdown 报告都会
+在分数旁标注"部分评分：仅基于 N 项计分检查"，`summary.json` 里也会带
+`meta.partial_scope: true` 与 `stats.scored_total`。要做趋势对比，请
+固定同一组模块，或直接跑全量。
 
 ### 不同失败组合下的示例（按 ~50 个 scored check 估算）
 
@@ -1224,6 +1241,36 @@ sudo bash tests/mutation/run.sh -k 020    # 按编号过滤
 每个 `.case` 文件负责：注入一个已知缺陷 → 运行审计 → 断言对应
 检测命中 → 还原。restore 是 best-effort，因此**只在可丢弃的 VM
 或容器上运行**。
+
+#### 这套 harness 是手动工具，不接 CI
+
+它需要 root、需要真实改写 `/etc`、需要一次性主机，所以刻意不挂在
+GitHub Actions 上。代价是没人替你盯着它——因此**改动模块的检测逻辑
+或严重度分级后，请手动跑一遍并对照下面的基线**。
+
+**期望基线（Debian 12 容器，装有 openssh-server / ufw / fail2ban / cron / at）：**
+
+```
+Total: 22  Passed: 18  Failed: 0  Errored: 0  Skipped: 4
+```
+
+判据是 **`Failed` 与 `Errored` 都为 0**，且 `Passed + Skipped == Total`。
+`Skipped` 的具体数量取决于宿主装了什么、跑的是哪个内核：缺 docker /
+nginx 时对应 case 的 `precheck` 返回假；`022-filesystem-grub-perms`
+在没有 GRUB 的容器里跳过；`030-kernel-core-setuid-ok` 在没有
+`kernel.core_setuid_ok` 的内核上跳过。这些都是正常的。
+
+**`Failed` 或 `Errored` 非零就是回归**，需要定位到底是检测逻辑退化了，
+还是 case 的期望值过时了——两种情况历史上都发生过：
+
+- `EXPECT_SEVERITY` 曾经和模块里实际发出的严重度对不上（用例没跟上
+  一次分类收敛），表现为长期 `WARN | severity drift`；
+- `042-users-hash-rounds` 曾经只改 `/etc/login.defs`，而被测检查在
+  yescrypt（Debian 12+ 默认）下会正确跳过，于是这条 case 在所有受
+  支持的发行版上都永久失败——代码是对的，用例够不到它。
+
+写新 case 时优先用 `precheck` 表达前置条件，而不是让它在不适用的
+环境里直接红掉。
 
 ---
 
