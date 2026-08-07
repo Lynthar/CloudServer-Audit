@@ -194,6 +194,25 @@ _vpssec_fake_etc() {
     printf '%s\n' "$dir"
 }
 
+# Assert that COMMAND fails. Use this instead of `! command`.
+#
+# Bash exempts a command preceded by `!` from errexit and the ERR trap,
+# which is how bats detects a failed assertion. So `! command` only ends
+# the test when it happens to be the LAST statement in the test body —
+# anywhere else a failed assertion is silently discarded and the test
+# passes vacuously. Mutation testing caught one such assertion in the ufw
+# suite; the same shape was present in five other files.
+#
+#     _vpssec_refute _vpssec_stub_called ufw 'enable'
+#     _vpssec_refute grep -q accept_ra "$VPSSEC_SYSCTL_CONF"
+_vpssec_refute() {
+    if "$@"; then
+        printf 'expected to fail but succeeded: %s\n' "$*" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Open a backup session rooted in the per-test backups dir, so a fix's
 # backup_file calls land somewhere assertable and the created-file
 # manifest (.vpssec_created) is exercised the way execute_plan does it.

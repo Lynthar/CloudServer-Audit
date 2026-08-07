@@ -74,7 +74,7 @@ setup() {
     run _timezone_fix_set_timezone
     [ "$status" -eq 0 ]
     [ "$(cat "$TZ_CONF")" = "Asia/Shanghai" ]
-    ! _vpssec_stub_called timedatectl 'set-timezone'
+    _vpssec_refute _vpssec_stub_called timedatectl 'set-timezone'
 }
 
 @test "set_timezone: --yes on a host with no timezone reports failure" {
@@ -93,7 +93,7 @@ setup() {
 
     run _timezone_fix_set_timezone
     [ "$status" -eq 0 ]
-    ! _vpssec_stub_called timedatectl 'set-timezone'
+    _vpssec_refute _vpssec_stub_called timedatectl 'set-timezone'
 }
 
 @test "set_timezone: no interactive menu is printed on a non-interactive run" {
@@ -103,6 +103,6 @@ setup() {
     export VPSSEC_YES=1
 
     run _timezone_fix_set_timezone
-    ! grep -q 'Asia/Tokyo' <<<"$output"
-    ! grep -qE '^\s+[0-9]\) ' <<<"$output"
+    _vpssec_refute grep -q 'Asia/Tokyo' <<<"$output"
+    _vpssec_refute grep -qE '^\s+[0-9]\) ' <<<"$output"
 }

@@ -142,7 +142,7 @@ _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
 
     _ssh_rollback_dropin
     grep -q 'X11Forwarding no' "$SSH_HARDENING_DROPIN"
-    ! grep -q 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
+    _vpssec_refute grep -q 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
     [ "$(stat -c '%a' "$SSH_HARDENING_DROPIN")" = "644" ]
 }
 

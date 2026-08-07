@@ -93,7 +93,7 @@ SH
     [ "$status" -eq 0 ]
     grep -q '^daily$' "$LOGROTATE_CONF"
     grep -q 'operator config' "$LOGROTATE_CONF"
-    ! grep -q '^weekly$' "$LOGROTATE_CONF"
+    _vpssec_refute grep -q '^weekly$' "$LOGROTATE_CONF"
 }
 
 @test "logrotate: a config the fix creates is registered for rollback" {
@@ -118,5 +118,5 @@ SH
 
     run _logging_fix_setup_logrotate
     [ "$status" -eq 0 ]
-    ! _vpssec_stub_called apt-get
+    _vpssec_refute _vpssec_stub_called apt-get
 }

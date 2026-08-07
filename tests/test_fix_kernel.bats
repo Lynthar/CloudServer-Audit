@@ -178,7 +178,7 @@ SH
 
     local backup="${VPSSEC_BACKUP_SESSION}${VPSSEC_SYSCTL_CONF}"
     grep -qxF "kernel.sysrq = 176" "$backup"
-    ! grep -q "dmesg_restrict\|kptr_restrict" "$backup"
+    _vpssec_refute grep -q "dmesg_restrict\|kptr_restrict" "$backup"
 }
 
 @test "sysctl drop-in: a newly created drop-in is recorded so rollback deletes it" {
@@ -204,7 +204,7 @@ SH
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
-    ! grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
+    _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
 }
 
 @test "harden_ipv6: the always-safe parameters are still applied on a SLAAC host" {
@@ -234,7 +234,7 @@ SH
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
-    ! grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
+    _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
 }
 
 @test "harden_network: accept_ra is left alone on a SLAAC host" {
@@ -245,7 +245,7 @@ SH
 
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
-    ! grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
+    _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
 }
 
 @test "harden_network: accept_ra is applied on a statically configured host" {
@@ -268,7 +268,7 @@ SH
 
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
-    ! grep -q "ip_forward" "$VPSSEC_SYSCTL_CONF"
+    _vpssec_refute grep -q "ip_forward" "$VPSSEC_SYSCTL_CONF"
 }
 
 @test "harden_network: ip_forward is disabled on a host that does not route" {
@@ -290,7 +290,7 @@ SH
 
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
-    ! grep -q "conf\.all\.rp_filter" "$VPSSEC_SYSCTL_CONF"
+    _vpssec_refute grep -q "conf\.all\.rp_filter" "$VPSSEC_SYSCTL_CONF"
 }
 
 @test "harden_network: disabled rp_filter is hardened even on a forwarding host" {
@@ -335,7 +335,7 @@ SH
     run _kernel_fix_core_dump
     [ "$status" -eq 0 ]
     [ -f "${VPSSEC_BACKUP_SESSION}${KERNEL_LIMITS_CONF}" ]
-    ! grep -q "hard core 0" "${VPSSEC_BACKUP_SESSION}${KERNEL_LIMITS_CONF}"
+    _vpssec_refute grep -q "hard core 0" "${VPSSEC_BACKUP_SESSION}${KERNEL_LIMITS_CONF}"
 }
 
 @test "core dump: the systemd drop-in is written when only coredump.conf exists" {

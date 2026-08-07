@@ -238,5 +238,5 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
     # The root-login hardening from the first step stays; only the second
     # change is refused.
     grep -q '^PermitRootLogin no$' "$SSH_HARDENING_DROPIN"
-    ! grep -q '^PasswordAuthentication no$' "$SSH_HARDENING_DROPIN"
+    _vpssec_refute grep -q '^PasswordAuthentication no$' "$SSH_HARDENING_DROPIN"
 }
