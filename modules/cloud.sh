@@ -175,6 +175,60 @@ declare -ga SAFE_SYSTEM_PROCESSES=(
 #      placement/region or instance-id payload (Tencent and several
 #      other providers offer EC2-compatible IMDS at the same IP, so a
 #      bare 200 here is NOT enough to call it AWS).
+# Map an EC2-compatible IMDS payload — a placement/region string or an
+# instance-id — onto a provider name. Kept as a separate, pure function
+# (no network, no globals) so step 7's disambiguation rules can be
+# regression-tested directly; see tests/test_cloud_imds_region.bats.
+# Every branch below encodes a real overlap between providers, and the
+# ORDER is the whole point:
+_cloud_provider_from_imds() {
+    # Strip whitespace; lower-case for region match.
+    local _b
+    _b=$(printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+
+    case "$_b" in
+        # Tencent regions: ap-* (overlaps with AWS Asia-Pacific) plus
+        # eu-frankfurt, na-* — but the real giveaway is the instance-id
+        # prefix "ins-".
+        ins-*)                echo "tencent" ;;
+        # AWS Nitro / Xen instance IDs.
+        i-*)                  echo "aws" ;;
+        # AWS China (Ningxia). cn-northwest-* exists only on AWS, and it has
+        # to be matched before the Huawei cn-* shapes below, which would
+        # otherwise claim it.
+        cn-northwest-*)       echo "aws" ;;
+        # Huawei-EXCLUSIVE region shapes, tested BEFORE the generic
+        # `*-[0-9])` AWS rule below. Every Huawei region also ends in a digit
+        # (cn-north-4, cn-east-3, cn-south-1, ...), so that rule used to match
+        # first and this branch was unreachable for every real Huawei host —
+        # the whole fleet reported as AWS and got AWS-specific remediation
+        # advice. AWS has no cn-east / cn-south / cn-southwest / la-* / ru-* /
+        # na-mexico region at all, so these are unambiguous.
+        cn-east-*|cn-south*|la-north-*|la-south-*|ru-northwest-*|na-mexico-*)
+                              echo "huawei" ;;
+        # cn-north-1 is a TRUE collision — it is both AWS Beijing and Huawei's
+        # cn-north-1, and the region string cannot separate them. Keep the
+        # historical AWS answer rather than trading one misdetection for
+        # another; every other cn-north-* (4, 9, 11) is Huawei-only. A future
+        # disambiguation could probe
+        # http://169.254.169.254/openstack/latest/meta_data.json, which
+        # Huawei's IMDS serves and AWS's does not.
+        cn-north-1)           echo "aws" ;;
+        cn-north-*)           echo "huawei" ;;
+        # AWS region tokens look like us-east-1 / eu-west-2; they always have
+        # a single trailing digit. Tencent's eu-frankfurt has no trailing
+        # digit, ap-guangzhou ditto. ap-southeast-* / af-south-* / me-east-*
+        # are shared with Huawei and stay AWS here for the same reason as
+        # cn-north-1.
+        *-[0-9])              echo "aws" ;;
+        ap-guangzhou|ap-shanghai|ap-beijing|ap-chengdu|ap-chongqing|ap-nanjing|ap-hongkong|ap-singapore|ap-bangkok|ap-jakarta|ap-mumbai|ap-seoul|ap-tokyo|na-siliconvalley|na-ashburn|na-toronto|sa-saopaulo|eu-frankfurt|eu-moscow)
+                              echo "tencent" ;;
+        # Last resort: we got *something* from 169.254.169.254 with the EC2
+        # path shape; fall back to AWS but flag via the ambiguous return.
+        *)                    echo "aws-or-compatible" ;;
+    esac
+}
+
 _detect_cloud_provider() {
     local provider="unknown"
 
@@ -385,53 +439,7 @@ _detect_cloud_provider() {
         fi
 
         if [[ -n "$_imds_body" ]]; then
-            # Disambiguate. Strip whitespace; lower-case for region match.
-            local _b=$(printf '%s' "$_imds_body" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-            case "$_b" in
-                # Tencent regions: ap-* (overlaps with AWS Asia-Pacific)
-                # plus eu-frankfurt, na-* — but the real giveaway is the
-                # instance-id prefix "ins-".
-                ins-*)                provider="tencent" ;;
-                # AWS Nitro / Xen instance IDs.
-                i-*)                  provider="aws" ;;
-                # AWS China (Ningxia). cn-northwest-* exists only on AWS, and
-                # it has to be matched before the Huawei cn-* shapes below,
-                # which would otherwise claim it.
-                cn-northwest-*)       provider="aws" ;;
-                # Huawei-EXCLUSIVE region shapes, tested BEFORE the generic
-                # `*-[0-9])` AWS rule below. Every Huawei region also ends in
-                # a digit (cn-north-4, cn-east-3, cn-south-1, ...), so that
-                # rule used to match first and this branch was unreachable for
-                # every real Huawei host — the whole fleet reported as AWS and
-                # got AWS-specific remediation advice. AWS has no cn-east /
-                # cn-south / cn-southwest / la-* / ru-* / na-mexico region at
-                # all, so these are unambiguous.
-                cn-east-*|cn-south*|la-north-*|la-south-*|ru-northwest-*|na-mexico-*)
-                                       provider="huawei" ;;
-                # cn-north-1 is a TRUE collision — it is both AWS Beijing and
-                # Huawei's cn-north-1, and the region string cannot separate
-                # them. Keep the historical AWS answer rather than trading one
-                # misdetection for another; every other cn-north-* (4, 9, 11)
-                # is Huawei-only. A future disambiguation could probe
-                # http://169.254.169.254/openstack/latest/meta_data.json, which
-                # Huawei's IMDS serves and AWS's does not.
-                cn-north-1)           provider="aws" ;;
-                cn-north-*)           provider="huawei" ;;
-                # AWS region tokens look like us-east-1 / eu-west-2; they
-                # always have a single trailing digit. Tencent's
-                # eu-frankfurt has no trailing digit, ap-guangzhou ditto.
-                # ap-southeast-* / af-south-* / me-east-* are shared with
-                # Huawei and stay AWS here for the same reason as cn-north-1.
-                *-[0-9])              provider="aws" ;;
-                ap-guangzhou|ap-shanghai|ap-beijing|ap-chengdu|ap-chongqing|ap-nanjing|ap-hongkong|ap-singapore|ap-bangkok|ap-jakarta|ap-mumbai|ap-seoul|ap-tokyo|na-siliconvalley|na-ashburn|na-toronto|sa-saopaulo|eu-frankfurt|eu-moscow)
-                                       provider="tencent" ;;
-                *)
-                    # Last resort: we got *something* from 169.254.169.254
-                    # with the EC2 path shape; fall back to AWS but flag
-                    # via the ambiguous return.
-                    provider="aws-or-compatible"
-                    ;;
-            esac
+            provider=$(_cloud_provider_from_imds "$_imds_body")
         else
             # Try Azure (header-required path) and GCP (header + path).
             if curl -fs --connect-timeout 1 -m 2 -H "Metadata: true" \

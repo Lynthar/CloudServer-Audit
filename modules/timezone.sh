@@ -3,6 +3,14 @@
 # Timezone module - timezone and time synchronization checks
 # Copyright (c) 2024
 
+# System paths this module reads and writes. Named variables rather than
+# literals for the same reason logging.sh has LOGROTATE_CONF and docker.sh has
+# DOCKER_DAEMON_JSON: it is the seam that lets a test point the module at a
+# scratch tree instead of the host's real /etc.
+TZ_CONF="/etc/timezone"
+TZ_LOCALTIME="/etc/localtime"
+TZ_ZONEINFO="/usr/share/zoneinfo"
+
 # ==============================================================================
 # Timezone Audit
 # ==============================================================================
@@ -44,16 +52,16 @@ _timezone_current() {
     fi
 
     # Fallback to /etc/timezone
-    if [[ -z "$tz" ]] && [[ -f /etc/timezone ]]; then
-        tz=$(tr -d '[:space:]' < /etc/timezone 2>/dev/null)
-        src="/etc/timezone"
+    if [[ -z "$tz" ]] && [[ -f "$TZ_CONF" ]]; then
+        tz=$(tr -d '[:space:]' < "$TZ_CONF" 2>/dev/null)
+        src="$TZ_CONF"
     fi
 
     # Fallback to TZ environment or localtime symlink
     if [[ -z "$tz" ]]; then
-        if [[ -L /etc/localtime ]]; then
-            tz=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
-            src="/etc/localtime"
+        if [[ -L "$TZ_LOCALTIME" ]]; then
+            tz=$(readlink "$TZ_LOCALTIME" | sed 's|.*/zoneinfo/||')
+            src="$TZ_LOCALTIME"
         elif [[ -n "${TZ:-}" ]]; then
             tz="${TZ:-}"
             src="TZ env"
@@ -400,14 +408,14 @@ _timezone_fix_set_timezone() {
     fi
 
     # Validate timezone
-    if [[ ! -f "/usr/share/zoneinfo/$selected_tz" ]]; then
+    if [[ ! -f "${TZ_ZONEINFO}/$selected_tz" ]]; then
         print_error "$(i18n 'timezone.invalid_timezone' "tz=$selected_tz")"
         return 1
     fi
 
     # Create backup
-    backup_file "/etc/timezone"
-    backup_file "/etc/localtime"
+    backup_file "$TZ_CONF"
+    backup_file "$TZ_LOCALTIME"
 
     # Set timezone
     if command -v timedatectl &>/dev/null; then
@@ -417,8 +425,8 @@ _timezone_fix_set_timezone() {
         fi
     else
         # Manual method
-        ln -sf "/usr/share/zoneinfo/$selected_tz" /etc/localtime
-        echo "$selected_tz" > /etc/timezone
+        ln -sf "${TZ_ZONEINFO}/$selected_tz" "$TZ_LOCALTIME"
+        echo "$selected_tz" > "$TZ_CONF"
         print_ok "$(i18n 'timezone.timezone_set' "tz=$selected_tz")"
         return 0
     fi

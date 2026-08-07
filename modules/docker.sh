@@ -940,7 +940,11 @@ _docker_fix_enable_daemon_setting() {
 
         mv "$tmp_file" "$DOCKER_DAEMON_JSON"
     else
-        mkdir -p /etc/docker
+        # Derive the directory from the path variable rather than hardcoding
+        # /etc/docker: every other reference in this function goes through
+        # $DOCKER_DAEMON_JSON, and the literal made the function write outside
+        # whatever tree a caller pointed it at.
+        mkdir -p "$(dirname "$DOCKER_DAEMON_JSON")"
         if ! jq -n --arg key "$setting" --argjson val "$value" \
                '{($key): $val}' > "$tmp_file" 2>/dev/null; then
             rm -f "$tmp_file"
