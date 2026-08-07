@@ -9,10 +9,16 @@
 
 JOURNALD_CONF="/etc/systemd/journald.conf"
 JOURNALD_CONF_D="/etc/systemd/journald.conf.d"
+JOURNALD_DROPIN="${JOURNALD_CONF_D}/99-vpssec.conf"
+# The directory whose mere existence makes journald persist. A module
+# variable rather than a literal so the audit predicate and the fix cannot
+# be pointed at different places, and so both are reachable from a test.
+JOURNAL_DIR="/var/log/journal"
 LOGROTATE_CONF="/etc/logrotate.conf"
 LOGROTATE_D="/etc/logrotate.d"
 RSYSLOG_CONF="/etc/rsyslog.conf"
 AUDIT_RULES_D="/etc/audit/rules.d"
+AUDIT_RULES_FILE="${AUDIT_RULES_D}/99-vpssec.rules"
 
 # ==============================================================================
 # Logging Helper Functions
@@ -20,7 +26,7 @@ AUDIT_RULES_D="/etc/audit/rules.d"
 
 _logging_journald_persistent() {
     # Check if journal is configured for persistent storage
-    if [[ -d "/var/log/journal" ]]; then
+    if [[ -d "$JOURNAL_DIR" ]]; then
         return 0
     fi
 
@@ -414,15 +420,22 @@ _logging_fix_enable_persistent_journal() {
     print_info "$(i18n 'logging.enabling_persistent')"
 
     # Create journal directory
-    mkdir -p /var/log/journal
-    systemd-tmpfiles --create --prefix /var/log/journal
+    mkdir -p "$JOURNAL_DIR"
+    systemd-tmpfiles --create --prefix "$JOURNAL_DIR"
 
     # Create drop-in configuration atomically; back up any prior drop-in so a
     # bad restart can be rolled back. A partial file here could degrade
     # journald on the restart below.
+    #
+    # Call backup_file unconditionally. Guarding it on the file already
+    # existing is what left the FIRST run with no manifest entry: backup_file
+    # records an absent path as fix-created (.vpssec_created), which is the
+    # only thing that lets a rollback delete the drop-in. Without it the
+    # operator could undo the plan and still be left with journald
+    # reconfigured. The logrotate fix below already writes it this way.
     mkdir -p "$JOURNALD_CONF_D"
-    [[ -f "${JOURNALD_CONF_D}/99-vpssec.conf" ]] && backup_file "${JOURNALD_CONF_D}/99-vpssec.conf" >/dev/null 2>&1 || true
-    write_file_atomic "${JOURNALD_CONF_D}/99-vpssec.conf" '# vpssec journald configuration
+    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true
+    write_file_atomic "$JOURNALD_DROPIN" '# vpssec journald configuration
 [Journal]
 Storage=persistent
 Compress=yes
@@ -496,8 +509,16 @@ _logging_fix_install_auditd() {
 
     if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
         print_ok "$(i18n 'logging.auditd_installed')"
-        _logging_fix_enable_auditd
-        _logging_fix_setup_audit_rules
+
+        # The two follow-ups are a convenience, and their status deliberately
+        # does NOT decide this one. This fix_id answers the check
+        # logging.auditd_not_installed, and the install is what that check
+        # measures; the service and the rules have their own checks and their
+        # own fix_ids, so a failure there is reported by them on the next run
+        # rather than being recast as "the install failed". Each prints its own
+        # error, so nothing is swallowed silently.
+        _logging_fix_enable_auditd || true
+        _logging_fix_setup_audit_rules || true
         return 0
     else
         print_error "$(i18n 'logging.auditd_install_failed')"
@@ -586,7 +607,14 @@ _logging_fix_setup_audit_rules() {
 EOF
 )
 
-    if ! write_file_atomic "${AUDIT_RULES_D}/99-vpssec.rules" "$rules_content"; then
+    # Back up before writing, unconditionally: an existing 99-vpssec.rules is
+    # about to be replaced and must be restorable, and an absent one has to be
+    # recorded as fix-created so a rollback deletes it. This write had no
+    # backup call at all, so rolling back a plan that configured auditd left
+    # the rules loading on every boot.
+    backup_file "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true
+
+    if ! write_file_atomic "$AUDIT_RULES_FILE" "$rules_content"; then
         print_error "$(i18n 'logging.audit_rules_failed')"
         return 1
     fi
@@ -595,7 +623,7 @@ EOF
     # them (auditctl -l) rather than declaring success merely because the file
     # exists. augenrules/auditctl can fail (auditd inactive, syntax error,
     # already immutable via -e 2) while the file sits on disk looking fine.
-    augenrules --load 2>/dev/null || auditctl -R "${AUDIT_RULES_D}/99-vpssec.rules" 2>/dev/null || true
+    augenrules --load 2>/dev/null || auditctl -R "$AUDIT_RULES_FILE" 2>/dev/null || true
 
     if auditctl -l 2>/dev/null | grep -q '.'; then
         print_ok "$(i18n 'logging.audit_rules_configured')"
