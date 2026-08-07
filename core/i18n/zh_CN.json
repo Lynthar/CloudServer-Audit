@@ -750,6 +750,7 @@
     "kernel_params_weak": "{count} 个内核参数需要加固",
     "core_dump_disabled": "核心转储已正确限制",
     "core_dump_enabled": "核心转储未正确限制",
+    "core_dump_partial": "核心转储仍未完全限制：{issues}",
     "check_unused_protocols": "检查少用的网络协议模块",
     "unused_protocols_blocked": "少用网络协议已加入黑名单",
     "unused_protocols_unblocked": "{count} 个少用网络协议未加入黑名单",

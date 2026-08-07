@@ -750,6 +750,7 @@
     "kernel_params_weak": "{count} kernel parameters need hardening",
     "core_dump_disabled": "Core dumps properly restricted",
     "core_dump_enabled": "Core dumps not properly restricted",
+    "core_dump_partial": "Core dumps still not fully restricted: {issues}",
     "check_unused_protocols": "Checking rarely-used network protocol modules",
     "unused_protocols_blocked": "Rarely-used network protocols blacklisted",
     "unused_protocols_unblocked": "{count} rarely-used network protocols not blacklisted",

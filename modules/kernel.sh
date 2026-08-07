@@ -11,6 +11,15 @@ SYSCTL_CONF="/etc/sysctl.conf"
 SYSCTL_D="/etc/sysctl.d"
 VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 
+# Core-dump configuration paths. Module variables rather than literals so
+# that the audit predicate and the fix read the SAME locations — they had
+# already drifted once, the fix writing a drop-in the audit never looked
+# at — and so the fix is reachable from a test.
+KERNEL_LIMITS_CONF="/etc/security/limits.conf"
+KERNEL_COREDUMP_CONF="/etc/systemd/coredump.conf"
+KERNEL_COREDUMP_D="/etc/systemd/coredump.conf.d"
+KERNEL_COREDUMP_DROPIN="${KERNEL_COREDUMP_D}/99-vpssec.conf"
+
 # Recommended sysctl settings with descriptions
 # Format: parameter:recommended_value:severity:description
 declare -ga KERNEL_SECURITY_PARAMS=(
@@ -392,9 +401,9 @@ _kernel_check_core_dump() {
         issues+=("suid_dumpable=$suid_dump")
     fi
 
-    # Check /etc/security/limits.conf for core limits
-    if [[ -f /etc/security/limits.conf ]]; then
-        if ! grep -qE "^\*\s+(soft|hard)\s+core\s+0" /etc/security/limits.conf 2>/dev/null; then
+    # Check limits.conf for core limits
+    if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
+        if ! grep -qE "^\*\s+(soft|hard)\s+core\s+0" "$KERNEL_LIMITS_CONF" 2>/dev/null; then
             issues+=("no_core_limit")
         fi
     fi
@@ -405,9 +414,9 @@ _kernel_check_core_dump() {
     # old check read only the main file, so after the (auto-applied) fix the
     # audit kept flagging it forever. Look in both; only check when some config
     # is present (preserves the prior "don't flag a host without the file").
-    if [[ -f /etc/systemd/coredump.conf || -d /etc/systemd/coredump.conf.d ]]; then
+    if [[ -f "$KERNEL_COREDUMP_CONF" || -d "$KERNEL_COREDUMP_D" ]]; then
         if ! grep -rqsE "^[[:space:]]*Storage=none" \
-                /etc/systemd/coredump.conf /etc/systemd/coredump.conf.d/ 2>/dev/null; then
+                "$KERNEL_COREDUMP_CONF" "$KERNEL_COREDUMP_D/" 2>/dev/null; then
             issues+=("systemd_coredump")
         fi
     fi
@@ -1027,7 +1036,18 @@ kernel_fix() {
 # and only then does the caller apply accept_ra=0.
 _kernel_ipv6_uses_ra() {
     command -v ip >/dev/null 2>&1 || return 0
-    ip -6 route show default 2>/dev/null | grep -q 'proto ra'
+
+    # Separate "the probe failed" from "the probe says no RA route". Piping
+    # straight into grep collapsed the two: an `ip` that exists but cannot
+    # answer (netlink refused, no IPv6 support in the kernel) produced no
+    # output, grep found no 'proto ra', and the caller concluded the host was
+    # statically configured — then applied accept_ra=0 to a host that might
+    # well be on SLAAC. `ip` exiting non-zero is the same "cannot determine"
+    # case as `ip` being missing, and takes the same fail-safe answer.
+    local routes
+    routes=$(ip -6 route show default 2>/dev/null) || return 0
+
+    grep -q 'proto ra' <<<"$routes"
 }
 
 # True for the IPv6 params that, on a host configured via Router
@@ -1261,33 +1281,69 @@ _kernel_fix_core_dump() {
     _kernel_write_sysctl "fs.suid_dumpable" "0"
     _kernel_reload_sysctl_dropin
 
-    # Add limits.conf entry
-    if [[ -f /etc/security/limits.conf ]]; then
-        if ! grep -qE "^\*\s+hard\s+core\s+0" /etc/security/limits.conf; then
-            backup_file /etc/security/limits.conf
-            echo "* hard core 0" >> /etc/security/limits.conf
+    # Add limits.conf entry. PAM reads this file on every login, so append
+    # through the atomic writer rather than `>>`: a partial line left by an
+    # interrupted append is a config error on every subsequent login, and a
+    # direct `>>` to /etc also leaves no rollback trail.
+    if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
+        if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then
+            backup_file "$KERNEL_LIMITS_CONF" >/dev/null 2>&1 || true
+            local limits_content
+            limits_content=$(cat "$KERNEL_LIMITS_CONF")
+            write_file_atomic "$KERNEL_LIMITS_CONF" \
+                "${limits_content}"$'\n'"* hard core 0"$'\n'
         fi
     fi
 
-    # Configure systemd-coredump if present. Back up first so a rollback removes
-    # this drop-in when it is newly created (backup_file records it as
-    # fix-created when absent).
-    if [[ -d /etc/systemd/coredump.conf.d ]]; then
-        backup_file /etc/systemd/coredump.conf.d/99-vpssec.conf >/dev/null 2>&1 || true
-        write_file_atomic /etc/systemd/coredump.conf.d/99-vpssec.conf '[Coredump]
+    # Configure systemd-coredump if this host has it. The condition must
+    # mirror the audit's exactly. It previously required the drop-in
+    # DIRECTORY to exist while the audit flagged the finding when either the
+    # main coredump.conf or the directory existed — and Debian/Ubuntu ship
+    # coredump.conf with no coredump.conf.d, so on precisely those hosts the
+    # fix wrote nothing, claimed success, and the audit kept reporting it.
+    #
+    # Back up before writing so a rollback removes the drop-in when it is
+    # newly created (backup_file records it as fix-created when absent).
+    if [[ -f "$KERNEL_COREDUMP_CONF" || -d "$KERNEL_COREDUMP_D" ]]; then
+        mkdir -p "$KERNEL_COREDUMP_D"
+        backup_file "$KERNEL_COREDUMP_DROPIN" >/dev/null 2>&1 || true
+        write_file_atomic "$KERNEL_COREDUMP_DROPIN" '[Coredump]
 Storage=none
 ProcessSizeMax=0'
     fi
 
-    print_ok "$(i18n 'kernel.core_dump_disabled')"
-    return 0
+    # Report what was achieved, not what was attempted. The postcondition is
+    # the audit's own predicate, so this fix can no longer print a green
+    # "core dumps restricted" over a host where the next audit still flags
+    # them — which is what happened whenever `sysctl -w` failed (container,
+    # read-only /proc/sys) or the drop-in above was skipped.
+    local remaining
+    remaining=$(_kernel_check_core_dump)
+    if [[ -z "$remaining" ]]; then
+        print_ok "$(i18n 'kernel.core_dump_disabled')"
+        return 0
+    fi
+
+    print_warn "$(i18n 'kernel.core_dump_partial' "issues=$remaining")"
+    log_warn "kernel.disable_core_dump: still unrestricted after fix: $remaining"
+    return 1
 }
 
+# Run every kernel hardening step, and report failure if ANY of them failed.
+# Returning only the last step's status (the previous shape) meant a failed
+# ASLR or network pass was recorded as complete by execute_plan as long as
+# the core-dump step happened to succeed. Each step still runs even when an
+# earlier one fails — they are independent, and stopping early would leave
+# the host half-hardened with no indication of which half.
 _kernel_fix_all() {
-    _kernel_fix_aslr
-    _kernel_fix_network_params
-    _kernel_fix_kernel_params
-    _kernel_fix_core_dump
+    local rc=0
+
+    _kernel_fix_aslr || rc=1
+    _kernel_fix_network_params || rc=1
+    _kernel_fix_kernel_params || rc=1
+    _kernel_fix_core_dump || rc=1
+
+    return "$rc"
 }
 
 # Helper: Write sysctl setting to persistent config.
