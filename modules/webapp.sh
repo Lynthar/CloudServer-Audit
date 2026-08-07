@@ -1441,12 +1441,27 @@ _webapp_fix_nginx_server_tokens() {
     local bak
     bak=$(backup_file "$NGINX_CONF")
 
-    # Add to http block
-    if grep -q "^http\s*{" "$NGINX_CONF" 2>/dev/null; then
-        sed -i '/^http\s*{/a\    server_tokens off;' "$NGINX_CONF"
+    local updated
+    if grep -qE '^[^#]*server_tokens[[:space:]]' "$NGINX_CONF" 2>/dev/null; then
+        # An ACTIVE server_tokens directive already exists with some other
+        # value — typically an explicit `server_tokens on;`. Rewrite it in
+        # place. Appending a second one instead puts two server_tokens in the
+        # same http{} context, which nginx rejects as a duplicate directive:
+        # `nginx -t` then fails, the block below restores the backup, and the
+        # fix reports failure. So the hosts that had most explicitly opted
+        # into leaking their version were the exact hosts this fix could
+        # never repair.
+        updated=$(sed -E 's/^([^#]*)server_tokens[[:space:]]+[^;]*;/\1server_tokens off;/' "$NGINX_CONF")
+    elif grep -qE '^http[[:space:]]*\{' "$NGINX_CONF" 2>/dev/null; then
+        updated=$(sed '/^http[[:space:]]*{/a\    server_tokens off;' "$NGINX_CONF")
     else
-        # Try adding after first opening brace in http section
-        sed -i '/http\s*{/a\    server_tokens off;' "$NGINX_CONF"
+        # Fall back to the first http block opened at any indentation.
+        updated=$(sed '/http[[:space:]]*{/a\    server_tokens off;' "$NGINX_CONF")
+    fi
+
+    if ! write_file_atomic "$NGINX_CONF" "$updated"; then
+        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        return 1
     fi
 
     # Test and reload. On failure, restore the backup before returning: this
@@ -1477,11 +1492,17 @@ _webapp_fix_nginx_security_headers() {
     # prior version, or remove the one we write, if validation fails below.
     # This drop-in lives in conf.d which nginx auto-includes, so a broken file
     # left behind would fail the next reload — and this fix is auto-applied.
+    # backup_file is called unconditionally: for an existing file it snapshots
+    # the prior version, and for an absent one it records the path as
+    # fix-created in the session manifest, which is the only thing that lets a
+    # plan rollback delete it. Guarding the call on the file already existing
+    # meant a first run left an active conf.d drop-in that no rollback could
+    # remove — the operator undid the plan and vpssec's headers stayed on the
+    # wire. pre_existed is tracked separately because the validation failure
+    # path below has to choose between restoring and removing.
     local pre_existed="false" bak=""
-    if [[ -f "$headers_conf" ]]; then
-        pre_existed="true"
-        bak=$(backup_file "$headers_conf")
-    fi
+    [[ -f "$headers_conf" ]] && pre_existed="true"
+    bak=$(backup_file "$headers_conf")
 
     local content
     content=$(cat << 'EOF'
@@ -1494,8 +1515,13 @@ add_header X-Frame-Options "SAMEORIGIN" always;
 # Prevent MIME type sniffing
 add_header X-Content-Type-Options "nosniff" always;
 
-# XSS protection (legacy, but still useful)
-add_header X-XSS-Protection "1; mode=block" always;
+# XSS protection: explicitly DISABLED, which is the current OWASP advice.
+# The XSS Auditor this header enables is removed from every current browser,
+# and in the ones that still honour it "1; mode=block" has been shown to
+# introduce XSS vulnerabilities into otherwise safe pages. Sending 0 turns
+# the filter off rather than leaving it to the browser default. Real
+# protection comes from Content-Security-Policy below.
+add_header X-XSS-Protection "0" always;
 
 # Referrer policy
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -1535,9 +1561,16 @@ _webapp_fix_nginx_hsts() {
 
     local hsts_conf="$NGINX_CONFD/hsts.conf"
 
-    [[ -f "$hsts_conf" ]] && backup_file "$hsts_conf"
+    # Unconditional, as in the headers fix above: an absent path has to be
+    # recorded as fix-created or a rollback cannot delete this file.
+    backup_file "$hsts_conf" >/dev/null 2>&1 || true
 
-    cat > "$hsts_conf" << 'EOF'
+    # Written through the atomic writer rather than `cat >`, which is what
+    # every other /etc write in this project uses. This lands in conf.d,
+    # which nginx auto-includes, so a truncated file from an interrupted
+    # redirect is config nginx has to parse on its next reload.
+    local content
+    content=$(cat << 'EOF'
 # HSTS - added by vpssec
 # Only enable for HTTPS sites!
 # Uncomment in your SSL server blocks:
@@ -1547,6 +1580,12 @@ _webapp_fix_nginx_hsts() {
 # Warning: Once enabled, browsers will refuse HTTP connections
 # Make sure HTTPS is working properly before enabling
 EOF
+)
+
+    if ! write_file_atomic "$hsts_conf" "$content"; then
+        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        return 1
+    fi
 
     print_ok "$(i18n 'webapp.hsts_template_created' 2>/dev/null || echo 'HSTS template created'): $hsts_conf"
     print_warn "$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')"
@@ -1573,7 +1612,9 @@ _webapp_fix_nginx_ssl() {
     fi
     local ssl_conf="$NGINX_SNIPPETS/ssl-security.conf"
 
-    [[ -f "$ssl_conf" ]] && backup_file "$ssl_conf" >/dev/null 2>&1 || true
+    # Unconditional: see _webapp_fix_nginx_security_headers. A snippet this
+    # fix created must be deletable by a rollback.
+    backup_file "$ssl_conf" >/dev/null 2>&1 || true
 
     local content
     content=$(cat << 'EOF'
@@ -1644,7 +1685,7 @@ _webapp_fix_apache_security() {
     echo "  # Security headers"
     echo "  Header always set X-Frame-Options \"SAMEORIGIN\""
     echo "  Header always set X-Content-Type-Options \"nosniff\""
-    echo "  Header always set X-XSS-Protection \"1; mode=block\""
+    echo "  Header always set X-XSS-Protection \"0\"   # OWASP: disable the legacy XSS Auditor"
     echo ""
     echo "$(i18n 'webapp.enable_headers_mod' 2>/dev/null || echo 'Enable headers module'):"
     echo "  a2enmod headers"

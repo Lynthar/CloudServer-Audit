@@ -18,16 +18,23 @@ setup() {
     _vpssec_load
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/nginx.sh"
-    # Steer the module at scratch dir. nginx -T is unavailable on the
-    # test host, so the fallback path is what runs.
+    # Steer the module at a scratch dir.
     NGINX_CONF_DIR="$BATS_TEST_TMPDIR/nginx"
     NGINX_SITES_AVAILABLE="$NGINX_CONF_DIR/sites-available"
     NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
     mkdir -p "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
 
-    # Hide nginx from PATH so the fallback branch runs deterministically.
-    export PATH="$BATS_TEST_TMPDIR/empty_bin:$PATH"
-    mkdir -p "$BATS_TEST_TMPDIR/empty_bin"
+    # Force the fallback branch: _nginx_catchall_state takes it when
+    # `nginx -T` exits non-zero or prints nothing.
+    #
+    # This used to prepend an EMPTY directory to PATH and claim it hid
+    # nginx. It does not — `nginx` still resolves further down PATH — so on
+    # any host that actually has nginx these tests silently stopped
+    # exercising the fallback and read the host's real configuration
+    # instead. They passed only because the test host happened to have no
+    # nginx installed, which is not a property CI guarantees. A stub of the
+    # same name is what actually shadows the binary.
+    _vpssec_stub nginx 1
 }
 
 @test "catchall fallback: only port 80 with return 444 → 80only" {
