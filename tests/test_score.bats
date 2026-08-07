@@ -15,6 +15,16 @@
 #
 # These tests pin the formula end-to-end via fabricated checks.json
 # files. Drift here would silently misreport host security posture.
+#
+# The check ids in the fixtures below must be ids some module ACTUALLY
+# emits, and their CHECK_SCORE_CATEGORY entry is what puts them in or out
+# of the denominator. These fixtures used to name `fail2ban.installed`,
+# which no module has ever emitted — its only reason to exist in
+# security_levels.sh was to keep these tests arithmetically happy, so the
+# map carried a stale entry and the tests pinned behaviour for a check
+# that does not exist. Replaced with fail2ban.service_inactive: real,
+# emitted, and `recommended` like the id it stands in for, so the
+# expected scores are unchanged.
 
 load helpers
 
@@ -86,7 +96,7 @@ _write_checks() {
         "ssh.password_auth_disabled|low|passed" \
         "ssh.root_login_disabled|low|passed" \
         "ufw.enabled|low|passed" \
-        "fail2ban.installed|medium|failed"
+        "fail2ban.service_inactive|medium|failed"
     run calculate_score
     [ "$output" = "74" ]
 }
@@ -125,7 +135,7 @@ _write_checks() {
     local fails=(
         "ssh.password_auth_enabled|high|failed"
         "users.uid0_found|high|failed"
-        "fail2ban.installed|medium|failed"
+        "fail2ban.service_inactive|medium|failed"
     )
     local passes=(
         "ssh.root_login_disabled|low|passed"
@@ -159,7 +169,7 @@ _write_checks() {
     #     filter.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
-        "fail2ban.installed|medium|failed" \
+        "fail2ban.service_inactive|medium|failed" \
         "ssh.x11_forwarding_enabled|low|failed" \
         "ssh.root_login_disabled|low|passed"
 
@@ -185,7 +195,7 @@ _write_checks() {
     # on a nearly-clean host.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
-        "fail2ban.installed|medium|failed" \
+        "fail2ban.service_inactive|medium|failed" \
         "ssh.x11_forwarding_enabled|low|failed" \
         "ssh.root_login_disabled|low|passed"
 

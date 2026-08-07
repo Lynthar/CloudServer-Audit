@@ -325,9 +325,6 @@ timezone_fix() {
         timezone.enable_ntp)
             _timezone_fix_enable_ntp
             ;;
-        timezone.sync_time)
-            _timezone_fix_sync_time
-            ;;
         timezone.set_rtc_utc)
             _timezone_fix_rtc_utc
             ;;
@@ -468,37 +465,13 @@ _timezone_fix_enable_ntp() {
     return 1
 }
 
-# Fix: Force time sync
-_timezone_fix_sync_time() {
-    print_info "$(i18n 'timezone.syncing_time')"
-
-    # Try chrony / chronyd (see _timezone_check_ntp for the unit-name
-    # rationale: Debian uses chrony.service, RHEL uses chronyd.service).
-    if command -v chronyc &>/dev/null && \
-        ( systemctl is-active chrony &>/dev/null || \
-          systemctl is-active chronyd &>/dev/null ); then
-        chronyc makestep &>/dev/null
-        print_ok "$(i18n 'timezone.time_synced')"
-        return 0
-    fi
-
-    # Try systemd-timesyncd restart
-    if systemctl restart systemd-timesyncd &>/dev/null; then
-        sleep 2
-        print_ok "$(i18n 'timezone.time_synced')"
-        return 0
-    fi
-
-    # Try ntpdate as last resort
-    if command -v ntpdate &>/dev/null; then
-        ntpdate -u pool.ntp.org &>/dev/null
-        print_ok "$(i18n 'timezone.time_synced')"
-        return 0
-    fi
-
-    print_error "$(i18n 'timezone.sync_failed')"
-    return 1
-}
+# NOTE: a `_timezone_fix_sync_time` used to live here, wired to a
+# `timezone.sync_time` fix_id that no check ever emitted. It was therefore
+# unreachable through the engine while still being listed by
+# `vpssec help timezone` as an auto-applied fix, which is worse than absent:
+# it advertised something the user could never select. The actionable case
+# (NTP disabled or not synchronised) is handled by timezone.enable_ntp, whose
+# check does emit its fix_id.
 
 # Fix: Set RTC to UTC
 _timezone_fix_rtc_utc() {

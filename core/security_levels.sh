@@ -84,14 +84,21 @@ declare -gA FIX_SAFE=(
     ["cloudflared.setup_service"]="true"
     ["backup.generate_templates"]="true"
     ["alerts.setup_config"]="true"
-    ["alerts.generate_templates"]="true"
+    # No alerts.generate_templates entry: no check ever emits it as a fix_id,
+    # so it could never be selected — it only showed up in `vpssec help alerts`
+    # as an auto-applied fix the user could never actually get. Generating the
+    # monitor templates is a step inside alerts.setup_config, not a fix of its
+    # own.
 
     # Timezone - safe configurations. set_timezone is NOT here: it prompts an
     # interactive menu, and it is offered on PASSING checks as well (so a guide
     # user can change the timezone deliberately). Auto-applying it would stop a
     # select-all run on a host that has nothing wrong with its timezone.
     ["timezone.enable_ntp"]="true"
-    ["timezone.sync_time"]="true"
+    # No timezone.sync_time entry: no check emitted it, so the fix was
+    # unreachable through the engine while still being advertised by
+    # `vpssec help timezone`. The actionable case (NTP off / not synced) is
+    # covered by timezone.enable_ntp.
     ["timezone.set_rtc_utc"]="true"
     ["timezone.set_locale"]="true"
 
@@ -367,7 +374,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
 
     # === Fail2ban Module - recommended ===
     ["fail2ban.not_installed"]="recommended"
-    ["fail2ban.installed"]="recommended"
+    # No fail2ban.installed entry: the module never emits a check with that
+    # id. Not being installed is reported as fail2ban.not_installed, and the
+    # installed case simply proceeds to the service/jail checks. The entry
+    # that used to sit here was the only stale key in this map.
     ["fail2ban.service_active"]="recommended"
     ["fail2ban.service_inactive"]="recommended"
     ["fail2ban.service_not_enabled"]="recommended"

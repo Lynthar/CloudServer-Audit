@@ -163,9 +163,10 @@ alerts_fix() {
         alerts.setup_config)
             _alerts_fix_setup_config
             ;;
-        alerts.generate_templates)
-            _alerts_fix_generate_templates
-            ;;
+        # No alerts.generate_templates case: nothing emits that fix_id, so the
+        # branch was unreachable. _alerts_fix_generate_templates is still very
+        # much alive — _alerts_fix_setup_config calls it directly as its last
+        # step.
         *)
             log_warn "Alerts fix not implemented: $fix_id"
             return 1

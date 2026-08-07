@@ -22,6 +22,12 @@
 # Configuration
 # ==============================================================================
 
+# The shadow database. A named variable rather than a literal for the same
+# reason logging.sh has LOGROTATE_CONF and timezone.sh has TZ_CONF: it is the
+# seam that lets a test point these readers at a fixture instead of the host's
+# real /etc/shadow. Every reader in this module goes through it.
+USERS_SHADOW_FILE="/etc/shadow"
+
 # System users that should have shells (whitelist)
 declare -ga ALLOWED_SHELL_USERS=(
     "root"
@@ -154,7 +160,7 @@ _find_empty_password_users() {
     local users=()
 
     # Check /etc/shadow for empty password field
-    if [[ -r /etc/shadow ]]; then
+    if [[ -r "$USERS_SHADOW_FILE" ]]; then
         while IFS=: read -r user pass rest; do
             # Only flag truly empty password hashes. `!` / `!!` / `*`
             # indicate a locked account (cannot log in), which is safe;
@@ -167,7 +173,7 @@ _find_empty_password_users() {
                     users+=("$user")
                 fi
             fi
-        done < /etc/shadow
+        done < "$USERS_SHADOW_FILE"
     fi
 
     # Also catch INLINE empty passwords in passwd/NSS. A truly empty second
@@ -452,24 +458,83 @@ _nopasswd_is_cloudinit_only() {
 }
 
 # Get recently created users
+# Emits "user|uid|date|home|evidence" for accounts that look recently made.
+#
+# POSIX stores no account creation timestamp, so every signal is a proxy.
+# They are tried in order of accuracy, and the one that fired is reported so
+# the operator can weigh it:
+#
+#   home-created   home directory BIRTH time (stat %W). The real answer when
+#                  the filesystem records it (ext4 with 256-byte inodes, xfs,
+#                  btrfs); %W reports 0 where it does not.
+#   home-modified  home directory mtime. This used to be the ONLY signal, and
+#                  on its own it is wrong in both directions: a first login
+#                  writes ~/.cache and bumps mtime, so a years-old account
+#                  reads as brand new.
+#   password-set   /etc/shadow field 3 (sp_lstchg, days since epoch), used
+#                  ONLY for accounts with no home directory at all. That is
+#                  exactly the `useradd -M` shape — the backdoor account this
+#                  check exists to surface — which the home-directory signals
+#                  cannot see, so it was silently missed. It is deliberately
+#                  NOT consulted when a home directory exists: sp_lstchg also
+#                  moves on every password change, and an old account whose
+#                  password was rotated last week is not a new account.
 _find_recent_users() {
     local recent=()
-    local cutoff_date=$(date -d "$RECENT_USER_DAYS days ago" +%s 2>/dev/null || date -v-${RECENT_USER_DAYS}d +%s 2>/dev/null)
+    local cutoff_date
+    cutoff_date=$(date -d "$RECENT_USER_DAYS days ago" +%s 2>/dev/null || date -v-"${RECENT_USER_DAYS}"d +%s 2>/dev/null)
+    [[ "$cutoff_date" =~ ^[0-9]+$ ]] || return 0
+
+    # One pass over shadow instead of a grep per account.
+    local -A shadow_lstchg=()
+    if [[ -r "$USERS_SHADOW_FILE" ]]; then
+        local s_user s_lstchg
+        while IFS=: read -r s_user _ s_lstchg _; do
+            # 0 means "must change at next login", not a date.
+            [[ "$s_lstchg" =~ ^[0-9]+$ ]] && (( s_lstchg > 0 )) && \
+                shadow_lstchg["$s_user"]="$s_lstchg"
+        done < "$USERS_SHADOW_FILE"
+    fi
 
     while IFS=: read -r user pass uid gid gecos home shell; do
         [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip system users
         [[ "$uid" -lt 1000 ]] && continue
+        # "UID >= 1000" alone is not enough once the shadow fallback exists.
+        # `nobody` is 65534, has no home directory, and carries a shadow entry
+        # stamped when the image was built — so it looked like a freshly
+        # created account on every container and cloud image. RHEL's
+        # nfsnobody is the same id under a different name, hence the numeric
+        # guard alongside the module's own system-account list.
+        (( uid >= 65534 )) && continue
+        _is_system_account "$user" && continue
 
-        # Check home directory creation time or passwd modification
-        local created=""
+        local epoch="" evidence=""
         if [[ -d "$home" ]]; then
-            local home_stat=$(stat -c %Y "$home" 2>/dev/null || stat -f %m "$home" 2>/dev/null)
-            if [[ -n "$home_stat" && "$home_stat" -gt "$cutoff_date" ]]; then
-                created=$(date -d "@$home_stat" "+%Y-%m-%d" 2>/dev/null || date -r "$home_stat" "+%Y-%m-%d" 2>/dev/null)
-                recent+=("$user|$uid|$created|$home")
+            local btime
+            btime=$(stat -c %W "$home" 2>/dev/null) || btime=""
+            if [[ "$btime" =~ ^[0-9]+$ ]] && (( btime > 0 )); then
+                epoch="$btime"
+                evidence="home-created"
+            else
+                local mtime
+                mtime=$(stat -c %Y "$home" 2>/dev/null || stat -f %m "$home" 2>/dev/null) || mtime=""
+                if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+                    epoch="$mtime"
+                    evidence="home-modified"
+                fi
             fi
+        elif [[ -n "${shadow_lstchg[$user]:-}" ]]; then
+            epoch=$(( shadow_lstchg[$user] * 86400 ))
+            evidence="password-set"
         fi
+
+        [[ -n "$epoch" ]] || continue
+        (( epoch > cutoff_date )) || continue
+
+        local created
+        created=$(date -d "@$epoch" "+%Y-%m-%d" 2>/dev/null || date -r "$epoch" "+%Y-%m-%d" 2>/dev/null)
+        recent+=("$user|$uid|$created|$home|$evidence")
     done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${recent[@]}"
@@ -768,7 +833,7 @@ _find_duplicate_uids() {
 _check_hash_method() {
     local issues=()
 
-    if [[ -r /etc/shadow ]]; then
+    if [[ -r "$USERS_SHADOW_FILE" ]]; then
         local weak="" user hash _rest
         while IFS=: read -r user hash _rest; do
             case "$hash" in
@@ -784,7 +849,7 @@ _check_hash_method() {
                     fi
                     ;;
             esac
-        done < /etc/shadow
+        done < "$USERS_SHADOW_FILE"
         [[ -n "$weak" ]] && issues+=("Weak hashes in /etc/shadow: ${weak% }")
     fi
 
@@ -1068,9 +1133,12 @@ users_audit() {
 
     if [[ -n "$recent" && "$recent_count" -gt 0 ]]; then
         local recent_list=""
-        while IFS='|' read -r user uid created home; do
+        while IFS='|' read -r user uid created home evidence; do
             [[ -z "$user" ]] && continue
-            recent_list+="$user ($created), "
+            # Carry the evidence token: "home-modified" on a busy box is far
+            # weaker than "home-created", and an operator triaging the list
+            # needs to know which one fired.
+            recent_list+="$user ($created, $evidence), "
         done <<< "$recent"
         recent_list="${recent_list%, }"
 
@@ -1474,11 +1542,12 @@ users_fix() {
             echo ""
 
             local recent=$(_find_recent_users)
-            while IFS='|' read -r user uid created home; do
+            while IFS='|' read -r user uid created home evidence; do
                 [[ -z "$user" ]] && continue
                 echo "  • $user"
                 echo "    UID: $uid"
                 echo "    $(i18n 'users.created' 2>/dev/null || echo 'Created'): $created"
+                echo "    $(i18n 'users.recent_evidence' 2>/dev/null || echo 'Evidence'): $evidence"
                 echo "    Home: $home"
                 echo "    $(i18n 'users.check_cmd' 2>/dev/null || echo 'Check'): id $user && chage -l $user"
                 echo ""
@@ -1518,14 +1587,25 @@ users_fix() {
             echo ""
             echo "$(i18n 'users.login_defs_location' 2>/dev/null || echo 'Configuration file'): /etc/login.defs"
             echo ""
+            # Values come from PASSWORD_POLICY, not from literals repeated
+            # here. The table is the single place these numbers are declared;
+            # printing them from anywhere else is how the advice and the
+            # policy drift apart.
             echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
-            echo "  PASS_MAX_DAYS   90    # Password expires after 90 days"
-            echo "  PASS_MIN_DAYS   1     # Minimum 1 day between changes"
-            echo "  PASS_MIN_LEN    8     # Minimum 8 characters (use pam for better)"
-            echo "  PASS_WARN_AGE   7     # Warn 7 days before expiry"
+            printf '  PASS_MAX_DAYS   %-5s # Password expires after %s days\n' \
+                "${PASSWORD_POLICY[PASS_MAX_DAYS]}" "${PASSWORD_POLICY[PASS_MAX_DAYS]}"
+            printf '  PASS_MIN_DAYS   %-5s # Minimum %s day(s) between changes\n' \
+                "${PASSWORD_POLICY[PASS_MIN_DAYS]}" "${PASSWORD_POLICY[PASS_MIN_DAYS]}"
+            printf '  PASS_MIN_LEN    %-5s # Minimum %s characters (use pam for better)\n' \
+                "${PASSWORD_POLICY[PASS_MIN_LEN]}" "${PASSWORD_POLICY[PASS_MIN_LEN]}"
+            printf '  PASS_WARN_AGE   %-5s # Warn %s days before expiry\n' \
+                "${PASSWORD_POLICY[PASS_WARN_AGE]}" "${PASSWORD_POLICY[PASS_WARN_AGE]}"
             echo ""
             echo "$(i18n 'users.apply_to_existing' 2>/dev/null || echo 'To apply to existing users'):"
-            echo "  chage -M 90 -m 1 -W 7 <username>"
+            printf '  chage -M %s -m %s -W %s <username>\n' \
+                "${PASSWORD_POLICY[PASS_MAX_DAYS]}" \
+                "${PASSWORD_POLICY[PASS_MIN_DAYS]}" \
+                "${PASSWORD_POLICY[PASS_WARN_AGE]}"
             echo ""
             return 1
             ;;
@@ -1537,13 +1617,16 @@ users_fix() {
             echo ""
             echo "$(i18n 'users.install_pwquality' 2>/dev/null || echo 'Install'): apt install libpam-pwquality"
             echo ""
+            # Same rule as the login.defs advice above: the numbers live in
+            # PWQUALITY_POLICY, and nowhere else.
             echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
-            echo "  minlen = 12       # Minimum password length"
-            echo "  dcredit = -1      # Require at least 1 digit"
-            echo "  ucredit = -1      # Require at least 1 uppercase"
-            echo "  lcredit = -1      # Require at least 1 lowercase"
-            echo "  ocredit = -1      # Require at least 1 special char"
-            echo "  minclass = 3      # Require 3 character classes"
+            printf '  minlen = %-8s # Minimum password length\n'        "${PWQUALITY_POLICY[minlen]}"
+            printf '  dcredit = %-7s # Require at least 1 digit\n'      "${PWQUALITY_POLICY[dcredit]}"
+            printf '  ucredit = %-7s # Require at least 1 uppercase\n'  "${PWQUALITY_POLICY[ucredit]}"
+            printf '  lcredit = %-7s # Require at least 1 lowercase\n'  "${PWQUALITY_POLICY[lcredit]}"
+            printf '  ocredit = %-7s # Require at least 1 special char\n' "${PWQUALITY_POLICY[ocredit]}"
+            printf '  minclass = %-6s # Require %s character classes\n' \
+                "${PWQUALITY_POLICY[minclass]}" "${PWQUALITY_POLICY[minclass]}"
             echo ""
             return 1
             ;;

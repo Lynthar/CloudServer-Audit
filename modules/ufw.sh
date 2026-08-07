@@ -356,8 +356,9 @@ ufw_audit() {
         # "UFW not installed" is only actionable on Debian/Ubuntu, where
         # UFW is the standard front-end. On RHEL/Arch the active firewall
         # was already probed above; a "none" result has emitted the
-        # high-severity no_firewall check, so recommending UFW here would
-        # be both redundant and wrong for those distros.
+        # ufw.no_firewall check (medium — see the severity note there), so
+        # recommending UFW here would be both redundant and wrong for
+        # those distros.
         if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
             local check=$(create_check_json \
                 "ufw.not_installed" \

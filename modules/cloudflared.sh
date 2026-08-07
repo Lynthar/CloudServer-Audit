@@ -91,23 +91,45 @@ _cloudflared_tunnel_running() {
     pgrep -f "cloudflared.*tunnel" &>/dev/null
 }
 
+# True when PATTERN occurs on a line that is not commented out.
+#
+# YAML comments start with '#', and every check below was matching inside
+# them. The damage ran both ways. False positive: this module's own
+# generated config.yml.example carries
+#     #     noTLSVerify: true  # Only for internal services
+# inside a commented "private network access" example, and its header tells
+# the user to copy the file to /etc/cloudflared/config.yml — so anyone who
+# followed the tool's own template got flagged for a setting they never
+# enabled. False negative: the two `! grep -q` checks were satisfied by a
+# commented-out catch-all rule or originRequest block, silently passing a
+# config that has neither.
+#
+# `^[^#]*` still allows a trailing comment on a live line
+# (`noTLSVerify: true  # why`), which is the common YAML idiom.
+_cloudflared_yaml_has_active() {
+    local config="$1" pattern="$2"
+    grep -qE "^[^#]*${pattern}" "$config" 2>/dev/null
+}
+
 _cloudflared_check_ingress_security() {
     local config="$1"
     local issues=()
 
     if [[ -f "$config" ]]; then
         # Check for catch-all rule
-        if ! grep -q "service: http_status:404" "$config" 2>/dev/null; then
+        if ! _cloudflared_yaml_has_active "$config" 'service:[[:space:]]*http_status:404'; then
             issues+=("no_catchall")
         fi
 
-        # Check for noTLSVerify
-        if grep -q "noTLSVerify: true" "$config" 2>/dev/null; then
+        # Check for noTLSVerify. The whitespace class also catches the
+        # space-less `noTLSVerify:true`, which is valid YAML and just as
+        # unsafe as the spaced form the literal match required.
+        if _cloudflared_yaml_has_active "$config" 'noTLSVerify:[[:space:]]*true'; then
             issues+=("notls_verify")
         fi
 
         # Check originRequest settings
-        if ! grep -q "originRequest:" "$config" 2>/dev/null; then
+        if ! _cloudflared_yaml_has_active "$config" 'originRequest:'; then
             issues+=("no_origin_request")
         fi
     fi
