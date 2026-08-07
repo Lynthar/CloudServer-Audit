@@ -27,33 +27,47 @@ timezone_audit() {
     _timezone_check_locale
 }
 
+# Resolve the effective system timezone. Echoes "<tz>|<source>"; <tz> is empty
+# when nothing is configured. Kept as a shared getter because both the audit
+# (which logs the source) and _timezone_fix_set_timezone (which only needs to
+# know whether a timezone exists at all) ask the same question — a second copy
+# of this fallback chain is exactly the kind of duplication that lets the fix
+# and the audit drift apart.
+_timezone_current() {
+    local tz=""
+    local src=""
+
+    # Try to get timezone from timedatectl
+    if command -v timedatectl &>/dev/null; then
+        tz=$(timedatectl show --property=Timezone --value 2>/dev/null)
+        src="timedatectl"
+    fi
+
+    # Fallback to /etc/timezone
+    if [[ -z "$tz" ]] && [[ -f /etc/timezone ]]; then
+        tz=$(tr -d '[:space:]' < /etc/timezone 2>/dev/null)
+        src="/etc/timezone"
+    fi
+
+    # Fallback to TZ environment or localtime symlink
+    if [[ -z "$tz" ]]; then
+        if [[ -L /etc/localtime ]]; then
+            tz=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
+            src="/etc/localtime"
+        elif [[ -n "${TZ:-}" ]]; then
+            tz="${TZ:-}"
+            src="TZ env"
+        fi
+    fi
+
+    printf '%s|%s\n' "$tz" "$src"
+}
+
 # Check current timezone setting
 _timezone_check_current() {
     local current_tz=""
     local tz_source=""
-
-    # Try to get timezone from timedatectl
-    if command -v timedatectl &>/dev/null; then
-        current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null)
-        tz_source="timedatectl"
-    fi
-
-    # Fallback to /etc/timezone
-    if [[ -z "$current_tz" ]] && [[ -f /etc/timezone ]]; then
-        current_tz=$(cat /etc/timezone 2>/dev/null | tr -d '[:space:]')
-        tz_source="/etc/timezone"
-    fi
-
-    # Fallback to TZ environment or localtime symlink
-    if [[ -z "$current_tz" ]]; then
-        if [[ -L /etc/localtime ]]; then
-            current_tz=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
-            tz_source="/etc/localtime"
-        elif [[ -n "${TZ:-}" ]]; then
-            current_tz="${TZ:-}"
-            tz_source="TZ env"
-        fi
-    fi
+    IFS='|' read -r current_tz tz_source <<< "$(_timezone_current)"
 
     if [[ -z "$current_tz" ]]; then
         local check=$(create_check_json \
@@ -322,6 +336,25 @@ timezone_fix() {
 # Fix: Set timezone interactively
 _timezone_fix_set_timezone() {
     print_info "$(i18n 'timezone.setting_timezone')"
+
+    # This fix is deliberately attached to the PASSED checks too
+    # (timezone.using_utc / timezone.configured) so a guide user can opt to
+    # change the timezone — which also makes it reachable on a host whose
+    # timezone is already correct. The menu below cannot be answered under
+    # --yes / --json-only / no readable /dev/tty, so the fix used to return 1
+    # there and the engine recorded a failure for something the operator never
+    # asked for. Leave an already-configured host alone and report success;
+    # only a host with NO timezone at all genuinely needs a human here.
+    local current_tz=""
+    IFS='|' read -r current_tz _ <<< "$(_timezone_current)"
+    if _noninteractive || ! _tty_readable; then
+        if [[ -n "$current_tz" ]]; then
+            print_ok "$(i18n 'timezone.already_configured' "tz=$current_tz")"
+            return 0
+        fi
+        print_warn "$(i18n 'timezone.needs_interactive')"
+        return 1
+    fi
 
     # Common timezones for quick selection
     local common_timezones=(

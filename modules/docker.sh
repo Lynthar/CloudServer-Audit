@@ -115,11 +115,21 @@ _docker_check_live_restore() {
     # common "I set X in daemon.json but a systemd ExecStart override
     # re-specified it" failure mode (the Docker analogue of the
     # sshd_config.d drop-in bug).
-    if docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null | grep -qi '^true$'; then
-        return 0
+    # When the daemon ANSWERS, its answer is final — including "false".
+    # The previous form piped straight into `grep -qi '^true$'` and fell
+    # through to the daemon.json fallback on any non-true result, so a
+    # running daemon reporting false was overruled by a daemon.json that
+    # merely said true. That is the exact failure mode the paragraph above
+    # says this check exists to catch, and it also made the fix's own
+    # postcondition inert: writing daemon.json flipped the check green
+    # without the daemon ever picking the setting up.
+    local live=""
+    if live=$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null); then
+        [[ "${live,,}" == "true" ]]
+        return
     fi
-    # Fallback when the daemon is not running: at least surface the
-    # user's stated intent in daemon.json.
+    # Daemon unreachable (stopped, or docker not installed at all): fall back
+    # to the user's stated intent in daemon.json.
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
         jq -e '.["live-restore"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null
     else
@@ -774,10 +784,10 @@ docker_fix() {
             _docker_fix_generate_proxy_template
             ;;
         docker.enable_live_restore)
-            _docker_fix_enable_daemon_setting "live-restore" true
+            _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
             ;;
         docker.enable_no_new_privileges)
-            _docker_fix_enable_daemon_setting "no-new-privileges" true
+            _docker_fix_enable_daemon_setting "no-new-privileges" true _docker_check_no_new_privileges
             ;;
         *)
             log_warn "Docker fix not implemented: $fix_id"
@@ -893,6 +903,10 @@ EOF
 _docker_fix_enable_daemon_setting() {
     local setting="$1"
     local value="$2"
+    # Name of the audit predicate for this setting. Used as a postcondition
+    # below so the fix reports what the next audit will see, not merely that
+    # the file write succeeded. Optional: an empty value skips the assertion.
+    local verify_fn="${3:-}"
     local tmp_file="${DOCKER_DAEMON_JSON}.tmp"
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
@@ -951,6 +965,20 @@ _docker_fix_enable_daemon_setting() {
         fi
     else
         print_warn "$(i18n 'docker.restart_skipped')"
+    fi
+
+    # Postcondition: assert the setting is actually in effect, using the same
+    # predicate the audit uses. This matters because the two settings differ in
+    # where they become visible: _docker_check_live_restore asks `docker info`
+    # (the RUNNING daemon), so declining the restart above leaves it inactive,
+    # while _docker_check_no_new_privileges also accepts daemon.json alone.
+    # Returning 0 in both cases made state_mark_fix_complete record a
+    # live-restore fix that the very next audit re-flags as failed.
+    if [[ -n "$verify_fn" ]] && declare -f "$verify_fn" >/dev/null 2>&1; then
+        if ! "$verify_fn"; then
+            print_warn "$(i18n 'docker.not_effective')"
+            return 1
+        fi
     fi
 
     return 0

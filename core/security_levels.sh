@@ -72,8 +72,11 @@ declare -gA FIX_SAFE=(
     ["ufw.install"]="true"
     ["ufw.allow_ssh"]="true"
 
-    # Docker - safe daemon settings
-    ["docker.enable_live_restore"]="true"
+    # Docker - enable_live_restore is NOT here: it goes through the same
+    # writer as enable_no_new_privileges and needs a `systemctl restart docker`
+    # to take effect, which briefly pauses every running container. A fix that
+    # restarts a service is not "auto-apply, no questions asked" — it is
+    # CONFIRM-class.
 
     # Template generation only
     ["docker.generate_proxy_template"]="true"
@@ -83,8 +86,10 @@ declare -gA FIX_SAFE=(
     ["alerts.setup_config"]="true"
     ["alerts.generate_templates"]="true"
 
-    # Timezone - safe configurations
-    ["timezone.set_timezone"]="true"
+    # Timezone - safe configurations. set_timezone is NOT here: it prompts an
+    # interactive menu, and it is offered on PASSING checks as well (so a guide
+    # user can change the timezone deliberately). Auto-applying it would stop a
+    # select-all run on a host that has nothing wrong with its timezone.
     ["timezone.enable_ntp"]="true"
     ["timezone.sync_time"]="true"
     ["timezone.set_rtc_utc"]="true"
@@ -130,6 +135,11 @@ declare -gA FIX_CONFIRM=(
 
     # Requires service restart
     ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"
+    ["docker.enable_live_restore"]="Requires a Docker daemon restart, which briefly pauses every running container"
+
+    # Interactive: prompts for a timezone, and is offered on hosts whose
+    # timezone is already correct so the operator can change it on purpose.
+    ["timezone.set_timezone"]="Prompts for a new system timezone; log timestamps and cron schedules shift with it"
 
     # Modifies web server config
     ["nginx.add_catchall"]="Modifies Nginx configuration"
@@ -278,6 +288,7 @@ declare -gA FIX_SELF_CONFIRMED=(
     ["ssh.disable_root_login"]="true"           # confirm_critical after admin-user precondition (modules/ssh.sh)
     ["ufw.enable"]="true"                        # confirm_critical after showing current rules (modules/ufw.sh)
     ["docker.enable_no_new_privileges"]="true"  # confirm_critical before daemon restart (modules/docker.sh)
+    ["docker.enable_live_restore"]="true"       # same writer, same confirm_critical (modules/docker.sh)
 )
 
 # ==============================================================================

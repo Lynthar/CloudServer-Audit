@@ -445,20 +445,46 @@ MaxRetentionSec=1month'
 _logging_fix_setup_logrotate() {
     print_info "$(i18n 'logging.configuring_logrotate')"
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null
+    # Propagate the install failure. The previous version discarded apt's exit
+    # status and then returned 0 unconditionally, so on a host with no network
+    # (or a held apt lock) the fix printed "configured", the engine recorded it
+    # via state_mark_fix_complete, and the next audit re-flagged logrotate as
+    # missing — a fix that permanently disagrees with its own audit.
+    if ! check_command logrotate; then
+        # Refresh the index first (fail2ban/ufw's install fixes already do
+        # this): without it, a host whose /var/lib/apt/lists is empty or stale
+        # gets "Unable to locate package" and the install can never succeed.
+        # Unlike those two we do NOT gate the install on update's exit status —
+        # one broken third-party repo makes `apt-get update` non-zero, and
+        # logrotate is very likely still installable from the rest of the index.
+        # The install's own status is what decides.
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then
+            print_error "$(i18n 'logging.logrotate_install_failed')"
+            return 1
+        fi
+    fi
 
-    # Ensure default config exists
+    # The logrotate package ships /etc/logrotate.conf as a conffile, so this
+    # branch only runs when the install above could not supply one. Go through
+    # backup_file + write_file_atomic like every other /etc write in this
+    # project: the bare `cat >` it replaces could truncate the file if
+    # interrupted, and left no backup entry — so backup_file's session manifest
+    # (.vpssec_created) never learned about the new file and a rollback could
+    # not delete it.
     if [[ ! -f "$LOGROTATE_CONF" ]]; then
-        cat > "$LOGROTATE_CONF" <<'EOF'
-# vpssec logrotate configuration
+        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true
+        if ! write_file_atomic "$LOGROTATE_CONF" '# vpssec logrotate configuration
 weekly
 rotate 4
 create
 dateext
 compress
 delaycompress
-include /etc/logrotate.d
-EOF
+include /etc/logrotate.d'; then
+            print_error "$(i18n 'logging.logrotate_failed')"
+            return 1
+        fi
     fi
 
     print_ok "$(i18n 'logging.logrotate_configured')"
