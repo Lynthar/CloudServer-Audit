@@ -11,6 +11,12 @@ NGINX_CONF_DIR="/etc/nginx"
 NGINX_SITES_AVAILABLE="${NGINX_CONF_DIR}/sites-available"
 NGINX_SITES_ENABLED="${NGINX_CONF_DIR}/sites-enabled"
 NGINX_CATCHALL_CONF="${NGINX_SITES_AVAILABLE}/99-catchall.conf"
+# The symlink under sites-enabled is what makes the catchall live; it used to
+# be spelled out at its two use sites instead of named here.
+NGINX_CATCHALL_LINK="${NGINX_SITES_ENABLED}/99-catchall.conf"
+NGINX_SSL_DIR="${NGINX_CONF_DIR}/ssl"
+NGINX_CATCHALL_CERT="${NGINX_SSL_DIR}/default.crt"
+NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/default.key"
 
 # ==============================================================================
 # Nginx Helper Functions
@@ -117,8 +123,11 @@ _nginx_has_catchall() {
     [[ "$(_nginx_catchall_state)" == "both" ]]
 }
 
+# Validate the merged config. Returns nginx's own diagnostic on stdout as well
+# as its status, because "configuration test failed" on its own is not
+# something an operator can act on — see the fix's use of it.
 _nginx_test_config() {
-    nginx -t 2>/dev/null
+    nginx -t 2>&1
 }
 
 # ----- DoS-hardening helpers (timeouts + rate limiting) ----------------------
@@ -439,13 +448,15 @@ nginx_fix() {
     esac
 }
 
-_nginx_fix_add_catchall() {
-    print_info "$(i18n 'nginx.creating_catchall')"
-
-    mkdir -p "$NGINX_SITES_AVAILABLE"
-
-    # Create catchall config
-    cat > "$NGINX_CATCHALL_CONF" <<'EOF'
+# The catchall config text. A function rather than a heredoc inlined in the
+# fix so the certificate paths come from the module path variables — which is
+# what makes the fix testable against a scratch tree instead of only against
+# a real /etc/nginx. The heredoc is deliberately expanding (<<EOF); the
+# openssl hint below is one long line rather than the backslash-continued
+# three it used to be, because in an expanding heredoc a trailing backslash
+# is a line continuation and would silently glue the comment together.
+_nginx_catchall_config() {
+    cat <<EOF
 # vpssec - Nginx catchall configuration
 # Prevents certificate/hostname leakage for unknown requests
 
@@ -463,39 +474,107 @@ server {
     listen [::]:443 ssl default_server;
     server_name _;
 
-    # Self-signed certificate for rejecting unknown hosts
-    # Generate with: openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    #   -keyout /etc/nginx/ssl/default.key -out /etc/nginx/ssl/default.crt \
-    #   -subj "/CN=invalid"
-    ssl_certificate /etc/nginx/ssl/default.crt;
-    ssl_certificate_key /etc/nginx/ssl/default.key;
+    # Self-signed certificate for rejecting unknown hosts. Regenerate with:
+    # openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ${NGINX_CATCHALL_KEY} -out ${NGINX_CATCHALL_CERT} -subj "/CN=invalid"
+    ssl_certificate ${NGINX_CATCHALL_CERT};
+    ssl_certificate_key ${NGINX_CATCHALL_KEY};
 
     # Return 444 (connection closed without response)
     return 444;
 }
 EOF
+}
 
-    # Create SSL directory and self-signed cert if needed
-    mkdir -p /etc/nginx/ssl
+_nginx_fix_add_catchall() {
+    print_info "$(i18n 'nginx.creating_catchall')"
 
-    if [[ ! -f /etc/nginx/ssl/default.crt ]]; then
-        print_info "$(i18n 'nginx.generating_cert')"
-        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-            -keyout /etc/nginx/ssl/default.key \
-            -out /etc/nginx/ssl/default.crt \
-            -subj "/CN=invalid" 2>/dev/null
-        chmod 600 /etc/nginx/ssl/default.key
+    # sites-enabled is checked FIRST, before anything is written. A config in
+    # sites-available that nothing links to is never read by nginx, so on a
+    # host laid out around conf.d/ the old code skipped the `ln` silently,
+    # `nginx -t` passed (there was nothing new to parse), the reload
+    # succeeded, two print_ok's fired and the fix returned 0 — while the
+    # catchall was not live and the next audit still reported it missing.
+    # Refuse instead, and print the include line that would make this layout
+    # work, the way baseline's disable_unused prints its way back.
+    if [[ ! -d "$NGINX_SITES_ENABLED" ]]; then
+        print_error "$(i18n 'nginx.sites_enabled_missing' "dir=$NGINX_SITES_ENABLED")"
+        print_info "$(i18n 'nginx.sites_enabled_hint' "dir=$NGINX_SITES_ENABLED")"
+        log_error "nginx.add_catchall: $NGINX_SITES_ENABLED does not exist; refusing to stage a config nothing would read"
+        return 1
     fi
 
-    # Enable the site
-    if [[ -d "$NGINX_SITES_ENABLED" ]]; then
-        ln -sf "$NGINX_CATCHALL_CONF" "${NGINX_SITES_ENABLED}/99-catchall.conf"
+    # Whether these existed before this invocation decides what the
+    # validation-failure path is allowed to delete (see below).
+    # -e follows a symlink, so it answers about the TARGET: a dangling link
+    # already at that path reads as absent, and the validation-failure path
+    # would then delete something this run did not create. -L is what asks
+    # about the link itself.
+    local conf_existed=0 link_existed=0
+    [[ -e "$NGINX_CATCHALL_CONF" ]] && conf_existed=1
+    [[ -L "$NGINX_CATCHALL_LINK" || -e "$NGINX_CATCHALL_LINK" ]] && link_existed=1
+
+    # backup_file is called UNCONDITIONALLY. Its second job is recording an
+    # absent path in .vpssec_created, which is the only thing that lets a
+    # rollback delete a file the fix created — and on a first run, which is
+    # the common case here, none of these exist. The module used to call
+    # neither backup_file nor write_file_atomic at all, so the config, the
+    # certificate and the key were invisible to `vpssec rollback`.
+    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true
+    # write_file_atomic creates the parent directory and reports its own
+    # failures, so sites-available needs no separate mkdir with a status to
+    # discard. The bare `cat >` this replaces was the last non-atomic /etc
+    # writer in the repo.
+    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)"; then
+        print_error "$(i18n 'nginx.catchall_write_failed' "file=$NGINX_CATCHALL_CONF")"
+        return 1
     fi
 
-    # Test config first; on failure remove the staged files and bail.
-    if ! _nginx_test_config; then
+    if ! _nginx_ensure_catchall_cert; then
+        return 1
+    fi
+
+    # Enable the site. The symlink is deliberately NOT registered for
+    # rollback: backup_restore skips a created path that is a symlink
+    # (symlink-escape safety, core/state.sh) and counts it as *skipped*, so
+    # registering it would both leave the link in place and drag the
+    # rollback's exit status from 0 to 2 — a rollback that did everything it
+    # could would then report "partial" and alarm the operator. Print and log
+    # the exact command that undoes it instead. -n so a symlink-to-a-directory
+    # already sitting at that path is replaced rather than dereferenced into.
+    if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then
+        print_error "$(i18n 'nginx.symlink_failed' "link=$NGINX_CATCHALL_LINK")"
+        return 1
+    fi
+    local revert="rm -f $NGINX_CATCHALL_LINK"
+    print_info "$(i18n 'nginx.symlink_revert_hint' "cmd=$revert")"
+    log_info "nginx.add_catchall revert command: $revert"
+
+    # Test config first; on failure undo what THIS invocation staged and
+    # bail. Only what this run created is removed: the old code deleted the
+    # config unconditionally, so an operator who already had a
+    # 99-catchall.conf lost it to a validation failure caused by something
+    # else entirely. Anything that pre-existed is left for `vpssec rollback`,
+    # which now has the snapshot.
+    local test_output
+    if ! test_output=$(_nginx_test_config); then
         print_error "$(i18n 'nginx.nginx_test_failed')"
-        rm -f "$NGINX_CATCHALL_CONF" "${NGINX_SITES_ENABLED}/99-catchall.conf"
+        # Surface nginx's own message. Measured on a stock Debian 12 host with
+        # nginx-light: this fix ALWAYS lands here, because the distro's own
+        # sites-enabled/default already carries `listen 80 default_server`, and
+        # nginx refuses a second one with "a duplicate default server for
+        # 0.0.0.0:80 in /etc/nginx/sites-enabled/default:22". That is the most
+        # common outcome in the field, and "configuration test failed" alone
+        # tells the operator neither which file nor which line. Deciding what
+        # to do about the competing default_server is theirs — this fix does
+        # not edit another site's config — but they cannot decide without the
+        # message.
+        [[ -n "$test_output" ]] && print_info "$(i18n 'nginx.nginx_test_output' "msg=$test_output")"
+        (( link_existed )) || rm -f "$NGINX_CATCHALL_LINK"
+        if (( conf_existed )); then
+            print_warn "$(i18n 'nginx.catchall_conf_kept' "file=$NGINX_CATCHALL_CONF")"
+        else
+            rm -f "$NGINX_CATCHALL_CONF"
+        fi
         return 1
     fi
     print_ok "$(i18n 'nginx.catchall_created' "path=$NGINX_CATCHALL_CONF")"
@@ -507,10 +586,63 @@ EOF
     # the old `if reload; then return 0; fi` fell through with no return, so
     # bash returned 0 (the `if` completes successfully even when the
     # condition is false) and the fix was recorded as done.
-    if systemctl reload nginx 2>/dev/null; then
-        print_ok "$(i18n 'nginx.nginx_reloaded')"
-        return 0
+    if ! systemctl reload nginx 2>/dev/null; then
+        print_error "$(i18n 'nginx.reload_failed_staged')"
+        return 1
     fi
-    print_error "$(i18n 'nginx.reload_failed_staged')"
-    return 1
+    print_ok "$(i18n 'nginx.nginx_reloaded')"
+
+    # Postcondition: ask the audit's own question. `nginx -t` passing says
+    # the config PARSES and the reload says it was loaded; neither says this
+    # host now has a catchall on both ports — a custom nginx.conf that
+    # includes only conf.d/, or a competing default_server that wins the
+    # bind, leaves the answer at what it was. Without this the fix reported
+    # a success the very next audit contradicted.
+    local state
+    state=$(_nginx_catchall_state)
+    if [[ "$state" != "both" ]]; then
+        print_error "$(i18n 'nginx.catchall_postcondition_failed' "state=$state")"
+        return 1
+    fi
+    return 0
+}
+
+# Create the SSL directory and the self-signed certificate the 443 catchall
+# references. Split out of the fix because every one of these four statuses
+# used to be discarded, and errexit is OFF inside a fix (execute_fix calls it
+# in a condition context), so a failing openssl continued straight into the
+# reload. It surfaced eventually as "nginx test failed", which sends the
+# operator looking at their config rather than at a certificate that was
+# never generated.
+_nginx_ensure_catchall_cert() {
+    [[ -f "$NGINX_CATCHALL_CERT" ]] && return 0
+
+    if ! mkdir -p "$NGINX_SSL_DIR" 2>/dev/null; then
+        print_error "$(i18n 'nginx.ssl_dir_failed' "dir=$NGINX_SSL_DIR")"
+        return 1
+    fi
+
+    print_info "$(i18n 'nginx.generating_cert')"
+    # Unconditional for the reason given at the config write: inside this
+    # branch neither file is in a state worth keeping, and on a first run
+    # .vpssec_created is what lets a rollback remove them.
+    backup_file "$NGINX_CATCHALL_CERT" >/dev/null 2>&1 || true
+    backup_file "$NGINX_CATCHALL_KEY" >/dev/null 2>&1 || true
+
+    if ! openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "$NGINX_CATCHALL_KEY" \
+            -out "$NGINX_CATCHALL_CERT" \
+            -subj "/CN=invalid" 2>/dev/null; then
+        print_error "$(i18n 'nginx.cert_generate_failed' "file=$NGINX_CATCHALL_CERT")"
+        return 1
+    fi
+
+    # The private key must not be world-readable. A failure here is reported
+    # rather than swallowed: the alternative is a 644 key on disk under a
+    # fix that told the operator it had hardened the host.
+    if ! chmod 600 "$NGINX_CATCHALL_KEY" 2>/dev/null; then
+        print_error "$(i18n 'nginx.cert_chmod_failed' "file=$NGINX_CATCHALL_KEY")"
+        return 1
+    fi
+    return 0
 }

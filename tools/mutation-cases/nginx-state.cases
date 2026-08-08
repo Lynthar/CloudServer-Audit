@@ -1,0 +1,90 @@
+# Mutation cases for tests/test_nginx_catchall_state.bats against
+# modules/nginx.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/nginx.sh \
+#        tests/test_nginx_catchall_state.bats tools/mutation-cases/nginx-state.cases
+#
+# One of three files naming this module. This one pairs with the suite that
+# covers _nginx_catchall_state_from_text — the awk parser that reads a
+# `nginx -T` dump — and nothing else. nginx.cases pairs with the fix suite,
+# nginx-fallback.cases with the file-scan suite. Both of these suites had
+# shipped without a cases file, which per the logging lesson means nobody had
+# established they assert anything; writing this one turned up three real gaps
+# in the fallback suite (see that file).
+#
+# Every case here mutates the awk program, so every anchor is inside a
+# single-quoted awk body — no host path is touched and nothing is written.
+
+# ---- what makes a line count ----------------------------------------------
+
+# The parser strips inline comments before matching, so a commented-out
+# `return 444;` is not a catchall.
+run_case "parse/comments-not-stripped" 1 \
+    '            sub(/[[:space:]]*#.*$/, "")' \
+    '            $0 = $0'
+
+# default_server is half the definition: a listen directive without it is a
+# named vhost, not the block unknown hostnames fall through to.
+run_case "parse/default-server-not-required" 1 \
+    '                if (/listen/ && /default_server/) {' \
+    '                if (/listen/) {'
+
+# `return 444;` is the other half.
+run_case "parse/return-444-loosened" 1 \
+    '                if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1' \
+    '                if ($0 ~ /return/) ret = 1'
+
+# The (^|[{;[:space:]]) boundary is what lets a one-liner server block parse;
+# anchoring at line start alone drops it.
+run_case "parse/return-444-anchored-at-line-start" 1 \
+    '                if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1' \
+    '                if ($0 ~ /^[[:space:]]*return[[:space:]]+444[[:space:]]*;/) ret = 1'
+
+# ---- port boundaries -------------------------------------------------------
+#
+# The trailing character class is the whole reason 8080 does not read as 80
+# and 4430 does not read as 443.
+
+run_case "parse/port-80-substring-match" 1 \
+    '                    if ($0 ~ /:80([[:space:]]|;)/    || $0 ~ /[[:space:]]80([[:space:]]|;)/)  d80  = 1' \
+    '                    if ($0 ~ /80/)  d80  = 1'
+
+run_case "parse/port-443-substring-match" 1 \
+    '                    if ($0 ~ /:443([[:space:]]|;)/   || $0 ~ /[[:space:]]443([[:space:]]|;)/) d443 = 1' \
+    '                    if ($0 ~ /443/) d443 = 1'
+
+# ---- server-block scope ----------------------------------------------------
+#
+# The M7 defect this parser replaced saw `default_server` anywhere and
+# `return 444` anywhere and called that covered. Everything below is what
+# keeps the two facts inside the same block.
+
+run_case "scope/block-never-closes-on-depth" 1 \
+    '            if (in_server && depth <= close_depth) {' \
+    '            if (in_server) {'
+
+run_case "scope/closing-braces-not-counted" 1 \
+    '            depth += opens - closes' \
+    '            depth += opens'
+
+run_case "scope/state-not-reset-between-blocks" 1 \
+    '                reset_block()' \
+    '                ;'
+
+run_case "scope/return-444-not-required-at-close" 1 \
+    '                if (ret) {' \
+    '                if (1) {'
+
+# ---- what the four states mean ---------------------------------------------
+#
+# "both" is deliberately strict: partial coverage is a finding, because an
+# HTTPS-only catchall still leaks certificates on port 80 and vice versa.
+
+run_case "state/both-satisfied-by-either-port" 1 \
+    '            if (c80 && c443) print "both"' \
+    '            if (c80 || c443) print "both"'
+
+run_case "state/80only-mislabelled" 1 \
+    '            else if (c80)    print "80only"' \
+    '            else if (c80)    print "443only"'

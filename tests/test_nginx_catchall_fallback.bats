@@ -76,6 +76,94 @@ EOF
     [ "$output" = "none" ]
 }
 
+@test "catchall fallback: 443 listen without default_server → none" {
+    # Mirror of the port-80 case above, and it was missing. Note what actually
+    # decides this one: with no default_server ANYWHERE in the file, the outer
+    # `grep -rl "listen.*default_server"` never lists it, so the per-port greps
+    # are not reached. The two "same file" tests below are what pin those.
+    cat >"$NGINX_SITES_ENABLED/00-default.conf" <<'EOF'
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+    return 444;
+}
+EOF
+    run _nginx_catchall_state
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
+@test "catchall fallback: an ordinary port-80 vhost beside a 443 catchall is not counted" {
+    # The scan is file-level: one block with default_server gets the whole file
+    # listed, and each per-port grep then has to require default_server for the
+    # port IT is asking about. Nothing pinned that until this test — dropping
+    # the requirement from either grep changed no outcome, because every
+    # existing case either had default_server on both ports or on neither.
+    cat >"$NGINX_SITES_ENABLED/00-mixed.conf" <<'EOF'
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    return 444;
+}
+
+server {
+    listen 80;
+    server_name app.example.com;
+}
+EOF
+    run _nginx_catchall_state
+    [ "$status" -eq 0 ]
+    [ "$output" = "443only" ]
+}
+
+@test "catchall fallback: an ordinary port-443 vhost beside an 80 catchall is not counted" {
+    cat >"$NGINX_SITES_ENABLED/00-mixed.conf" <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+}
+EOF
+    run _nginx_catchall_state
+    [ "$status" -eq 0 ]
+    [ "$output" = "80only" ]
+}
+
+@test "catchall fallback: port 8080 must NOT match port 80" {
+    # The state parser's own suite pins this for `nginx -T` output; the
+    # fallback runs a different, file-level regex and had no equivalent. The
+    # 8080 vhost in the two-file test below carries no `return 444`, so it is
+    # skipped before the port match is ever reached.
+    cat >"$NGINX_SITES_ENABLED/00-default.conf" <<'EOF'
+server {
+    listen 8080 default_server;
+    server_name _;
+    return 444;
+}
+EOF
+    run _nginx_catchall_state
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
+@test "catchall fallback: port 4430 must NOT match port 443" {
+    cat >"$NGINX_SITES_ENABLED/00-default.conf" <<'EOF'
+server {
+    listen 4430 ssl default_server;
+    server_name _;
+    return 444;
+}
+EOF
+    run _nginx_catchall_state
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
 @test "catchall fallback: H18 path:line regression — file detected without xargs bug" {
     # Original chained grep that fed `path:matched-line` to xargs and
     # looked for a literal filename. Now the loop iterates `grep -rl`
