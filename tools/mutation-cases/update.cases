@@ -1,0 +1,134 @@
+# Mutation cases for tests/test_fix_update.bats against modules/update.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/update.sh \
+#        tests/test_fix_update.bats tools/mutation-cases/update.cases
+#
+# The predicate cases at the end are the point of this file: the module used to
+# carry its own copy of "are automatic updates effective", reachable only from
+# the fix's postcondition, while the audit asked core/distro.sh. Reintroducing
+# either copy must go red.
+
+# ---- the path variables that make the fix reachable ------------------
+#
+# Pinned through backup_file (read-only) rather than write_file_atomic: an
+# inlined literal on the WRITE would rewrite the container's own
+# /etc/apt/apt.conf.d and leave every later case running against a changed host.
+
+run_case "paths/auto-upgrades-inlined" 1 \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
+    '    backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null 2>&1 || true'
+
+run_case "paths/dropin-inlined" 1 \
+    '    local uu_dropin="$UPDATE_UU_DROPIN"' \
+    '    local uu_dropin="/etc/apt/apt.conf.d/52vpssec-unattended-security"'
+
+# ---- the rollback contract -------------------------------------------
+
+run_case "rollback/auto-upgrades-backup-skipped" 1 \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "rollback/auto-upgrades-backup-guarded-again" 1 \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
+    '    [[ -f "$UPDATE_AUTO_UPGRADES_CONF" ]] && backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true'
+
+run_case "rollback/dropin-backup-skipped" 1 \
+    '    backup_file "$uu_dropin" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "rollback/dropin-backup-guarded-again" 1 \
+    '    backup_file "$uu_dropin" >/dev/null 2>&1 || true' \
+    '    [[ -f "$uu_dropin" ]] && backup_file "$uu_dropin" >/dev/null 2>&1 || true'
+
+# ---- write failures --------------------------------------------------
+
+# Both writes span several lines (the content is inline), so the status check is
+# broken at the CLOSING line with `&& false`: the write still runs and only its
+# result is ignored, which is the defect being modelled. Replacing the opening
+# line would delete the write itself — a different and much louder bug.
+
+run_case "write/auto-upgrades-status-unchecked" 1 \
+    "APT::Periodic::AutocleanInterval \"7\";'; then" \
+    "APT::Periodic::AutocleanInterval \"7\";' && false; then"
+
+run_case "write/dropin-status-unchecked" 1 \
+    'Unattended-Upgrade::SyslogEnable \"true\";"; then' \
+    'Unattended-Upgrade::SyslogEnable \"true\";" && false; then'
+
+# ---- what the drop-in must say ---------------------------------------
+
+run_case "config/periodic-flag-off" 1 \
+    'APT::Periodic::Unattended-Upgrade "1";' \
+    'APT::Periodic::Unattended-Upgrade "0";'
+
+# The "50unattended-upgrades is left alone" test only asserts that a file at
+# that path survives — which it would even if the fix wrote to the real /etc
+# copy, since the test's tree is elsewhere. This case is what makes that test
+# mean something: point the writer at the 50 conffile within the SAME tree and
+# the assertion must fail.
+run_case "config/writes-the-50-conffile" 1 \
+    '    local uu_dropin="$UPDATE_UU_DROPIN"' \
+    '    local uu_dropin="${UPDATE_UU_DROPIN%/*}/50unattended-upgrades"'
+
+run_case "config/inherited-origins-not-cleared" 1 \
+    '#clear Unattended-Upgrade::Allowed-Origins;' \
+    '// no clear'
+
+run_case "config/automatic-reboot-enabled" 1 \
+    'Unattended-Upgrade::Automatic-Reboot \"false\";' \
+    'Unattended-Upgrade::Automatic-Reboot \"true\";'
+
+run_case "config/debian-pattern-on-ubuntu" 1 \
+    '    if [[ "$(detect_os)" == "ubuntu" ]]; then' \
+    '    if false; then'
+
+run_case "config/ubuntu-pattern-everywhere" 1 \
+    '    if [[ "$(detect_os)" == "ubuntu" ]]; then' \
+    '    if true; then'
+
+# ---- the periodic driver ---------------------------------------------
+
+run_case "service/timer-not-enabled" 1 \
+    '    systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true' \
+    '    :'
+
+# ---- postconditions --------------------------------------------------
+
+run_case "postcondition/enable-removed" 1 \
+    '    if _update_unattended_enabled; then' \
+    '    if true; then'
+
+run_case "postcondition/install-status-discarded" 1 \
+    '        return $?' \
+    '        return 0'
+
+run_case "apply/installed-check-inverted" 1 \
+    '    if ! _update_unattended_installed; then' \
+    '    if false; then'
+
+run_case "apply/upgrade-failure-swallowed" 1 \
+    '    if unattended-upgrade -d 2>/dev/null; then' \
+    '    if unattended-upgrade -d 2>/dev/null || true; then'
+
+run_case "apply/falls-back-to-full-upgrade" 1 \
+    '    if unattended-upgrade -d 2>/dev/null; then' \
+    '    if apt-get upgrade -y 2>/dev/null; then'
+
+run_case "apply/history-hint-dropped" 1 \
+    "        print_info \"\$(i18n 'update.security_applied_revert_hint')\"" \
+    '        :'
+
+# ---- the predicate the audit and the fix share -----------------------
+
+run_case "predicate/private-status-copy-restored" 1 \
+    '    [[ "$(auto_update_status)" == "ok" ]]' \
+    '    systemctl is-enabled apt-daily-upgrade.timer &>/dev/null'
+
+run_case "predicate/private-installed-copy-restored" 1 \
+    '    auto_update_installed' \
+    '    dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"'
+
+run_case "dispatch/unknown-id-succeeds" 1 \
+    '            log_error "Unknown update fix: $fix_id"' \
+    '            return 0'

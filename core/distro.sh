@@ -316,6 +316,28 @@ pkg_reboot_required() {
     esac
 }
 
+# Parse one answer out of a merged `apt-config dump`. Both are pure functions
+# of their argument so they can be tested without an apt host, and they live
+# here rather than in modules/update.sh because `auto_update_status` below is
+# the single implementation of this predicate: the audit asks it for its
+# verdict and the unattended-upgrades fix asks it whether it succeeded. There
+# used to be a second copy of the whole three-step check inside the module,
+# reachable only from the fix's postcondition — the two agreed, but an edit to
+# either would have made the fix report success on a host the audit still
+# flagged, which is the shape that has already bitten this project five times.
+_auto_update_apt_periodic_from_dump() {
+    local val
+    val=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$1")
+    [[ "$val" == "1" ]]
+}
+
+# Match list elements (`Key:: "value";`) only; skip the empty-list anchor
+# (`Key "";`), which apt emits for a cleared list and which used to read as
+# "origins are configured".
+_auto_update_apt_origins_from_dump() {
+    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: "[^"]+";' <<<"$1"
+}
+
 # Is an unattended-update mechanism installed? 0 = yes.
 auto_update_installed() {
     case "$VPSSEC_PKG_MGR" in
@@ -341,12 +363,10 @@ auto_update_status() {
                 echo "service_disabled"; return 1
             fi
             command -v apt-config >/dev/null 2>&1 || { echo "unknown"; return 1; }
-            local dump per
+            local dump
             dump=$(apt-config dump 2>/dev/null) || { echo "unknown"; return 1; }
-            per=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$dump")
-            [[ "$per" == "1" ]] || { echo "periodic_off"; return 1; }
-            grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: "[^"]+";' <<<"$dump" \
-                || { echo "no_origins"; return 1; }
+            _auto_update_apt_periodic_from_dump "$dump" || { echo "periodic_off"; return 1; }
+            _auto_update_apt_origins_from_dump "$dump"  || { echo "no_origins"; return 1; }
             echo "ok"; return 0
             ;;
         dnf)

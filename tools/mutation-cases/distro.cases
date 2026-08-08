@@ -1,0 +1,35 @@
+# Mutation cases for tests/test_update_unattended.bats against core/distro.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh core/distro.sh \
+#        tests/test_update_unattended.bats tools/mutation-cases/distro.cases
+#
+# These two parsers moved here from modules/update.sh so that auto_update_status
+# — which the audit asks for its verdict and the unattended-upgrades fix asks
+# whether it succeeded — is the only implementation of the predicate. The suite
+# came with them; these cases are what shows it still asserts something in the
+# new home.
+
+run_case "periodic/value-not-compared" 1 \
+    '    [[ "$val" == "1" ]]' \
+    '    [[ -n "$val" ]]'
+
+run_case "periodic/first-match-not-taken" 1 \
+    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2; exit}' <<<\"\$1\")" \
+    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2}' <<<\"\$1\")"
+
+run_case "periodic/prefix-match-too-loose" 1 \
+    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2; exit}' <<<\"\$1\")" \
+    "    val=\$(awk -F'\"' '/^APT::Periodic::/{print \$2; exit}' <<<\"\$1\")"
+
+run_case "origins/empty-anchor-accepted" 1 \
+    "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]+\";' <<<\"\$1\"" \
+    "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins)' <<<\"\$1\""
+
+run_case "origins/list-element-form-ignored" 1 \
+    "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]+\";' <<<\"\$1\"" \
+    "    grep -qE '^Unattended-Upgrade::Origins-Pattern:: \"[^\"]+\";' <<<\"\$1\""
+
+run_case "origins/anchored-match-dropped" 1 \
+    "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]+\";' <<<\"\$1\"" \
+    "    grep -qE 'Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]*\";' <<<\"\$1\""

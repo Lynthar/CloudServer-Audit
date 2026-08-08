@@ -4,6 +4,17 @@
 # Copyright (c) 2024
 
 # ==============================================================================
+# Update Configuration
+# ==============================================================================
+
+# The two files the unattended-upgrades fix writes. Module variables rather than
+# literals so the fix is reachable from a test — the audit reads the MERGED
+# `apt-config dump` rather than either file (that is deliberate: a drop-in can
+# override them), so these are the fix's alone.
+UPDATE_AUTO_UPGRADES_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
+UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"
+
+# ==============================================================================
 # Update Helper Functions
 # ==============================================================================
 
@@ -28,56 +39,25 @@ _update_get_security_count() {
     echo "${count:-0}"
 }
 
-# Check if unattended-upgrades is installed
+# Whether automatic updates are installed / effective. Both delegate to
+# core/distro.sh, which is what the AUDIT asks — so the fix's success gate and
+# the finding it is supposed to clear can no longer disagree. The module used to
+# carry its own copy of both (a `dpkg -l` check and the whole three-step
+# apt-config walk), reachable only from the fix; they agreed with distro.sh at
+# the time, so nothing was broken, but keeping two implementations of the
+# predicate that decides "did this fix work" is how a fix comes to report
+# success on a host the audit still flags.
+#
+# Distro coverage is distro.sh's problem, not a second copy's: on a dnf host
+# these answer about dnf-automatic while the fix bodies below still run apt
+# commands. That gap is C5-#6 (fix_id not gated by distro) and is tracked
+# there — it is not made better or worse by this delegation.
 _update_unattended_installed() {
-    dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"
-}
-
-# Read from merged apt-config dump (not 20auto-upgrades directly) so drop-in overrides are caught.
-_update_unattended_periodic_from_dump() {
-    local val
-    val=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$1")
-    [[ "$val" == "1" ]]
-}
-
-# Match list elements (`Key:: "value";`) only; skip the empty-list anchor (`Key "";`).
-_update_unattended_origins_from_dump() {
-    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: "[^"]+";' <<<"$1"
-}
-
-# Echoes ok|service_disabled|periodic_off|no_origins|unknown; returns 0 iff ok.
-_update_unattended_status() {
-    # The periodic driver is apt-daily-upgrade.timer, NOT the
-    # unattended-upgrades service (which only flushes pending upgrades at
-    # shutdown). A masked timer with the service still enabled used to read
-    # as "ok" — a false pass. `is-enabled` returns 0 for enabled/static and
-    # non-zero only for masked/disabled, so this is the correct gate.
-    if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
-        echo "service_disabled"
-        return 1
-    fi
-    if ! command -v apt-config >/dev/null 2>&1; then
-        echo "unknown"
-        return 1
-    fi
-    local dump
-    dump=$(apt-config dump 2>/dev/null) || { echo "unknown"; return 1; }
-
-    if ! _update_unattended_periodic_from_dump "$dump"; then
-        echo "periodic_off"
-        return 1
-    fi
-    if ! _update_unattended_origins_from_dump "$dump"; then
-        echo "no_origins"
-        return 1
-    fi
-
-    echo "ok"
-    return 0
+    auto_update_installed
 }
 
 _update_unattended_enabled() {
-    [[ "$(_update_unattended_status)" == "ok" ]]
+    [[ "$(auto_update_status)" == "ok" ]]
 }
 
 # Pure-data variant for tests. Returns 0 when needrestart batch output
@@ -458,6 +438,12 @@ _update_fix_apply_security() {
 
     if unattended-upgrade -d 2>/dev/null; then
         print_ok "$(i18n 'update.updates_applied')"
+        # `vpssec rollback` restores config FILES. Installed packages are not
+        # files it tracks, so this is the only pointer the operator gets to
+        # what changed — and unlike a drop-in, it cannot be undone by the tool
+        # at all. Same reasoning as baseline's disable_unused revert hint.
+        print_info "$(i18n 'update.security_applied_revert_hint')"
+        log_info "update.apply_security: upgraded packages are listed in /var/log/apt/history.log"
         return 0
     fi
 
@@ -484,12 +470,23 @@ _update_fix_install_unattended() {
 _update_fix_enable_unattended() {
     print_info "$(i18n 'update.configuring_unattended')"
 
-    # Create auto-upgrades config (back it up first — it previously had none —
-    # and write it atomically).
-    [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]] && backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null 2>&1 || true
-    write_file_atomic /etc/apt/apt.conf.d/20auto-upgrades 'APT::Periodic::Update-Package-Lists "1";
+    # Create the auto-upgrades config.
+    #
+    # backup_file is called UNCONDITIONALLY. Its second job is recording an
+    # absent path in .vpssec_created, which is the only thing that lets a
+    # rollback delete a file the fix created — and on a first run, which is the
+    # common case for this fix, the file does not exist. Under the old
+    # `[[ -f ]] && backup_file` guard nothing was recorded, so an operator who
+    # rolled the whole plan back still had a host installing packages
+    # unattended. Same defect as logging's journald drop-in and webapp's three
+    # conf.d writers; this is where it mattered most.
+    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true
+    if ! write_file_atomic "$UPDATE_AUTO_UPGRADES_CONF" 'APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::AutocleanInterval "7";'
+APT::Periodic::AutocleanInterval "7";'; then
+        print_error "$(i18n 'update.auto_upgrades_write_failed' "file=$UPDATE_AUTO_UPGRADES_CONF")"
+        return 1
+    fi
 
     # Security-only origins.
     #
@@ -510,7 +507,7 @@ APT::Periodic::AutocleanInterval "7";'
     # security Suite IS <codename>-security, so archive= matches there.
     # ${distro_id}/${distro_codename} are written literally (single-quoted
     # below); unattended-upgrades expands them, not the shell.
-    local uu_dropin="/etc/apt/apt.conf.d/52vpssec-unattended-security"
+    local uu_dropin="$UPDATE_UU_DROPIN"
     local origins
     if [[ "$(detect_os)" == "ubuntu" ]]; then
         origins='    "origin=${distro_id},archive=${distro_codename}-security";
@@ -521,12 +518,15 @@ APT::Periodic::AutocleanInterval "7";'
     "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
     fi
 
-    [[ -f "$uu_dropin" ]] && backup_file "$uu_dropin" >/dev/null 2>&1 || true
+    # Unconditional, for the reason given above: this drop-in is vpssec's own
+    # file, so it never exists on a first run and the rollback needs it
+    # recorded as created.
+    backup_file "$uu_dropin" >/dev/null 2>&1 || true
     # Double-quoted so ${origins} interpolates; the literal ${distro_id} /
     # ${distro_codename} inside $origins were single-quoted at assignment
     # and are inserted verbatim (bash does a single expansion pass), so
     # there is no set -u risk from those unbound names.
-    write_file_atomic "$uu_dropin" "// vpssec: automatic SECURITY upgrades only.
+    if ! write_file_atomic "$uu_dropin" "// vpssec: automatic SECURITY upgrades only.
 // Dropped after 50unattended-upgrades so the distro conffile and operator
 // settings (Mail, Package-Blacklist, ...) in it are preserved; #clear resets
 // the inherited origin lists so only the security patterns below are active.
@@ -537,7 +537,10 @@ ${origins}
 };
 Unattended-Upgrade::Remove-Unused-Dependencies \"true\";
 Unattended-Upgrade::Automatic-Reboot \"false\";
-Unattended-Upgrade::SyslogEnable \"true\";"
+Unattended-Upgrade::SyslogEnable \"true\";"; then
+        print_error "$(i18n 'update.uu_dropin_write_failed' "file=$uu_dropin")"
+        return 1
+    fi
 
     # Verify the merged config actually parses and selects packages before
     # claiming success: --dry-run exercises the real origin match, which is
