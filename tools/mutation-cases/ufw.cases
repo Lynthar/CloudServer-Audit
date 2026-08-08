@@ -1,0 +1,64 @@
+# Mutation cases for tests/test_fix_ufw*.bats against modules/ufw.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/ufw.sh <suite.bats> tools/mutation-cases/ufw.cases
+# Each entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it relies on. All of them must stay killed.
+#
+# The occurrence index (2nd argument) matters where the audit and the fix
+# share a line verbatim; see the header of tools/mutate-suite.sh.
+
+run_case "enable/allow-failure-ignored" 1 \
+    '        if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then' \
+    '        if false; then'
+
+run_case "enable/confirm-gate-removed" 1 \
+    '    if ! confirm_critical "$(i18n '"'"'ufw.confirm_ufw_enable'"'"')"; then' \
+    '    if false; then'
+
+run_case "enable/decline-keeps-rescue-rule" 1 \
+    '            ufw delete allow from "$current_ip" 2>/dev/null' \
+    '            :'
+
+run_case "enable/rescue-rule-auto-deleted" 1 \
+    '            print_warn "$(i18n '"'"'ufw.rescue_rule_kept'"'"' "ip=$current_ip")"' \
+    '            ufw delete allow from "$current_ip"'
+
+run_case "enable/rescue-rule-for-unknown-ip" 1 \
+    '    if [[ -n "$current_ip" ]]; then' \
+    '    if true; then'
+
+run_case "enable/enable-failure-swallowed" 1 \
+    '    if echo "y" | ufw enable; then' \
+    '    if echo "y" | ufw enable || true; then'
+
+run_case "deny/ssh-rule-never-added" 1 \
+    '        if ! _ufw_port_allowed "$_p"; then' \
+    '        if false; then'
+
+run_case "deny/idempotence-removed" 1 \
+    '        if ! _ufw_port_allowed "$_p"; then' \
+    '        if true; then'
+
+run_case "deny/allow-failure-ignored" 1 \
+    '            if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then' \
+    '            if false; then'
+
+run_case "deny/outgoing-left-denied" 1 \
+    '        ufw default allow outgoing 2>/dev/null || true' \
+    '        :'
+
+run_case "allow_ssh/only-first-port" 1 \
+    '        any=1' \
+    '        any=1; [[ -n "${_seen:-}" ]] && continue || _seen=1'
+
+run_case "allow_ssh/failure-swallowed" 1 \
+    '            rc=1' \
+    '            rc=0'
+
+run_case "install/failure-swallowed" 1 \
+    '    if apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then' \
+    '    if true; then'
+
+run_case "dispatch/unknown-id-succeeds" 1 \
+    '            log_error "Unknown UFW fix: $fix_id"' \
+    '            return 0'

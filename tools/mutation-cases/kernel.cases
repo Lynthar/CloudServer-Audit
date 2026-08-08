@@ -1,0 +1,56 @@
+# Mutation cases for tests/test_fix_kernel*.bats against modules/kernel.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/kernel.sh <suite.bats> tools/mutation-cases/kernel.cases
+# Each entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it relies on. All of them must stay killed.
+#
+# The occurrence index (2nd argument) matters where the audit and the fix
+# share a line verbatim; see the header of tools/mutate-suite.sh.
+
+run_case "ipv6/ra-guard-inverted" 1 \
+    '    if _kernel_ipv6_uses_ra; then' \
+    '    if ! _kernel_ipv6_uses_ra; then'
+
+run_case "network/ra-guard-removed" 2 \
+    '        if [[ "$host_uses_ra" == "true" ]] && _kernel_param_is_ra_dependent "$param"; then' \
+    '        if false; then'
+
+run_case "ra-probe/failsafe-removed" 1 \
+    '    routes=$(ip -6 route show default 2>/dev/null) || return 0' \
+    '    routes=$(ip -6 route show default 2>/dev/null) || true'
+
+run_case "coredump/dropin-needs-dir" 1 \
+    '        mkdir -p "$KERNEL_COREDUMP_D"' \
+    '        [[ -d "$KERNEL_COREDUMP_D" ]] || return 0'
+
+run_case "coredump/always-reports-success" 1 \
+    '    log_warn "kernel.disable_core_dump: still unrestricted after fix: $remaining"' \
+    '    return 0'
+
+run_case "coredump/limits-not-idempotent" 1 \
+    '        if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then' \
+    '        if true; then'
+
+run_case "harden_all/failure-masked" 1 \
+    '    return "$rc"' \
+    '    return 0'
+
+run_case "dropin/header-filter-removed" 1 \
+    '        existing=$(grep -vE '"'"'^[[:space:]]*(#|$)'"'"' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \' \
+    '        existing=$(cat "$VPSSEC_SYSCTL_CONF" 2>/dev/null \'
+
+run_case "dropin/param-replace-removed" 1 \
+    '                   | grep -vE "^${param_re}[[:space:]]*=" || true)' \
+    '                   | cat || true)'
+
+run_case "network/rp_filter-exception-gone" 2 \
+    '            [[ "$rp_val" == "2" ]] && continue' \
+    '            :'
+
+run_case "dropin/backup-skipped" 1 \
+    '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "network/ip_forward-exception-gone" 2 \
+    '        if [[ "$param" == "net.ipv4.ip_forward" ]] && _kernel_ip_forward_needed; then' \
+    '        if false; then'

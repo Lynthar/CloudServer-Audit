@@ -1,0 +1,76 @@
+# Mutation cases for tests/test_fix_webapp*.bats against modules/webapp.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/webapp.sh <suite.bats> tools/mutation-cases/webapp.cases
+# Each entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it relies on. All of them must stay killed.
+#
+# The occurrence index (2nd argument) matters where the audit and the fix
+# share a line verbatim; see the header of tools/mutate-suite.sh.
+
+run_case "tokens/comment-counts-as-configured" 1 \
+    "    if grep -qE '^[^#]*server_tokens[[:space:]]+off' \"\$NGINX_CONF\" 2>/dev/null; then" \
+    "    if grep -qE 'server_tokens[[:space:]]+off' \"\$NGINX_CONF\" 2>/dev/null; then"
+
+run_case "tokens/duplicate-instead-of-replace" 1 \
+    "    if grep -qE '^[^#]*server_tokens[[:space:]]' \"\$NGINX_CONF\" 2>/dev/null; then" \
+    '    if false; then'
+
+run_case "tokens/no-backup" 1 \
+    '    bak=$(backup_file "$NGINX_CONF")' \
+    '    bak=""'
+
+run_case "tokens/no-rollback-on-reject" 1 \
+    '            cp -p "$bak" "$NGINX_CONF" && \' \
+    '            true && \'
+
+run_case "tokens/validation-gate-removed" 1 \
+    '    if nginx -t 2>/dev/null; then' \
+    '    if true; then'
+
+run_case "tokens/write-not-persisted" 1 \
+    '    if ! write_file_atomic "$NGINX_CONF" "$updated"; then' \
+    '    if false; then'
+
+run_case "headers/backup-guarded-again" 1 \
+    '    bak=$(backup_file "$headers_conf")' \
+    '    [[ -f "$headers_conf" ]] && bak=$(backup_file "$headers_conf")'
+
+run_case "headers/xss-auditor-re-enabled" 1 \
+    'add_header X-XSS-Protection "0" always;' \
+    'add_header X-XSS-Protection "1; mode=block" always;'
+
+run_case "headers/rejected-dropin-left-behind" 1 \
+    '            rm -f "$headers_conf"' \
+    '            :'
+
+run_case "headers/validation-gate-removed" 2 \
+    '    if nginx -t 2>/dev/null; then' \
+    '    if true; then'
+
+run_case "hsts/backup-skipped" 1 \
+    '    backup_file "$hsts_conf" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "hsts/reports-success" 1 \
+    "    print_warn \"\$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')\"" \
+    '    return 0'
+
+run_case "ssl/backup-skipped" 1 \
+    '    backup_file "$ssl_conf" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "ssl/written-into-conf.d" 1 \
+    '    local ssl_conf="$NGINX_SNIPPETS/ssl-security.conf"' \
+    '    local ssl_conf="$NGINX_CONFD/ssl-security.conf"'
+
+run_case "ssl/weak-protocol-offered" 1 \
+    'ssl_protocols TLSv1.2 TLSv1.3;' \
+    'ssl_protocols TLSv1 TLSv1.2 TLSv1.3;'
+
+run_case "ssl/validation-ignored" 1 \
+    '    if command -v nginx >/dev/null 2>&1 && ! nginx -t 2>/dev/null; then' \
+    '    if false; then'
+
+run_case "dispatch/unknown-id-succeeds" 1 \
+    '            log_warn "Unknown fix_id: $fix_id"' \
+    '            return 0'

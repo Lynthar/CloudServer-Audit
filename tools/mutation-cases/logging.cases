@@ -1,0 +1,68 @@
+# Mutation cases for tests/test_fix_logging*.bats against modules/logging.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/logging.sh <suite.bats> tools/mutation-cases/logging.cases
+# Each entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it relies on. All of them must stay killed.
+#
+# The occurrence index (2nd argument) matters where the audit and the fix
+# share a line verbatim; see the header of tools/mutate-suite.sh.
+
+run_case "journal/backup-skipped" 1 \
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "journal/backup-guarded-again" 1 \
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true' \
+    '    [[ -f "$JOURNALD_DROPIN" ]] && backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true'
+
+run_case "journal/postcondition-removed" 2 \
+    '    if _logging_journald_persistent; then' \
+    '    if true; then'
+
+run_case "journal/dir-not-created" 1 \
+    '    mkdir -p "$JOURNAL_DIR"' \
+    '    :'
+
+run_case "journal/no-restart" 1 \
+    '    systemctl restart systemd-journald' \
+    '    :'
+
+run_case "rules/backup-skipped" 1 \
+    '    backup_file "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "rules/delete-all-introduced" 1 \
+    '-b 8192' \
+    '-D'
+
+run_case "rules/write-failure-unchecked" 1 \
+    '    if ! write_file_atomic "$AUDIT_RULES_FILE" "$rules_content"; then' \
+    '    if false; then'
+
+run_case "rules/pending-branch-removed" 1 \
+    '    elif _logging_check_audit_rules; then' \
+    '    elif false; then'
+
+run_case "auditd/postcondition-removed" 1 \
+    '    if systemctl is-active --quiet auditd; then' \
+    '    if true; then'
+
+run_case "auditd/never-started" 1 \
+    '    systemctl start auditd' \
+    '    :'
+
+run_case "install/failure-swallowed" 1 \
+    '    if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then' \
+    '    if true; then'
+
+run_case "install/rules-not-configured" 1 \
+    '        _logging_fix_setup_audit_rules || true' \
+    '        :'
+
+run_case "install/overstrict-on-service" 1 \
+    '        _logging_fix_enable_auditd || true' \
+    '        _logging_fix_enable_auditd || return 1'
+
+run_case "dispatch/unknown-id-succeeds" 1 \
+    '            log_warn "Logging fix not implemented: $fix_id"' \
+    '            return 0'
