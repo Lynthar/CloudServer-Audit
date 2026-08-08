@@ -1,0 +1,127 @@
+# Mutation cases for tests/test_fix_filesystem.bats against modules/filesystem.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/filesystem.sh \
+#        tests/test_fix_filesystem.bats tools/mutation-cases/filesystem.cases
+#
+# One constraint is specific to this module and worth knowing before adding a
+# case: **a mutation must not redirect a WRITE to a real /etc path.** The
+# obvious way to pin FS_LOGIN_DEFS is to inline the literal back into the fix's
+# guard or its write_file_atomic call — but the verification container HAS
+# /etc/login.defs, so that mutation would rewrite the container's own file and
+# leave every later case running against a changed host. The path variables are
+# pinned here through READ-ONLY call sites instead (backup_file, and the audit
+# reader), which fails just as loudly and touches nothing outside the test tree.
+#
+# The occurrence index (2nd argument) matters where the audit and the fix share
+# a line verbatim — the drop-in loops do, and the fix is the second one.
+
+# ---- the path variables that make the fixes reachable ----------------
+
+run_case "paths/backup-target-inlined" 1 \
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true' \
+    '    backup_file /etc/login.defs >/dev/null 2>&1 || true'
+
+run_case "paths/audit-reader-inlined" 1 \
+    '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' "$FS_LOGIN_DEFS" 2>/dev/null)' \
+    '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' /etc/login.defs 2>/dev/null)'
+
+run_case "paths/pam-files-inlined" 1 \
+    '    for f in "${FS_PAM_SESSION_FILES[@]}"; do' \
+    '    for f in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do'
+
+# ---- filesystem.fix_umask -------------------------------------------
+
+run_case "umask/missing-file-not-refused" 1 \
+    '    if [[ ! -f "$FS_LOGIN_DEFS" ]]; then' \
+    '    if false; then'
+
+run_case "umask/backup-skipped" 1 \
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "umask/existing-line-not-rewritten" 1 \
+    '    if grep -qE '"'"'^UMASK'"'"' "$FS_LOGIN_DEFS"; then' \
+    '    if false; then'
+
+run_case "umask/staged-content-not-validated" 1 \
+    '    if ! grep -qE '"'"'^UMASK[[:space:]]+027$'"'"' <<<"$staged"; then' \
+    '    if false; then'
+
+run_case "umask/write-failure-unchecked" 1 \
+    '    if ! write_file_atomic "$FS_LOGIN_DEFS" "$staged"; then' \
+    '    if ! write_file_atomic "$FS_LOGIN_DEFS" "$staged" && false; then'
+
+run_case "umask/postcondition-removed" 1 \
+    '    if ! _fs_umask_is_strict "$effective"; then' \
+    '    if false; then'
+
+# Occurrence 2, not 1: _fs_audit_umask opens its pam_umask branch with the same
+# line verbatim. Anchored at #1 both of these land in the audit — which this
+# suite does not cover — and report a gap that is not one. The runner's
+# "SURVIVED at line 1180" against a fix that lives at 1474 is the tell.
+run_case "umask/pam-warning-dropped" 2 \
+    '    if ! _fs_check_pam_umask_enabled; then' \
+    '    if false; then'
+
+run_case "umask/pam-warning-always" 2 \
+    '    if ! _fs_check_pam_umask_enabled; then' \
+    '    if true; then'
+
+# ---- the predicate the fix's postcondition shares with the audit -----
+
+run_case "predicate/first-umask-line-not-taken" 1 \
+    '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' "$FS_LOGIN_DEFS" 2>/dev/null)' \
+    '        umask_value=$(awk '"'"'/^UMASK/ { print $2 }'"'"' "$FS_LOGIN_DEFS" 2>/dev/null)'
+
+run_case "predicate/profile-not-consulted" 1 \
+    '    if [[ -z "$umask_value" && -f "$FS_PROFILE" ]]; then' \
+    '    if false; then'
+
+run_case "predicate/profile-first-instead-of-last" 1 \
+    '        umask_value=$(grep -E "^\s*umask" "$FS_PROFILE" 2>/dev/null | tail -1 | awk '"'"'{print $2}'"'"')' \
+    '        umask_value=$(grep -E "^\s*umask" "$FS_PROFILE" 2>/dev/null | head -1 | awk '"'"'{print $2}'"'"')'
+
+run_case "predicate/strictness-accepts-world-bits" 1 \
+    '    [[ "$1" =~ ^0[0-7][0-7]7$ ]]' \
+    '    [[ "$1" =~ ^0[0-7][0-7][0-7]$ ]]'
+
+# _fs_get_usergroups_enab, _fs_check_pam_umask_enabled and
+# _fs_compute_effective_umask are covered by tests/test_filesystem_umask.bats,
+# not by this suite, so their cases live in filesystem-umask.cases. A case
+# aimed at code the named suite does not cover reads as a coverage gap that
+# isn't one — which is exactly what happened to the usergroups default here.
+
+# ---- filesystem.fix_sensitive_perms ---------------------------------
+
+run_case "perms/bitmask-back-to-numeric-compare" 1 \
+    '        if (( extra_bits != 0 )); then' \
+    '        if (( actual_num > expected_num )); then'
+
+run_case "perms/backup-skipped" 1 \
+    '            backup_file "$file" >/dev/null 2>&1 || true' \
+    '            :'
+
+run_case "perms/chmod-failure-uncounted" 1 \
+    '                ((failed++)) || true' \
+    '                :'
+
+run_case "perms/failure-not-returned" 1 \
+    '    if ((failed > 0)); then' \
+    '    if false; then'
+
+run_case "perms/sudoers-dropins-skipped" 2 \
+    '    for _drop in "$FS_SUDOERS_D"/*; do' \
+    '    for _drop in "$FS_SUDOERS_D"/nonexistent-*; do'
+
+run_case "perms/sudoers-expected-mode-wrong" 1 \
+    '        _fs_fix_one "$_drop" "440"' \
+    '        _fs_fix_one "$_drop" "644"'
+
+run_case "perms/sshd-dropins-skipped" 2 \
+    '    for _drop in "$FS_SSHD_CONFIG_D"/*; do' \
+    '    for _drop in "$FS_SSHD_CONFIG_D"/nonexistent-*; do'
+
+run_case "perms/already-correct-file-touched" 1 \
+    '        local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))' \
+    '        local extra_bits=1'

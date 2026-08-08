@@ -746,6 +746,51 @@ validate_ip() {
 # restore walk.
 VPSSEC_CREATED_MANIFEST=".vpssec_created"
 
+# Name of the per-backup-directory manifest recording each backed-up file's
+# ORIGINAL mode, one "<mode> <path>" line per file.
+#
+# It exists because two correct decisions combine into a wrong result:
+# backup_file chmods its own copy to 600 so a snapshot of /etc/shadow is not
+# left readable, and backup_restore restores with `cp -p`, which takes the
+# mode from that copy. So a rollback used to reset every restored file to
+# 600 while reporting full success. Harmless on root-read config
+# (sshd_config, nginx.conf), but filesystem.fix_sensitive_perms backs up
+# /etc/passwd and /etc/group — at 600 those break name lookups for every
+# non-root process, leaving the host worse off than before the fix OR after
+# it. Verified against the real primitives: 666 -> fix -> rollback gave 600.
+VPSSEC_MODES_MANIFEST=".vpssec_modes"
+
+# True if $1 already has a mode recorded in the manifest $2.
+#
+# The path is compared with `grep -qxF` on the path column rather than a
+# regex over the whole line: an /etc path can contain regex metacharacters,
+# and `cut -d' ' -f2-` keeps paths containing spaces intact because the mode
+# is the only field that can never hold one.
+_backup_mode_recorded() {
+    local path="$1" manifest="$2"
+    [[ -f "$manifest" ]] || return 1
+    cut -d' ' -f2- "$manifest" 2>/dev/null | grep -qxF "$path"
+}
+
+# Record $1's current mode into $2 (a backup directory), once.
+#
+# First write wins, for the same reason backup_file's snapshot does: both
+# must describe the pre-plan state. A fix that backs the same file up once
+# per parameter would otherwise record the mode of its own intermediate.
+backup_track_mode() {
+    local path="$1" backup_dir="$2"
+    [[ -n "$backup_dir" ]] || return 0
+    local manifest="${backup_dir}/${VPSSEC_MODES_MANIFEST}"
+    _backup_mode_recorded "$path" "$manifest" && return 0
+
+    local mode
+    mode=$(stat -c '%a' "$path" 2>/dev/null) || return 0
+    [[ "$mode" =~ ^[0-7]+$ ]] || return 0
+
+    printf '%s %s\n' "$mode" "$path" >> "$manifest" || return 0
+    chmod 600 "$manifest" 2>/dev/null || true
+}
+
 # True if $1 is already recorded as created this session.
 backup_is_tracked_created() {
     local path="$1"
@@ -833,6 +878,12 @@ backup_file() {
         if backup_is_tracked_created "$file"; then
             return 0
         fi
+
+        # Record the mode BEFORE the copy is taken and re-permissioned, so
+        # what lands in the manifest is the file's own mode rather than the
+        # 600 the snapshot gets. See VPSSEC_MODES_MANIFEST for why the
+        # rollback cannot recover it from the copy.
+        backup_track_mode "$file" "$backup_dir"
 
         mkdir -p "$(dirname "$backup_path")"
         cp -p "$file" "$backup_path"

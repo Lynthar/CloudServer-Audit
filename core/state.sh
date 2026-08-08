@@ -300,6 +300,33 @@ backup_create_session() {
 #   2 — partial: some entries restored, some skipped
 #   1 — nothing restored (empty backup dir, or every entry skipped)
 # Counts are also written to stdout via print_*, not only to the log.
+# Re-apply the mode recorded by backup_track_mode. A backup directory made
+# before this manifest existed simply has no entry, so the file keeps
+# whatever cp -p gave it — restoring content without the mode is still
+# better than refusing to restore.
+#
+# The path reaches awk through ENVIRON, never `-v`: awk expands escape
+# sequences in a -v assignment, so a path containing a backslash would
+# arrive mangled and match nothing, silently skipping the chmod.
+_backup_restore_mode() {
+    local path="$1" manifest="$2"
+    [[ -f "$manifest" ]] || return 0
+
+    local mode
+    mode=$(VPSSEC_MODE_PATH="$path" awk '
+        BEGIN { want = ENVIRON["VPSSEC_MODE_PATH"] }
+        { m = $1; sub(/^[0-7]+ /, ""); if ($0 == want) { print m; exit } }
+    ' "$manifest" 2>/dev/null) || return 0
+    # Emptiness is the only case to guard: the awk above matches a line only
+    # when its first field is octal (that is what the sub() strips before
+    # comparing the path), so anything it prints is already a valid mode.
+    [[ -n "$mode" ]] || return 0
+
+    if ! chmod "$mode" "$path" 2>/dev/null; then
+        log_warn "Restored content but could not restore mode $mode on $path"
+    fi
+}
+
 backup_restore() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -330,6 +357,7 @@ backup_restore() {
 
     local skipped=0
     local restored=0
+    local modes_manifest="${backup_dir}/${VPSSEC_MODES_MANIFEST}"
 
     # Find all backed up files and restore them
     while IFS= read -r -d '' backup_file; do
@@ -381,9 +409,12 @@ backup_restore() {
 
         mkdir -p "$original_dir"
         cp -p "$backup_file" "$original_path"
+        # cp -p copies the mode of the BACKUP copy, which backup_file
+        # deliberately chmods to 600. Put the file's own mode back.
+        _backup_restore_mode "$original_path" "$modes_manifest"
         log_info "Restored: $backup_file -> $original_path"
         ((restored++)) || true
-    done < <(find "$backup_dir" -type f ! -name '.vpssec_created' -print0)
+    done < <(find "$backup_dir" -type f ! -name '.vpssec_created' ! -name '.vpssec_modes' -print0)
 
     # Delete files that fixes CREATED during this plan (they had no prior
     # version, so restoring is not enough — the file must be removed). Paths are

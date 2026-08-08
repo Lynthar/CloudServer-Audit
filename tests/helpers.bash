@@ -106,6 +106,18 @@ _vpssec_require_gnu_realpath() {
 #         [ ! -f "$LOGROTATE_CONF" ]
 #     }
 
+# Absolute path to the real chmod, resolved at load time — before any stub can
+# shadow it.
+#
+# The helpers below make each stub executable with chmod, so stubbing `chmod`
+# itself used to be self-defeating: the helper invoked the stub it had just
+# written, that stub exited without making anything executable, and bash then
+# SKIPPED the non-executable candidate during its PATH search and ran the real
+# chmod. The test passed against the real command while believing it had
+# replaced it. Same shape as the empty-directory-on-PATH fixture that claimed
+# to hide nginx.
+_VPSSEC_REAL_CHMOD="$(command -v chmod || echo /bin/chmod)"
+
 # Directory holding this test's command stubs.
 _vpssec_stub_dir() {
     printf '%s\n' "$BATS_TEST_TMPDIR/stubbin"
@@ -123,6 +135,12 @@ _vpssec_stub_init() {
         *":$dir:"*) ;;
         *) export PATH="$dir:$PATH" ;;
     esac
+    # Drop bash's command hash table. Prepending to PATH does NOT redirect a
+    # command bash has already resolved in this shell: if the test's own setup
+    # ran `chmod` before stubbing it, the cached /usr/bin/chmod keeps being
+    # used and the stub silently never fires — the test then passes against
+    # the real command. Found when a "chmod fails" test refused to fail.
+    hash -r 2>/dev/null || true
 }
 
 # Stub COMMAND with a fixed exit status and optional stdout.
@@ -142,7 +160,7 @@ _vpssec_stub() {
         [[ -n "$out" ]] && printf 'printf "%%s\\n" %q\n' "$out"
         printf 'exit %d\n' "$rc"
     } > "$(_vpssec_stub_dir)/$cmd"
-    chmod +x "$(_vpssec_stub_dir)/$cmd"
+    "$_VPSSEC_REAL_CHMOD" +x "$(_vpssec_stub_dir)/$cmd"
 }
 
 # Stub COMMAND with an arbitrary body read from stdin, for the cases where
@@ -163,7 +181,7 @@ _vpssec_stub_script() {
         printf 'printf "%%s %%s\\n" %q "$*" >> %q\n' "$cmd" "$VPSSEC_STUB_LOG"
         cat
     } > "$(_vpssec_stub_dir)/$cmd"
-    chmod +x "$(_vpssec_stub_dir)/$cmd"
+    "$_VPSSEC_REAL_CHMOD" +x "$(_vpssec_stub_dir)/$cmd"
 }
 
 # All recorded stub invocations, one "<cmd> <argv>" line per call.
@@ -220,8 +238,15 @@ _vpssec_refute() {
 # SETS $VPSSEC_BACKUP_SESSION — call it plainly, never as `s=$(...)`.
 # Command substitution runs it in a subshell where the export dies with
 # the subshell, and the fix under test then silently records nothing.
+#
+# The directory is named like a real session (YYYYMMDD_HHMMSS) because
+# backup_restore refuses any timestamp that doesn't match that shape — with
+# the old "test_session" name a test could set a backup up but never roll it
+# back, which is half the contract. Pass VPSSEC_TEST_BACKUP_SESSION_TS to
+# backup_restore.
+VPSSEC_TEST_BACKUP_SESSION_TS="20260101_000000"
 _vpssec_begin_backup_session() {
-    VPSSEC_BACKUP_SESSION="${VPSSEC_BACKUPS}/test_session"
+    VPSSEC_BACKUP_SESSION="${VPSSEC_BACKUPS}/${VPSSEC_TEST_BACKUP_SESSION_TS}"
     mkdir -p "$VPSSEC_BACKUP_SESSION"
     export VPSSEC_BACKUP_SESSION
 }

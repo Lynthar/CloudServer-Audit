@@ -106,6 +106,26 @@ declare -gA FS_SENSITIVE_FILES=(
 # Maximum number of items to report (to prevent huge output)
 FS_MAX_REPORT_ITEMS=20
 
+# System paths the umask and permissions checks read and write. Module
+# variables rather than literals for two reasons: the audit predicate and the
+# fix must not be able to point at different files, and a fix that hardcodes
+# an /etc literal cannot be exercised against a scratch tree — which is why
+# _fs_fix_umask went untested for as long as it did, and why the
+# "usergroups: missing login.defs" test could only ever skip on Linux.
+FS_LOGIN_DEFS="/etc/login.defs"
+FS_PROFILE="/etc/profile"
+# Files whose pam_umask line decides whether login.defs UMASK applies at
+# session start at all.
+declare -ga FS_PAM_SESSION_FILES=(
+    "/etc/pam.d/common-session"
+    "/etc/pam.d/common-session-noninteractive"
+)
+# Drop-in directories expanded by BOTH the audit and the permissions fix.
+# FS_SENSITIVE_FILES cannot hold globs, so these are walked separately; the
+# fix mirrors the audit's expected modes (sudoers.d 0440, sshd_config.d 0644).
+FS_SUDOERS_D="/etc/sudoers.d"
+FS_SSHD_CONFIG_D="/etc/ssh/sshd_config.d"
+
 # Filesystem-walk infrastructure (_FS_PRUNE_PATHS, _FS_FIND_TIMEOUT,
 # _fs_build_prune_args, _fs_run_find) lives in core/common.sh so any
 # module — webapp's web-root scans, malware's path probes — can use it
@@ -472,17 +492,36 @@ _fs_check_tmp_mount() {
 _fs_check_umask() {
     local umask_value
 
-    # Check /etc/login.defs
-    if [[ -f /etc/login.defs ]]; then
-        umask_value=$(grep -E "^UMASK" /etc/login.defs 2>/dev/null | awk '{print $2}')
+    # Check login.defs — FIRST occurrence only. shadow's getdef keeps the
+    # first entry for a duplicated name: verified on Debian 12 with
+    # pam_umask enabled, two UMASK lines, both orders — the session gets the
+    # first one. An unbounded grep concatenated both values into "077 022",
+    # which normalises to a nonsense mask and made the audit report a weak
+    # umask on a host that had a strict one.
+    #
+    # awk rather than `grep | head -1`: head closes the pipe early, and under
+    # pipefail that SIGPIPE becomes the assignment's exit status.
+    if [[ -f "$FS_LOGIN_DEFS" ]]; then
+        umask_value=$(awk '/^UMASK/ { print $2; exit }' "$FS_LOGIN_DEFS" 2>/dev/null)
     fi
 
-    # Check /etc/profile
-    if [[ -z "$umask_value" && -f /etc/profile ]]; then
-        umask_value=$(grep -E "^\s*umask" /etc/profile 2>/dev/null | tail -1 | awk '{print $2}')
+    # Check /etc/profile. `tail -1` here rather than the first match, and the
+    # asymmetry is deliberate: this is a shell script, so the last `umask`
+    # command executed is the one in effect.
+    if [[ -z "$umask_value" && -f "$FS_PROFILE" ]]; then
+        umask_value=$(grep -E "^\s*umask" "$FS_PROFILE" 2>/dev/null | tail -1 | awk '{print $2}')
     fi
 
     echo "${umask_value:-022}"
+}
+
+# The audit's own definition of an acceptable umask: world bits denied.
+# Shared with _fs_fix_umask so the fix's postcondition cannot drift from the
+# check that produced the finding — the same reason the paths above are
+# variables. Matches 027, 077, 007 (the USERGROUPS-rewritten form) and any
+# other variant whose last digit is 7.
+_fs_umask_is_strict() {
+    [[ "$1" =~ ^0[0-7][0-7]7$ ]]
 }
 
 # Returns "yes" or "no" — the value of USERGROUPS_ENAB in /etc/login.defs.
@@ -490,8 +529,8 @@ _fs_check_umask() {
 # directive is absent, since that's how pam_umask actually behaves.
 _fs_get_usergroups_enab() {
     local val=""
-    if [[ -f /etc/login.defs ]]; then
-        val=$(grep -E "^USERGROUPS_ENAB" /etc/login.defs 2>/dev/null | awk '{print tolower($2)}')
+    if [[ -f "$FS_LOGIN_DEFS" ]]; then
+        val=$(grep -E "^USERGROUPS_ENAB" "$FS_LOGIN_DEFS" 2>/dev/null | awk '{print tolower($2)}')
     fi
     echo "${val:-yes}"
 }
@@ -530,7 +569,7 @@ _fs_compute_effective_umask() {
 # rc files (/etc/profile, /etc/bash.bashrc) influence umask.
 _fs_check_pam_umask_enabled() {
     local f
-    for f in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do
+    for f in "${FS_PAM_SESSION_FILES[@]}"; do
         [[ -f "$f" ]] || continue
         # Match "session ... pam_umask.so" while skipping commented lines.
         grep -qE '^[[:space:]]*session[[:space:]]+[^#]*pam_umask\.so' "$f" 2>/dev/null && return 0
@@ -976,13 +1015,13 @@ _fs_audit_sensitive_perms() {
     # cleanly. Same drop-in blindness pattern as the sshd_config.d
     # bug this whole audit pass was seeded by.
     local _drop
-    for _drop in /etc/sudoers.d/*; do
+    for _drop in "$FS_SUDOERS_D"/*; do
         [[ -f "$_drop" ]] || continue
         local result
         result=$(_fs_check_sensitive_file "$_drop" "440")
         [[ -n "$result" ]] && high_issues+=("$result")
     done
-    for _drop in /etc/ssh/sshd_config.d/*; do
+    for _drop in "$FS_SSHD_CONFIG_D"/*; do
         [[ -f "$_drop" ]] || continue
         local result
         result=$(_fs_check_sensitive_file "$_drop" "644")
@@ -1096,7 +1135,7 @@ _fs_audit_umask() {
 
     # OK = world denied (last digit = 7). Captures 027, 077, 007 (the
     # USERGROUPS-rewritten form), and any other strict variant.
-    if [[ "$effective" =~ ^0[0-7][0-7]7$ ]]; then
+    if _fs_umask_is_strict "$effective"; then
         local check=$(create_check_json \
             "filesystem.umask_ok" \
             "filesystem" \
@@ -1347,11 +1386,11 @@ _fs_fix_sensitive_perms() {
     # should be 0644 (matching sshd_config). Without this, the fix
     # path is silently a no-op for files the audit just flagged.
     local _drop
-    for _drop in /etc/sudoers.d/*; do
+    for _drop in "$FS_SUDOERS_D"/*; do
         [[ -f "$_drop" ]] || continue
         _fs_fix_one "$_drop" "440"
     done
-    for _drop in /etc/ssh/sshd_config.d/*; do
+    for _drop in "$FS_SSHD_CONFIG_D"/*; do
         [[ -f "$_drop" ]] || continue
         _fs_fix_one "$_drop" "644"
     done
@@ -1373,34 +1412,68 @@ _fs_fix_sensitive_perms() {
 _fs_fix_umask() {
     print_info "$(i18n 'filesystem.fixing_umask')"
 
-    local login_defs="/etc/login.defs"
-
-    if [[ -f "$login_defs" ]]; then
-        backup_file "$login_defs"
-
-        # Update UMASK in login.defs
-        if grep -q "^UMASK" "$login_defs"; then
-            sed -i 's/^UMASK.*/UMASK\t\t027/' "$login_defs"
-        else
-            echo "UMASK		027" >> "$login_defs"
-        fi
-
-        print_ok "$(i18n 'filesystem.umask_fixed')"
-
-        # Surface the USERGROUPS_ENAB interaction so the operator isn't
-        # surprised. With the Debian default (USERGROUPS_ENAB=yes +
-        # private user groups), pam_umask rewrites 027 to effective 007
-        # at session start. World access is still denied; the change
-        # is just that group bits mirror owner bits — harmless on a
-        # standard VPS where each user has their own private group.
-        local usergroups
-        usergroups=$(_fs_get_usergroups_enab)
-        if [[ "$usergroups" == "yes" ]]; then
-            print_info "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
-        fi
-        return 0
-    else
+    if [[ ! -f "$FS_LOGIN_DEFS" ]]; then
         print_error "$(i18n 'filesystem.login_defs_not_found')"
         return 1
     fi
+
+    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true
+
+    # Stage, validate, then replace atomically. This used to be `sed -i` on
+    # the live file, with `echo >> ` when no UMASK line existed — and PAM
+    # reads login.defs at every login, so an interrupted in-place rewrite or
+    # a partial append is a login-time failure on a fix nobody was asked to
+    # confirm (filesystem.fix_umask is FIX_SAFE).
+    local staged
+    if grep -qE '^UMASK' "$FS_LOGIN_DEFS"; then
+        staged=$(sed 's/^UMASK.*/UMASK\t\t027/' "$FS_LOGIN_DEFS") || staged=""
+    else
+        staged=$(printf '%s\nUMASK\t\t027\n' "$(cat "$FS_LOGIN_DEFS")") || staged=""
+    fi
+
+    if ! grep -qE '^UMASK[[:space:]]+027$' <<<"$staged"; then
+        print_error "$(i18n 'filesystem.umask_stage_failed' "file=$FS_LOGIN_DEFS")"
+        return 1
+    fi
+
+    if ! write_file_atomic "$FS_LOGIN_DEFS" "$staged"; then
+        print_error "$(i18n 'filesystem.umask_write_failed' "file=$FS_LOGIN_DEFS")"
+        return 1
+    fi
+
+    # Postcondition: ask the audit's own question again rather than trusting
+    # that the write did what it looked like. `sed` exits 0 having matched
+    # nothing, and a UMASK line the audit reads differently (a second one
+    # later in the file, a value the pattern does not accept) would otherwise
+    # be reported as a fixed host that the next audit re-flags.
+    local usergroups effective
+    usergroups=$(_fs_get_usergroups_enab)
+    effective=$(_fs_compute_effective_umask "$(_fs_check_umask)" "$usergroups")
+    if ! _fs_umask_is_strict "$effective"; then
+        print_error "$(i18n 'filesystem.umask_not_effective' "value=$effective")"
+        return 1
+    fi
+
+    print_ok "$(i18n 'filesystem.umask_fixed')"
+
+    # Surface the USERGROUPS_ENAB interaction so the operator isn't
+    # surprised. With the Debian default (USERGROUPS_ENAB=yes +
+    # private user groups), pam_umask rewrites 027 to effective 007
+    # at session start. World access is still denied; the change
+    # is just that group bits mirror owner bits — harmless on a
+    # standard VPS where each user has their own private group.
+    if [[ "$usergroups" == "yes" ]]; then
+        print_info "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
+    fi
+
+    # pam_umask is what makes login.defs UMASK apply at session start. Without
+    # it the value this fix just wrote only reaches shell login sessions, so
+    # saying so here is the difference between "hardened" and "hardened for
+    # interactive bash users only". The audit reports the same thing as info;
+    # no fix is offered because editing the PAM stack is not auto-safe.
+    if ! _fs_check_pam_umask_enabled; then
+        print_warn "$(i18n 'filesystem.umask_pam_missing')"
+    fi
+
+    return 0
 }

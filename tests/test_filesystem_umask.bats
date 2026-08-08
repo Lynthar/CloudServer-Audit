@@ -17,6 +17,19 @@ setup() {
     _vpssec_load
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/filesystem.sh"
+
+    # Redirect the paths this family reads. Until these became module
+    # variables the two tests at the bottom of this file could not run at all:
+    # one skipped on every host that has /etc/login.defs (i.e. all of CI), and
+    # the other could only assert that a function existed.
+    etc=$(_vpssec_fake_etc)
+    FS_LOGIN_DEFS="$etc/login.defs"
+    FS_PROFILE="$etc/profile"
+    FS_PAM_SESSION_FILES=(
+        "$etc/pam.d/common-session"
+        "$etc/pam.d/common-session-noninteractive"
+    )
+    mkdir -p "$etc/pam.d"
 }
 
 # ---------- _fs_compute_effective_umask ----------
@@ -78,27 +91,64 @@ setup() {
 # ---------- _fs_get_usergroups_enab ----------
 
 @test "usergroups: missing login.defs → defaults to yes" {
-    # Run with an isolated PWD so no /etc/login.defs interference. The
-    # function reads /etc/login.defs unconditionally, so we can't fully
-    # mock; this asserts the default-when-absent contract assuming the
-    # host doesn't have USERGROUPS_ENAB set explicitly. On macOS dev
-    # hosts /etc/login.defs doesn't exist → "yes" is returned.
-    if [[ -f /etc/login.defs ]]; then
-        skip "host has /etc/login.defs; default-when-absent path can't be exercised"
-    fi
+    # This used to skip on every host that HAS /etc/login.defs, which is every
+    # Linux host including CI — so the default-when-absent contract was never
+    # actually exercised. With FS_LOGIN_DEFS pointed at a scratch path it runs
+    # everywhere.
+    [ ! -f "$FS_LOGIN_DEFS" ]
+
     run _fs_get_usergroups_enab
     [ "$status" -eq 0 ]
     [ "$output" = "yes" ]
 }
 
-# ---------- _fs_check_pam_umask_enabled (via stub /etc/pam.d) ----------
-# We can't mock /etc/pam.d on macOS without root, so these are skipped
-# unless running on a Linux host with writable test layout. The
-# helper is also used in production with real paths, so the bash -n
-# coverage and the audit-level integration test above suffice.
+@test "usergroups: an absent directive defaults to yes, an explicit no is read" {
+    printf 'MAIL_DIR\t/var/mail\n' > "$FS_LOGIN_DEFS"
+    run _fs_get_usergroups_enab
+    [ "$output" = "yes" ]
 
-@test "pam_umask: function exists and is callable" {
-    run type -t _fs_check_pam_umask_enabled
+    printf 'USERGROUPS_ENAB\tno\n' >> "$FS_LOGIN_DEFS"
+    run _fs_get_usergroups_enab
+    [ "$output" = "no" ]
+}
+
+@test "usergroups: the value is lowercased" {
+    printf 'USERGROUPS_ENAB\tYES\n' > "$FS_LOGIN_DEFS"
+    run _fs_get_usergroups_enab
+    [ "$output" = "yes" ]
+}
+
+# ---------- _fs_check_pam_umask_enabled ----------
+
+@test "pam_umask: an active session line is detected" {
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+    run _fs_check_pam_umask_enabled
     [ "$status" -eq 0 ]
-    [ "$output" = "function" ]
+}
+
+@test "pam_umask: a commented-out line does not count" {
+    # The whole point of the regex: a distro that ships the line commented is
+    # not applying login.defs UMASK at session start.
+    printf '# session optional pam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+    run _fs_check_pam_umask_enabled
+    [ "$status" -eq 1 ]
+}
+
+@test "pam_umask: the noninteractive file is checked too" {
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[1]}"
+    run _fs_check_pam_umask_enabled
+    [ "$status" -eq 0 ]
+}
+
+@test "pam_umask: absent files mean not enabled" {
+    # The Debian 12 verification container is exactly this shape — no
+    # pam_umask line anywhere — so this is the common case, not a corner one.
+    run _fs_check_pam_umask_enabled
+    [ "$status" -eq 1 ]
+}
+
+@test "pam_umask: an unrelated pam module is not mistaken for it" {
+    printf 'session\trequired\tpam_unix.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+    run _fs_check_pam_umask_enabled
+    [ "$status" -eq 1 ]
 }

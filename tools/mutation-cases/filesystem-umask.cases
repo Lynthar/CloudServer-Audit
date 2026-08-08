@@ -1,0 +1,40 @@
+# Mutation cases for tests/test_filesystem_umask.bats against
+# modules/filesystem.sh — the umask AUDIT helpers, as opposed to the fixes
+# (tools/mutation-cases/filesystem.cases, paired with test_fix_filesystem.bats).
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/filesystem.sh \
+#        tests/test_filesystem_umask.bats tools/mutation-cases/filesystem-umask.cases
+#
+# Two of the tests this file pins could not run at all until FS_LOGIN_DEFS and
+# FS_PAM_SESSION_FILES became module variables: one skipped on every host that
+# has /etc/login.defs (i.e. all of CI) and the other asserted only that a
+# function existed. These cases are what shows the replacements assert something.
+
+run_case "usergroups/default-flipped" 1 \
+    '    echo "${val:-yes}"' \
+    '    echo "${val:-no}"'
+
+run_case "usergroups/value-not-lowercased" 1 \
+    '        val=$(grep -E "^USERGROUPS_ENAB" "$FS_LOGIN_DEFS" 2>/dev/null | awk '"'"'{print tolower($2)}'"'"')' \
+    '        val=$(grep -E "^USERGROUPS_ENAB" "$FS_LOGIN_DEFS" 2>/dev/null | awk '"'"'{print $2}'"'"')'
+
+run_case "pam/comment-not-skipped" 1 \
+    "        grep -qE '^[[:space:]]*session[[:space:]]+[^#]*pam_umask\\.so' \"\$f\" 2>/dev/null && return 0" \
+    "        grep -q 'pam_umask' \"\$f\" 2>/dev/null && return 0"
+
+run_case "pam/any-session-line-matches" 1 \
+    "        grep -qE '^[[:space:]]*session[[:space:]]+[^#]*pam_umask\\.so' \"\$f\" 2>/dev/null && return 0" \
+    "        grep -qE '^[[:space:]]*session' \"\$f\" 2>/dev/null && return 0"
+
+run_case "pam/only-the-first-file-checked" 1 \
+    '    for f in "${FS_PAM_SESSION_FILES[@]}"; do' \
+    '    for f in "${FS_PAM_SESSION_FILES[0]}"; do'
+
+run_case "effective/usergroups-rewrite-dropped" 1 \
+    '        echo "${raw:0:1}${raw:1:1}${raw:1:1}${raw:3:1}"' \
+    '        echo "$raw"'
+
+run_case "effective/empty-default-dropped" 1 \
+    '    [[ -z "$raw" ]] && raw="022"' \
+    '    :'
