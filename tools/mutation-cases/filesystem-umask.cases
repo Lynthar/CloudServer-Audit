@@ -38,3 +38,30 @@ run_case "effective/usergroups-rewrite-dropped" 1 \
 run_case "effective/empty-default-dropped" 1 \
     '    [[ -z "$raw" ]] && raw="022"' \
     '    :'
+
+# ---- what _fs_audit_umask reports (text only; the branch is untouched) ----
+
+run_case "report/rewrite-stated-as-fact" 1 \
+    '        desc="$desc, possibly effective=$effective (USERGROUPS_ENAB=$usergroups may make pam_umask mirror owner bits onto group bits for private-group users; confirm with '"'"'umask'"'"' in a login shell)"' \
+    '        desc="$desc, effective=$effective (USERGROUPS_ENAB=$usergroups rewrites group bits)"'
+
+run_case "report/raw-comparison-restored" 1 \
+    '    elif [[ "$normalized" != "$effective" ]]; then' \
+    '    elif [[ "$configured" != "$effective" ]]; then'
+
+run_case "report/pam-gate-removed" 1 \
+    '    if (( pam_umask_on == 0 )); then' \
+    '    if false; then'
+
+run_case "report/pam-info-check-always" 2 \
+    '    if (( pam_umask_on == 0 )); then' \
+    '    if true; then'
+
+# The severity branch must NOT move — these two prove the suite would catch it.
+run_case "report/branch-keyed-on-configured" 1 \
+    '    if _fs_umask_is_strict "$effective"; then' \
+    '    if _fs_umask_is_strict "$configured"; then'
+
+run_case "report/default-branch-widened" 1 \
+    '    elif [[ "$effective" == "0022" || "$effective" == "0002" ]]; then' \
+    '    elif true; then'

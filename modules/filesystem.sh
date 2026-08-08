@@ -1124,13 +1124,47 @@ _fs_audit_umask() {
     usergroups=$(_fs_get_usergroups_enab)
     effective=$(_fs_compute_effective_umask "$configured" "$usergroups")
 
+    local pam_umask_on=0
+    _fs_check_pam_umask_enabled && pam_umask_on=1
+
     # Severity is decided on the EFFECTIVE umask (what actually applies
     # at session start), not the literal value in login.defs. Otherwise
     # configured=027 + USERGROUPS_ENAB=yes (Debian default) reports "OK"
     # while real users get effective 007.
+    #
+    # What follows only decides what the report SAYS — the branch below still
+    # keys on $effective exactly as before, so no host's score moves. Two
+    # claims that used to be stated as fact are now qualified:
+    #
+    #   * The USERGROUPS_ENAB rewrite. Measured on Debian 12 with pam_umask
+    #     enabled, USERGROUPS_ENAB=yes and a textbook private-group user
+    #     (uid == gid, group name == user name): a configured UMASK of 077
+    #     produced a session umask of 0077, not the 0007 this model predicts.
+    #     The likely reason is that pam_umask performs that rewrite for its own
+    #     `usergroups` module option while USERGROUPS_ENAB in login.defs is
+    #     what useradd reads — unverified, and `su -` is not a full getty/sshd
+    #     login, so the model itself stays. But the report must not assert a
+    #     rewrite the operator disproves by typing `umask`. That is the mirror
+    #     image of the M15 bug this model was written to fix.
+    #   * That login.defs UMASK applies at all. Without pam_umask in the
+    #     session stack it does not: shadow's own `login` honours it on the
+    #     console, sshd does not. Stock Debian 12 ships no pam_umask line, so
+    #     this is the common case, not a corner one.
+    # Compare the NORMALISED configured value, not the raw one. `configured` is
+    # what the file says ("027"); `effective` is always 4 digits ("0027"), so a
+    # raw string comparison differs for every 3-digit value and the qualifier
+    # was emitted even when nothing had been rewritten — including on
+    # USERGROUPS_ENAB=no hosts, where the sentence read "effective=0027
+    # (USERGROUPS_ENAB=no rewrites group bits)". Same for an already-mirrored
+    # value like 007, where the rewrite is a no-op.
+    local normalized
+    normalized=$(_fs_compute_effective_umask "$configured" "no")
+
     local desc="configured=$configured"
-    if [[ "$configured" != "$effective" ]]; then
-        desc="$desc, effective=$effective (USERGROUPS_ENAB=$usergroups rewrites group bits)"
+    if (( pam_umask_on == 0 )); then
+        desc="$desc (not applied at PAM session start: pam_umask is not enabled, so this value reaches console logins but not sshd sessions)"
+    elif [[ "$normalized" != "$effective" ]]; then
+        desc="$desc, possibly effective=$effective (USERGROUPS_ENAB=$usergroups may make pam_umask mirror owner bits onto group bits for private-group users; confirm with 'umask' in a login shell)"
     fi
 
     # OK = world denied (last digit = 7). Captures 027, 077, 007 (the
@@ -1177,7 +1211,7 @@ _fs_audit_umask() {
     # in login.defs may not be applied at session start (only via shell
     # rc files), so tell the user. No fix offered: PAM stack edits are
     # too sensitive to auto-modify.
-    if ! _fs_check_pam_umask_enabled; then
+    if (( pam_umask_on == 0 )); then
         local pam_check
         pam_check=$(create_check_json \
             "filesystem.pam_umask_disabled" \

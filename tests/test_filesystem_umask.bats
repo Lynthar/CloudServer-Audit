@@ -14,7 +14,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/security_levels.sh core/state.sh
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/filesystem.sh"
 
@@ -151,4 +151,138 @@ setup() {
     printf 'session\trequired\tpam_unix.so\n' > "${FS_PAM_SESSION_FILES[0]}"
     run _fs_check_pam_umask_enabled
     [ "$status" -eq 1 ]
+}
+
+# ---------- what _fs_audit_umask REPORTS ----------
+#
+# The model that turns configured 027 into effective 007 does not reproduce on
+# Debian 12: with pam_umask enabled, USERGROUPS_ENAB=yes and a private-group
+# user, configured 077 gave a session umask of 0077. Whether that holds for a
+# full getty/sshd login was not established, so the model stays and the
+# SEVERITY BRANCH is untouched — these tests pin that, because changing it
+# would move every host's score. What changed is the wording: the rewrite is
+# reported as a possibility, and only when pam_umask is in the session stack.
+
+# The JSON key is `desc`, not `description` — see create_check_json.
+_emitted_ids()  { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
+_emitted_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSEC_STATE/checks.json"; }
+
+@test "audit umask: the finding for a stock 022 host is unchanged" {
+    # The whole point of a text-only change: this id, and therefore the score,
+    # must be identical before and after.
+    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    # The ids are captured first: `_vpssec_refute _emitted_ids | grep …` would
+    # bind the pipe to the refutation, so _vpssec_refute would negate
+    # _emitted_ids (which always succeeds) and the grep result would be
+    # discarded — an assertion that asserts nothing.
+    local ids
+    ids=$(_emitted_ids)
+    grep -qx 'filesystem.umask_default' <<<"$ids"
+    _vpssec_refute grep -qx 'filesystem.umask_weak' <<<"$ids"
+}
+
+@test "audit umask: a hardened 027 host still passes" {
+    printf 'UMASK\t\t027\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    _emitted_ids | grep -qx 'filesystem.umask_ok'
+    [ "$(_emitted_desc filesystem.umask_ok)" != "" ]
+}
+
+@test "audit umask: the group-bit rewrite is reported as a possibility" {
+    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    local d
+    d=$(_emitted_desc filesystem.umask_default)
+    grep -q 'possibly effective=0002' <<<"$d"
+    grep -q 'confirm with' <<<"$d"
+    # The old wording asserted it as fact. An operator can disprove that by
+    # typing `umask`, which is the whole reason for this change.
+    _vpssec_refute grep -q 'rewrites group bits' <<<"$d"
+}
+
+@test "audit umask: with pam_umask absent the report says the value is not applied" {
+    # Stock Debian 12 ships no pam_umask line, so this is the common case.
+    # Claiming any effective value here would describe a path that does not
+    # exist on the host.
+    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    rm -f "${FS_PAM_SESSION_FILES[0]}" "${FS_PAM_SESSION_FILES[1]}"
+
+    _fs_audit_umask
+    local d
+    d=$(_emitted_desc filesystem.umask_default)
+    grep -q 'not applied at PAM session start' <<<"$d"
+    _vpssec_refute grep -q 'possibly effective' <<<"$d"
+}
+
+@test "audit umask: pam_umask absent still emits its own info check" {
+    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    rm -f "${FS_PAM_SESSION_FILES[0]}" "${FS_PAM_SESSION_FILES[1]}"
+
+    _fs_audit_umask
+    _emitted_ids | grep -qx 'filesystem.pam_umask_disabled'
+    # Same finding as before this change: the info check is not new.
+    _emitted_ids | grep -qx 'filesystem.umask_default'
+}
+
+@test "audit umask: pam_umask present emits no pam info check" {
+    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    local ids
+    ids=$(_emitted_ids)
+    _vpssec_refute grep -qx 'filesystem.pam_umask_disabled' <<<"$ids"
+}
+
+@test "audit umask: USERGROUPS_ENAB=no reports no rewrite at all" {
+    # The regression this uncovered: `configured` is what the file says (027)
+    # and `effective` is always four digits (0027), so comparing them raw
+    # differed for every 3-digit value and the qualifier was emitted even here
+    # — the old text read "effective=0027 (USERGROUPS_ENAB=no rewrites group
+    # bits)", which contradicts itself.
+    printf 'UMASK\t\t027\nUSERGROUPS_ENAB\tno\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    [ "$(_emitted_desc filesystem.umask_ok)" = "configured=027" ]
+}
+
+@test "audit umask: a permissive value still lands in the scored branch" {
+    # umask_weak is the ONLY one of the three umask checks in a scored
+    # category (`recommended`; umask_ok and umask_default are `info`), so it is
+    # the branch any "this change moves no score" claim rests on. Nothing above
+    # reached it, and a mutation that widened umask_default to swallow
+    # everything survived until this test existed.
+    #
+    # 072 with USERGROUPS_ENAB=no is deliberate: it is one of the six values
+    # (0b2 with b not in {0,2}) where the rewrite model and the measured
+    # behaviour would classify differently, so pinning it with the rewrite
+    # switched off keeps the assertion stable whichever way that question is
+    # settled later.
+    printf 'UMASK\t\t072\nUSERGROUPS_ENAB\tno\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    local ids
+    ids=$(_emitted_ids)
+    grep -qx 'filesystem.umask_weak' <<<"$ids"
+    _vpssec_refute grep -qx 'filesystem.umask_default' <<<"$ids"
+    grep -q 'too permissive' <<<"$(_emitted_desc filesystem.umask_weak)"
+}
+
+@test "audit umask: a rewrite that changes nothing is not reported" {
+    # 007 already has group bits equal to owner bits, so the rewrite is a
+    # no-op even with USERGROUPS_ENAB=yes. Nothing to qualify.
+    printf 'UMASK\t\t007\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+    printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
+
+    _fs_audit_umask
+    [ "$(_emitted_desc filesystem.umask_ok)" = "configured=007" ]
 }
