@@ -1,6 +1,14 @@
-# Mutation cases for tests/test_fix_logging*.bats against modules/logging.sh.
+# Mutation cases for tests/test_fix_logging_journal_auditd.bats against
+# modules/logging.sh.
 #
-# Run with:  bash tools/mutate-suite.sh modules/logging.sh <suite.bats> tools/mutation-cases/logging.cases
+# Run with:  bash tools/mutate-suite.sh modules/logging.sh \
+#                 tests/test_fix_logging_journal_auditd.bats \
+#                 tools/mutation-cases/logging.cases
+#
+# ONE suite, not `test_fix_logging*.bats` as this header used to say. The glob
+# was wishful: nothing here mutates _logging_fix_setup_logrotate, so the other
+# logging suite went unmutated and three of its tests turned out to assert
+# nothing. Its cases are in logging-logrotate.cases.
 # Each entry reintroduces a defect this code actually had, or a plausible
 # regression of a guard it relies on. All of them must stay killed.
 #

@@ -184,6 +184,54 @@ _vpssec_stub_script() {
     "$_VPSSEC_REAL_CHMOD" +x "$(_vpssec_stub_dir)/$cmd"
 }
 
+# Make `check_command NAME` answer "not installed", whatever the host has.
+#
+# Stubbing cannot do this job — it does the opposite. _vpssec_stub puts an
+# executable on PATH, so `command -v` and therefore check_command start
+# SUCCEEDING. There is no way to steer the guard the other way from PATH: the
+# only thing that makes check_command fail is the genuine absence of a binary,
+# i.e. whatever the test host happens not to ship. A test written that way
+# asserts nothing about the code and everything about the container.
+#
+# That is not hypothetical. Three tests in test_fix_logging_logrotate.bats
+# covered the apt-install-failure branch of _logging_fix_setup_logrotate in the
+# Debian container, which has no logrotate, and stopped covering it on
+# ubuntu-latest, which preinstalls it: check_command succeeded, the whole apt
+# block was skipped, and the fix returned 0 without calling apt-get. Three went
+# red in CI. A fourth ("a failing apt-get update alone does not fail the fix")
+# stayed GREEN and proved nothing, because the status 0 it asserts is what
+# skipping the block hands it for free — the more dangerous half.
+#
+# Still stub the binary alongside this, so a "never called" refutation is real.
+#
+#     _vpssec_absent_command logrotate            # absent for this whole test
+#     _vpssec_absent_command aa-status "$marker"  # absent until $marker exists
+#
+# The two-argument form models a lifecycle (absent -> apt-get installs it ->
+# present) and takes a FILE on purpose. A nested function closing over a
+# `local` captures the NAME, not the value, so by the time the guard calls it
+# the variable is out of scope, `set -u` aborts — and an aborted guard is
+# indistinguishable from a guard that refused, so every "it refused" assertion
+# passes vacuously.
+#
+# Call it AFTER _vpssec_load: common.sh defines the real check_command at
+# source time and would overwrite this one.
+declare -gA _VPSSEC_ABSENT_CMDS=()
+_vpssec_absent_command() {
+    _VPSSEC_ABSENT_CMDS["$1"]="${2:-}"
+
+    check_command() {
+        local marker
+        if [[ -n "${_VPSSEC_ABSENT_CMDS[$1]+set}" ]]; then
+            marker="${_VPSSEC_ABSENT_CMDS[$1]}"
+            # No marker: absent for good. With one: absent until it appears,
+            # after which the normal PATH lookup (i.e. the stub) answers.
+            [[ -n "$marker" && -e "$marker" ]] || return 1
+        fi
+        command -v "$1" &>/dev/null
+    }
+}
+
 # All recorded stub invocations, one "<cmd> <argv>" line per call.
 _vpssec_stub_calls() {
     cat "${VPSSEC_STUB_LOG:-/dev/null}" 2>/dev/null || true

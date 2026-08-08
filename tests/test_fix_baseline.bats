@@ -95,13 +95,13 @@ _config_mode() {
 # ==============================================================================
 
 @test "selinux: a host without setenforce fails instead of editing the config" {
-    # check_command is redefined rather than un-stubbing setenforce, because
+    # The guard is answered here rather than by un-stubbing setenforce, because
     # "is the binary absent" must not depend on what the test host happens to
     # have installed — the tool ships for hosts both with and without
     # selinux-utils. setenforce IS stubbed, so the refutation below is real.
     _selinux_present
     _permissive_config
-    check_command() { [[ "$1" != "setenforce" ]] && command -v "$1" &>/dev/null; }
+    _vpssec_absent_command setenforce
 
     run _baseline_fix_selinux_enforcing
     [ "$status" -eq 1 ]
@@ -254,20 +254,14 @@ _config_mode() {
 # baseline.enable_apparmor  (FIX_CONFIRM — installs, enables, starts)
 # ==============================================================================
 
-# check_command answers from a marker file so "not installed" is a property of
-# the test rather than of the host, and so one test can cover the whole
+# The guard answers from a marker file, so "not installed" is a property of the
+# test rather than of the host, and one test can cover the whole
 # install -> enable -> effective lifecycle. The state lives in a file, not in a
 # local: a nested function closing over a local captures the NAME, and by call
 # time set -u aborts the gate — indistinguishable from the gate refusing.
 _apparmor_absent() {
     rm -f "$BATS_TEST_TMPDIR/aa-installed"
-    check_command() {
-        if [[ "$1" == "aa-status" ]]; then
-            [[ -f "$BATS_TEST_TMPDIR/aa-installed" ]]
-            return
-        fi
-        command -v "$1" &>/dev/null
-    }
+    _vpssec_absent_command aa-status "$BATS_TEST_TMPDIR/aa-installed"
 }
 
 @test "apparmor: an install that fails is reported as an install failure" {
