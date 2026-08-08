@@ -70,18 +70,26 @@ EOF
     [ "$status" -eq 1 ]
 }
 
-@test "jail.local empty + jail.d with operator file → custom" {
+@test "jail.local empty + jail.d/*.local operator file → custom" {
+    # This test used to assert the opposite, on the reasoning that "the
+    # current glob matches *.conf only" — describing the implementation
+    # rather than a requirement, and so pinning a defect as if it were the
+    # spec. fail2ban reads jail.d/*.local as well as jail.d/*.conf (measured
+    # against fail2ban-client), so a .local carrying maxretry IS operator
+    # tuning. Reading it as "not custom" made the audit report "using default
+    # configuration only" on a tuned host — and, once this tool's own fix
+    # started writing a .local drop-in, on a host it had just configured.
     : >"$F2B_JAIL_LOCAL"
     cat >"$F2B_JAIL_D/sshd.local" <<'EOF'
 [sshd]
 maxretry = 3
 EOF
-    # sshd.local is in jail.d/ but doesn't end in .conf — current glob
-    # matches *.conf only, so this should not by itself flip custom.
-    # Add a real .conf to confirm.
     run _f2b_has_custom_config
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 0 ]
+}
 
+@test "jail.local empty + jail.d/*.conf operator file → custom" {
+    : >"$F2B_JAIL_LOCAL"
     cat >"$F2B_JAIL_D/operator.conf" <<'EOF'
 [sshd]
 maxretry = 3

@@ -1,0 +1,239 @@
+# Mutation cases for tests/test_fix_fail2ban.bats against modules/fail2ban.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/fail2ban.sh \
+#                 tests/test_fix_fail2ban.bats tools/mutation-cases/fail2ban.cases
+#
+# Paired with the FIX suite only. The module's other suite,
+# tests/test_fail2ban_custom.bats, covers the _f2b_has_custom_config predicate
+# and has its own file (fail2ban-custom.cases) — a case aimed at code a suite
+# does not cover reads as a coverage gap that is not one.
+#
+# Every entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it relies on. All of them must stay killed.
+#
+# NOTE on path pinning: the verification container has a real
+# /etc/fail2ban/jail.d, so a mutation that inlines the literal drop-in path
+# back in would make the mutated fix write into the container's own /etc and
+# every later case would run against a changed host. Where a case needs to
+# redirect the target it swaps one module path VARIABLE for another
+# ($F2B_DROPIN -> $F2B_JAIL_LOCAL); both are redirected into the test's
+# scratch tree, and the swap is a more faithful model of the defect anyway.
+#
+# The occurrence index matters in several places: `if _f2b_service_active;
+# then` appears five times at the same indentation, and the drop-in content
+# carries `maxretry = 3` / `bantime = 1h` in both [DEFAULT] and [sshd].
+
+# ---------------------------------------------------------------------------
+# The rollback contract. backup_file's second job is recording an ABSENT path
+# in .vpssec_created, which is the only thing that lets a rollback delete a
+# fix-created file.
+# ---------------------------------------------------------------------------
+
+run_case "backup/guard-reintroduced" 1 \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
+    '    [[ -f "$F2B_DROPIN" ]] && { f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""; }'
+
+run_case "backup/registers-wrong-path" 1 \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
+    '    f2b_bak=$(backup_file "$F2B_JAIL_LOCAL" 2>/dev/null) || f2b_bak=""'
+
+run_case "backup/not-taken-at-all" 1 \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
+    '    f2b_bak=""'
+
+# ---------------------------------------------------------------------------
+# Where the configuration lands. Writing jail.local again is the defect the
+# whole change exists to remove.
+# ---------------------------------------------------------------------------
+
+run_case "write/jail-local-again" 1 \
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then' \
+    '    if ! write_file_atomic "$F2B_JAIL_LOCAL" "$jail_content"; then'
+
+run_case "write/status-discarded" 1 \
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then' \
+    '    if write_file_atomic "$F2B_DROPIN" "$jail_content"; false; then'
+
+# ---------------------------------------------------------------------------
+# Validation and the cleanup that follows it.
+# ---------------------------------------------------------------------------
+
+run_case "validate/config-test-skipped" 1 \
+    '    if command -v fail2ban-client >/dev/null 2>&1 && ! fail2ban-client -t >/dev/null 2>&1; then' \
+    '    if false; then'
+
+run_case "restore/created-file-not-removed" 1 \
+    '    elif [[ "$had_dropin" != "true" ]]; then' \
+    '    elif false; then'
+
+run_case "restore/removes-what-it-cannot-restore" 1 \
+    '    elif [[ "$had_dropin" != "true" ]]; then' \
+    '    else'
+
+run_case "restore/backup-not-put-back" 1 \
+    '    if [[ -n "$bak" && -f "$bak" ]]; then' \
+    '    if false; then'
+
+# Occurrence 1 of two: the config-test-failure branch. (#2 is the
+# postcondition-failure branch, further down.)
+run_case "restore/not-called-after-bad-config" 1 \
+    '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
+    '        :'
+# There was once a third call site, on the failed-WRITE branch. It survived
+# this mutation, and the reason was not a missing test: write_file_atomic
+# stages into a temp file and finishes with `mv -f`, so every failure path
+# leaves the target untouched — the cleanup was inert and no constructible
+# state told it apart from `:`. Removed rather than covered; see the comment
+# at that branch.
+
+# ---------------------------------------------------------------------------
+# The postcondition. errexit is off inside a fix, so this is the only thing
+# standing between a failed reload and a reported success.
+# ---------------------------------------------------------------------------
+
+# Occurrence 2, not 1: the same line at the same indentation opens
+# _f2b_audit_ssh_jail, which this suite never runs. Aimed at #1 it SURVIVED
+# and read as a coverage gap in the fix's postcondition — which is covered.
+run_case "postcondition/always-succeeds" 2 \
+    '    if _f2b_ssh_jail_enabled; then' \
+    '    if true; then'
+
+run_case "enable_ssh_jail/does-nothing" 1 \
+    '    _f2b_fix_configure_ssh_jail' \
+    '    return 0'
+
+# A failed postcondition must also put the host back. Found by running the fix
+# against a real fail2ban: a drop-in that passes `-t` can still make fail2ban
+# fail to initialize the jail, and then the box has no sshd jail at all.
+
+# Occurrence 2: #1 is the same call on the config-test-failure branch above.
+run_case "postcondition/failure-leaves-dropin-live" 2 \
+    '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
+    '        :'
+
+# Occurrence 4 of six: #1 audit, #2 enable_service's postcondition, #3
+# configure's reload branch, #4 the guard under test, #5/#6 the unban helpers.
+run_case "postcondition/rolls-back-even-when-service-down" 4 \
+    '    if _f2b_service_active; then' \
+    '    if true; then'
+
+# The backend predicate. `backend = systemd` needs python3-systemd, which
+# Debian only Recommends; journald being up says nothing about it.
+
+run_case "backend/systemd-without-the-python-module" 1 \
+    '        if journalctl -n 1 &>/dev/null && \' \
+    '        if journalctl -n 1 &>/dev/null || \'
+
+run_case "backend/journal-check-dropped" 1 \
+    '           python3 -c "import systemd.journal" 2>/dev/null; then' \
+    '           true; then'
+
+# ---------------------------------------------------------------------------
+# The generated content. Each of these was a real value the fix has to derive
+# rather than assume.
+# ---------------------------------------------------------------------------
+
+run_case "ignoreip/loopback-dropped" 1 \
+    '    local f2b_ignoreip="127.0.0.1/8 ::1"' \
+    '    local f2b_ignoreip="10.255.255.254"'
+
+run_case "ignoreip/operator-address-dropped" 1 \
+    '    [[ -n "$f2b_current_ip" ]] && f2b_ignoreip+=" $f2b_current_ip"' \
+    '    :'
+
+run_case "banaction/hardcoded-iptables" 1 \
+    'banaction = $f2b_banaction' \
+    'banaction = iptables-multiport'
+
+run_case "banaction/allports-hardcoded" 1 \
+    'banaction_allports = $f2b_banaction_allports' \
+    'banaction_allports = iptables-allports'
+
+run_case "port/hardcoded-22" 1 \
+    'port = $ssh_port' \
+    'port = 22'
+
+run_case "jail/not-enabled" 1 \
+    'enabled = true' \
+    'enabled = false'
+
+run_case "maxretry/left-at-stock-default" 2 \
+    'maxretry = 3' \
+    'maxretry = 5'
+
+run_case "bantime/left-at-stock-default" 2 \
+    'bantime = 1h' \
+    'bantime = 10m'
+
+# ---------------------------------------------------------------------------
+# The audit must be able to read back what the fix wrote. These three readers
+# globbed jail.d/*.conf only, so the fix succeeded and the next audit said
+# "using default configuration only".
+# ---------------------------------------------------------------------------
+
+run_case "readers/custom-config-conf-only" 1 \
+    '        for f in "$F2B_JAIL_D"/*.conf "$F2B_JAIL_D"/*.local; do' \
+    '        for f in "$F2B_JAIL_D"/*.conf; do'
+
+run_case "readers/maxretry-conf-only" 1 \
+    '            maxretry=$(grep -rh "^\s*maxretry\s*=" "$F2B_JAIL_D"/*.conf "$F2B_JAIL_D"/*.local 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"'"' '"'"')' \
+    '            maxretry=$(grep -rh "^\s*maxretry\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"'"' '"'"')'
+
+run_case "readers/bantime-conf-only" 1 \
+    '            bantime=$(grep -rh "^\s*bantime\s*=" "$F2B_JAIL_D"/*.conf "$F2B_JAIL_D"/*.local 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"'"' '"'"')' \
+    '            bantime=$(grep -rh "^\s*bantime\s*=" "$F2B_JAIL_D"/*.conf 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"'"' '"'"')'
+
+# ---------------------------------------------------------------------------
+# The legacy-jail.local notice. Without it a host carries two vpssec configs
+# and nothing on screen says which one is in effect.
+# ---------------------------------------------------------------------------
+
+run_case "legacy/notice-suppressed" 1 \
+    '    if [[ -f "$F2B_JAIL_LOCAL" ]] && \' \
+    '    if false && \'
+
+run_case "legacy/marker-not-checked" 1 \
+    '       grep -q '"'"'^# vpssec fail2ban configuration'"'"' "$F2B_JAIL_LOCAL" 2>/dev/null; then' \
+    '       true; then'
+
+# ---------------------------------------------------------------------------
+# enable_service. Starting without enabling leaves a host protected until its
+# next reboot and silently unprotected afterwards.
+# ---------------------------------------------------------------------------
+
+run_case "service/enable-not-called" 1 \
+    '    systemctl enable fail2ban 2>/dev/null' \
+    '    :'
+
+run_case "service/start-not-called" 1 \
+    '    systemctl start fail2ban 2>/dev/null' \
+    '    :'
+
+run_case "service/postcondition-always-succeeds" 2 \
+    '    if _f2b_service_active; then' \
+    '    if true; then'
+
+# ---------------------------------------------------------------------------
+# install. FIX_SAFE, auto-applied with no confirm, so its gate is what keeps
+# the CONFIRM-class writer from running unasked.
+# ---------------------------------------------------------------------------
+
+run_case "install/apt-failure-ignored" 1 \
+    '    if apt-get update -qq && apt-get install -y fail2ban; then' \
+    '    if apt-get update -qq || true; then'
+
+run_case "install/service-status-discarded" 1 \
+    '        _f2b_fix_enable_service || rc=1' \
+    '        _f2b_fix_enable_service || true'
+
+run_case "install/configure-status-discarded" 1 \
+    '            _f2b_fix_configure_ssh_jail || rc=1' \
+    '            _f2b_fix_configure_ssh_jail || true'
+
+run_case "install/gate-removed" 1 \
+    '        if _f2b_has_custom_config; then' \
+    '        if false; then'
+
+run_case "install/gate-asks-about-jail-local-only" 1 \
+    '        if _f2b_has_custom_config; then' \
+    '        if [[ -e "$F2B_JAIL_LOCAL" ]]; then'

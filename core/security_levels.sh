@@ -17,13 +17,14 @@
 # Safe fixes - can be auto-applied in guide mode
 declare -gA FIX_SAFE=(
     # Fail2ban - service management and config.
-    # configure_ssh_jail is intentionally NOT here: it overwrites the whole
-    # jail.local, which can clobber an operator's hand-written multi-jail /
-    # ignoreip config — it is CONFIRM-class so the user is warned first.
-    # enable_ssh_jail is NOT here: it is an alias for configure_ssh_jail and
-    # overwrites jail.local wholesale (it fires on hosts that have a custom
-    # jail.local without an sshd jail — exactly the config worth warning
-    # about), so it is CONFIRM-class alongside configure_ssh_jail.
+    # configure_ssh_jail is intentionally NOT here: since it moved to a
+    # jail.d/99-vpssec-sshd.local drop-in it no longer destroys the operator's
+    # jail.local, but it still OVERRIDES the bantime/maxretry/ignoreip they set
+    # there (jail.d wins over jail.local, and the *.local tier wins over
+    # *.conf) — a behaviour change worth a warning, so it stays CONFIRM-class.
+    # enable_ssh_jail is NOT here either: it is an alias for the same writer,
+    # and it fires on hosts that have a custom jail.local without an sshd jail
+    # — exactly the config whose owner should see the warning first.
     ["fail2ban.install"]="true"
     ["fail2ban.enable_service"]="true"
 
@@ -132,9 +133,10 @@ declare -gA FIX_CONFIRM=(
     # Stopping "unused" services can disrupt ones the operator relies on
     ["baseline.disable_unused"]="Stops/disables services flagged as unused (e.g. avahi/cups); review before applying"
 
-    # Overwrites jail.local wholesale (enable_ssh_jail is the same writer)
-    ["fail2ban.configure_ssh_jail"]="Overwrites /etc/fail2ban/jail.local; a hand-written multi-jail or ignoreip config will be replaced"
-    ["fail2ban.enable_ssh_jail"]="Overwrites /etc/fail2ban/jail.local; a hand-written multi-jail or ignoreip config will be replaced"
+    # Overrides the operator's sshd-jail settings via a drop-in, without
+    # replacing their files (enable_ssh_jail is the same writer)
+    ["fail2ban.configure_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/maxretry/ignoreip you set in jail.local or jail.d/*.conf for the sshd jail"
+    ["fail2ban.enable_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/maxretry/ignoreip you set in jail.local or jail.d/*.conf for the sshd jail"
 
     # Enables unattended, automatic installation of (security) updates
     ["update.install_unattended"]="Installs and enables automatic unattended security updates"

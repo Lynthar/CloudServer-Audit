@@ -1,0 +1,69 @@
+# Mutation cases for tests/test_fail2ban_custom.bats against modules/fail2ban.sh.
+#
+# Run with:  bash tools/mutate-suite.sh modules/fail2ban.sh \
+#                 tests/test_fail2ban_custom.bats tools/mutation-cases/fail2ban-custom.cases
+#
+# Paired with the AUDIT-predicate suite only; the four fixes have their own
+# file (fail2ban.cases). This module needed two because it has two suites —
+# and the absence of any cases file at all is how test_fail2ban_custom.bats
+# came to carry an assertion that pinned a defect as if it were the spec
+# ("sshd.local is in jail.d/ but doesn't end in .conf ... so this should not
+# by itself flip custom"), describing the glob rather than a requirement.
+#
+# _f2b_has_custom_config decides fail2ban.custom_config vs
+# fail2ban.default_config. Both are `optional` category, so nothing here moves
+# a host's score unless --strict is in play; what it moves is whether the
+# report tells a tuned host it is running stock defaults.
+
+# ---------------------------------------------------------------------------
+# jail.local half.
+# ---------------------------------------------------------------------------
+
+run_case "jail-local/branch-removed" 1 \
+    '    if [[ -f "$F2B_JAIL_LOCAL" ]]; then' \
+    '    if false; then'
+
+run_case "jail-local/comments-count-as-tuning" 1 \
+    '        if grep -qE '"'"'^[[:space:]]*[^#[:space:]]'"'"' "$F2B_JAIL_LOCAL" 2>/dev/null; then' \
+    '        if true; then'
+
+run_case "jail-local/anything-non-empty-counts" 1 \
+    '        if grep -qE '"'"'^[[:space:]]*[^#[:space:]]'"'"' "$F2B_JAIL_LOCAL" 2>/dev/null; then' \
+    '        if grep -qE '"'"'.'"'"' "$F2B_JAIL_LOCAL" 2>/dev/null; then'
+
+# ---------------------------------------------------------------------------
+# jail.d half. The *.local glob is what lets the audit see an operator file —
+# and, since the fix moved to a drop-in, what this tool itself writes.
+# ---------------------------------------------------------------------------
+
+run_case "jail-d/branch-removed" 1 \
+    '    if [[ -d "$F2B_JAIL_D" ]]; then' \
+    '    if false; then'
+
+run_case "jail-d/local-tier-ignored" 1 \
+    '        for f in "$F2B_JAIL_D"/*.conf "$F2B_JAIL_D"/*.local; do' \
+    '        for f in "$F2B_JAIL_D"/*.conf; do'
+
+run_case "jail-d/conf-tier-ignored" 1 \
+    '        for f in "$F2B_JAIL_D"/*.conf "$F2B_JAIL_D"/*.local; do' \
+    '        for f in "$F2B_JAIL_D"/*.local; do'
+
+run_case "jail-d/unmatched-glob-counts" 1 \
+    '            [[ -f "$f" ]] || continue' \
+    '            :'
+
+run_case "jail-d/distro-default-counts-as-tuning" 1 \
+    '            [[ "$(basename "$f")" == "defaults-debian.conf" ]] && continue' \
+    '            :'
+
+run_case "jail-d/every-name-is-exempted" 1 \
+    '            [[ "$(basename "$f")" == "defaults-debian.conf" ]] && continue' \
+    '            continue'
+
+# ---------------------------------------------------------------------------
+# The default answer.
+# ---------------------------------------------------------------------------
+
+run_case "default/answers-custom-when-nothing-found" 1 \
+    '    return 1' \
+    '    return 0'
