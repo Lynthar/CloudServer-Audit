@@ -51,9 +51,19 @@ run_case "hsts/backup-skipped" 1 \
     '    backup_file "$hsts_conf" >/dev/null 2>&1 || true' \
     '    :'
 
-run_case "hsts/reports-success" 1 \
+# This case used to replace the print_warn with `return 0`, modelling "the fix
+# reports success" back when the success path returned 1. Since that convention
+# was replaced by FIX_TEMPLATE_ONLY the success path returns 0 legitimately, so
+# the old mutation was a no-op on the status and it SURVIVED. The two defects
+# worth pinning now are the two halves that used to be conflated.
+run_case "hsts/instruction-not-printed" 1 \
     "    print_warn \"\$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')\"" \
-    '    return 0'
+    '    :'
+
+# Occurrence 2 of three: #1 is the dispatch tail, #3 the SSL fix.
+run_case "hsts/success-reported-as-failure" 2 \
+    '    return 0' \
+    '    return 1'
 
 run_case "ssl/backup-skipped" 1 \
     '    backup_file "$ssl_conf" >/dev/null 2>&1 || true' \

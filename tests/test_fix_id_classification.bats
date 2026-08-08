@@ -157,6 +157,73 @@ _emitted_check_ids() {
     fi
 }
 
+# ---- FIX_TEMPLATE_ONLY --------------------------------------------------
+#
+# The map records which fixes cannot resolve the finding they hang off. It is
+# ORTHOGONAL to the safety class, not a fifth class: all four generators are
+# FIX_SAFE and webapp's SSL pair is FIX_CONFIRM. So it gets the same both-ways
+# treatment as the others — a key naming nothing is a promise the engine can
+# never keep, and a key with no safety class would slip past get_fix_safety.
+
+@test "every FIX_TEMPLATE_ONLY key is a fix some check actually offers" {
+    local emitted orphans="" id
+    emitted=$( { _emitted_fix_ids_all; } | sort -u )
+
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        grep -qxF -- "$id" <<<"$emitted" || orphans+="$id "
+    done < <(_map_keys FIX_TEMPLATE_ONLY)
+
+    if [[ -n "$orphans" ]]; then
+        echo "FIX_TEMPLATE_ONLY names a fix_id no check emits — execute_fix will"
+        echo "never consult the entry, and 'vpssec help' shows a note on a fix"
+        echo "the user cannot select:"
+        echo "  $orphans"
+        false
+    fi
+}
+
+@test "every FIX_TEMPLATE_ONLY key also has a safety class" {
+    # Without one get_fix_safety answers "unknown", which bypasses the
+    # confirm/risky gate entirely — the template-only note would be the only
+    # thing the operator ever saw about it.
+    local id missing="" classes
+    classes=$( { _map_keys FIX_SAFE; _map_keys FIX_CONFIRM; _map_keys FIX_RISKY; } | sort -u )
+
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        grep -qxF -- "$id" <<<"$classes" || missing+="$id "
+    done < <(_map_keys FIX_TEMPLATE_ONLY)
+
+    if [[ -n "$missing" ]]; then
+        echo "FIX_TEMPLATE_ONLY entry with no FIX_SAFE/CONFIRM/RISKY class:"
+        echo "  $missing"
+        false
+    fi
+}
+
+@test "every FIX_TEMPLATE_ONLY key has a fixtmpl translation in both languages" {
+    # The map's English doubles as the fallback, so a missing key degrades to a
+    # readable sentence rather than printing 'fixtmpl.docker.…' — but only the
+    # English half. A zh_CN user would silently get English, which is the same
+    # last-mile gap fixwarn.* was created to close.
+    local id missing="" lang
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        for lang in en_US zh_CN; do
+            jq -e --arg k "$id" '.fixtmpl[$k] // empty' \
+                "$REPO/core/i18n/${lang}.json" >/dev/null 2>&1 \
+                || missing+="${lang}:${id} "
+        done
+    done < <(_map_keys FIX_TEMPLATE_ONLY)
+
+    if [[ -n "$missing" ]]; then
+        echo "Missing fixtmpl.<fix_id> translation:"
+        echo "  $missing"
+        false
+    fi
+}
+
 @test "every scored check id is actually emitted" {
     local emitted orphans="" id
     emitted=$(_emitted_check_ids | sort -u)

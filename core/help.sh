@@ -157,6 +157,14 @@ _help_print_class_section() {
                 printf "      ${DIM}⚠ %s${NC}\n" "$reason"
             fi
         fi
+        # Orthogonal to the safety class — a template-only fix can be SAFE
+        # (the four generators) or CONFIRM (webapp's SSL pair) — so it is a
+        # note on the line rather than a sixth section. Without it `vpssec
+        # help` lists these as fixes that clear the finding, which they never
+        # do however well they run.
+        if fix_is_template_only "$id"; then
+            printf "      ${DIM}→ %s${NC}\n" "$(get_fix_manual_step "$id")"
+        fi
     done <<< "$list"
 }
 

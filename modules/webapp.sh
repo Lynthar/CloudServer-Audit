@@ -1589,7 +1589,11 @@ EOF
 
     print_ok "$(i18n 'webapp.hsts_template_created' 2>/dev/null || echo 'HSTS template created'): $hsts_conf"
     print_warn "$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')"
-    return 1
+    # The header is written commented out, so the HSTS finding is NOT resolved
+    # — but the template was created, and returning 1 to express the first fact
+    # reported a failure for the second. webapp.nginx_hsts is in
+    # FIX_TEMPLATE_ONLY, which is what withholds the completion record.
+    return 0
 }
 
 # Fix: Nginx SSL configuration
@@ -1664,9 +1668,12 @@ EOF
 
     print_ok "$(i18n 'webapp.ssl_config_created' 2>/dev/null || echo 'Secure SSL configuration created'): $ssl_conf"
     print_warn "$(i18n 'webapp.include_in_ssl' 2>/dev/null || echo 'Include in each SSL server block, then reload nginx'): include snippets/ssl-security.conf;"
-    # Manual step required: the snippet is inert until included, so do not report
-    # the weak-SSL finding as resolved.
-    return 1
+    # The snippet is inert until the operator includes it, so the weak-SSL
+    # finding is NOT resolved — but the write itself succeeded, and this used to
+    # return 1 to express the first fact at the cost of reporting a failure for
+    # the second. Both fix_ids are in FIX_TEMPLATE_ONLY now, which is what stops
+    # execute_fix recording a completion; the exit status here is about the work.
+    return 0
 }
 
 # Fix: Apache security settings

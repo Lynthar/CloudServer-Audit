@@ -51,7 +51,24 @@ report_generate_json() {
         --argjson score "$score" \
         --argjson stats "$stats" \
         --argjson checks "$checks" \
-        '{
+        --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
+        '
+        # Mark the findings whose fix cannot resolve them on its own, so a
+        # consumer can tell "run this and the finding goes away" from "run this
+        # and you still have work to do". Set only where it is TRUE: absence
+        # from FIX_TEMPLATE_ONLY is not evidence that a fix is direct — that
+        # list is curated, not exhaustive — and stamping fix_type:"direct" on
+        # every other check would assert something nobody verified.
+        # $fid is bound before the pipe on purpose: inside `$tmpl_fixes | ...`
+        # the input `.` is the ARRAY, so a bare `.fix_id` there indexes it and
+        # jq aborts the whole document with "Cannot index array with string".
+        ($checks | map(
+            (.fix_id // "") as $fid
+            | if $fid != "" and ($tmpl_fixes | index($fid))
+              then . + {fix_type: "template_only"}
+              else . end
+        )) as $checks_typed
+        | {
             meta: {
                 version: $version,
                 timestamp: $timestamp,
@@ -65,7 +82,7 @@ report_generate_json() {
             },
             score: $score,
             stats: $stats,
-            checks: $checks
+            checks: $checks_typed
         }') || { log_error "Failed to build JSON report"; return 1; }
 
     write_file_atomic "$output_file" "$json"
@@ -279,19 +296,28 @@ _md_section() {
         --argjson groups "$groups" \
         --arg kind "$kind" \
         --arg info "$label_info" \
-        --arg recs "$label_recs" '
+        --arg recs "$label_recs" \
+        --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
+        --arg tmpl_label "$(i18n 'fix.template_only')" '
         . as $checks
         # One check -> its Markdown block, always ending in exactly one
         # newline. "passed" is a one-liner; the failure severities get
         # the full detail block, and only `low` omits the Fix ID line
         # (matching the previous output).
-        | def render($c):
+        # Appended to the Fix ID line when running that fix leaves the finding
+        # standing. Without it the report reads as if every listed Fix ID makes
+        # the finding go away, which is false for the template generators.
+        | def tmpl_note($c):
+            if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))
+            then " _(\($tmpl_label))_"
+            else "" end;
+        def render($c):
             if $kind == "passed" then
                 "- ✓ \($c.title)\n"
             elif $kind == "low" then
                 "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n"
             else
-                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\n"
+                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"
             end;
         def matches($c):
             if $kind == "passed"
@@ -639,6 +665,7 @@ report_generate_sarif() {
     local sarif
     sarif=$(jq -n \
         --argjson checks "$checks" \
+        --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         --arg     version "${VPSSEC_VERSION:-}" \
         --arg     host    "$hostname" \
         --arg     endtime "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
@@ -672,7 +699,13 @@ report_generate_sarif() {
                           "shortDescription": { "text": $c.title },
                           "fullDescription":  { "text": ($c.desc // "") },
                           "defaultConfiguration": { "level": ($c.severity | level) },
-                          "properties": { "security-severity": ($c.severity | secsev) }
+                          "properties": (
+                            { "security-severity": ($c.severity | secsev) }
+                            # Only where true: absence from FIX_TEMPLATE_ONLY is
+                            # not evidence that a fix resolves its finding.
+                            + (if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))
+                               then { "fixType": "template_only" } else {} end)
+                          )
                         }]
                     end)
                   | .out

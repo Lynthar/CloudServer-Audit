@@ -1,0 +1,36 @@
+# Mutation cases for tests/test_fix_template_only.bats against core/engine.sh.
+#
+# Run with:  bash tools/mutate-suite.sh core/engine.sh \
+#                 tests/test_fix_template_only.bats \
+#                 tools/mutation-cases/template-only-engine.cases
+#
+# execute_fix is where the two facts finally separate: the exit status says
+# whether the work succeeded, the map says whether the finding is resolved.
+# Both branches need pinning — a change that suppressed EVERY completion
+# record would satisfy every "not recorded" assertion on its own.
+
+run_case "engine/records-template-only-anyway" 1 \
+    '            if fix_is_template_only "$fix_id"; then' \
+    '            if false; then'
+
+run_case "engine/records-nothing-ever" 1 \
+    '            if fix_is_template_only "$fix_id"; then' \
+    '            if true; then'
+
+run_case "engine/completion-record-dropped" 1 \
+    '                state_mark_fix_complete "$fix_id"' \
+    '                :'
+
+run_case "engine/manual-step-not-shown" 1 \
+    '                print_info "$(get_fix_manual_step "$fix_id")"' \
+    '                :'
+
+run_case "engine/notice-header-not-shown" 1 \
+    '                print_warn "$(i18n '"'"'fix.manual_step_remains'"'"')"' \
+    '                :'
+
+# A template-only fix that FAILED must not be treated as "applied, manual step
+# remains" — the map is consulted only inside the success branch.
+run_case "engine/template-only-swallows-failure" 1 \
+    '        if "$fix_func" "$fix_id"; then' \
+    '        if "$fix_func" "$fix_id" || fix_is_template_only "$fix_id"; then'

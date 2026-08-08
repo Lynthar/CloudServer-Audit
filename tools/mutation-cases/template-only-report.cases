@@ -1,0 +1,62 @@
+# Mutation cases for tests/test_fix_template_only.bats against core/report.sh.
+#
+# Run with:  bash tools/mutate-suite.sh core/report.sh \
+#                 tests/test_fix_template_only.bats \
+#                 tools/mutation-cases/template-only-report.cases
+#
+# Three output formats carry the same fact and each derives it independently,
+# so each needs its own case: a marker that quietly stopped appearing in one
+# format would still leave the other two green.
+#
+# The stamp is set only where it is TRUE. Absence from FIX_TEMPLATE_ONLY is not
+# evidence that a fix resolves its finding — the map is curated, not
+# exhaustive — so the "everything is direct" mutations below must stay killed
+# just as hard as the "nothing is template-only" ones.
+
+# ---------------------------------------------------------------------------
+# summary.json
+# ---------------------------------------------------------------------------
+
+run_case "json/never-marks" 1 \
+    '            | if $fid != "" and ($tmpl_fixes | index($fid))' \
+    '            | if false'
+
+run_case "json/marks-everything" 1 \
+    '            | if $fid != "" and ($tmpl_fixes | index($fid))' \
+    '            | if true'
+
+run_case "json/stamps-direct-on-the-rest" 1 \
+    '              else . end' \
+    '              else . + {fix_type: "direct"} end'
+
+run_case "json/typed-array-discarded" 1 \
+    '            checks: $checks_typed' \
+    '            checks: $checks'
+
+# ---------------------------------------------------------------------------
+# summary.sarif
+# ---------------------------------------------------------------------------
+
+run_case "sarif/never-marks" 1 \
+    '                            + (if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))' \
+    '                            + (if false'
+
+run_case "sarif/marks-everything" 1 \
+    '                            + (if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))' \
+    '                            + (if true'
+
+# ---------------------------------------------------------------------------
+# summary.md — the human-facing one, and the reason the note exists at all.
+# ---------------------------------------------------------------------------
+
+run_case "md/never-annotates" 1 \
+    '            if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))' \
+    '            if false'
+
+run_case "md/annotates-everything" 1 \
+    '            if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))' \
+    '            if true'
+
+run_case "md/note-not-appended-to-the-line" 1 \
+    '                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"' \
+    '                "#### \($c.title)\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\n"'

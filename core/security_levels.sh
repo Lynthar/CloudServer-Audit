@@ -300,6 +300,52 @@ declare -gA FIX_SELF_CONFIRMED=(
     ["docker.enable_live_restore"]="true"       # same writer, same confirm_critical (modules/docker.sh)
 )
 
+# Fixes that CANNOT resolve the finding they hang off, however well they run.
+#
+# They generate a template, or write a file the operator still has to wire in.
+# The work they do succeeds; the finding stays. Two facts, and a fix's exit
+# status can only carry one of them — which is how two opposite conventions
+# grew side by side, each defensible on its own terms:
+#
+#   - these four returned 0, so execute_fix called state_mark_fix_complete and
+#     ok.json recorded a completion the very next audit contradicted; while
+#   - webapp's SSL fix returned 1 to avoid exactly that, and so reported a
+#     FAILURE for a file it had written perfectly well.
+#
+# The map is the second fact, held separately. A fix in here still returns 0
+# for "I did my work"; execute_fix consults this map and skips the completion
+# record, telling the operator what remains instead. The value is that text —
+# it is both the English source string and the fallback, the same arrangement
+# FIX_CONFIRM uses, and `fixtmpl.<fix_id>` overrides it when translated.
+#
+# Membership is a claim about the fix's REACH, not its quality. Do not add a
+# fix that asserts its own postcondition: cloudflared.setup_service looks like
+# it belongs here and does not — it installs, enables and starts the service,
+# then returns 0 only if `_cloudflared_service_active` agrees.
+#
+# It is also a claim about the fix ALWAYS, since the key is a fix_id. A fix
+# that leaves a manual step only on some hosts cannot be expressed here and
+# should keep returning 1 on that branch: `_baseline_fix_selinux_set_enforcing`
+# is the example — it sets enforcing at runtime and, when the config file is
+# absent, cannot make it persist. That is a failure to achieve the goal on that
+# host, not a property of the fix.
+#
+# The membership list was closed with a sweep, not a reading: `return 1`
+# preceded within three lines by a print_ok/print_warn rather than a
+# print_error found 20 candidates across the tree, of which 19 are legitimate
+# refusals (unknown-fix dispatch fallbacks, failed postconditions, "manual
+# action required" fixes that produce no artifact at all, restore-after-
+# validation-failure) and one — webapp.nginx_hsts — was this family.
+declare -gA FIX_TEMPLATE_ONLY=(
+    ["docker.generate_proxy_template"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"
+    ["cloudflared.generate_config"]="A tunnel config template was written; copy it to /etc/cloudflared and create the tunnel to finish"
+    ["backup.generate_templates"]="Backup script templates were written; no backup tool is installed and nothing is scheduled yet"
+    ["alerts.setup_config"]="The alert config and monitor scripts were written; schedule them and set a webhook to start receiving alerts"
+    ["webapp.nginx_ssl_protocols"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"
+    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"
+    ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
+)
+
 # ==============================================================================
 # Check Score Categories
 # ==============================================================================
@@ -815,6 +861,42 @@ fix_needs_engine_confirmation() {
     local fix_id="$1"
     fix_requires_confirmation "$fix_id" || return 1
     [[ -z "${FIX_SELF_CONFIRMED[$fix_id]:-}" ]]
+}
+
+# True when this fix cannot resolve the finding it hangs off, however well it
+# runs. See FIX_TEMPLATE_ONLY. `${MAP[$key]:-}` for the same set -u reason as
+# get_fix_safety.
+fix_is_template_only() {
+    local fix_id="$1"
+    [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]:-}" ]]
+}
+
+# The FIX_TEMPLATE_ONLY keys as a JSON array, for the reporting layer.
+#
+# One call per document, never per check — report.sh's whole performance rule
+# is one jq per section, and a `fix_is_template_only` per finding would put the
+# per-check subprocess right back. Consumers pass this in as --argjson and do
+# the membership test inside their existing jq program.
+fix_template_only_ids_json() {
+    printf '%s\n' "${!FIX_TEMPLATE_ONLY[@]}" | jq -Rs 'split("\n") | map(select(. != ""))'
+}
+
+# What still has to be done by hand after a template-only fix succeeds. Prefers
+# a `fixtmpl.<fix_id>` translation, falling back to the English in the map —
+# the same arrangement as get_fix_warning, and for the same reason: a missing
+# key must degrade to a readable sentence, not print the key at the moment the
+# operator is deciding whether the work is finished.
+get_fix_manual_step() {
+    local fix_id="$1"
+    local fallback="${FIX_TEMPLATE_ONLY[$fix_id]:-}"
+    [[ -n "$fallback" ]] || return 0
+
+    local translated="${VPSSEC_I18N[fixtmpl.${fix_id}]:-}"
+    if [[ -n "$translated" ]]; then
+        echo "$translated"
+    else
+        echo "$fallback"
+    fi
 }
 
 # ==============================================================================

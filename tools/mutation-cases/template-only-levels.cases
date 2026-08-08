@@ -1,0 +1,86 @@
+# Mutation cases for tests/test_fix_template_only.bats against
+# core/security_levels.sh.
+#
+# Run with:  bash tools/mutate-suite.sh core/security_levels.sh \
+#                 tests/test_fix_template_only.bats \
+#                 tools/mutation-cases/template-only-levels.cases
+#
+# The batch spans three core files, so it has three cases files — one per
+# (source, suite) pair, and all three name the same suite because that is the
+# suite covering them. Run them SEQUENTIALLY only where they share a source;
+# these three mutate different files, so they may run concurrently.
+#
+# What the map has to get right is narrow but load-bearing: it is the only
+# thing standing between "the fix ran" and "the finding is resolved", and both
+# of the conventions it replaced were wrong in one direction each.
+
+# ---------------------------------------------------------------------------
+# The predicate the engine and the reports both branch on.
+# ---------------------------------------------------------------------------
+
+run_case "predicate/always-true" 1 \
+    '    [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]:-}" ]]' \
+    '    true'
+
+run_case "predicate/always-false" 1 \
+    '    [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]:-}" ]]' \
+    '    false'
+
+# The `:-` default is not decoration: common.sh enables `set -u`, so a missing
+# key without it aborts the function, and an aborted predicate is
+# indistinguishable from one that answered "no".
+run_case "predicate/unset-default-dropped" 1 \
+    '    [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]:-}" ]]' \
+    '    [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]}" ]]'
+
+# ---------------------------------------------------------------------------
+# The manual-step text. A missing translation must degrade to the map's
+# English, never to the key — the operator reads this while deciding whether
+# the work is finished.
+# ---------------------------------------------------------------------------
+
+# Occurrence 2 for both: get_fix_manual_step is a deliberate mirror of
+# get_fix_warning, so these two lines are byte-identical in the two functions
+# and #1 lands in the warning path — which this suite does not exercise, so it
+# would report a coverage gap that is not one.
+run_case "manual-step/prefers-map-over-translation" 2 \
+    '    if [[ -n "$translated" ]]; then' \
+    '    if false; then'
+
+run_case "manual-step/emits-the-key-when-untranslated" 2 \
+    '        echo "$fallback"' \
+    '        echo "fixtmpl.${fix_id}"'
+
+run_case "manual-step/speaks-for-fixes-it-knows-nothing-about" 1 \
+    '    [[ -n "$fallback" ]] || return 0' \
+    '    :'
+
+# ---------------------------------------------------------------------------
+# The reporting layer's input. One call per document; a wrong shape here takes
+# out all three report formats at once.
+# ---------------------------------------------------------------------------
+
+run_case "ids-json/emits-empty" 1 \
+    "    printf '%s\\n' \"\${!FIX_TEMPLATE_ONLY[@]}\" | jq -Rs 'split(\"\\n\") | map(select(. != \"\"))'" \
+    "    printf '%s\\n' '' | jq -Rs 'split(\"\\n\") | map(select(. != \"\"))'"
+
+run_case "ids-json/emits-values-not-keys" 1 \
+    "    printf '%s\\n' \"\${!FIX_TEMPLATE_ONLY[@]}\" | jq -Rs 'split(\"\\n\") | map(select(. != \"\"))'" \
+    "    printf '%s\\n' \"\${FIX_TEMPLATE_ONLY[@]}\" | jq -Rs 'split(\"\\n\") | map(select(. != \"\"))'"
+
+# ---------------------------------------------------------------------------
+# Membership. Dropping an entry is the regression that silently restores the
+# old behaviour for that one fix.
+# ---------------------------------------------------------------------------
+
+run_case "map/docker-generator-dropped" 1 \
+    '    ["docker.generate_proxy_template"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"' \
+    '    ["docker.generate_proxy_template_disabled"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"'
+
+run_case "map/webapp-ciphers-dropped" 1 \
+    '    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"' \
+    '    ["webapp.nginx_ssl_ciphers_disabled"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"'
+
+run_case "map/webapp-hsts-dropped" 1 \
+    '    ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"' \
+    '    ["webapp.nginx_hsts_disabled"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"'

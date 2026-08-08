@@ -1040,7 +1040,9 @@
     "confirm_skipped": "Fix skipped in basic mode",
     "safe": "Safe fix",
     "confirm": "Requires confirmation",
-    "risky": "Risky operation"
+    "risky": "Risky operation",
+    "manual_step_remains": "Applied, but this does not resolve the finding on its own — a manual step remains:",
+    "template_only": "Template only - a manual step is needed to take effect"
   },
   "help": {
     "modules_by_category": "Modules by category",
@@ -1414,5 +1416,14 @@
     "ufw.enable": "Can lock you out if SSH not allowed",
     "ufw.set_default_deny": "Flips the firewall to deny-all inbound; can drop running services not explicitly allowed, and can lock you out if the SSH rule is wrong",
     "update.apply_security": "May break system packages or services"
+  },
+  "fixtmpl": {
+    "docker.generate_proxy_template": "A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do",
+    "cloudflared.generate_config": "A tunnel config template was written; copy it to /etc/cloudflared and create the tunnel to finish",
+    "backup.generate_templates": "Backup script templates were written; no backup tool is installed and nothing is scheduled yet",
+    "alerts.setup_config": "The alert config and monitor scripts were written; schedule them and set a webhook to start receiving alerts",
+    "webapp.nginx_ssl_protocols": "A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block",
+    "webapp.nginx_ssl_ciphers": "A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block",
+    "webapp.nginx_hsts": "An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
   }
 }

@@ -1040,7 +1040,9 @@
     "confirm_skipped": "在基础模式下跳过修复",
     "safe": "安全修复",
     "confirm": "需要确认",
-    "risky": "高风险操作"
+    "risky": "高风险操作",
+    "manual_step_remains": "已执行，但它本身并不能解决该发现 —— 仍需手动完成：",
+    "template_only": "仅生成模板 - 需要手动一步才会生效"
   },
   "help": {
     "modules_by_category": "按类别列出的模块",
@@ -1414,5 +1416,14 @@
     "ufw.enable": "如果没有放行 SSH，会把你锁在门外",
     "ufw.set_default_deny": "会把防火墙切成默认拒绝所有入站；未显式放行的运行中服务会被切断，SSH 规则若有误还会把你锁在门外",
     "update.apply_security": "可能导致系统软件包或服务异常"
+  },
+  "fixtmpl": {
+    "docker.generate_proxy_template": "已写出反向代理模板供你审阅并部署；在你部署之前端口仍然暴露",
+    "cloudflared.generate_config": "已写出隧道配置模板；把它复制到 /etc/cloudflared 并创建隧道才算完成",
+    "backup.generate_templates": "已写出备份脚本模板；目前尚未安装任何备份工具，也没有任何定时任务",
+    "alerts.setup_config": "已写出告警配置与监控脚本；还需为它们设置定时任务并填入 webhook 才会收到告警",
+    "webapp.nginx_ssl_protocols": "已向 nginx snippets/ 写出加固的 SSL 片段；在你把它 include 进 server 块之前它不起任何作用",
+    "webapp.nginx_ssl_ciphers": "已向 nginx snippets/ 写出加固的 SSL 片段；在你把它 include 进 server 块之前它不起任何作用",
+    "webapp.nginx_hsts": "已写出 HSTS 模板，其中的响应头是注释掉的；确认站点全部只走 HTTPS 之后，再在 HTTPS server 块里取消注释"
   }
 }

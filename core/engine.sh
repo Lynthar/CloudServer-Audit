@@ -558,7 +558,21 @@ execute_fix() {
     if declare -f "$fix_func" > /dev/null; then
         log_info "Executing fix: $fix_id"
         if "$fix_func" "$fix_id"; then
-            state_mark_fix_complete "$fix_id"
+            # A fix returning 0 means "my work succeeded", which is not the
+            # same as "the finding is resolved". For the fixes in
+            # FIX_TEMPLATE_ONLY it never can be — they write a template, or a
+            # file the operator still has to wire in. Recording a completion
+            # for those put a line in ok.json that the next audit contradicted,
+            # and the alternative convention (return 1) reported a FAILURE for
+            # work that succeeded. Keep the exit status honest about the work
+            # and take the second fact from the map.
+            if fix_is_template_only "$fix_id"; then
+                log_info "Fix applied, manual step remains: $fix_id"
+                print_warn "$(i18n 'fix.manual_step_remains')"
+                print_info "$(get_fix_manual_step "$fix_id")"
+            else
+                state_mark_fix_complete "$fix_id"
+            fi
             return 0
         else
             log_error "Fix failed: $fix_id"

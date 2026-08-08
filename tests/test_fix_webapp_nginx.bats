@@ -32,6 +32,11 @@ load helpers.bash
 
 setup() {
     _vpssec_load
+    # Without this, i18n echoes the KEY, so any assertion against a printed
+    # message matches the key name and passes whether or not the string exists
+    # — and a fix printing an unregistered key ships to the operator. No test
+    # here greps a key name, so loading it changes nothing else.
+    i18n_load en_US
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/webapp.sh"
 
@@ -257,9 +262,30 @@ _active_server_tokens() {
     grep -qxF "$NGINX_CONFD/hsts.conf" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
 }
 
-@test "hsts: the fix reports a manual step rather than success" {
-    # Returning 0 would mark the HSTS finding resolved while nothing is on
-    # the wire; the operator still has to uncomment it in their server block.
+@test "hsts: writing the template successfully is reported as success" {
+    # This used to return 1, so that the HSTS finding was not marked resolved
+    # while nothing was on the wire. The cost was reporting a failure for a
+    # template it had written correctly. webapp.nginx_hsts is in
+    # FIX_TEMPLATE_ONLY now, which is what keeps the finding open — see
+    # test_fix_template_only.bats.
+    run _webapp_fix_nginx_hsts
+    [ "$status" -eq 0 ]
+}
+
+@test "hsts: it tells the operator the header is commented out" {
+    # The template alone is not actionable — the header ships commented, and
+    # without this line the operator has a file and no reason to open it.
+    VPSSEC_QUIET_SCAN=0
+    run _webapp_fix_nginx_hsts
+    [ "$status" -eq 0 ]
+    grep -qiE 'uncomment|注释' <<<"$output"
+}
+
+@test "hsts: a failed write is still a failure" {
+    # The other direction: flipping the success path to 0 must not turn the
+    # write-failure path green with it.
+    rm -rf "$NGINX_CONFD"
+    printf 'not a directory\n' > "$NGINX_CONFD"
     run _webapp_fix_nginx_hsts
     [ "$status" -eq 1 ]
 }
@@ -290,20 +316,34 @@ _active_server_tokens() {
     grep -qxF "$NGINX_SNIPPETS/ssl-security.conf" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
 }
 
-@test "ssl: the fix reports a manual step rather than success" {
-    # The snippet is inert until the operator includes it, so the weak-SSL
-    # finding must stay open.
+@test "ssl: writing the snippet successfully is reported as success" {
+    # This fix used to return 1 here, to stop the weak-SSL finding being
+    # marked resolved — the snippet is inert until the operator includes it.
+    # That made a perfectly good write show up in the guide as a FAILURE. The
+    # two facts are separated now: the exit status is about the work, and
+    # FIX_TEMPLATE_ONLY carries "this does not resolve the finding" (see
+    # test_fix_template_only.bats, which pins that the completion record is
+    # withheld).
     run _webapp_fix_nginx_ssl
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 0 ]
+}
+
+@test "ssl: it still tells the operator the snippet does nothing until included" {
+    # The engine prints the map's manual-step text; this is the fix's own,
+    # more specific instruction, and losing it would leave the operator with
+    # a file and no include line.
+    VPSSEC_QUIET_SCAN=0
+    run _webapp_fix_nginx_ssl
+    [ "$status" -eq 0 ]
+    grep -qF 'include snippets/ssl-security.conf;' <<<"$output"
 }
 
 @test "ssl: a rejected config is distinguishable from the ordinary manual step" {
-    # This fix returns 1 on BOTH paths — the snippet is inert until the
-    # operator includes it, so success also returns 1. The exit status
-    # therefore cannot tell the two apart, and asserting on it alone is a
-    # test that passes with the validation branch deleted (mutation testing
-    # caught exactly that). The printed message is the operator's only
-    # signal, so that is what this pins.
+    # This is what the old convention could not express. Both paths returned 1,
+    # so the exit status could not tell "nginx refused the config" from "wrote
+    # it, now go include it" — asserting on the status alone passed with the
+    # validation branch deleted, which mutation testing caught. Now the two
+    # differ in status as well, and both halves are pinned.
     #
     # helpers.bash sets VPSSEC_QUIET_SCAN=1, which silences print_*.
     VPSSEC_QUIET_SCAN=0
@@ -318,7 +358,7 @@ _active_server_tokens() {
     VPSSEC_QUIET_SCAN=0
 
     run _webapp_fix_nginx_ssl
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 0 ]
     _vpssec_refute grep -qiE 'test[ _]failed' <<<"$output"
 }
 
