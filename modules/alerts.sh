@@ -38,6 +38,19 @@ _alerts_check_curl() {
     check_command curl
 }
 
+# True when there is somebody to ask for a webhook URL.
+#
+# Extracted from _alerts_fix_setup_config so the decision is testable: the
+# inline `[[ -t 0 ]]` it replaces could only ever be exercised by whatever
+# stdin the test runner happened to supply, which is never a terminal — so
+# no test could tell the old gate from the new one. It was wrong twice over
+# anyway: it asks about stdin while the prompts read from /dev/tty, and it
+# ignores --yes / --json-only, so `guide --yes` on a real terminal parked on
+# "Webhook URL:" forever. Same pair of predicates as timezone.sh's menu.
+_alerts_should_prompt() {
+    ! _noninteractive && _tty_readable
+}
+
 # ==============================================================================
 # Alert Audit
 # ==============================================================================
@@ -177,24 +190,22 @@ alerts_fix() {
 _alerts_fix_setup_config() {
     print_info "$(i18n 'alerts.setting_up')"
 
-    mkdir -p "$(dirname "$ALERTS_CONFIG_FILE")"
+    # Its own message rather than the write failure's: an uncreatable state
+    # directory and an unwritable alerts.json need different things from the
+    # operator, and sharing one string also made the two indistinguishable to
+    # a test — dropping this guard entirely still produced the write failure's
+    # message one step later, so nothing could tell the guards apart.
+    local _config_dir
+    _config_dir=$(dirname "$ALERTS_CONFIG_FILE")
+    if ! mkdir -p "$_config_dir"; then
+        print_error "$(i18n 'alerts.state_dir_failed' "path=$_config_dir")"
+        return 1
+    fi
 
-    # alerts.json holds webhook URLs and tokens; create it 0600 so it
-    # retains its restrictive mode even if someone `cp`s it elsewhere.
-    # The parent state dir is 700 (state_init), but don't rely on that.
-    local _prev_umask
-    _prev_umask=$(umask)
-    umask 077
-
-    # Interactive setup or generate template.
-    #
-    # Build the JSON with `jq -n --arg` rather than heredoc-interpolating
-    # `$webhook_url` / `$email` directly — a URL or address containing
-    # `"` or `\` would otherwise produce malformed JSON and break
-    # downstream `jq -r '.webhook_url'` reads in _alerts_get_webhook_url.
-    if [[ -t 0 ]]; then
-        local webhook_url=""
-        local email=""
+    # Ask only when there is somebody to ask — see _alerts_should_prompt.
+    local webhook_url="" email="" interactive=0
+    if _alerts_should_prompt; then
+        interactive=1
 
         print_msg ""
         print_msg "$(i18n 'alerts.configure_prompt')"
@@ -202,28 +213,21 @@ _alerts_fix_setup_config() {
 
         read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url </dev/tty
         read -rp "Email address (leave empty to skip): " email </dev/tty
+    fi
 
-        jq -n \
-            --arg webhook "$webhook_url" \
-            --arg email   "$email" \
-            '{
-                webhook_url: $webhook,
-                email: $email,
-                events: {
-                    ssh_login_failure: true,
-                    firewall_change: true,
-                    service_restart: true,
-                    security_audit: true
-                },
-                throttle_minutes: 5
-            }' > "$ALERTS_CONFIG_FILE"
-
-        print_ok "$(i18n 'alerts.config_saved')"
-    else
-        # Non-interactive: generate template with empty defaults.
-        jq -n '{
-            webhook_url: "",
-            email: "",
+    # Build the JSON with `jq -n --arg` rather than heredoc-interpolating
+    # `$webhook_url` / `$email` directly — a URL or address containing
+    # `"` or `\` would otherwise produce malformed JSON and break
+    # downstream `jq -r '.webhook_url'` reads in _alerts_get_webhook_url.
+    # Both paths share one builder: the non-interactive template is just
+    # this with both values empty.
+    local config_json
+    if ! config_json=$(jq -n \
+        --arg webhook "$webhook_url" \
+        --arg email   "$email" \
+        '{
+            webhook_url: $webhook,
+            email: $email,
             events: {
                 ssh_login_failure: true,
                 firewall_change: true,
@@ -231,29 +235,80 @@ _alerts_fix_setup_config() {
                 security_audit: true
             },
             throttle_minutes: 5
-        }' > "$ALERTS_CONFIG_FILE"
-        print_ok "$(i18n 'alerts.template_created' "path=$ALERTS_CONFIG_FILE")"
-        print_info "$(i18n 'alerts.edit_template')"
+        }'); then
+        print_error "$(i18n 'alerts.config_write_failed' "path=$ALERTS_CONFIG_FILE")"
+        return 1
     fi
 
+    # alerts.json holds webhook URLs and tokens; create it 0600 so it
+    # retains its restrictive mode even if someone `cp`s it elsewhere.
+    # The parent state dir is 700 (state_init), but don't rely on that.
+    local _prev_umask wrote=0
+    _prev_umask=$(umask)
+    umask 077
+    printf '%s\n' "$config_json" > "$ALERTS_CONFIG_FILE" && wrote=1
     umask "$_prev_umask"
+
+    # The redirection above is the whole write, and its status used to be
+    # discarded: an unwritable state dir left the operator with "alert
+    # configuration saved" and a fix the engine recorded as complete.
+    if ((wrote == 0)); then
+        print_error "$(i18n 'alerts.config_write_failed' "path=$ALERTS_CONFIG_FILE")"
+        return 1
+    fi
+
     # Belt-and-braces in case an existing file pre-dated this patch and
     # already has a permissive mode. chmod is idempotent.
     chmod 600 "$ALERTS_CONFIG_FILE" 2>/dev/null || true
 
-    # Generate monitoring scripts
-    _alerts_fix_generate_templates
+    if ((interactive)); then
+        print_ok "$(i18n 'alerts.config_saved')"
+    else
+        print_ok "$(i18n 'alerts.template_created' "path=$ALERTS_CONFIG_FILE")"
+        print_info "$(i18n 'alerts.edit_template')"
+    fi
+
+    # The monitor scripts are the other half of this fix — a config pointing
+    # at scripts that were never written is not a configured alert channel.
+    _alerts_fix_generate_templates || return 1
 
     return 0
 }
 
+# Write one generated artifact from stdin, and say so when it could not be
+# written. Each of these was a bare `cat >` whose status the fix discarded,
+# so a full disk or a read-only templates tree still ended in "alert hooks
+# generated" and a return 0.
+#
+# MODE is passed to chmod verbatim; `+x` rather than an absolute mode so the
+# caller's umask still decides who may read a generated script.
+_alerts_write_template() {
+    local name="$1" mode="${2:-}"
+    local path="${ALERTS_TEMPLATES_DIR}/${name}"
+
+    if ! cat > "$path"; then
+        print_error "$(i18n 'alerts.hook_write_failed' "name=$name")"
+        return 1
+    fi
+
+    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then
+        print_error "$(i18n 'alerts.hook_write_failed' "name=$name")"
+        return 1
+    fi
+
+    print_item "$(i18n 'alerts.hook_created' "name=$name")"
+}
+
 _alerts_fix_generate_templates() {
-    mkdir -p "$ALERTS_TEMPLATES_DIR"
+    if ! mkdir -p "$ALERTS_TEMPLATES_DIR"; then
+        print_error "$(i18n 'alerts.templates_dir_failed' "path=$ALERTS_TEMPLATES_DIR")"
+        return 1
+    fi
 
     print_info "$(i18n 'alerts.generating_hooks')"
 
     # Main alert function library
-    cat > "${ALERTS_TEMPLATES_DIR}/alert-lib.sh" <<'EOF'
+    _alerts_write_template alert-lib.sh +x <<'EOF' || return 1
 #!/bin/bash
 # vpssec Alert Library
 # Source this file in your monitoring scripts
@@ -370,11 +425,8 @@ vpssec_alert() {
 vpssec_alert_load_config
 EOF
 
-    chmod +x "${ALERTS_TEMPLATES_DIR}/alert-lib.sh"
-    print_item "$(i18n 'alerts.hook_created' "name=alert-lib.sh")"
-
     # SSH login monitor
-    cat > "${ALERTS_TEMPLATES_DIR}/ssh-login-monitor.sh" <<'EOF'
+    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || return 1
 #!/bin/bash
 # SSH Login Monitor - sends alerts on failed/successful logins
 # Install: Copy to /usr/local/bin/ and add to /etc/pam.d/sshd
@@ -403,11 +455,8 @@ case "$TYPE" in
 esac
 EOF
 
-    chmod +x "${ALERTS_TEMPLATES_DIR}/ssh-login-monitor.sh"
-    print_item "$(i18n 'alerts.hook_created' "name=ssh-login-monitor.sh")"
-
     # Firewall change monitor
-    cat > "${ALERTS_TEMPLATES_DIR}/ufw-monitor.sh" <<'EOF'
+    _alerts_write_template ufw-monitor.sh +x <<'EOF' || return 1
 #!/bin/bash
 # UFW Change Monitor
 # Run via inotifywait or periodically via cron
@@ -429,11 +478,8 @@ if [[ "$current_hash" != "$stored_hash" ]]; then
 fi
 EOF
 
-    chmod +x "${ALERTS_TEMPLATES_DIR}/ufw-monitor.sh"
-    print_item "$(i18n 'alerts.hook_created' "name=ufw-monitor.sh")"
-
     # Service monitor
-    cat > "${ALERTS_TEMPLATES_DIR}/service-monitor.sh" <<'EOF'
+    _alerts_write_template service-monitor.sh +x <<'EOF' || return 1
 #!/bin/bash
 # Critical Service Monitor
 # Run via cron: */5 * * * * /path/to/service-monitor.sh
@@ -458,11 +504,8 @@ for service in "${SERVICES[@]}"; do
 done
 EOF
 
-    chmod +x "${ALERTS_TEMPLATES_DIR}/service-monitor.sh"
-    print_item "$(i18n 'alerts.hook_created' "name=service-monitor.sh")"
-
     # Installation instructions
-    cat > "${ALERTS_TEMPLATES_DIR}/README.md" <<'EOF'
+    _alerts_write_template README.md <<'EOF' || return 1
 # vpssec Alert Hooks
 
 ## Setup
@@ -527,12 +570,20 @@ EOF
     # `source .../alert-lib.sh` fails and every alert silently never fires. The
     # `state|templates` order matters (templates lives under neither, state is a
     # distinct tree), and | is a safe sed delimiter since paths contain /.
-    find "$ALERTS_TEMPLATES_DIR" -type f -exec sed -i \
+    #
+    # The status is checked and stderr left visible on purpose: this used to be
+    # `2>/dev/null || true`, which swallowed exactly the failure the paragraph
+    # above describes as fatal. Artifacts that still point at /var/lib/vpssec
+    # are artifacts whose every alert silently never fires, so shipping them
+    # with a green "alert hooks generated" is worse than reporting the failure.
+    if ! find "$ALERTS_TEMPLATES_DIR" -type f -exec sed -i \
         -e "s|/var/lib/vpssec/templates|${VPSSEC_TEMPLATES}|g" \
         -e "s|/var/lib/vpssec/state|${VPSSEC_STATE}|g" \
-        {} + 2>/dev/null || true
+        {} +; then
+        print_error "$(i18n 'alerts.path_rewrite_failed' "path=$ALERTS_TEMPLATES_DIR")"
+        return 1
+    fi
 
-    print_item "$(i18n 'alerts.hook_created' "name=README.md")"
     print_ok "$(i18n 'alerts.templates_generated' "path=$ALERTS_TEMPLATES_DIR")"
 
     return 0

@@ -1,0 +1,164 @@
+# Mutation cases for tests/test_fix_alerts.bats against modules/alerts.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/alerts.sh \
+#        tests/test_fix_alerts.bats tools/mutation-cases/alerts.cases
+#
+# The only suite naming this module, so this is the only cases file for it —
+# checked with `ls tests/*alerts*.bats` against `ls tools/mutation-cases/alerts*`.
+#
+# Every anchor below is unique in the file (grep -cxF == 1), so the occurrence
+# index is 1 throughout and no case can land in the audit half by accident.
+#
+# This module writes only into vpssec's own state/templates trees, so unlike
+# every other cases file here there is no risk of a mutation redirecting a
+# write at the container's real /etc.
+
+# ---- the interactivity gate ------------------------------------------------
+
+# THE regression. `[[ -t 0 ]]` asks about stdin while the prompts read from
+# /dev/tty, and it ignores --yes entirely, so `guide --yes` on a real terminal
+# parked on "Webhook URL:" forever. It is killed only by the test that asserts
+# the gate says "prompt" when a terminal is readable: stdin is never a terminal
+# under bats, so on every other input the old and new gates agree. That is also
+# why the decision had to be extracted from _alerts_fix_setup_config into a
+# predicate before any of this could be pinned.
+run_case "gate/back-to-stdin-tty" 1 \
+    '    ! _noninteractive && _tty_readable' \
+    '    [[ -t 0 ]]'
+
+run_case "gate/ignores-yes-flag" 1 \
+    '    ! _noninteractive && _tty_readable' \
+    '    _tty_readable'
+
+run_case "gate/ignores-tty" 1 \
+    '    ! _noninteractive && _tty_readable' \
+    '    ! _noninteractive'
+
+# ---- the config write ------------------------------------------------------
+
+# Each of the three status checks below was absent before this batch: the fix
+# ran the action, discarded the result and ended `return 0`. errexit is off
+# inside a fix, so nothing else would have stopped it.
+
+# This one SURVIVED on the first run, and the survivor is the interesting
+# part: the suite did execute this guard, but with the error branch made
+# unreachable the write one step later failed too and printed the SAME
+# string, so the assertion could not tell which guard had caught it. The
+# repair was in the module, not the suite — an uncreatable state directory
+# and an unwritable alerts.json are different problems for the operator and
+# now say so. A survivor can mean "the assertion asks the wrong question".
+run_case "config/mkdir-status-discarded" 1 \
+    '    if ! mkdir -p "$_config_dir"; then' \
+    '    if ! mkdir -p "$_config_dir" && false; then'
+
+# Keep the two diagnostics distinct: collapsing them back into one string
+# restores exactly the ambiguity that let the case above survive.
+run_case "config/dir-failure-message-collapsed" 1 \
+    "        print_error \"\$(i18n 'alerts.state_dir_failed' \"path=\$_config_dir\")\"" \
+    "        print_error \"\$(i18n 'alerts.config_write_failed' \"path=\$ALERTS_CONFIG_FILE\")\""
+
+# Mutate the status check, not the jq call: the point is "the failure is
+# swallowed", not "jq never runs".
+run_case "config/jq-status-discarded" 1 \
+    "        }'); then" \
+    "        }') && false; then"
+
+run_case "config/write-status-discarded" 1 \
+    "    printf '%s\\n' \"\$config_json\" > \"\$ALERTS_CONFIG_FILE\" && wrote=1" \
+    "    printf '%s\\n' \"\$config_json\" > \"\$ALERTS_CONFIG_FILE\"; wrote=1"
+
+run_case "config/write-failure-unreported" 1 \
+    '    if ((wrote == 0)); then' \
+    '    if false; then'
+
+# The trailing chmod is NOT redundant with the umask around the write: the
+# umask governs creation only, and an alerts.json left at 0644 by an older
+# vpssec would keep that mode.
+run_case "config/existing-mode-not-tightened" 1 \
+    '    chmod 600 "$ALERTS_CONFIG_FILE" 2>/dev/null || true' \
+    '    true'
+
+# A config naming scripts that were never written is not a configured alert
+# channel, so the generator's status has to reach the caller.
+run_case "config/hook-failure-swallowed" 1 \
+    '    _alerts_fix_generate_templates || return 1' \
+    '    _alerts_fix_generate_templates || true'
+
+# ---- the generated hooks ---------------------------------------------------
+
+run_case "hooks/templates-dir-status-discarded" 1 \
+    '    if ! mkdir -p "$ALERTS_TEMPLATES_DIR"; then' \
+    '    if ! mkdir -p "$ALERTS_TEMPLATES_DIR" && false; then'
+
+run_case "hooks/write-status-discarded" 1 \
+    '    if ! cat > "$path"; then' \
+    '    if ! cat > "$path" && false; then'
+
+run_case "hooks/chmod-status-discarded" 1 \
+    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then' \
+    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path" && false; then'
+
+# Dropping the mode argument leaves a hook the operator cannot execute.
+run_case "hooks/lib-not-executable" 1 \
+    "    _alerts_write_template alert-lib.sh +x <<'EOF' || return 1" \
+    "    _alerts_write_template alert-lib.sh <<'EOF' || return 1"
+
+# One case per write, because a "check only the first one" implementation
+# passes every test that fails on the first artifact. TWO of these (the third
+# and fourth artifacts) SURVIVED the first run: the suite failed the 1st, 2nd
+# and 5th writes and nothing ever failed the middle two. The repair was a
+# single test that iterates over all five names in a fresh tree each time —
+# five near-identical tests would have been the alternative, and the loop is
+# what makes "every write is checked" the thing actually asserted.
+run_case "hooks/second-write-unchecked" 1 \
+    "    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || return 1" \
+    "    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || true"
+
+run_case "hooks/third-write-unchecked" 1 \
+    "    _alerts_write_template ufw-monitor.sh +x <<'EOF' || return 1" \
+    "    _alerts_write_template ufw-monitor.sh +x <<'EOF' || true"
+
+run_case "hooks/fourth-write-unchecked" 1 \
+    "    _alerts_write_template service-monitor.sh +x <<'EOF' || return 1" \
+    "    _alerts_write_template service-monitor.sh +x <<'EOF' || true"
+
+run_case "hooks/last-write-unchecked" 1 \
+    "    _alerts_write_template README.md <<'EOF' || return 1" \
+    "    _alerts_write_template README.md <<'EOF' || true"
+
+# ---- the path rewrite ------------------------------------------------------
+
+# The generated artifacts are authored with a /var/lib/vpssec literal so the
+# quoted heredocs don't expand $WEBHOOK_URL. Without the rewrite the hooks
+# source a path that does not exist on this installation, so every alert
+# silently never fires — which is why the status check below replaced a
+# `2>/dev/null || true`.
+
+run_case "rewrite/status-discarded" 1 \
+    '        {} +; then' \
+    '        {} + && false; then'
+
+run_case "rewrite/templates-path-missed" 1 \
+    '        -e "s|/var/lib/vpssec/templates|${VPSSEC_TEMPLATES}|g" \' \
+    '        -e "s|/var/lib/vpssec/templates-unmatched|${VPSSEC_TEMPLATES}|g" \'
+
+run_case "rewrite/state-path-missed" 1 \
+    '        -e "s|/var/lib/vpssec/state|${VPSSEC_STATE}|g" \' \
+    '        -e "s|/var/lib/vpssec/state-unmatched|${VPSSEC_STATE}|g" \'
+
+# ---- the dispatcher --------------------------------------------------------
+
+run_case "dispatch/unknown-fix-succeeds" 1 \
+    '            return 1' \
+    '            return 0'
+
+# ---- deliberately absent ---------------------------------------------------
+#
+# `umask 077` around the config write has no case. Removing it alone changes
+# nothing observable: the file is created 0644, and the very next statement
+# chmods it to 600. What the umask buys is that the window in which the file
+# exists world-readable is never opened at all — a property no assertion in a
+# single-process test can see. Both halves are pinned against removal of the
+# OTHER one (config/existing-mode-not-tightened covers the chmod), and a case
+# that cannot be killed does not belong here.
