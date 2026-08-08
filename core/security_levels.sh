@@ -393,6 +393,11 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # === Update Module - required ===
     ["update.apt_available"]="required"
     ["update.apt_locked"]="required"
+    # Deliberately info, i.e. unscored: it reports that the lock state could
+    # NOT be measured. Scoring it either way would put a number on a
+    # non-observation — which is precisely how the two above came to hand a
+    # scored pass to any host without lsof.
+    ["update.lock_state_unknown"]="info"
     ["update.no_updates"]="required"
     ["update.updates_available"]="required"
     ["update.unattended_enabled"]="recommended"

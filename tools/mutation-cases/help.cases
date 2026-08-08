@@ -1,0 +1,64 @@
+# Mutation cases for tests/test_help.bats against core/help.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh core/help.sh \
+#        tests/test_help.bats tools/mutation-cases/help.cases
+#
+# This file had never existed. test_help.bats has been in the repo for
+# months and was the suite whose main assertion was four hardcoded counts
+# (5/1/2/4) — which broke on every unrelated ssh change and were "fixed" by
+# retyping the number. Exactly the shape the logrotate suite was in before
+# `9f5996c`: a suite nobody had mutation-tested, asserting less than it
+# looked like it did. Entry check for any module: does EVERY suite naming it
+# have a cases file?
+#
+# All mutations are on a read-only help renderer; nothing here writes.
+
+# ---- the module filter ----------------------------------------------------
+
+# The bug the old counts could never catch. `cloud` and `cloudflared` are a
+# real prefix pair here: dropping the dot hands `vpssec help cloud`
+# cloudflared's two FIX_SAFE and three FIX_ALERT_ONLY entries. ssh, which is
+# what the suite used to test exclusively, has no prefix sibling to leak
+# from, so no amount of pinning ssh's counts would have found this.
+run_case "filter/unanchored-safe" 1 \
+    '        [[ "$id" == "$module".* ]] && _help_fix_table[safe]+="$id"$'"'"'\n'"'"'' \
+    '        [[ "$id" == "$module"* ]] && _help_fix_table[safe]+="$id"$'"'"'\n'"'"''
+
+run_case "filter/unanchored-alert-only" 1 \
+    '        [[ "$id" == "$module".* ]] && _help_fix_table[alert_only]+="$id"$'"'"'\n'"'"'' \
+    '        [[ "$id" == "$module"* ]] && _help_fix_table[alert_only]+="$id"$'"'"'\n'"'"''
+
+# No filter at all: every module's help page would list every fix in the
+# repo. Caught by "every collected id belongs to the module asked for".
+run_case "filter/dropped-entirely-confirm" 1 \
+    '        [[ "$id" == "$module".* ]] && _help_fix_table[confirm]+="$id"$'"'"'\n'"'"'' \
+    '        _help_fix_table[confirm]+="$id"$'"'"'\n'"'"''
+
+# ---- the buckets ----------------------------------------------------------
+
+# A safe fix rendered under "risky" (or the reverse) is the mistake the old
+# counts caught by accident, since 5 and 1 would have traded places. Now
+# asserted on purpose.
+run_case "bucket/safe-ids-land-in-risky" 1 \
+    '        [[ "$id" == "$module".* ]] && _help_fix_table[safe]+="$id"$'"'"'\n'"'"'' \
+    '        [[ "$id" == "$module".* ]] && _help_fix_table[risky]+="$id"$'"'"'\n'"'"''
+
+run_case "bucket/safe-reads-the-wrong-map" 1 \
+    '    for id in "${!FIX_SAFE[@]}"; do' \
+    '    for id in "${!FIX_RISKY[@]}"; do'
+
+run_case "bucket/risky-never-collected" 1 \
+    '    for id in "${!FIX_RISKY[@]}"; do' \
+    '    for id in "${!FIX_SAFE[@]}"; do'
+
+# ---- the explicit success return -----------------------------------------
+
+# The last loop ends in `[[ X ]] && y`, which short-circuits to 1 whenever
+# the final id does not match the requested module. Without the pinned
+# return, that propagates to the caller and set -e aborts it silently — the
+# reason the line exists at all. The suite already had a test for this; the
+# case is what shows the test still asserts it.
+run_case "return/implicit-status-from-last-loop" 1 \
+    '    return 0' \
+    '    # return 0 removed by mutation'

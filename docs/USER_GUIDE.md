@@ -1151,9 +1151,11 @@ vpssec/
 ├── modules/            # 安全检查模块（共 21 个）
 ├── tests/              # 测试基础设施
 │   ├── *.bats          # bats 单元测试（用 `bats tests/` 运行）
-│   └── mutation/       # 变异测试 harness
-│       ├── run.sh      # 驱动（sudo bash tests/mutation/run.sh）
-│       └── cases/      # 每个 check_id 一个文件
+│   ├── mutation/       # 变异测试 harness
+│   │   ├── run.sh      # 驱动（sudo bash tests/mutation/run.sh）
+│   │   └── cases/      # 每个 check_id 一个文件
+│   └── uninstall/      # 卸载脚本的破坏性验证
+│       └── run.sh      # 驱动（sudo bash tests/uninstall/run.sh）
 ├── tools/              # 开发者工具
 │   └── gen-manifest.sh # 重新生成 manifest.sha256
 ├── docs/               # 用户文档
@@ -1259,6 +1261,27 @@ Total: 22  Passed: 18  Failed: 0  Errored: 0  Skipped: 4
 nginx 时对应 case 的 `precheck` 返回假；`022-filesystem-grub-perms`
 在没有 GRUB 的容器里跳过；`030-kernel-core-setuid-ok` 在没有
 `kernel.core_setuid_ok` 的内核上跳过。这些都是正常的。
+
+### 卸载脚本验证
+
+```bash
+sudo bash tests/uninstall/run.sh          # 仅在可丢弃 VM 或容器
+```
+
+`install.sh` 生成的 `uninstall.sh` 是全项目**唯一会生成 `rm -rf` 的
+地方**，而它的白名单只接受 `/opt/<名字>` 与 `/var/lib/<名字>`——bats
+的临时目录一律不在其中，所以「数据保留」「数据清除」这两条成功路径
+在单元测试里根本走不到。拒绝路径和生成内容由
+`tests/test_install_uninstaller.bats` 覆盖，需要真实目录和真实
+`rm -rf` 的那一半在这里。
+
+这个脚本只在 `/opt/vpssec-proof-*` 与 `/srv/vpssec-proof-*` 下操作，
+但它确实执行删除，因此同样**只在可丢弃主机上跑**。
+
+**期望基线：** 每一行都是 `ok`，末行 `UNINSTALLER PROOF: ALL PASS`，
+退出码 0。五组分别验证：路径被正确烤进脚本、默认保留 state/backups、
+`VPSSEC_UNINSTALL_PURGE=1` 时全清、白名单外的路径拒绝且不动任何东西、
+含 shell 元字符的路径被引用而不是被执行。
 
 **`Failed` 或 `Errored` 非零就是回归**，需要定位到底是检测逻辑退化了，
 还是 case 的期望值过时了——两种情况历史上都发生过：

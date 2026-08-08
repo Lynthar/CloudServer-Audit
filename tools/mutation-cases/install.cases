@@ -1,0 +1,88 @@
+# Mutation cases for tests/test_install_uninstaller.bats against install.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh install.sh \
+#        tests/test_install_uninstaller.bats tools/mutation-cases/install.cases
+#
+# First cases file for install.sh. It is worth the wall-clock for one reason:
+# this is the only place in the project that GENERATES an `rm -rf`, and the
+# guard standing between a mis-set INSTALL_DIR and `rm -rf /` lives inside a
+# quoted heredoc where nothing else can check it.
+#
+# Note the two near-identical allowlist lines. install.sh:33 is
+# safe_remove_install_dir's own guard (4-space indent); the one below is the
+# copy baked into the generated uninstaller (3-space indent, a continuation
+# of `if ... || \`). They are distinct as whole lines, which is why the
+# occurrence index is 1 for the generated one — `grep -nxF` it and check the
+# runner's reported line before believing a survivor.
+#
+# The destructive half of this contract (data kept, data purged, real
+# directories removed) cannot be reached from a bats tmpdir, because the
+# allowlist only accepts /opt/<name> and /var/lib/<name>. That half lives in
+# tests/uninstall/run.sh and needs root.
+
+# ---- the paths are baked, not hardcoded -----------------------------------
+
+# The original defect: `rm -rf /opt/vpssec` as a literal, so
+# `INSTALL_DIR=/srv/vpssec ./install.sh` generated an uninstaller that
+# deleted a directory it had never installed to and left the real one alone.
+#
+# NOTE THE LITERAL, and do not "correct" it to /opt/vpssec. The rule that a
+# mutation must not redirect a WRITE at a real path applies with teeth here,
+# because what this file generates is an `rm -rf`: baking the real
+# /opt/vpssec makes the guard ACCEPT it (that path is allowlisted), so the
+# suite's own "refused run" tests execute the removal and delete the
+# container's checkout of this repo. That is not hypothetical — it happened
+# on the first run of this file and took three concurrent mutation runs down
+# with it. /opt/vpssec-not-an-install is allowlisted too, so the guard still
+# passes and the mutation is faithful, but there is nothing there to delete.
+run_case "bake/install-dir-hardcoded-again" 1 \
+    "        printf 'INSTALL_DIR=%q\\n' \"\$INSTALL_DIR\"" \
+    "        printf 'INSTALL_DIR=/opt/vpssec-not-an-install\\n'"
+
+# %q rather than %s is what keeps a metacharacter path inert. With %s the
+# generated `INSTALL_DIR=/tmp/x; rm -rf <canary>` line runs the rm the moment
+# the uninstaller starts — before any guard can refuse it.
+run_case "bake/quoting-dropped" 1 \
+    "        printf 'INSTALL_DIR=%q\\n' \"\$INSTALL_DIR\"" \
+    "        printf 'INSTALL_DIR=%s\\n' \"\$INSTALL_DIR\""
+
+run_case "bake/bin-link-hardcoded" 1 \
+    "        printf 'BIN_LINK=%q\\n' \"\$BIN_LINK\"" \
+    "        printf 'BIN_LINK=/usr/local/bin/vpssec\\n'"
+
+# ---- the guard the generated script carries -------------------------------
+
+# Occurrence 1 of this text is the 3-space-indented copy inside the heredoc,
+# i.e. the generated uninstaller's own guard — NOT install.sh's
+# safe_remove_install_dir at line 33, which is indented four.
+run_case "guard/allowlist-never-refuses" 1 \
+    '   [[ ! "$INSTALL_DIR" =~ ^/(opt|var/lib)/[a-zA-Z0-9_-]+$ ]]; then' \
+    '   false; then'
+
+run_case "guard/allowlist-accepts-anything-rooted" 1 \
+    '   [[ ! "$INSTALL_DIR" =~ ^/(opt|var/lib)/[a-zA-Z0-9_-]+$ ]]; then' \
+    '   [[ ! "$INSTALL_DIR" =~ ^/ ]]; then'
+
+# ---- what the generated script does ---------------------------------------
+
+# The dead path the old prompt offered to delete. Nothing in this codebase
+# has ever written to /var/lib/vpssec — state and backups live under
+# $INSTALL_DIR — so putting it back is putting the theatre back.
+run_case "generated/dead-var-lib-path-returns" 1 \
+    'rm -rf "${INSTALL_DIR:?}"' \
+    'rm -rf "${INSTALL_DIR:?}" /var/lib/vpssec'
+
+run_case "generated/not-made-executable" 1 \
+    '    chmod +x "$INSTALL_DIR/uninstall.sh"' \
+    '    true'
+
+# ---- deliberately absent --------------------------------------------------
+#
+# The `[[ -z "$INSTALL_DIR" ]]` half of the guard has no case: it is
+# redundant with the regex, which an empty string fails anyway, so no input
+# can distinguish the two and a case for it could never be killed. The test
+# "an empty install dir is refused" still exists — it pins the BEHAVIOUR,
+# which is what matters to an operator — but the belt-and-braces check
+# itself is unfalsifiable and a case that cannot be killed does not belong
+# in this file.

@@ -157,8 +157,15 @@ _preflight_check_deps() {
         print_ok "$(i18n 'common.required_deps')"
     fi
 
-    # Optional dependencies
-    local optional_deps=(whiptail dialog curl wget)
+    # Optional dependencies.
+    #
+    # lsof is here rather than in required_deps above because the thing that
+    # needed it — pkg_manager_locked's apt branch — now answers from
+    # /proc/locks first and only falls back to lsof. Before that it was used
+    # and declared nowhere, and its absence silently turned "is the package
+    # manager busy?" into a scored pass. Declaring it optional is the other
+    # half of that fix: the audit now says out loud that this host lacks it.
+    local optional_deps=(whiptail dialog curl wget lsof)
     local missing_optional=()
 
     for dep in "${optional_deps[@]}"; do

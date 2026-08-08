@@ -18,12 +18,11 @@ UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"
 # Update Helper Functions
 # ==============================================================================
 
-# Check if APT is locked
-_update_apt_locked() {
-    lsof /var/lib/dpkg/lock-frontend &>/dev/null || \
-    lsof /var/lib/apt/lists/lock &>/dev/null || \
-    lsof /var/cache/apt/archives/lock &>/dev/null
-}
+# No _update_apt_locked here: it was a byte-identical copy of
+# pkg_manager_locked's apt branch with ZERO callers — the audit has always
+# asked core/distro.sh. It was the eighth instance of the duplicate-predicate
+# family and survived the same file's `auto_update_*` de-duplication, so it
+# is deleted rather than delegated. Ask distro.sh.
 
 # Get count of available updates
 _update_get_count() {
@@ -164,7 +163,20 @@ update_audit() {
 }
 
 _update_audit_apt_lock() {
-    if pkg_manager_locked; then
+    # Three-way on purpose. `if pkg_manager_locked` collapsed "could not
+    # determine" into the passing branch, so a host missing the probe tool
+    # was handed a green — and SCORED — "package manager available" for a
+    # question nobody asked. See _pkg_lock_held in core/distro.sh.
+    # `pkg_manager_locked || lock_rc=$?` rather than a bare call followed by
+    # `$?`. The bare form works today only because engine.sh invokes audits as
+    # `if "$audit_func"; then`, and bash's condition-context exemption reaches
+    # into the body — so `set -e` ignores the 1 that "not locked" returns.
+    # Measured: outside that context the bare form aborts the caller
+    # immediately, i.e. on the NORMAL path. The `||` form is exempt anywhere.
+    local lock_rc=0
+    pkg_manager_locked || lock_rc=$?
+
+    if (( lock_rc == 0 )); then
         local check=$(create_check_json \
             "update.apt_locked" \
             "update" \
@@ -176,6 +188,40 @@ _update_audit_apt_lock() {
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'update.apt_locked')"
+    elif (( lock_rc == 2 )); then
+        # status=failed, category=info. Both halves are deliberate:
+        #
+        # `failed` because report.sh renders a passed check as the one-liner
+        # "- ✓ <title>", and a green tick beside "could not determine" is the
+        # same contradiction this batch exists to remove — the operator would
+        # never see the desc explaining what was skipped or the suggestion
+        # that restores it. A failed low renders the full block.
+        #
+        # `info` in CHECK_SCORE_CATEGORY so this check enters neither the
+        # base nor the penalty — calculate_score reads scored_total and
+        # *_failed, both gated on the category. Putting a number on a
+        # non-observation is how the scored `update.apt_available` came to
+        # pass for free in the first place.
+        #
+        # Be precise about what that does and does not mean. The check itself
+        # is worth nothing either way, but a host that lands here scores
+        # LOWER than it used to, because the pass it was being handed for
+        # free is gone: measured on an unmeasurable host with
+        # `--include=update`, scored_total 4→3 and passed 3→2, i.e. 75→66.
+        # That drop IS the fix. A host where /proc/locks is readable — every
+        # normal Linux box — never reaches this branch and does not move: the
+        # full-audit container measured 31 / scored_total 43 before and after.
+        local check=$(create_check_json \
+            "update.lock_state_unknown" \
+            "update" \
+            "low" \
+            "failed" \
+            "$(i18n 'update.lock_state_unknown')" \
+            "$(i18n 'update.lock_state_unknown_desc')" \
+            "$(i18n 'update.lock_state_unknown_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'update.lock_state_unknown')"
     else
         local check=$(create_check_json \
             "update.apt_available" \

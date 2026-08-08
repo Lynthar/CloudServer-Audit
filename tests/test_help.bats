@@ -18,15 +18,73 @@ setup() {
 
 # ---- _help_collect_fixes: per-module bucketing -----------------------
 
-@test "_help_collect_fixes: ssh module collects expected counts" {
+@test "_help_collect_fixes: ssh populates all four buckets" {
+    # ssh is the one module shipping fixes in every safety class, so it is
+    # what proves the bucketing works rather than one bucket catching
+    # everything.
+    #
+    # The exact counts (once pinned here as 5/1/2/4) are deliberately NOT
+    # asserted. They are a snapshot of security_levels.sh, so adding any ssh
+    # fix turned this red for a reason that had nothing to do with a defect,
+    # and the "fix" was to retype the number — which is not a test. Deriving
+    # them from the maps instead would be worse: _help_collect_fixes IS a
+    # prefix filter over those maps, so the expectation would re-implement
+    # the function and pass no matter what it did.
     _help_collect_fixes "ssh"
-    # SSH module ships a known mix per security_levels.sh:
-    #   5 safe, 1 confirm, 2 risky, 4 alert_only (+ a handful of
-    #   passed-state checks that aren't fix_ids — those don't count)
-    [ "$(count_lines "${_help_fix_table[safe]}")"        = "5" ]
-    [ "$(count_lines "${_help_fix_table[confirm]}")"     = "1" ]
-    [ "$(count_lines "${_help_fix_table[risky]}")"       = "2" ]
-    [ "$(count_lines "${_help_fix_table[alert_only]}")"  = "4" ]
+    [ "$(count_lines "${_help_fix_table[safe]}")"        -gt 0 ]
+    [ "$(count_lines "${_help_fix_table[confirm]}")"     -gt 0 ]
+    [ "$(count_lines "${_help_fix_table[risky]}")"       -gt 0 ]
+    [ "$(count_lines "${_help_fix_table[alert_only]}")"  -gt 0 ]
+}
+
+@test "_help_collect_fixes: every collected id belongs to the module asked for" {
+    # What the hardcoded counts were really guarding, stated directly: a
+    # bucket must not pick up another module's fix. Independent of how many
+    # fixes ssh happens to ship this week.
+    _help_collect_fixes "ssh"
+    local all ids
+    all="${_help_fix_table[safe]}${_help_fix_table[confirm]}"
+    all+="${_help_fix_table[risky]}${_help_fix_table[alert_only]}"
+    ids=$(grep -c . <<<"$all")
+    [ "$ids" -gt 0 ]
+    # No line that is not an ssh.* id.
+    _vpssec_refute grep -qv '^ssh\.' <<<"$(grep . <<<"$all")"
+}
+
+@test "_help_collect_fixes: the module filter is anchored at the dot" {
+    # `cloud` and `cloudflared` are a real prefix pair in this repo:
+    # cloudflared ships 2 FIX_SAFE and 3 FIX_ALERT_ONLY entries, cloud ships
+    # none and two respectively. An unanchored `[[ $id == $module* ]]` would
+    # therefore print cloudflared's fixes on `vpssec help cloud` — and no
+    # other test in this suite could notice, because ssh has no prefix
+    # sibling to leak from.
+    _help_collect_fixes "cloud"
+    local all
+    all="${_help_fix_table[safe]}${_help_fix_table[confirm]}"
+    all+="${_help_fix_table[risky]}${_help_fix_table[alert_only]}"
+
+    _vpssec_refute grep -q 'cloudflared\.' <<<"$all"
+    # ...and it must still collect cloud's own, or "no cloudflared" would
+    # also pass with the function returning nothing at all.
+    grep -q '^cloud\.' <<<"$all"
+}
+
+@test "_help_collect_fixes: a bucket only holds ids of its own safety class" {
+    # The old counts caught a swapped-bucket bug by accident (5 and 1 would
+    # trade places). Assert it on purpose instead.
+    _help_collect_fixes "ssh"
+    local id
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        [[ -n "${FIX_SAFE[$id]+set}" ]]
+        [[ -z "${FIX_RISKY[$id]+set}" ]]
+    done < <(grep . <<<"${_help_fix_table[safe]}")
+
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        [[ -n "${FIX_RISKY[$id]+set}" ]]
+        [[ -z "${FIX_SAFE[$id]+set}" ]]
+    done < <(grep . <<<"${_help_fix_table[risky]}")
 }
 
 @test "_help_collect_fixes: preflight is audit-only (zero fixes)" {

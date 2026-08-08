@@ -115,27 +115,109 @@ distro_detect() {
 # Package / update primitives
 # ==============================================================================
 
+# Where the kernel publishes currently-held file locks. A variable rather
+# than a literal so the predicate below is reachable from a test.
+DISTRO_PROC_LOCKS="${DISTRO_PROC_LOCKS:-/proc/locks}"
+
+# The apt lock files, in the order apt itself takes them.
+DISTRO_APT_LOCK_FILES=(
+    /var/lib/dpkg/lock-frontend
+    /var/lib/apt/lists/lock
+    /var/cache/apt/archives/lock
+)
+
+# Is a lock held on PATH? Echoes exactly one of: held / free / unknown.
+#
+# Primary source is /proc/locks, which needs no package installed at all —
+# apt takes an flock on each of its lock files and the kernel publishes it
+# as "MAJOR:MINOR:INODE" in field 5, hex major/minor and decimal inode.
+# lsof is kept as a fallback for a host whose procfs is unreadable.
+#
+# Known blind spot, measured rather than assumed: /proc/locks omits any lock
+# whose owning pid the kernel cannot resolve in the READER's pid namespace.
+# A lock held only through an inherited descriptor whose original locker has
+# exited is therefore invisible here even though it is genuinely held (a
+# second flock is still refused). That does not affect the case this exists
+# for — apt and dpkg hold their locks from a live process in our own
+# namespace — but it is why the tests hold the lock from a live process
+# rather than the `exec 9>f; flock -n 9` idiom, which silently proves
+# nothing.
+#
+# The third answer is the point. This used to be three bare `lsof` calls
+# ORed together: on a host without lsof each exits 127, the || chain yields
+# 1, and the caller read that as "not locked" — so `update.apt_available`,
+# a SCORED check, passed for something that was never looked at. vpssec's
+# own verification container has no lsof, so that green line was in every
+# smoke run. "I could not tell" must not be spelled the same as "no".
+_pkg_lock_held() {
+    local path="$1"
+
+    # A lock file that does not exist cannot be held by anyone.
+    [[ -e "$path" ]] || { printf 'free\n'; return 0; }
+
+    if [[ -r "$DISTRO_PROC_LOCKS" ]]; then
+        local dev ino major minor
+        if dev=$(stat -c '%d' "$path" 2>/dev/null) && \
+           ino=$(stat -c '%i' "$path" 2>/dev/null) && \
+           [[ "$dev" =~ ^[0-9]+$ && "$ino" =~ ^[0-9]+$ ]]; then
+            # glibc's st_dev encoding, which is what /proc/locks prints.
+            major=$(( (dev >> 8) & 0xfff ))
+            minor=$(( (dev & 0xff) | ((dev >> 12) & ~0xff) ))
+            if grep -qE "[[:space:]]$(printf '%02x:%02x:%d' "$major" "$minor" "$ino")[[:space:]]" \
+                    "$DISTRO_PROC_LOCKS" 2>/dev/null; then
+                printf 'held\n'
+            else
+                printf 'free\n'
+            fi
+            return 0
+        fi
+    fi
+
+    if check_command lsof; then
+        if lsof "$path" &>/dev/null; then printf 'held\n'; else printf 'free\n'; fi
+        return 0
+    fi
+
+    printf 'unknown\n'
+}
+
 # Is the native package database locked (an install/upgrade in flight)?
-# Returns 0 = locked, 1 = not locked. Read-only.
+# Returns 0 = locked, 1 = not locked, **2 = could not determine**. Read-only.
+# Callers must handle all three — see _pkg_lock_held for what the third one
+# costs when it is collapsed into "not locked".
 pkg_manager_locked() {
     case "$VPSSEC_PKG_MGR" in
         apt)
-            lsof /var/lib/dpkg/lock-frontend &>/dev/null || \
-            lsof /var/lib/apt/lists/lock &>/dev/null || \
-            lsof /var/cache/apt/archives/lock &>/dev/null
+            local f state unknown=0
+            for f in "${DISTRO_APT_LOCK_FILES[@]}"; do
+                state=$(_pkg_lock_held "$f")
+                # One held lock settles it; keep looking otherwise, since a
+                # later file may be held even if this one was unreadable.
+                [[ "$state" == "held" ]] && return 0
+                [[ "$state" == "unknown" ]] && unknown=1
+            done
+            (( unknown )) && return 2
+            return 1
             ;;
         dnf)
             # dnf/rpm hold a transaction lock; a running dnf/yum/PackageKit
             # process is the reliable read-only signal (the lock file path
             # has moved across rpm versions).
+            #
+            # Same trap as the apt branch: without pgrep every probe exits
+            # 127 and the || chain says "not locked".
+            check_command pgrep || return 2
             pgrep -x dnf >/dev/null 2>&1 || \
             pgrep -x yum >/dev/null 2>&1 || \
             pgrep -x packagekitd >/dev/null 2>&1
             ;;
         pacman)
+            # The only branch that needs no external tool.
             [[ -e /var/lib/pacman/db.lck ]]
             ;;
-        *) return 1 ;;
+        # An unrecognised package manager is "cannot determine", not "not
+        # locked" — we have not looked at anything.
+        *) return 2 ;;
     esac
 }
 

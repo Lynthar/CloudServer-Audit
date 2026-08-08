@@ -1,0 +1,92 @@
+# Mutation cases for tests/test_distro_pkg_lock.bats against core/distro.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh core/distro.sh \
+#        tests/test_distro_pkg_lock.bats tools/mutation-cases/distro-pkglock.cases
+#
+# SECOND cases file for this source, and that is the point of the per-suite
+# rule: distro.cases pairs with tests/test_update_unattended.bats and targets
+# the auto-update parsers. A case aimed at the lock predicate would read as a
+# coverage gap there that is not one, and vice versa. Same split as
+# filesystem / filesystem-umask.
+#
+# `*) return 2 ;;` occurs THREE times in this file (the lock case, and two
+# later ones) — the occurrence index below is 1 on purpose. Read the runner's
+# "at line N" against `grep -nxF` before trusting any result here.
+#
+# Every mutation is on a read path; nothing here can write to the container's
+# real /etc or /proc.
+
+# ---- _pkg_lock_held: the answer must be real ------------------------------
+
+# THE regression, at its narrowest: "I could not tell" spelled the same as
+# "no". Before this batch the apt branch was three bare `lsof` calls, so a
+# host without lsof produced "not locked" and the caller published it as
+# update.apt_available — status passed, category required, i.e. SCORED.
+run_case "held/unknown-collapsed-to-free" 1 \
+    "    printf 'unknown\\n'" \
+    "    printf 'free\\n'"
+
+# /proc/locks is what makes the answer real on a bare host rather than merely
+# honest. With the branch gone, every call falls through to lsof.
+run_case "held/proc-locks-branch-skipped" 1 \
+    '    if [[ -r "$DISTRO_PROC_LOCKS" ]]; then' \
+    '    if false; then'
+
+# Re-inlining the literal is how the predicate would silently become
+# untestable again. Read-only, so this cannot touch the host's real procfs.
+run_case "held/proc-locks-path-inlined" 1 \
+    '    if [[ -r "$DISTRO_PROC_LOCKS" ]]; then' \
+    '    if [[ -r /proc/locks ]]; then'
+
+# A lock file that does not exist cannot be held. Without this guard the
+# stat below fails, execution falls to lsof, and an absent file reports
+# "unknown" — which on most hosts means a spurious unscored finding.
+run_case "held/missing-file-not-short-circuited" 1 \
+    "    [[ -e \"\$path\" ]] || { printf 'free\\n'; return 0; }" \
+    '    :'
+
+# The dev encoding is the one thing a fixture cannot verify — only the two
+# tests that hold a real flock and read the real /proc/locks can. These two
+# cases are what prove those tests are doing that job.
+run_case "held/major-encoding-wrong" 1 \
+    '            major=$(( (dev >> 8) & 0xfff ))' \
+    '            major=$(( dev & 0xfff ))'
+
+run_case "held/minor-encoding-wrong" 1 \
+    '            minor=$(( (dev & 0xff) | ((dev >> 12) & ~0xff) ))' \
+    '            minor=$(( dev >> 8 ))'
+
+run_case "held/lsof-fallback-dropped" 1 \
+    '    if check_command lsof; then' \
+    '    if false; then'
+
+# ---- pkg_manager_locked: all three returns --------------------------------
+
+run_case "locked/unknown-reported-as-not-locked" 1 \
+    '            (( unknown )) && return 2' \
+    '            (( unknown )) && return 1'
+
+# Returning as soon as ONE file is unmeasurable would report "could not
+# determine" for a host that demonstrably is locked. Needs the test whose
+# first lock file is unmeasurable and whose second is really held.
+run_case "locked/unknown-short-circuits-past-a-held-lock" 1 \
+    '                [[ "$state" == "unknown" ]] && unknown=1' \
+    '                [[ "$state" == "unknown" ]] && return 2'
+
+# The loop must not stop at the first free file: apt holds its three locks at
+# different points in a run.
+run_case "locked/stops-at-first-free-file" 1 \
+    '                [[ "$state" == "held" ]] && return 0' \
+    '                [[ "$state" == "held" ]] && return 0 || return 1'
+
+# Same trap as the apt branch, one package manager over.
+run_case "locked/dnf-missing-pgrep-unguarded" 1 \
+    '            check_command pgrep || return 2' \
+    '            true'
+
+# Occurrence 1 = the lock case's default arm. Two later `*) return 2 ;;`
+# lines belong to other functions entirely.
+run_case "locked/unknown-pkg-manager-claims-not-locked" 1 \
+    '        *) return 2 ;;' \
+    '        *) return 1 ;;'
