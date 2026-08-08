@@ -1,0 +1,170 @@
+# Mutation cases for tests/test_fix_baseline.bats against modules/baseline.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/baseline.sh \
+#        tests/test_fix_baseline.bats tools/mutation-cases/baseline.cases
+#
+# Each entry reintroduces a defect this code actually had, or a plausible
+# regression of a guard it now relies on. All of them must stay killed.
+#
+# Two shapes recur and are worth reading for:
+#
+#   * `... && false` rather than `if false` where the point is that the command
+#     still RUNS and only its status is ignored. Replacing the whole condition
+#     with `false` would also delete the action, which is a different (and
+#     easier to catch) defect than the one being modelled.
+#   * Re-hardcoding an /etc literal over a module path variable. Those cases
+#     exist because the variables are the only reason these fixes are testable
+#     at all — a future edit that inlines the path again would silently take
+#     the fix back out of test coverage, and the suite would still be green.
+#
+# The occurrence index (2nd argument) matters where a line appears more than
+# once; see the header of tools/mutate-suite.sh.
+
+# ---- the path variables that make the fixes reachable ----------------
+
+run_case "paths/selinux-config-inlined" 1 \
+    '    if [[ ! -f "$BASELINE_SELINUX_CONFIG" ]]; then' \
+    '    if [[ ! -f /etc/selinux/config ]]; then'
+
+run_case "paths/selinux-fs-inlined" 1 \
+    '    [[ -e "$BASELINE_SELINUX_FS_ENFORCE" ]] || return 1' \
+    '    [[ -e /sys/fs/selinux/enforce ]] || return 1'
+
+# ---- baseline.selinux_set_enforcing ----------------------------------
+
+run_case "selinux/setenforce-guard-removed" 1 \
+    '    if ! check_command setenforce; then' \
+    '    if false; then'
+
+run_case "selinux/setenforce-not-called" 1 \
+    '    setenforce 1 2>/dev/null || true' \
+    '    :'
+
+run_case "selinux/runtime-postcondition-removed" 1 \
+    '    if [[ "$(_baseline_selinux_get_status)" != "enforcing" ]]; then' \
+    '    if false; then'
+
+run_case "selinux/missing-config-reports-success" 3 \
+    '        return 1' \
+    '        return 0'
+
+run_case "selinux/backup-skipped" 1 \
+    '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true' \
+    '    :'
+
+run_case "selinux/sed-anchor-dropped" 1 \
+    "    staged=\$(sed 's/^SELINUX=.*/SELINUX=enforcing/' \"\$BASELINE_SELINUX_CONFIG\") || staged=\"\"" \
+    "    staged=\$(sed 's/SELINUX=.*/SELINUX=enforcing/' \"\$BASELINE_SELINUX_CONFIG\") || staged=\"\""
+
+run_case "selinux/sed-matches-selinuxtype" 1 \
+    "    staged=\$(sed 's/^SELINUX=.*/SELINUX=enforcing/' \"\$BASELINE_SELINUX_CONFIG\") || staged=\"\"" \
+    "    staged=\$(sed 's/^SELINUX.*/SELINUX=enforcing/' \"\$BASELINE_SELINUX_CONFIG\") || staged=\"\""
+
+run_case "selinux/layout-check-removed" 1 \
+    '    if ! grep -qE '"'"'^SELINUX=enforcing[[:space:]]*$'"'"' <<<"$staged"; then' \
+    '    if false; then'
+
+run_case "selinux/write-failure-unchecked" 1 \
+    '    if ! write_file_atomic "$BASELINE_SELINUX_CONFIG" "$staged"; then' \
+    '    if ! write_file_atomic "$BASELINE_SELINUX_CONFIG" "$staged" && false; then'
+
+# ---- baseline.selinux_enable (advice only) ---------------------------
+
+run_case "selinux-enable/reports-success" 1 \
+    '    return 1  # Manual intervention required' \
+    '    return 0'
+
+run_case "selinux-enable/steps-not-printed" 1 \
+    '    echo "  2. Set SELINUX=enforcing (or permissive for testing)"' \
+    '    :'
+
+# ---- baseline.enable_apparmor ----------------------------------------
+
+run_case "apparmor/install-not-attempted" 1 \
+    '    if ! check_command aa-status; then' \
+    '    if false; then'
+
+run_case "apparmor/reinstalled-every-run" 1 \
+    '    if ! check_command aa-status; then' \
+    '    if true; then'
+
+run_case "apparmor/install-failure-swallowed" 1 \
+    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then' \
+    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null && false; then'
+
+run_case "apparmor/never-enabled" 1 \
+    '    systemctl enable apparmor || log_warn "systemctl enable apparmor failed"' \
+    '    :'
+
+run_case "apparmor/never-started" 1 \
+    '    systemctl start apparmor || log_warn "systemctl start apparmor failed"' \
+    '    :'
+
+run_case "apparmor/start-skipped-after-failed-enable" 1 \
+    '    systemctl start apparmor || log_warn "systemctl start apparmor failed"' \
+    '    systemctl enable apparmor && systemctl start apparmor || log_warn "failed"'
+
+# Occurrence 2, not 1: _baseline_apparmor_get_status opens with the same line
+# verbatim. Anchored at #1 this mutation lands in that audit helper instead and
+# reports a coverage gap in code this suite never claimed to cover — it did
+# exactly that once, and the runner's "SURVIVED at line 69" is what gave it away.
+run_case "apparmor/postcondition-removed" 2 \
+    '    if _baseline_apparmor_enabled; then' \
+    '    if true; then'
+
+# ---- baseline.disable_unused -----------------------------------------
+
+run_case "unused/stop-skipped-after-failed-disable" 1 \
+    '        if ! systemctl stop "$service" 2>/dev/null; then' \
+    '        if (( ok )) && ! systemctl stop "$service" 2>/dev/null; then'
+
+run_case "unused/never-stopped" 1 \
+    '        if ! systemctl stop "$service" 2>/dev/null; then' \
+    '        if false; then'
+
+run_case "unused/never-disabled" 1 \
+    '        if ! systemctl disable "$service" 2>/dev/null; then' \
+    '        if false; then'
+
+run_case "unused/disable-failure-hidden" 1 \
+    '        if ! systemctl disable "$service" 2>/dev/null; then' \
+    '        if ! systemctl disable "$service" 2>/dev/null && false; then'
+
+run_case "unused/stop-failure-hidden" 1 \
+    '        if ! systemctl stop "$service" 2>/dev/null; then' \
+    '        if ! systemctl stop "$service" 2>/dev/null && false; then'
+
+run_case "unused/failure-not-counted" 1 \
+    '            failed=$((failed + 1))' \
+    '            failed=$((failed + 0))'
+
+run_case "unused/status-always-success" 1 \
+    '    (( failed == 0 ))' \
+    '    true'
+
+run_case "unused/disabled-list-not-recorded" 1 \
+    '            disabled+=("$service")' \
+    '            :'
+
+run_case "unused/revert-hint-dropped" 1 \
+    '        print_info "$(i18n '"'"'baseline.services_revert_hint'"'"' "cmd=$revert")"' \
+    '        :'
+
+run_case "unused/revert-hint-when-nothing-changed" 1 \
+    '    if (( ${#disabled[@]} > 0 )); then' \
+    '    if true; then'
+
+# ---- the predicate all three service fixes rest on -------------------
+
+run_case "predicate/state-word-ignored" 1 \
+    '            enabled|enabled-runtime) unused+=("$service") ;;' \
+    '            *) unused+=("$service") ;;'
+
+run_case "predicate/enabled-runtime-dropped" 1 \
+    '            enabled|enabled-runtime) unused+=("$service") ;;' \
+    '            enabled) unused+=("$service") ;;'
+
+run_case "predicate/sysv-notice-not-skipped" 1 \
+    '        state=$(systemctl is-enabled "$service" 2>/dev/null | tail -n1) || state=""' \
+    '        state=$(systemctl is-enabled "$service" 2>/dev/null | head -n1) || state=""'

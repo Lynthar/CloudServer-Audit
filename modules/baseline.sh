@@ -4,6 +4,20 @@
 # Copyright (c) 2024
 
 # ==============================================================================
+# Baseline Configuration
+# ==============================================================================
+
+# System paths this module reads and writes. Module variables rather than
+# literals so the audit predicate and the fix cannot be pointed at different
+# places, and so the fixes are reachable from a test (a fix that hardcodes an
+# /etc literal cannot be exercised against a scratch tree).
+BASELINE_SELINUX_CONFIG="/etc/selinux/config"
+# The kernel-level "SELinux is real on this host" signal; see
+# _baseline_selinux_installed for why userspace tooling is not enough.
+BASELINE_SELINUX_FS_ENFORCE="/sys/fs/selinux/enforce"
+BASELINE_AUDIT_LOG="/var/log/audit/audit.log"
+
+# ==============================================================================
 # Baseline Helper Functions
 # ==============================================================================
 
@@ -77,7 +91,7 @@ _baseline_selinux_installed() {
     # /sys/fs/selinux/enforce only exists when the kernel was built
     # with CONFIG_SECURITY_SELINUX=y AND the LSM is loaded; that is
     # the canonical "SELinux is real on this host" signal.
-    [[ -e /sys/fs/selinux/enforce ]] || return 1
+    [[ -e "$BASELINE_SELINUX_FS_ENFORCE" ]] || return 1
     check_command getenforce || check_command sestatus
 }
 
@@ -104,8 +118,8 @@ _baseline_selinux_get_status() {
 
 _baseline_selinux_get_config() {
     # Get configured mode from config file
-    if [[ -f /etc/selinux/config ]]; then
-        grep -E "^SELINUX=" /etc/selinux/config 2>/dev/null | cut -d= -f2 | tr -d '"'
+    if [[ -f "$BASELINE_SELINUX_CONFIG" ]]; then
+        grep -E "^SELINUX=" "$BASELINE_SELINUX_CONFIG" 2>/dev/null | cut -d= -f2 | tr -d '"'
     else
         echo "not_configured"
     fi
@@ -114,8 +128,8 @@ _baseline_selinux_get_config() {
 _baseline_selinux_get_policy() {
     if check_command sestatus; then
         sestatus 2>/dev/null | grep "Loaded policy name" | awk '{print $4}'
-    elif [[ -f /etc/selinux/config ]]; then
-        grep -E "^SELINUXTYPE=" /etc/selinux/config 2>/dev/null | cut -d= -f2 | tr -d '"'
+    elif [[ -f "$BASELINE_SELINUX_CONFIG" ]]; then
+        grep -E "^SELINUXTYPE=" "$BASELINE_SELINUX_CONFIG" 2>/dev/null | cut -d= -f2 | tr -d '"'
     fi
 }
 
@@ -127,8 +141,8 @@ _baseline_selinux_denials_count() {
     # then died under set -e. awk's `c+0` always yields one integer.
     if check_command ausearch; then
         ausearch -m avc -ts today 2>/dev/null | awk '/type=AVC/ {c++} END {print c+0}'
-    elif [[ -f /var/log/audit/audit.log ]]; then
-        awk '/type=AVC.*denied/ {c++} END {print c+0}' /var/log/audit/audit.log 2>/dev/null
+    elif [[ -f "$BASELINE_AUDIT_LOG" ]]; then
+        awk '/type=AVC.*denied/ {c++} END {print c+0}' "$BASELINE_AUDIT_LOG" 2>/dev/null
     else
         echo "unknown"
     fi
@@ -182,10 +196,30 @@ _baseline_get_unused_services() {
         "apport"         # Crash reporting
     )
 
+    local service state
     for service in "${check_services[@]}"; do
-        if systemctl is-enabled "$service" &>/dev/null; then
-            unused+=("$service")
-        fi
+        # Match the state WORD, not is-enabled's exit status. `is-enabled`
+        # also exits 0 for `static`, `indirect` and `alias` units, and
+        # `systemctl disable` cannot act on any of those — it exits 0 and
+        # changes nothing. Keying on the exit status therefore produces a
+        # finding whose fix reports success on every run while the next
+        # audit re-reports it, forever. `enabled-runtime` is included
+        # because `disable` does clear it.
+        #
+        # tail -n1: for a SysV init script systemctl prints a
+        # "redirecting to systemd-sysv-install" notice before the state.
+        #
+        # `|| state=""`: is-enabled exits non-zero for a unit that is not
+        # installed, which is the common case for most of this list, and under
+        # `pipefail` that status is the assignment's. Without the `||` the
+        # statement depends on the caller having disabled errexit — which the
+        # engine does today (it calls audits inside an `if`) and `run` does in
+        # every test, so a regression here would abort the loop silently at the
+        # first absent unit and no assertion could see it.
+        state=$(systemctl is-enabled "$service" 2>/dev/null | tail -n1) || state=""
+        case "$state" in
+            enabled|enabled-runtime) unused+=("$service") ;;
+        esac
     done
 
     echo "${unused[*]}"
@@ -418,7 +452,7 @@ _baseline_audit_selinux() {
 
         # Check if configured as disabled (will be disabled on reboot)
         if [[ "$config" == "disabled" ]]; then
-            print_warn "SELinux is configured as disabled in /etc/selinux/config"
+            print_warn "SELinux is configured as disabled in $BASELINE_SELINUX_CONFIG"
         fi
     fi
 }
@@ -573,37 +607,51 @@ baseline_fix() {
 _baseline_fix_selinux_enforcing() {
     print_info "$(i18n 'baseline.setting_selinux_enforcing')"
 
-    # Set enforcing mode immediately
-    if check_command setenforce; then
-        setenforce 1 2>/dev/null
-        if [[ "$(_baseline_selinux_get_status)" == "enforcing" ]]; then
-            print_ok "$(i18n 'baseline.selinux_enforcing_set')"
-
-            # Update config file for persistence. Verify the edit produced the
-            # intended SELINUX=enforcing line; if it did not (e.g. an unexpected
-            # config layout with no SELINUX= line), restore the backup so we
-            # never leave a half-edited /etc/selinux/config that could
-            # mis-initialise SELinux on the next boot.
-            if [[ -f /etc/selinux/config ]]; then
-                local sel_bak
-                sel_bak=$(backup_file /etc/selinux/config)
-                sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-                if grep -qE '^SELINUX=enforcing[[:space:]]*$' /etc/selinux/config; then
-                    print_ok "$(i18n 'baseline.selinux_config_updated')"
-                else
-                    print_error "$(i18n 'baseline.selinux_config_restore' 2>/dev/null || echo 'Unexpected /etc/selinux/config layout; restored from backup - set SELINUX=enforcing manually')"
-                    [[ -n "$sel_bak" && -f "$sel_bak" ]] && cp -p "$sel_bak" /etc/selinux/config
-                fi
-            fi
-            return 0
-        else
-            print_error "$(i18n 'baseline.selinux_enforcing_failed')"
-            return 1
-        fi
-    else
+    if ! check_command setenforce; then
         print_error "setenforce command not found"
         return 1
     fi
+
+    # Set enforcing mode immediately
+    setenforce 1 2>/dev/null || true
+    if [[ "$(_baseline_selinux_get_status)" != "enforcing" ]]; then
+        print_error "$(i18n 'baseline.selinux_enforcing_failed')"
+        return 1
+    fi
+    print_ok "$(i18n 'baseline.selinux_enforcing_set')"
+
+    # `setenforce` does not survive a reboot — only SELINUX= in the config
+    # file does. Both branches below therefore return 1: the runtime change
+    # happened, but the finding this fix answers is "SELinux is not
+    # enforcing", and returning 0 would record it as resolved on a host that
+    # comes back permissive at the next boot. Same contract as the webapp
+    # snippet fixes: a manual step is still outstanding.
+    if [[ ! -f "$BASELINE_SELINUX_CONFIG" ]]; then
+        print_warn "$(i18n 'baseline.selinux_runtime_only' "file=$BASELINE_SELINUX_CONFIG")"
+        return 1
+    fi
+
+    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true
+
+    # Validate the staged content BEFORE it goes anywhere near the file that
+    # decides how SELinux initialises at boot. An unexpected layout (no
+    # SELINUX= line at all) used to be discovered only after sed -i had
+    # already rewritten the live file, leaving a restore-from-backup dance;
+    # staging means the live file is never in an intermediate state.
+    local staged
+    staged=$(sed 's/^SELINUX=.*/SELINUX=enforcing/' "$BASELINE_SELINUX_CONFIG") || staged=""
+    if ! grep -qE '^SELINUX=enforcing[[:space:]]*$' <<<"$staged"; then
+        print_error "$(i18n 'baseline.selinux_config_restore' "file=$BASELINE_SELINUX_CONFIG")"
+        return 1
+    fi
+
+    if ! write_file_atomic "$BASELINE_SELINUX_CONFIG" "$staged"; then
+        print_error "$(i18n 'baseline.selinux_config_write_failed' "file=$BASELINE_SELINUX_CONFIG")"
+        return 1
+    fi
+
+    print_ok "$(i18n 'baseline.selinux_config_updated')"
+    return 0
 }
 
 _baseline_fix_selinux_enable() {
@@ -623,14 +671,23 @@ _baseline_fix_selinux_enable() {
 _baseline_fix_enable_apparmor() {
     print_info "$(i18n 'baseline.enabling_apparmor')"
 
-    # Install if needed
+    # Install if needed. A failed install used to be swallowed, and the
+    # operator then read "Failed to enable AppArmor" — which points at the
+    # service rather than at the apt transaction that actually failed (no
+    # network, held packages, a distro without the apparmor-utils package).
     if ! check_command aa-status; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null
+        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then
+            print_error "$(i18n 'baseline.apparmor_install_failed')"
+            return 1
+        fi
     fi
 
-    # Enable and start
-    systemctl enable apparmor
-    systemctl start apparmor
+    # Enable and start. Neither status is decisive on its own — a unit can be
+    # enabled and still refuse to start on a kernel without AppArmor support —
+    # so the postcondition below is what the return value rests on. Log the
+    # individual failures so the reason is in logs/vpssec.log.
+    systemctl enable apparmor || log_warn "systemctl enable apparmor failed"
+    systemctl start apparmor || log_warn "systemctl start apparmor failed"
 
     if _baseline_apparmor_enabled; then
         print_ok "$(i18n 'baseline.apparmor_enabled_success')"
@@ -642,18 +699,49 @@ _baseline_fix_enable_apparmor() {
 }
 
 _baseline_fix_disable_unused() {
-    local unused=$(_baseline_get_unused_services)
+    local unused
+    unused=$(_baseline_get_unused_services)
     local failed=0
+    local service
+    local disabled=()
 
     for service in $unused; do
         print_info "$(i18n 'baseline.disabling_service' "service=$service")"
-        if systemctl disable "$service" 2>/dev/null && systemctl stop "$service" 2>/dev/null; then
+
+        # disable and stop are run independently, not chained with &&. A
+        # failed disable used to skip the stop, leaving the service both
+        # running and enabled while the operator was told only that the
+        # disable failed; and a failed stop used to hide a disable that did
+        # land, so the same service was re-reported after the reboot that
+        # would have stopped it anyway.
+        local ok=1
+        if ! systemctl disable "$service" 2>/dev/null; then
+            log_warn "systemctl disable $service failed"
+            ok=0
+        fi
+        if ! systemctl stop "$service" 2>/dev/null; then
+            log_warn "systemctl stop $service failed"
+            ok=0
+        fi
+
+        if (( ok )); then
             print_ok "$(i18n 'baseline.service_disabled' "service=$service")"
+            disabled+=("$service")
         else
             print_warn "$(i18n 'baseline.service_disable_failed' "service=$service")"
-            ((failed++)) || true
+            failed=$((failed + 1))
         fi
     done
 
-    return $failed
+    # `vpssec rollback` restores FILES. A disabled unit is invisible to it, so
+    # this is the only place the operator is given the way back — print it and
+    # log it, because a printed line scrolls away and this one may be needed
+    # days later when a printer or a Bluetooth headset stops working.
+    if (( ${#disabled[@]} > 0 )); then
+        local revert="systemctl enable --now ${disabled[*]}"
+        print_info "$(i18n 'baseline.services_revert_hint' "cmd=$revert")"
+        log_info "baseline.disable_unused revert command: $revert"
+    fi
+
+    (( failed == 0 ))
 }
