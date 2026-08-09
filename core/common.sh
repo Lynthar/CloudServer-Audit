@@ -608,6 +608,23 @@ is_supported_os() {
                 arch)
                     return 0
                     ;;
+                debian)
+                    # A Debian/Ubuntu derivative whose own ID is not in the
+                    # list above: Mint, Pop!_OS, Kali, Armbian, Raspbian. The
+                    # RHEL and Arch derivatives were already handled by family
+                    # while their own main platform's were not, so a Mint host
+                    # got the "unsupported OS" prompt (default no) at the entry
+                    # point and a failed preflight check — for a distro whose
+                    # every distro.sh primitive resolves correctly.
+                    #
+                    # No version test: derivatives number their own releases
+                    # (Mint 21 is Ubuntu 22.04 underneath), so matching against
+                    # the upstream numbers would reject every one of them.
+                    #
+                    # This does NOT widen fix mode. guide_mode gates on
+                    # is_debian_based(), which stays an ID allowlist.
+                    return 0
+                    ;;
                 *)
                     return 1
                     ;;

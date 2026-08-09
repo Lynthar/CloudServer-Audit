@@ -1,0 +1,22 @@
+# Mutation cases for tests/test_audit_host_claims.bats against modules/baseline.sh.
+#
+#   bash tools/mutate-suite.sh modules/baseline.sh \
+#        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-baseline.cases
+#
+# The defect: a profile symlinked into apparmor.d/disable is counted as neither
+# enforcing nor complaining, so switching one off left no trace in the report.
+
+# Emitting on an empty directory turns a real finding into noise on every host.
+run_case "claims/emits-when-none-disabled" 1 \
+    '    (( disabled_count > 0 )) || return 0' \
+    '    (( disabled_count >= 0 )) || return 0'
+
+# Editor leftovers are not disabled profiles.
+run_case "claims/dotfiles-counted-as-profiles" 1 \
+    "         ! -name '.*' 2>/dev/null | sed 's|.*/||' | sort" \
+    "         2>/dev/null | sed 's|.*/||' | sort"
+
+# The check is only meaningful where AppArmor exists.
+run_case "claims/installed-gate-inverted" 1 \
+    '    _baseline_apparmor_installed || return 0' \
+    '    _baseline_apparmor_installed && return 0'

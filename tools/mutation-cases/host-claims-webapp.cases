@@ -1,0 +1,23 @@
+# Mutation cases for tests/test_audit_host_claims.bats against modules/webapp.sh.
+#
+#   bash tools/mutate-suite.sh modules/webapp.sh \
+#        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-webapp.cases
+#
+# The defect: a caddy/openresty host was told it had no web server at all, as
+# a PASSED check, and every web finding was skipped behind it.
+
+# The candidate list is the whole detection.
+run_case "claims/candidate-list-emptied" 1 \
+    '    for candidate in caddy openresty lighttpd traefik haproxy; do' \
+    '    for candidate in ; do'
+
+# Dropping just the first entry is the shape a careless edit takes.
+run_case "claims/caddy-dropped" 1 \
+    '    for candidate in caddy openresty lighttpd traefik haproxy; do' \
+    '    for candidate in openresty lighttpd traefik haproxy; do'
+
+# The summary branch must choose the honest check; without it the audit is back
+# to claiming the host serves nothing.
+run_case "claims/summary-branch-skipped" 1 \
+    '        if [[ -n "$other" ]]; then' \
+    '        if false; then'

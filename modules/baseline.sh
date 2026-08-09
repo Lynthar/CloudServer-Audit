@@ -16,6 +16,12 @@ BASELINE_SELINUX_CONFIG="/etc/selinux/config"
 # _baseline_selinux_installed for why userspace tooling is not enough.
 BASELINE_SELINUX_FS_ENFORCE="/sys/fs/selinux/enforce"
 BASELINE_AUDIT_LOG="/var/log/audit/audit.log"
+# Profiles the operator has explicitly switched off. A symlink here removes the
+# profile from AppArmor's view entirely, so it appears in NEITHER the enforce
+# nor the complain count — the two numbers this module reports. Without reading
+# this directory a host that disabled usr.sbin.sshd looks identical to one that
+# never had the profile.
+BASELINE_APPARMOR_DISABLE_DIR="/etc/apparmor.d/disable"
 
 # ==============================================================================
 # Baseline Helper Functions
@@ -58,6 +64,20 @@ _baseline_apparmor_count_profiles() {
     enforced=$(echo "$text" | grep -E "^\s*[0-9]+ profiles are in enforce mode" | grep -oE "[0-9]+" | head -1)
     complain=$(echo "$text" | grep -E "^\s*[0-9]+ profiles are in complain mode" | grep -oE "[0-9]+" | head -1)
     echo "${enforced:-0}:${complain:-0}"
+}
+
+# Names of the profiles under BASELINE_APPARMOR_DISABLE_DIR, one per line.
+# Echoes nothing when the directory is absent or empty, which is the stock
+# state on every distro that ships AppArmor.
+_baseline_apparmor_disabled_profiles() {
+    [[ -d "$BASELINE_APPARMOR_DISABLE_DIR" ]] || return 0
+    # Entries are symlinks back into /etc/apparmor.d. `-maxdepth 1` because
+    # AppArmor does not recurse here, and `! -name '.*'` so an editor's
+    # leftovers are not reported as disabled profiles. `sed` rather than
+    # `-printf '%f'` because the latter is a GNU extension and part of this
+    # suite still runs on a macOS checkout.
+    find "$BASELINE_APPARMOR_DISABLE_DIR" -maxdepth 1 -mindepth 1 \
+         ! -name '.*' 2>/dev/null | sed 's|.*/||' | sort
 }
 
 _baseline_apparmor_get_status() {
@@ -397,6 +417,8 @@ _baseline_audit_mac() {
             _baseline_audit_no_mac
             ;;
     esac
+
+    _baseline_audit_apparmor_disabled_profiles
 }
 
 # ------------------------------------------------------------------------------
@@ -512,6 +534,37 @@ _baseline_audit_apparmor() {
             print_severity "low" "$(i18n 'baseline.apparmor_many_complain' "count=$complain")"
         fi
     fi
+}
+
+# Profiles the operator switched off explicitly.
+#
+# Deliberately NOT part of _baseline_audit_apparmor: that one runs only on the
+# `apparmor` branch of the MAC dispatch, and a disabled profile is worth
+# reporting on a host where AppArmor as a whole is off, or where SELinux won
+# the dispatch because both are installed. Called from _baseline_audit_mac
+# after the case, so it is reached on every branch.
+_baseline_audit_apparmor_disabled_profiles() {
+    _baseline_apparmor_installed || return 0
+
+    local disabled disabled_count
+    disabled=$(_baseline_apparmor_disabled_profiles)
+    disabled_count=$(count_lines "$disabled")
+    (( disabled_count > 0 )) || return 0
+
+    local list
+    list=$(echo "$disabled" | tr '\n' ' ' | sed 's/ $//')
+    local check
+    check=$(create_check_json \
+        "baseline.apparmor_profiles_disabled" \
+        "baseline" \
+        "low" \
+        "failed" \
+        "$(i18n 'baseline.apparmor_profiles_disabled' "count=$disabled_count")" \
+        "$(i18n 'baseline.apparmor_profiles_disabled_desc' "list=$list")" \
+        "$(i18n 'baseline.apparmor_profiles_disabled_fix' "dir=$BASELINE_APPARMOR_DISABLE_DIR")" \
+        "")
+    state_add_check "$check"
+    print_severity "low" "$(i18n 'baseline.apparmor_profiles_disabled' "count=$disabled_count")"
 }
 
 _baseline_audit_apparmor_disabled() {

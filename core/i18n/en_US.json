@@ -411,7 +411,10 @@
     "check_unlimited_memory": "Checking container memory limits",
     "unlimited_memory": "{count} container(s) without a memory limit",
     "memory_limits_set": "All running containers have memory limits configured",
-    "fix_unlimited_memory": "Re-run each container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose"
+    "fix_unlimited_memory": "Re-run each container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose",
+    "daemon_unreachable": "Container runtime present but unreachable",
+    "daemon_unreachable_desc": "Cannot query a container daemon ({found}), so no container check ran. A rootless daemon is not visible to a sudo'd audit, and Podman is not probed at all.",
+    "daemon_unreachable_fix": "Re-run as the owning user for rootless Docker, or start the daemon; Podman is not audited"
   },
   "nginx": {
     "title": "Nginx Catchall",
@@ -502,7 +505,10 @@
     "services_revert_hint": "Rollback restores files, not service state. To undo this: {cmd}",
     "check_insecure_services": "Checking for insecure legacy services",
     "insecure_services_active": "{count} insecure legacy service(s)/package(s) present",
-    "insecure_services_clean": "No insecure legacy services found"
+    "insecure_services_clean": "No insecure legacy services found",
+    "apparmor_profiles_disabled": "AppArmor profiles explicitly disabled: {count}",
+    "apparmor_profiles_disabled_desc": "These profiles are symlinked into the disable directory, so they appear in neither the enforcing nor the complain count: {list}",
+    "apparmor_profiles_disabled_fix": "Review {dir}; remove the symlink and reload the profile to re-enable it"
   },
   "logging": {
     "title": "Logging & Audit",
@@ -1296,7 +1302,10 @@
     "files_to_remove": "Files to remove or protect",
     "block_access": "Or block access in web server config",
     "backup_warning": "Backup Files Detected",
-    "backups_to_remove": "Backup files to remove"
+    "backups_to_remove": "Backup files to remove",
+    "other_webserver": "Web server present but not audited: {server}",
+    "other_webserver_desc": "vpssec audits Nginx and Apache only. {server} is running on this host and none of the web-server checks were applied to it.",
+    "other_webserver_fix": "Audit this web server's configuration by hand, or check whether the host still needs it"
   },
   "error": {
     "root_required": "Root privileges required to run this command",

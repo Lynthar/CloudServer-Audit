@@ -18,6 +18,31 @@ _docker_installed() {
     check_command docker && docker info &>/dev/null
 }
 
+# A container runtime is present but this module cannot audit it.
+#
+# `_docker_installed` answers "can I talk to a daemon", and the audit used to
+# treat a No as "Docker is not installed" — a passed check that skips every
+# container finding. Two common hosts answer No while running containers:
+# rootless Docker, whose socket lives in the invoking user's runtime dir and is
+# therefore invisible to a sudo'd audit, and Podman, which vpssec never probes
+# at all. Echoes what was found, space-separated; empty when nothing was.
+_docker_unaudited_runtime() {
+    local found=() uid home
+    command -v podman &>/dev/null && found+=("podman")
+
+    while IFS=: read -r _ _ uid _ _ home _; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
+        (( uid >= 1000 )) || continue
+        if [[ -S "/run/user/${uid}/docker.sock" ]] || \
+           [[ -n "$home" && -S "${home}/.docker/run/docker.sock" ]]; then
+            found+=("rootless-docker")
+            break
+        fi
+    done < <(getent passwd 2>/dev/null)
+
+    printf '%s' "${found[*]:-}"
+}
+
 _docker_get_exposed_ports() {
     # Publicly-published host ports: the number immediately before "->" for any
     # binding that is NOT loopback. The old `0\.0\.0\.0:` regex caught ONLY the
@@ -252,6 +277,25 @@ docker_audit() {
     # Check if Docker is installed
     print_item "$(i18n 'docker.check_installed')"
     if ! _docker_installed; then
+        local runtime
+        runtime=$(_docker_unaudited_runtime)
+        if check_command docker || [[ -n "$runtime" ]]; then
+            # Something is there, we just cannot reach it. Reporting "not
+            # installed" here is the check claiming it looked when it did not.
+            local check=$(create_check_json \
+                "docker.daemon_unreachable" \
+                "docker" \
+                "low" \
+                "failed" \
+                "$(i18n 'docker.daemon_unreachable')" \
+                "$(i18n 'docker.daemon_unreachable_desc' "found=${runtime:-docker}")" \
+                "$(i18n 'docker.daemon_unreachable_fix')" \
+                "")
+            state_add_check "$check"
+            print_severity "low" "$(i18n 'docker.daemon_unreachable')"
+            return
+        fi
+
         local check=$(create_check_json \
             "docker.not_installed" \
             "docker" \

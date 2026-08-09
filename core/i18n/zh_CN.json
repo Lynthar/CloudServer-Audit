@@ -411,7 +411,10 @@
     "check_unlimited_memory": "检查容器内存限制",
     "unlimited_memory": "{count} 个容器未设置内存限制",
     "memory_limits_set": "所有运行中的容器均配置了内存限制",
-    "fix_unlimited_memory": "为每个容器加上 --memory=<size>（如 --memory=512m），或在 docker-compose 中设置 mem_limit"
+    "fix_unlimited_memory": "为每个容器加上 --memory=<size>（如 --memory=512m），或在 docker-compose 中设置 mem_limit",
+    "daemon_unreachable": "容器运行时存在但连不上",
+    "daemon_unreachable_desc": "无法查询容器守护进程（{found}），因此没有任何容器检查执行过。rootless 守护进程对 sudo 下的审计不可见，Podman 则从未被探测。",
+    "daemon_unreachable_fix": "rootless Docker 请以属主用户身份重跑，或先启动守护进程；Podman 不在审计范围内"
   },
   "nginx": {
     "title": "Nginx 默认拦截",
@@ -502,7 +505,10 @@
     "services_revert_hint": "回滚只恢复文件，不恢复服务状态。撤销此改动请执行：{cmd}",
     "check_insecure_services": "检查不安全的传统服务",
     "insecure_services_active": "发现 {count} 个不安全的传统服务或软件包",
-    "insecure_services_clean": "未发现不安全的传统服务"
+    "insecure_services_clean": "未发现不安全的传统服务",
+    "apparmor_profiles_disabled": "被显式禁用的 AppArmor 配置文件：{count} 个",
+    "apparmor_profiles_disabled_desc": "这些配置文件被软链到 disable 目录，因此既不计入强制模式也不计入投诉模式：{list}",
+    "apparmor_profiles_disabled_fix": "检查 {dir}；删掉软链并重新加载该配置文件即可恢复"
   },
   "logging": {
     "title": "日志与审计",
@@ -1296,7 +1302,10 @@
     "files_to_remove": "需要移除或保护的文件",
     "block_access": "或在 Web 服务器配置中阻止访问",
     "backup_warning": "检测到备份文件",
-    "backups_to_remove": "需要移除的备份文件"
+    "backups_to_remove": "需要移除的备份文件",
+    "other_webserver": "存在未被审计的 Web 服务器：{server}",
+    "other_webserver_desc": "vpssec 只审计 Nginx 与 Apache。本机运行着 {server}，所有 Web 服务器检查都没有作用在它上面。",
+    "other_webserver_fix": "手工审计该 Web 服务器的配置，或确认这台主机是否还需要它"
   },
   "error": {
     "root_required": "需要 root 权限运行此命令",

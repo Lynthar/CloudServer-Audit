@@ -1,0 +1,19 @@
+# Mutation cases for tests/test_audit_host_claims.bats against core/common.sh.
+#
+#   bash tools/mutate-suite.sh core/common.sh \
+#        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-common.cases
+#
+# The defect: RHEL and Arch derivatives were accepted by family while the
+# project's own platform's derivatives — Mint, Kali, Armbian — were not, so a
+# Mint host got "unsupported OS" and an entry-point prompt defaulting to no.
+
+# Occurrence 1: the outer case's `debian)` is indented 8 spaces, this one 16,
+# so the anchor is already unique — the runner matches whole lines.
+run_case "claims/debian-family-rejected" 1 \
+    '                debian)' \
+    '                nosuchfamily)'
+
+# The audit widening must not widen fix mode with it.
+run_case "claims/fix-mode-widened-too" 1 \
+    '    [[ "$os" == "debian" || "$os" == "ubuntu" ]]' \
+    '    [[ "$os" == "debian" || "$os" == "ubuntu" || "${VPSSEC_DISTRO_FAMILY:-}" == "debian" ]]'

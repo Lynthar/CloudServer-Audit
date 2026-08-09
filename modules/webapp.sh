@@ -163,6 +163,20 @@ _webapp_nginx_installed() {
 }
 
 # Check if Apache is installed
+# Web servers this module does NOT audit, but whose presence makes
+# "no web server detected" a false statement about the host.
+#
+# Echoes the names found, space-separated. Detection is by binary only: these
+# ship no config path vpssec knows, and the point is not to audit them but to
+# stop reporting a passed check that says the host serves nothing.
+_webapp_other_webserver() {
+    local found=() candidate
+    for candidate in caddy openresty lighttpd traefik haproxy; do
+        command -v "$candidate" &>/dev/null && found+=("$candidate")
+    done
+    printf '%s' "${found[*]:-}"
+}
+
 _webapp_apache_installed() {
     (command -v apache2 &>/dev/null || command -v httpd &>/dev/null) && \
     ([[ -f "$APACHE_CONF" ]] || [[ -f "$APACHE_CONF_ALT" ]])
@@ -1268,17 +1282,37 @@ webapp_audit() {
         state_add_check "$check_json"
     fi
 
-    # Summary if no webserver found
+    # Summary if neither audited web server was found.
+    #
+    # "No web server detected" is a claim about the host, and on a machine
+    # running caddy or openresty it is false — a passed check reading "nothing
+    # to check here" while the host serves traffic. Say which one is there and
+    # that vpssec does not audit it, so the operator knows the gap is in the
+    # tool rather than in their host.
     if [[ "$has_webserver" == "false" ]]; then
-        check_json=$(create_check_json \
-            "webapp.no_webserver" \
-            "webapp" \
-            "info" \
-            "passed" \
-            "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')" \
-            "Neither Nginx nor Apache detected - skipping web server checks" \
-            "" \
-            "")
+        local other
+        other=$(_webapp_other_webserver)
+        if [[ -n "$other" ]]; then
+            check_json=$(create_check_json \
+                "webapp.other_webserver" \
+                "webapp" \
+                "info" \
+                "failed" \
+                "$(i18n 'webapp.other_webserver' "server=$other")" \
+                "$(i18n 'webapp.other_webserver_desc' "server=$other")" \
+                "$(i18n 'webapp.other_webserver_fix')" \
+                "")
+        else
+            check_json=$(create_check_json \
+                "webapp.no_webserver" \
+                "webapp" \
+                "info" \
+                "passed" \
+                "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')" \
+                "Neither Nginx nor Apache detected - skipping web server checks" \
+                "" \
+                "")
+        fi
         state_add_check "$check_json"
     fi
 

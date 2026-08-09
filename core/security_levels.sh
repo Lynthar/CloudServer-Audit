@@ -454,6 +454,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
 
     # === Docker Module - conditional (only if Docker installed) ===
     ["docker.not_installed"]="info"
+    # A runtime is there but unreachable. info, not scored: the audit did
+    # not measure anything, so it must not move the score in either
+    # direction — the old behaviour handed such a host a free pass.
+    ["docker.daemon_unreachable"]="info"
     ["docker.exposed_ports"]="conditional"
     ["docker.no_exposed_ports"]="conditional"
     ["docker.privileged_containers"]="conditional"
@@ -499,6 +503,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["baseline.apparmor_enabled"]="recommended"
     ["baseline.apparmor_disabled"]="recommended"
     ["baseline.apparmor_many_complain"]="info"
+    # Disabling a profile is an operator decision, same class as leaving
+    # profiles in complain mode above. Visibility is the point; scoring it
+    # would move the baseline of every host that ever disabled one.
+    ["baseline.apparmor_profiles_disabled"]="info"
     ["baseline.selinux_enforcing"]="recommended"
     ["baseline.selinux_permissive"]="recommended"
     ["baseline.selinux_disabled"]="recommended"
@@ -708,6 +716,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.sensitive_files_ok"]="required"
     ["webapp.backup_files"]="recommended"
     ["webapp.no_webserver"]="info"
+    # Mirrors no_webserver: the web checks did not run. Reporting it is
+    # honest, scoring it would penalise a host for vpssec's own gap.
+    ["webapp.other_webserver"]="info"
 
     # === Score-category round: previously-unlisted check_ids, classified
     # per the hardening-posture rubric. The score measures configuration
