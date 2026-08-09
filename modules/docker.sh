@@ -28,7 +28,18 @@ _docker_installed() {
 # at all. Echoes what was found, space-separated; empty when nothing was.
 _docker_unaudited_runtime() {
     local found=() uid home
-    command -v podman &>/dev/null && found+=("podman")
+    # check_command, not a bare `command -v`: the project's own wrapper is what
+    # _vpssec_absent_command can steer, and a test that cannot make a binary
+    # absent ends up asserting what the CI runner happens to have installed —
+    # ubuntu-latest ships podman, the verification container does not.
+    #
+    # `if`, not `&&`: as a bare `a && b` this line returns non-zero on every
+    # host without podman, which under errexit would abort the function before
+    # the rootless scan below. The audit path happens to run with errexit off
+    # (the engine dispatches audits inside an `if`), so it worked by accident
+    # of the call context — and bats `run` disables errexit too, so no test
+    # could see it either.
+    if check_command podman; then found+=("podman"); fi
 
     while IFS=: read -r _ _ uid _ _ home _; do
         [[ "$uid" =~ ^[0-9]+$ ]] || continue

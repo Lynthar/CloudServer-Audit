@@ -15,7 +15,7 @@ run_case "claims/unreachable-collapses-to-not-installed" 1 \
 # Podman is never probed by the rest of the module, so this line is the only
 # thing standing between a Podman host and "Docker is not installed".
 run_case "claims/podman-not-probed" 1 \
-    '    command -v podman &>/dev/null && found+=("podman")' \
+    '    if check_command podman; then found+=("podman"); fi' \
     '    :'
 
 # Rootless sockets live in the user's runtime dir; dropping the scan makes the

@@ -95,9 +95,13 @@ _load_docker() {
 printf 'dev:x:1000:1000::%s:/bin/bash\n' "$sock_root/h"
 SH
 
-    run _docker_unaudited_runtime
+    # Called directly, NOT through `run`: `run` disables errexit, and the
+    # defect this pins is a non-zero status mid-function aborting the scan
+    # before it reaches the socket. Under `run` the broken version passed.
+    local out
+    out=$(_docker_unaudited_runtime)
 
-    [[ "$output" == *"rootless-docker"* ]]
+    [[ "$out" == *"rootless-docker"* ]]
 }
 
 @test "docker: a host with no runtime at all still reports not installed" {
@@ -122,7 +126,10 @@ SH
 
     run _webapp_other_webserver
 
-    [ "$output" = "caddy" ]
+    # Containment, not equality: a host that also ships lighttpd answers with
+    # both, and asserting the exact string would make this test a statement
+    # about the runner's package list rather than about the predicate.
+    [[ "$output" == *caddy* ]]
 }
 
 @test "webapp: several unaudited servers are all named" {
@@ -140,12 +147,15 @@ SH
 @test "webapp: a host with nothing serving reports nothing serving" {
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/webapp.sh"
-    _vpssec_stub_init
-    # The predicate asks `command -v` directly, so absence cannot be stubbed
-    # in — it has to come from PATH. Running with only the (empty) stub dir on
-    # PATH is the one way to assert the negative without asserting a property
-    # of whatever this host happens to have installed.
-    PATH="$(_vpssec_stub_dir)" run _webapp_other_webserver
+    local c
+    for c in caddy openresty lighttpd traefik haproxy; do
+        _vpssec_absent_command "$c"
+    done
+    # Absence has to be asserted, not inherited: whether this host ships caddy
+    # is a property of the runner, and a test that depends on it passes in one
+    # environment and fails in another. That is how this suite went red on
+    # ubuntu-latest, which preinstalls podman.
+    run _webapp_other_webserver
 
     [ -z "$output" ]
 }
@@ -166,6 +176,30 @@ SH
     _vpssec_refute grep -q 'webapp.no_webserver' "$VPSSEC_STATE/checks.json"
     # info, so a host is not penalised for a gap in vpssec's coverage.
     [ "$(_check_field webapp.other_webserver status)" = "failed" ]
+}
+
+@test "webapp: detection goes through the project's own command wrapper" {
+    # Stub caddy so `command -v caddy` succeeds, and declare it absent so
+    # check_command fails. The two answers now differ, which is the only way
+    # to tell the wrapper from a bare `command -v` on a host that does not
+    # ship caddy — and every host in CI and in the container is such a host.
+    # Without this the difference is invisible until it is invisible in the
+    # wrong direction, which is how ubuntu-latest went red.
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/modules/webapp.sh"
+    local c
+    for c in caddy openresty lighttpd traefik haproxy; do
+        _vpssec_absent_command "$c"
+    done
+    _vpssec_stub caddy 0
+
+    run _webapp_other_webserver
+
+    # Only caddy is asserted about — the others are declared absent so the
+    # host cannot contribute, but the claim under test is narrow: a binary the
+    # wrapper says is absent must not appear, however loudly `command -v`
+    # answers.
+    [[ "$output" != *caddy* ]]
 }
 
 # ==============================================================================

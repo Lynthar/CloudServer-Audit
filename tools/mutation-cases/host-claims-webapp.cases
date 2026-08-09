@@ -21,3 +21,10 @@ run_case "claims/caddy-dropped" 1 \
 run_case "claims/summary-branch-skipped" 1 \
     '        if [[ -n "$other" ]]; then' \
     '        if false; then'
+
+# Reverting to a bare `command -v` puts the answer back in the hands of
+# whatever the runner has installed — the shape that made this suite pass in
+# the verification container and fail on ubuntu-latest.
+run_case "claims/bare-command-v-restored" 1 \
+    '        if check_command "$candidate"; then found+=("$candidate"); fi' \
+    '        command -v "$candidate" &>/dev/null && found+=("$candidate")'

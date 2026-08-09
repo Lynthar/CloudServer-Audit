@@ -172,7 +172,10 @@ _webapp_nginx_installed() {
 _webapp_other_webserver() {
     local found=() candidate
     for candidate in caddy openresty lighttpd traefik haproxy; do
-        command -v "$candidate" &>/dev/null && found+=("$candidate")
+        # check_command + `if` rather than `command -v ... &&`: see the note in
+        # docker.sh's _docker_unaudited_runtime. Same two reasons — steerable
+        # from a test, and no non-zero status left lying around.
+        if check_command "$candidate"; then found+=("$candidate"); fi
     done
     printf '%s' "${found[*]:-}"
 }
