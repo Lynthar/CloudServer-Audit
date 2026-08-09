@@ -49,8 +49,21 @@ teardown() {
 # from a running process.
 _hold_lock() {
     local f="$1" ready="$BATS_TEST_TMPDIR/lock-ready"
+    _lock_hold_file="$BATS_TEST_TMPDIR/lock-hold"
+    _lock_file="$f"
     rm -f "$ready"
-    flock "$f" -c "touch '$ready'; sleep 30" &
+    : > "$_lock_hold_file"
+    # The holder exits when the sentinel disappears, rather than being killed.
+    # `flock f -c CMD` runs CMD as a CHILD that inherits the locked fd, so
+    # `kill $flock_pid` leaves that child alive and orphaned — verified in the
+    # container, where the /bin/sh holding `sleep 30` outlived the kill. Asking
+    # it to exit means flock reaps it and exits itself, so `wait` returning
+    # really does mean every fd is closed.
+    # POSIX `[` inside the command string, not `[[`: flock runs it with
+    # /bin/sh, which is dash on Debian and has no `[[`. The bashism failed
+    # instantly, the holder exited, and the lock the test needed was never
+    # there — four tests red with a one-line shell error buried in the output.
+    flock "$f" -c "touch '$ready'; while [ -e '$_lock_hold_file' ]; do sleep 0.05; done" &
     _lock_pid=$!
     local i=0
     while [[ ! -e "$ready" ]]; do
@@ -62,11 +75,35 @@ _hold_lock() {
     done
 }
 
+# True while the kernel still lists an flock on $1. Reads /proc/locks directly
+# rather than calling _pkg_lock_held, so the wait below cannot be satisfied by
+# the very predicate the tests are checking.
+_kernel_lock_present() {
+    local ino
+    ino=$(stat -c %i "$1" 2>/dev/null) || return 1
+    grep -qE "FLOCK.*:${ino} " /proc/locks 2>/dev/null
+}
+
 _release_lock() {
     [[ -n "${_lock_pid:-}" ]] || return 0
-    kill "$_lock_pid" 2>/dev/null || true
+    rm -f "${_lock_hold_file:-}"
     wait "$_lock_pid" 2>/dev/null || true
     _lock_pid=""
+
+    # Then wait for the KERNEL to agree. `wait` returning proves the holder was
+    # reaped; on a busy runner /proc/locks has been observed to still list the
+    # entry at that instant, which is what turned this suite red on
+    # ubuntu-latest while it stayed green in the container for weeks. Polling
+    # the kernel instead of assuming the release is instantaneous makes the
+    # test independent of how fast the host happens to be.
+    local i=0
+    while _kernel_lock_present "${_lock_file:-/nonexistent}"; do
+        if (( ++i > 200 )); then
+            printf 'lock was never released\n' >&2
+            return 1
+        fi
+        sleep 0.05
+    done
 }
 
 # ---- _pkg_lock_held, against the REAL /proc/locks --------------------
