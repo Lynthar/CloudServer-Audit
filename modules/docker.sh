@@ -911,18 +911,28 @@ _docker_fix_enable_daemon_setting() {
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
+    # Refuse to edit an existing file that is not valid JSON. Without this
+    # guard, a failed jq on malformed input used to write an empty tmp file
+    # that then clobbered the user's daemon.json. Checked before the backup
+    # so a file we refuse to touch leaves no trace in the session.
+    if [[ -f "$DOCKER_DAEMON_JSON" ]] && ! jq empty "$DOCKER_DAEMON_JSON" 2>/dev/null; then
+        print_error "$(i18n 'docker.daemon_invalid_json' "path=$DOCKER_DAEMON_JSON")"
+        return 1
+    fi
+
+    # Unconditional, covering BOTH branches below. backup_file snapshots an
+    # existing file and, for a path that does not exist yet, records it in
+    # .vpssec_created so a rollback can delete what this fix is about to
+    # create. Docker ships no daemon.json, so the create branch is the common
+    # case — and it used to be the only writer in this file with no backup
+    # call at all, which left `vpssec rollback` unable to remove the file.
+    # Same defect class as logging's journald drop-in, webapp's three conf.d
+    # writers and update's 20auto-upgrades; this is its ninth instance and the
+    # first where the guard was a full if/else rather than a one-line `&&`.
+    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true
+
     # Create or update daemon.json
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
-        # Refuse to edit if the existing file is not valid JSON. Without
-        # this guard, a failed jq on malformed input used to write an
-        # empty tmp file that then clobbered the user's daemon.json.
-        if ! jq empty "$DOCKER_DAEMON_JSON" 2>/dev/null; then
-            print_error "$(i18n 'docker.daemon_invalid_json' "path=$DOCKER_DAEMON_JSON")"
-            return 1
-        fi
-
-        backup_file "$DOCKER_DAEMON_JSON"
-
         if ! jq --arg key "$setting" --argjson val "$value" '.[$key] = $val' \
                "$DOCKER_DAEMON_JSON" > "$tmp_file" 2>/dev/null; then
             rm -f "$tmp_file"

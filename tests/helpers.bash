@@ -260,6 +260,77 @@ _vpssec_fake_etc() {
     printf '%s\n' "$dir"
 }
 
+# ==============================================================================
+# The created-file contract
+# ==============================================================================
+#
+# `.vpssec_created` is the ONLY thing backup_restore consults when deciding
+# which files a rollback should delete. A fix that creates a file without
+# registering it leaves that file on the host after the operator asked to undo
+# the whole plan. Eight instances of this shipped across logging, webapp,
+# update and fail2ban before a ninth turned up in docker's daemon.json writer,
+# and the shape mutates every time: a one-line `[[ -f X ]] && backup_file X`,
+# then the same guard split over two lines, then a full if/else with the backup
+# call in the then-branch only. Every closing grep written for one shape missed the
+# next, because a grep can only prove "this shape is gone", never "this defect
+# is gone" — so this pair asserts the OUTCOME instead: whatever appeared on
+# disk must match the manifest, no matter which primitive wrote it.
+#
+# That is also why this works for the three creators write_file_atomic can
+# never cover — ssh's staged `sshd -t` chain, docker's jq merge, and nginx's
+# openssl-written certificate — which is what blocked the API redesign twice.
+#
+#     snap=$(_vpssec_tree_snapshot "$etc")
+#     run _docker_fix_enable_daemon_setting live-restore true
+#     _vpssec_assert_created_contract "$etc" "$snap"
+
+# Every regular file and symlink under DIR, one "<type> <path>" line each.
+# `find -printf` would be shorter but is GNU-only; this stays portable to the
+# macOS dev checkout where much of the suite still runs.
+_vpssec_tree_snapshot() {
+    local dir="$1"
+    {
+        find "$dir" -type f -print 2>/dev/null | sed 's|^|f |'
+        find "$dir" -type l -print 2>/dev/null | sed 's|^|l |'
+    } | sort
+}
+
+# Assert the contract for everything that appeared under DIR since SNAPSHOT.
+#
+# Regular files must be tracked. Symlinks must NOT be: backup_restore runs a
+# symlink-escape check over the manifest, skips any entry that matches it and
+# counts it as skipped — so a tracked symlink both survives the rollback AND
+# drags its return code from 0 to 2, reporting "partially restored" for a
+# rollback that in fact did everything it was supposed to.
+_vpssec_assert_created_contract() {
+    local dir="$1" before="$2" rc=0
+    local manifest="${VPSSEC_BACKUP_SESSION:-/nonexistent}/${VPSSEC_CREATED_MANIFEST:-.vpssec_created}"
+    local after kind path
+    after=$(_vpssec_tree_snapshot "$dir")
+
+    while read -r kind path; do
+        [[ -n "${path:-}" ]] || continue
+        case "$kind" in
+            f)
+                if ! grep -qxF "$path" "$manifest" 2>/dev/null; then
+                    printf 'created but not tracked in %s: %s\n' \
+                        "$VPSSEC_CREATED_MANIFEST" "$path" >&2
+                    rc=1
+                fi
+                ;;
+            l)
+                if grep -qxF "$path" "$manifest" 2>/dev/null; then
+                    printf 'symlink must not be tracked (rollback skips it and returns 2): %s\n' \
+                        "$path" >&2
+                    rc=1
+                fi
+                ;;
+        esac
+    done < <(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+
+    return "$rc"
+}
+
 # Assert that COMMAND fails. Use this instead of `! command`.
 #
 # Bash exempts a command preceded by `!` from errexit and the ERR trap,
