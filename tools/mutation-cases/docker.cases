@@ -1,0 +1,100 @@
+# Mutation cases for tests/test_fix_docker_daemon.bats against modules/docker.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/docker.sh \
+#        tests/test_fix_docker_daemon.bats tools/mutation-cases/docker.cases
+#
+# This suite shipped twelve tests and no cases file, so nothing had ever
+# confirmed the assertions could fail — the same gap the logrotate suite
+# carried until CI happened to expose it, and the reason coverage has to be
+# checked per SUITE rather than per module.
+#
+# The two defects it was written for are the first two groups below. Note the
+# asymmetry it pins: live-restore is observable only through the running
+# daemon, while no-new-privileges is satisfied by daemon.json alone, so
+# "declining the restart" must fail one fix and not the other. Several
+# mutations exist purely to prove the suite still tells those two apart.
+#
+# Everything runs against the per-test fake /etc; `docker` and `systemctl` are
+# stubs throughout, so no mutation here can reach a real daemon.
+
+# ---- the audit predicate: the daemon's answer is final --------------------
+
+# THE regression, at its narrowest: a running daemon reporting false used to
+# fall through to daemon.json, so a file that merely said true overruled the
+# daemon. That is the exact failure mode the check exists to catch.
+run_case "live-restore/false-falls-through" 1 \
+    '        [[ "${live,,}" == "true" ]]' \
+    '        [[ "${live,,}" == "true" ]] || return 1'
+
+# Same defect from the other side: taking daemon.json first makes the
+# daemon's answer irrelevant.
+run_case "live-restore/daemon-not-asked-first" 1 \
+    '    if live=$(docker info --format '"'"'{{.LiveRestoreEnabled}}'"'"' 2>/dev/null); then' \
+    '    if false; then'
+
+# The fallback exists for an unreachable daemon only. Removing it makes a
+# stopped daemon indistinguishable from an unconfigured host.
+run_case "live-restore/no-fallback-when-unreachable" 1 \
+    '        jq -e '"'"'.["live-restore"] == true'"'"' "$DOCKER_DAEMON_JSON" &>/dev/null' \
+    '        return 1'
+
+# The fallback reads the file only when there is one; inverting the gate makes
+# a stopped daemon with a configured daemon.json report unconfigured.
+# Occurrence 1 — the same line opens the writer's update branch further down.
+run_case "live-restore/fallback-file-gate-inverted" 1 \
+    '    if [[ -f "$DOCKER_DAEMON_JSON" ]]; then' \
+    '    if [[ ! -f "$DOCKER_DAEMON_JSON" ]]; then'
+
+# Case folding: `docker info` has printed capitalised booleans in the past,
+# and the audit must not start reporting a configured host as unconfigured.
+run_case "live-restore/case-sensitive-compare" 1 \
+    '        [[ "${live,,}" == "true" ]]' \
+    '        [[ "$live" == "true" ]]'
+
+# ---- the fix's postcondition ---------------------------------------------
+
+# The second shipped defect: returning 0 after the operator declined the
+# restart recorded the fix as complete while the daemon ran without it.
+run_case "postcondition/declined-restart-reports-success" 1 \
+    '        if ! "$verify_fn"; then' \
+    '        if false; then'
+
+# The postcondition must run the predicate belonging to THIS fix. Hardcoding
+# either one collapses the live-restore / no-new-privileges asymmetry that the
+# third argument exists to express.
+run_case "postcondition/verify-fn-hardcoded" 1 \
+    '        if ! "$verify_fn"; then' \
+    '        if ! _docker_check_no_new_privileges; then'
+
+# Declining the restart is not a write failure: the setting stays staged and
+# takes effect on the next restart. Bailing out early would lose it.
+run_case "postcondition/declined-restart-skips-write" 1 \
+    '    if confirm_critical "$(i18n '"'"'docker.confirm_restart'"'"')"; then' \
+    '    if ! confirm_critical "$(i18n '"'"'docker.confirm_restart'"'"')"; then'
+
+# ---- the writer ----------------------------------------------------------
+
+# Editing a file that is not valid JSON used to clobber it with jq's empty
+# output.
+run_case "writer/malformed-file-not-refused" 1 \
+    '    if [[ -f "$DOCKER_DAEMON_JSON" ]] && ! jq empty "$DOCKER_DAEMON_JSON" 2>/dev/null; then' \
+    '    if false; then'
+
+# Merge, do not replace: the operator's other daemon settings have to survive.
+run_case "writer/merge-becomes-replace" 1 \
+    '        if ! jq --arg key "$setting" --argjson val "$value" '"'"'.[$key] = $val'"'"' \' \
+    '        if ! jq -n --arg key "$setting" --argjson val "$value" '"'"'{($key): $val}'"'"' \'
+
+# A failed merge must not leave a staging file behind next to daemon.json.
+# Occurrence 1 is the jq-failure path; the other two are the validity recheck
+# and the create branch.
+run_case "writer/tmp-left-behind-on-merge-failure" 1 \
+    '            rm -f "$tmp_file"' \
+    '            :'
+
+# The pre-edit backup is what a rollback restores; without it the operator's
+# original daemon.json is gone.
+run_case "writer/existing-file-not-backed-up" 1 \
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true' \
+    '    :'
