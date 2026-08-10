@@ -88,6 +88,12 @@ _load_docker() {
     sock_root=$(cd "$sock_root" && pwd -P)
     local sock_dir="$sock_root/h/.docker/run"
     mkdir -p "$sock_dir"
+    # Two different reasons to skip, kept apart on purpose. The single
+    # message used to blame AF_UNIX for both, and on Arch — where the base
+    # image ships no python at all — it sent the reader looking at sockets
+    # and path lengths for a missing interpreter. A skip that names the
+    # wrong cause is worse than a failure.
+    command -v python3 >/dev/null 2>&1 || skip "python3 is needed to create the test socket"
     python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" \
         "$sock_dir/docker.sock" || skip "cannot create an AF_UNIX socket here"
     _vpssec_absent_command docker

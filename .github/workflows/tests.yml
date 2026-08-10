@@ -65,9 +65,13 @@ jobs:
           DISTRO: ${{ matrix.distro }}
         run: |
           set -eu
+          # python3 is not a vpssec dependency — it is a fixture one. One
+          # test needs a real AF_UNIX socket, which shell cannot create, and
+          # Arch's base image ships no interpreter, so that test skipped here
+          # while running everywhere else. Rocky's image already has it.
           case "$DISTRO" in
               rocky) dnf -q -y install git jq ;;
-              arch)  pacman -Sy --noconfirm --needed git jq ;;
+              arch)  pacman -Sy --noconfirm --needed git jq python ;;
               *)     echo "unknown distro: $DISTRO" >&2; exit 1 ;;
           esac
 
