@@ -30,6 +30,62 @@ jobs:
       - name: Run bats tests
         run: bats tests/
 
+  bats-non-debian:
+    # The audit is supported on RHEL and Arch; every CI job ran on Ubuntu,
+    # so nothing here had ever executed on a host with dnf or pacman. The
+    # author has verified the audit on those distributions by hand, and this
+    # turns that one-off into something that reruns on every push — the
+    # cheapest defect class this project has, and the source of all three of
+    # its CI failures so far.
+    #
+    # Containers rather than runners because GitHub hosts Ubuntu, Windows and
+    # macOS only; there is no Rocky or Arch runner to put in runs-on.
+    #
+    # Arch is pulled by :latest because it is a rolling release and has no
+    # other tag; Rocky is pinned to its major version.
+    name: bats on ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: rocky
+            image: rockylinux:9
+          - distro: arch
+            image: archlinux:latest
+    steps:
+      # git and jq are vpssec's own runtime dependencies, and the checkout
+      # action wants git present before it runs in a bare container image.
+      # Dispatched on a plain identifier rather than interpolating a command
+      # string into `run:` — the values here are ours, but a workflow that
+      # executes ${{ }} content teaches the wrong habit.
+      - name: Install dependencies
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -eu
+          case "$DISTRO" in
+              rocky) dnf -q -y install git jq ;;
+              arch)  pacman -Sy --noconfirm --needed git jq ;;
+              *)     echo "unknown distro: $DISTRO" >&2; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v5
+
+      - name: Install bats-core
+        run: |
+          set -euo pipefail
+          BATS_VERSION=v1.11.0
+          tmp=$(mktemp -d)
+          git clone --depth 1 --branch "$BATS_VERSION" \
+              https://github.com/bats-core/bats-core.git "$tmp/bats"
+          "$tmp/bats/install.sh" /usr/local
+          bats --version
+
+      - name: Run bats tests
+        run: bats tests/
+
   i18n-parity:
     name: i18n key parity
     runs-on: ubuntu-latest

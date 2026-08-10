@@ -1,0 +1,76 @@
+# Mutation cases for tests/test_report_distro_meta.bats against core/report.sh.
+# mutate-suite: core/report.sh tests/test_report_distro_meta.bats
+#
+# Two fields, three formats, and one way for each to be quietly wrong.
+#
+# guide_supported is the field that carries risk. It is false on exactly the
+# hosts where every fix_id in the same document is unreachable, so a mutation
+# that pins it true does not corrupt the report — it makes the report agree
+# with what a reader would have assumed anyway. That is the kind of defect
+# this project keeps finding: not a crash, a confident wrong answer.
+#
+# The --arg / --argjson distinction gets its own case because the string
+# "false" is truthy in every consumer that tests the field.
+
+# ---- summary.json ---------------------------------------------------------
+
+# The whole point, inverted: hardening is reported as available on a host
+# where guide_mode refuses to run.
+run_case "json/guide-always-supported" 1 \
+    '    is_debian_based && guide_supported="true"' \
+    '    guide_supported="true"'
+
+run_case "json/guide-never-supported" 1 \
+    '    is_debian_based && guide_supported="true"' \
+    '    :'
+
+# A string where a boolean belongs. jq accepts it, the document stays valid,
+# and `if (.meta.guide_supported)` is true on every host.
+run_case "json/guide-supported-as-string" 1 \
+    '        --argjson guide_supported "$guide_supported" \' \
+    '        --arg guide_supported "$guide_supported" \'
+
+# The family goes missing rather than saying so.
+run_case "json/family-defaults-to-empty" 1 \
+    '    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"' \
+    '    local distro_family="${VPSSEC_DISTRO_FAMILY:-}"'
+
+run_case "json/family-hardcoded-debian" 1 \
+    '    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"' \
+    '    local distro_family="debian"'
+
+# ---- summary.sarif --------------------------------------------------------
+
+# The SARIF copy drifting from the JSON one. Both are generated from the same
+# host, and a consumer reading either has to get the same answer.
+#
+# Occurrence order for the distro_family line is json, markdown, sarif -- the
+# order the three generators appear in the file, not the order they are
+# discussed here.
+run_case "sarif/guide-always-supported" 2 \
+    '    is_debian_based && guide_supported="true"' \
+    '    guide_supported="true"'
+
+run_case "sarif/family-hardcoded" 3 \
+    '    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"' \
+    '    local distro_family="debian"'
+
+run_case "sarif/properties-dropped" 1 \
+    '              "distroFamily":   $family,' \
+    '              "distroFamily":   null,'
+
+# ---- summary.md -----------------------------------------------------------
+
+# The human-facing report is where the claim matters most, and the one place
+# where getting it backwards reads as reassurance.
+run_case "markdown/hardening-row-inverted" 1 \
+    '    if is_debian_based; then' \
+    '    if ! is_debian_based; then'
+
+run_case "markdown/hardening-wording-hardcoded" 1 \
+    '        guide_state=$(i18n '"'"'report.guide_unsupported'"'"')' \
+    '        guide_state="not available"'
+
+run_case "markdown/family-row-hardcoded" 2 \
+    '    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"' \
+    '    local distro_family="debian"'

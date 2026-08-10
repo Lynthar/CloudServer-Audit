@@ -27,6 +27,16 @@ report_generate_json() {
     local partial="false"
     score_is_partial && partial="true"
 
+    # The audit runs on Debian, RHEL and Arch; hardening and rollback do not.
+    # Without these two a consumer reading summary.json cannot tell that every
+    # fix_id in the file is unreachable on the host it was produced on.
+    # guide_supported is named after the thing that is actually gated —
+    # guide_mode, wholesale, on is_debian_based — rather than after individual
+    # fixes, so it stays true if a fix ever grows a non-Debian path.
+    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"
+    local guide_supported="false"
+    is_debian_based && guide_supported="true"
+
     # Build via jq so every string field (hostname, os, os-release values, …)
     # is correctly escaped. The previous hand-written heredoc inlined these raw;
     # a hostname or os-release field containing a quote, backslash or control
@@ -47,6 +57,8 @@ report_generate_json() {
         --arg virt "$virt" \
         --arg lang "${VPSSEC_LANG:-}" \
         --arg modules "$modules_checked" \
+        --arg distro_family "$distro_family" \
+        --argjson guide_supported "$guide_supported" \
         --argjson partial "$partial" \
         --argjson score "$score" \
         --argjson stats "$stats" \
@@ -74,8 +86,10 @@ report_generate_json() {
                 timestamp: $timestamp,
                 os: $os,
                 os_version: $os_version,
+                distro_family: $distro_family,
                 hostname: $hostname,
                 virtualization: $virt,
+                guide_supported: $guide_supported,
                 lang: $lang,
                 modules: $modules,
                 partial_scope: $partial
@@ -110,6 +124,17 @@ report_generate_markdown() {
     local hostname=$(hostname 2>/dev/null || uname -n)
     local modules_checked="${VPSSEC_INCLUDE:-all}"
 
+    # Stated on every report, not only where hardening is unavailable: a row
+    # that appears only in the bad case makes its absence mean "supported",
+    # and this project has already decided once that absence is not evidence.
+    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"
+    local guide_state
+    if is_debian_based; then
+        guide_state=$(i18n 'report.guide_supported')
+    else
+        guide_state=$(i18n 'report.guide_unsupported')
+    fi
+
     local score_basis
     if score_is_partial; then
         score_basis=$(i18n 'report.score_partial' "count=${scored_total}" "modules=${modules_checked}")
@@ -126,6 +151,8 @@ report_generate_markdown() {
 |---|---|
 | Hostname | ${hostname} |
 | OS | ${os} ${os_version} |
+| Distro Family | ${distro_family} |
+| Hardening | ${guide_state} |
 | Date | $(date '+%Y-%m-%d %H:%M:%S') |
 | vpssec Version | ${VPSSEC_VERSION} |
 | Modules | ${modules_checked} |
@@ -661,6 +688,9 @@ report_generate_sarif() {
     [[ -n "$checks" ]] || checks='[]'
 
     local hostname=$(hostname 2>/dev/null || uname -n)
+    local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"
+    local guide_supported="false"
+    is_debian_based && guide_supported="true"
 
     local sarif
     sarif=$(jq -n \
@@ -668,6 +698,8 @@ report_generate_sarif() {
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         --arg     version "${VPSSEC_VERSION:-}" \
         --arg     host    "$hostname" \
+        --arg     family  "$distro_family" \
+        --argjson guide   "$guide_supported" \
         --arg     endtime "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
         def level:
           if   . == "high"   then "error"
@@ -731,7 +763,14 @@ report_generate_sarif() {
             "invocations": [{
               "executionSuccessful": true,
               "endTimeUtc": $endtime
-            }]
+            }],
+            # Run-level property bag: every fix named in "fixes" above is
+            # unreachable when guideSupported is false, and nothing else in
+            # the document says so.
+            "properties": {
+              "distroFamily":   $family,
+              "guideSupported": $guide
+            }
           }]
         }') || { log_error "Failed to build SARIF report"; return 1; }
 

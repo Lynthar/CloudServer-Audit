@@ -327,7 +327,7 @@ _baseline_audit_insecure_services() {
             "failed" \
             "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "${#found[@]} insecure legacy service(s)/package(s) present")" \
             "Found: ${list% }" \
-            "Disable the service (systemctl disable --now <name>) and remove the package (apt purge <name>)" \
+            "Disable the service (systemctl disable --now <name>) and remove the package ($(pkg_remove_hint '<name>' || echo 'with your package manager'))" \
             "")
         state_add_check "$check"
         print_severity "high" "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "Insecure legacy services present")"
@@ -382,6 +382,16 @@ _baseline_audit_integrity() {
         state_add_check "$check"
         print_ok "$(i18n 'baseline.integrity_installed' "tool=$found")"
     else
+        # Name a command only where one exists. AIDE is not in Arch's own
+        # repositories, so the old `apt install aide` had no honest
+        # replacement there — the tools are named instead.
+        local integrity_pkg integrity_cmd integrity_hint
+        integrity_pkg=$(distro_integrity_package)
+        if [[ -n "$integrity_pkg" ]] && integrity_cmd=$(pkg_install_hint "$integrity_pkg"); then
+            integrity_hint="Install a file integrity tool: $integrity_cmd"
+        else
+            integrity_hint="Install a file integrity tool (AIDE, Tripwire or Samhain)"
+        fi
         local check=$(create_check_json \
             "baseline.integrity_missing" \
             "baseline" \
@@ -389,7 +399,7 @@ _baseline_audit_integrity() {
             "failed" \
             "$(i18n 'baseline.integrity_missing')" \
             "No file integrity monitor (AIDE/Tripwire/Samhain) installed" \
-            "Install a file integrity tool: apt install aide" \
+            "$integrity_hint" \
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'baseline.integrity_missing')"

@@ -119,6 +119,7 @@
     "network_ok": "Network connectivity OK",
     "network_fail": "Network connection failed",
     "dep_missing": "Missing required dependency: {dep}",
+    "install_deps": "Install with your package manager: {deps}",
     "dep_optional": "Optional dependency missing: {dep} (related features disabled)",
     "virtualization": "Virtualization type: {type}",
     "listening_ports": "Listening ports: {count}",
@@ -1034,6 +1035,8 @@
     "sudo_non_root": "{count} non-root"
   },
   "report": {
+    "guide_supported": "available (guide, rollback)",
+    "guide_unsupported": "not available - this distribution is audit-only",
     "title": "Security Check Report",
     "summary": "Check Summary",
     "score": "Security Score",

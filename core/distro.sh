@@ -547,6 +547,81 @@ distro_insecure_packages() {
     esac
 }
 
+# The command that would install / remove PACKAGES on this host, as advice
+# printed to the operator. vpssec never runs these: hardening is Debian-only
+# and installs there through the module's own apt calls.
+#
+# They exist because the audit was telling RHEL and Arch operators to run
+# `apt install aide`. The audit supports those distros, so a suggestion that
+# cannot run on the host it is shown to is the tool asserting something the
+# operator can disprove in one command.
+#
+# Both return non-zero and print nothing when the package manager is unknown,
+# rather than guessing — so callers must invoke them in a tested context and
+# have something honest to say when there is no answer.
+pkg_install_hint() {
+    (( $# )) || return 1
+    case "$VPSSEC_PKG_MGR" in
+        apt)    echo "apt install $*" ;;
+        dnf)    echo "dnf install $*" ;;
+        pacman) echo "pacman -S $*" ;;
+        zypper) echo "zypper install $*" ;;
+        *)      return 1 ;;
+    esac
+}
+
+pkg_remove_hint() {
+    (( $# )) || return 1
+    case "$VPSSEC_PKG_MGR" in
+        # purge, not remove: leaving a disabled service's config behind is
+        # what makes it come back on the next reinstall.
+        apt)    echo "apt purge $*" ;;
+        dnf)    echo "dnf remove $*" ;;
+        pacman) echo "pacman -Rns $*" ;;
+        zypper) echo "zypper remove $*" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Package names providing the given COMMANDS, for feeding to pkg_install_hint.
+#
+# A command name is not a package name, and the preflight suggestion was
+# built as though it were: `apt install ss` fails on Debian too, because ss
+# ships in iproute2. Only the commands vpssec actually requires are mapped;
+# anything unrecognised passes through unchanged, which is right for the ones
+# whose package shares their name (jq, sed, tar, grep).
+distro_packages_for_commands() {
+    local cmd pkg out=()
+    for cmd in "$@"; do
+        case "$cmd" in
+            ss)
+                # iproute on RHEL, iproute2 everywhere else.
+                [[ "$VPSSEC_DISTRO_FAMILY" == "rhel" ]] && pkg=iproute || pkg=iproute2
+                ;;
+            systemctl) pkg=systemd ;;
+            # mawk provides awk on Debian and gawk is available there too;
+            # gawk is the one name that resolves on all four families.
+            awk)       pkg=gawk ;;
+            *)         pkg="$cmd" ;;
+        esac
+        out+=("$pkg")
+    done
+    printf '%s\n' "${out[*]}"
+}
+
+# The file-integrity package to recommend, or empty where there is none in
+# the distribution's own repositories.
+#
+# AIDE is packaged by Debian and RHEL but lives in the AUR on Arch, so
+# suggesting `pacman -S aide` there would replace one command that cannot run
+# with another. An empty answer means "name the tools, do not name a command".
+distro_integrity_package() {
+    case "$VPSSEC_DISTRO_FAMILY" in
+        debian|rhel|suse) echo "aide" ;;
+        *)                echo "" ;;
+    esac
+}
+
 # ==============================================================================
 # Firewall primitives (read-only)
 # ==============================================================================

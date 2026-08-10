@@ -132,6 +132,16 @@ _preflight_check_deps() {
     done
 
     if [[ ${#missing_required[@]} -gt 0 ]]; then
+        # The suggestion used to be `apt install <commands>`, wrong twice
+        # over: apt is not the package manager on two of the four families
+        # this audit supports, and a command name is not a package name on
+        # any of them.
+        local dep_pkgs dep_hint
+        dep_pkgs=$(distro_packages_for_commands "${missing_required[@]}")
+        # shellcheck disable=SC2086  # deliberate split: one package per word
+        if ! dep_hint=$(pkg_install_hint $dep_pkgs); then
+            dep_hint=$(i18n 'preflight.install_deps' "deps=$dep_pkgs")
+        fi
         local check=$(create_check_json \
             "preflight.deps_missing" \
             "preflight" \
@@ -139,7 +149,7 @@ _preflight_check_deps() {
             "failed" \
             "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
             "Required: ${missing_required[*]}" \
-            "apt install ${missing_required[*]}" \
+            "$dep_hint" \
             "")
         state_add_check "$check"
         print_error "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")"

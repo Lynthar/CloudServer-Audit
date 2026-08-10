@@ -311,7 +311,18 @@ main() {
     local missing_deps=$(check_required_deps 2>&1) || true
     if [[ -n "$missing_deps" ]]; then
         print_error "$(i18n 'preflight.dep_missing' "dep=$missing_deps")"
-        echo "Install with: apt install $missing_deps"
+        # This abort is the first thing a RHEL or Arch operator sees, and it
+        # used to tell them to run apt. check_required_deps reports command
+        # names, which are not package names on any distribution.
+        local dep_pkgs dep_hint
+        # shellcheck disable=SC2086  # deliberate split: one command per word
+        dep_pkgs=$(distro_packages_for_commands $missing_deps)
+        # shellcheck disable=SC2086  # deliberate split: one package per word
+        if dep_hint=$(pkg_install_hint $dep_pkgs); then
+            echo "Install with: $dep_hint"
+        else
+            echo "$(i18n 'preflight.install_deps' "deps=$dep_pkgs")"
+        fi
         exit 1
     fi
 

@@ -119,6 +119,7 @@
     "network_ok": "网络连通正常",
     "network_fail": "网络连接失败",
     "dep_missing": "缺少必需依赖: {dep}",
+    "install_deps": "用本机的包管理器安装：{deps}",
     "dep_optional": "可选依赖缺失: {dep} (相关功能将被禁用)",
     "virtualization": "虚拟化类型: {type}",
     "listening_ports": "监听端口: {count} 个",
@@ -1034,6 +1035,8 @@
     "sudo_non_root": "{count} 个非 root"
   },
   "report": {
+    "guide_supported": "可用（guide、rollback）",
+    "guide_unsupported": "不可用 - 该发行版仅支持审计",
     "title": "安全检查报告",
     "summary": "检查摘要",
     "score": "安全评分",

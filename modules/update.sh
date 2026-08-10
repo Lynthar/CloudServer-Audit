@@ -24,19 +24,12 @@ UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"
 # family and survived the same file's `auto_update_*` de-duplication, so it
 # is deleted rather than delegated. Ask distro.sh.
 
-# Get count of available updates
-_update_get_count() {
-    local count
-    count=$(apt-get -s upgrade 2>/dev/null | grep -c "^Inst ") || true
-    echo "${count:-0}"
-}
-
-# Get count of security updates
-_update_get_security_count() {
-    local count
-    count=$(apt-get -s upgrade 2>/dev/null | grep -c "security") || true
-    echo "${count:-0}"
-}
+# _update_get_count and _update_get_security_count are gone for the same
+# reason as _update_apt_locked above, and they sat directly beneath its
+# tombstone: apt-only duplicates of pkg_update_count / pkg_security_update_count
+# with zero callers anywhere in the repo, tests included. The de-duplication
+# that removed the predicate immediately above them did not look one screen
+# further down. Ask distro.sh.
 
 # Whether automatic updates are installed / effective. Both delegate to
 # core/distro.sh, which is what the AUDIT asks — so the fix's success gate and

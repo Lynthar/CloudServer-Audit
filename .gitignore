@@ -21,3 +21,8 @@ Thumbs.db
 CLAUDE.md
 REVIEW_FINDINGS.md
 MANUAL_TEST_PLAN.md
+
+# SMB share artifacts. This repo is worked on over a network share, where
+# deleting an open file leaves a server-side .smbdeleteXXXX rename behind
+# (and renames it again on each attempt). They are never ours to commit.
+.smbdelete*

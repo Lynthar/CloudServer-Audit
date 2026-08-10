@@ -1,0 +1,109 @@
+# Mutation cases for tests/test_distro_pkg_hints.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_distro_pkg_hints.bats
+#
+# The defect these guard against is a suggestion the operator cannot run. It
+# has three shapes, and only the first is obvious:
+#
+#   * the wrong package manager for the host
+#   * a command name where a package name belongs
+#   * a package the distribution does not actually ship
+#
+# The third is why a plain "translate apt to dnf" would not have been enough:
+# AIDE is in Debian's and RHEL's repositories but in Arch's AUR, so the
+# mechanical fix would have swapped one unrunnable command for another.
+#
+# Nothing here touches the host: the primitives read VPSSEC_DISTRO_FAMILY and
+# VPSSEC_PKG_MGR, which the suite assigns directly.
+
+# ---- the wrong manager, or none at all ------------------------------------
+
+# The failure this whole batch exists to prevent, put back: everything gets
+# apt. It is also the shape a careless default branch takes.
+run_case "install/everything-is-apt" 1 \
+    '        dnf)    echo "dnf install $*" ;;' \
+    '        dnf)    echo "apt install $*" ;;'
+
+run_case "install/pacman-uses-apt-syntax" 1 \
+    '        pacman) echo "pacman -S $*" ;;' \
+    '        pacman) echo "pacman install $*" ;;'
+
+# Guessing instead of refusing. A host whose package manager is unrecognised
+# gets a confident apt command — the same defect, reached by a different road,
+# and the one a fallback branch introduces by accident.
+#
+# Occurrence 2, not 1: auto_update_installed ends with the same line verbatim,
+# and anchored at #1 this lands there instead — a function this suite does not
+# cover, reported as a coverage gap that is not one.
+run_case "install/unknown-manager-falls-back-to-apt" 2 \
+    '        *)      return 1 ;;' \
+    '        *)      echo "apt install $*" ;;'
+
+# purge vs remove: apt remove leaves the config, and a reinstall brings the
+# service back configured.
+run_case "remove/apt-remove-instead-of-purge" 1 \
+    '        apt)    echo "apt purge $*" ;;' \
+    '        apt)    echo "apt remove $*" ;;'
+
+run_case "remove/pacman-leaves-dependencies" 1 \
+    '        pacman) echo "pacman -Rns $*" ;;' \
+    '        pacman) echo "pacman -R $*" ;;'
+
+run_case "remove/unknown-manager-guesses" 3 \
+    '        *)      return 1 ;;' \
+    '        *)      echo "apt purge $*" ;;'
+
+# An empty package list produces a bare "apt install" — a command that runs
+# and does nothing, which is worse than one that visibly fails.
+run_case "install/empty-list-still-emits-a-command" 1 \
+    '    (( $# )) || return 1' \
+    '    :'
+
+# ---- command name where a package name belongs ----------------------------
+
+# The bug that predates multi-distro support entirely: `apt install ss` fails
+# on Debian, because ss ships in iproute2. Matching on a literal sends every
+# command to the catch-all, which is the mapping not happening at all.
+#
+# The first attempt appended a duplicate `ss)` arm AFTER the catch-all, which
+# bash can never reach — an equivalent mutant that survived and looked like a
+# coverage gap. Kept as a note because the mistake is easy to repeat: a case
+# arm added below `*)` is dead code, not a defect.
+run_case "packages/mapping-skipped-entirely" 1 \
+    '        case "$cmd" in' \
+    '        case "_no_match_" in'
+
+run_case "packages/ss-is-iproute2-everywhere" 1 \
+    '                [[ "$VPSSEC_DISTRO_FAMILY" == "rhel" ]] && pkg=iproute || pkg=iproute2' \
+    '                pkg=iproute2'
+
+run_case "packages/ss-is-iproute-everywhere" 1 \
+    '                [[ "$VPSSEC_DISTRO_FAMILY" == "rhel" ]] && pkg=iproute || pkg=iproute2' \
+    '                pkg=iproute'
+
+run_case "packages/systemctl-passes-through" 1 \
+    '            systemctl) pkg=systemd ;;' \
+    '            systemctl) pkg="$cmd" ;;'
+
+run_case "packages/awk-passes-through" 1 \
+    '            awk)       pkg=gawk ;;' \
+    '            awk)       pkg="$cmd" ;;'
+
+# The mapping must not "helpfully" rename the commands whose package really
+# does share their name.
+run_case "packages/jq-renamed" 1 \
+    '            *)         pkg="$cmd" ;;' \
+    '            *)         pkg="${cmd}-bin" ;;'
+
+# ---- a package the distribution does not ship -----------------------------
+
+# Arch gets `pacman -S aide` again: the command is well-formed, the package
+# does not exist, and only a test that knows the difference catches it.
+run_case "integrity/aide-claimed-on-arch" 1 \
+    '        debian|rhel|suse) echo "aide" ;;' \
+    '        debian|rhel|suse|arch) echo "aide" ;;'
+
+# The opposite: no distribution names a tool, so the suggestion silently
+# stops being actionable on the two families where AIDE does ship.
+run_case "integrity/nothing-is-ever-packaged" 1 \
+    '        debian|rhel|suse) echo "aide" ;;' \
+    '        debian|rhel|suse) echo "" ;;'
