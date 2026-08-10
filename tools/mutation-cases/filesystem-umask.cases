@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_filesystem_umask.bats against
+# mutate-suite: modules/filesystem.sh tests/test_filesystem_umask.bats
 # modules/filesystem.sh — the umask AUDIT helpers, as opposed to the fixes
 # (tools/mutation-cases/filesystem.cases, paired with test_fix_filesystem.bats).
 #

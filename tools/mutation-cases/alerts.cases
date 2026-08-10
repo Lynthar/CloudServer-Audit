@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_alerts.bats against modules/alerts.sh.
+# mutate-suite: modules/alerts.sh tests/test_fix_alerts.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh modules/alerts.sh \

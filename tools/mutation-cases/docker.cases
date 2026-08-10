@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_docker_daemon.bats against modules/docker.sh.
+# mutate-suite: modules/docker.sh tests/test_fix_docker_daemon.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh modules/docker.sh \
@@ -20,12 +21,22 @@
 
 # ---- the audit predicate: the daemon's answer is final --------------------
 
-# THE regression, at its narrowest: a running daemon reporting false used to
-# fall through to daemon.json, so a file that merely said true overruled the
-# daemon. That is the exact failure mode the check exists to catch.
-run_case "live-restore/false-falls-through" 1 \
-    '        [[ "${live,,}" == "true" ]]' \
-    '        [[ "${live,,}" == "true" ]] || return 1'
+# A "live-restore/false-falls-through" case used to sit here, replacing
+#
+#     [[ "${live,,}" == "true" ]]
+# with
+#     [[ "${live,,}" == "true" ]] || return 1
+#
+# It was removed on 2026-08-10 because it is an EQUIVALENT MUTANT: the line it
+# targets is followed by a bare `return`, which returns the status of the last
+# command, so both forms return exactly the same thing on both paths. No test
+# could ever have failed against it, and it sat in the file as a permanent
+# survivor while the archive recorded this suite as "12/12 killed, no gaps".
+# The regression it was named for is covered by "daemon-not-asked-first" and
+# by the bats test that pins a false-reporting daemon against a true
+# daemon.json. Teaching point kept deliberately: a surviving mutation has
+# three meanings, and "the mutation changes nothing" is one of them — check
+# that before writing a test to chase it.
 
 # Same defect from the other side: taking daemon.json first makes the
 # daemon's answer irrelevant.

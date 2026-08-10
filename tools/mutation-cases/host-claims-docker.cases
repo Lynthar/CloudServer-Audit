@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_audit_host_claims.bats against modules/docker.sh.
+# mutate-suite: modules/docker.sh tests/test_audit_host_claims.bats
 #
 #   bash tools/mutate-suite.sh modules/docker.sh \
 #        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-docker.cases

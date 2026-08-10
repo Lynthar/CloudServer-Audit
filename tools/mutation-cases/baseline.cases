@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_baseline.bats against modules/baseline.sh.
+# mutate-suite: modules/baseline.sh tests/test_fix_baseline.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh modules/baseline.sh \

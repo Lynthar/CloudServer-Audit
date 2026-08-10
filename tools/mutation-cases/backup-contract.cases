@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_backup_created_contract.bats against
+# mutate-suite: modules/docker.sh tests/test_backup_created_contract.bats
 # modules/docker.sh.
 #
 # Run with:

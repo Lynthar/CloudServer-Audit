@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_ufw*.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_fix_ufw.bats
 #
 # Run with:  bash tools/mutate-suite.sh modules/ufw.sh tests/test_fix_ufw.bats tools/mutation-cases/ufw.cases
 # Each entry reintroduces a defect this code actually had, or a plausible

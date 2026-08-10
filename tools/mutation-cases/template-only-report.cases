@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_template_only.bats against core/report.sh.
+# mutate-suite: core/report.sh tests/test_fix_template_only.bats
 #
 # Run with:  bash tools/mutate-suite.sh core/report.sh \
 #                 tests/test_fix_template_only.bats \

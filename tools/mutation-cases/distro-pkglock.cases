@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_distro_pkg_lock.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_distro_pkg_lock.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh core/distro.sh \

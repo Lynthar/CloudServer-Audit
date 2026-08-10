@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_logging_journal_auditd.bats against
+# mutate-suite: modules/logging.sh tests/test_fix_logging_journal_auditd.bats
 # modules/logging.sh.
 #
 # Run with:  bash tools/mutate-suite.sh modules/logging.sh \

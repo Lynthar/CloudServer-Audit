@@ -64,6 +64,20 @@ cp "$SRC" "$PRISTINE"
 # left in the working tree is a nasty thing to debug later.
 trap 'cp "$PRISTINE" "$SRC"; rm -f "$PRISTINE"' EXIT INT TERM
 
+# The suite must be GREEN before anything is mutated. A mutation is "killed"
+# when the suite goes red, so a suite that is already red kills every mutation
+# it is handed and reports a flawless sweep — the loudest possible way to be
+# wrong, and silent. It is not hypothetical: on a macOS checkout several
+# suites fail for want of GNU realpath, and a sweep run there looks perfect.
+# One extra suite run per cases file buys the difference between a result and
+# a rumour.
+if ! baseline_out=$(bats "$SUITE" 2>&1); then
+    printf 'REFUSING TO RUN: %s already fails before any mutation.\n' "$SUITE" >&2
+    printf 'Every mutation would be reported as killed. Failing tests:\n' >&2
+    grep '^not ok' <<<"$baseline_out" | sed 's/^/  /' >&2
+    exit 2
+fi
+
 pass=0
 gap=0
 bad=0

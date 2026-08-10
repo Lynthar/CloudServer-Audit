@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_template_only.bats against
+# mutate-suite: core/security_levels.sh tests/test_fix_template_only.bats
 # core/security_levels.sh.
 #
 # Run with:  bash tools/mutate-suite.sh core/security_levels.sh \

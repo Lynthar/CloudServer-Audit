@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_filesystem.bats against modules/filesystem.sh.
+# mutate-suite: modules/filesystem.sh tests/test_fix_filesystem.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh modules/filesystem.sh \
@@ -56,15 +57,20 @@ run_case "umask/postcondition-removed" 1 \
     '    if ! _fs_umask_is_strict "$effective"; then' \
     '    if false; then'
 
-# Occurrence 2, not 1: _fs_audit_umask opens its pam_umask branch with the same
-# line verbatim. Anchored at #1 both of these land in the audit — which this
-# suite does not cover — and report a gap that is not one. The runner's
-# "SURVIVED at line 1180" against a fix that lives at 1474 is the tell.
-run_case "umask/pam-warning-dropped" 2 \
+# These two were anchored at occurrence 2 because _fs_audit_umask opened its
+# pam_umask branch with the same line verbatim, and anchoring at #1 landed
+# them in the audit — which this suite does not cover — reporting a gap that
+# was not one. c8e9c77 then rewrote the audit's copy as
+# `_fs_check_pam_umask_enabled && pam_umask_on=1`, leaving the fix's copy as
+# the only occurrence. The anchors kept asking for #2 and stopped resolving,
+# so from 2026-08-09 until 2026-08-10 neither of these ran: the runner exited
+# non-zero on a bad anchor and nobody was running it. Occurrence 1 below IS
+# the fix-side line these were always aimed at.
+run_case "umask/pam-warning-dropped" 1 \
     '    if ! _fs_check_pam_umask_enabled; then' \
     '    if false; then'
 
-run_case "umask/pam-warning-always" 2 \
+run_case "umask/pam-warning-always" 1 \
     '    if ! _fs_check_pam_umask_enabled; then' \
     '    if true; then'
 

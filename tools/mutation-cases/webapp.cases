@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_webapp*.bats against modules/webapp.sh.
+# mutate-suite: modules/webapp.sh tests/test_fix_webapp_nginx.bats
 #
 # Run with:  bash tools/mutate-suite.sh modules/webapp.sh tests/test_fix_webapp_nginx.bats tools/mutation-cases/webapp.cases
 # Each entry reintroduces a defect this code actually had, or a plausible

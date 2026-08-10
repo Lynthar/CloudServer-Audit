@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_nginx_catchall_state.bats against
+# mutate-suite: modules/nginx.sh tests/test_nginx_catchall_state.bats
 # modules/nginx.sh.
 #
 # Run with:

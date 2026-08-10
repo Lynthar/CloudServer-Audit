@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fail2ban_custom.bats against modules/fail2ban.sh.
+# mutate-suite: modules/fail2ban.sh tests/test_fail2ban_custom.bats
 #
 # Run with:  bash tools/mutate-suite.sh modules/fail2ban.sh \
 #                 tests/test_fail2ban_custom.bats tools/mutation-cases/fail2ban-custom.cases

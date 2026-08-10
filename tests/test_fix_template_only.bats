@@ -211,12 +211,23 @@ _completed_fixes() {
         "docker.exposed_ports" "docker" "medium" "failed" \
         "Exposed ports" "Ports are published to 0.0.0.0" \
         "Use a reverse proxy" "docker.generate_proxy_template")"
+    state_add_check "$(create_check_json \
+        "ufw.disabled" "ufw" "medium" "failed" \
+        "Firewall disabled" "ufw is installed but inactive" \
+        "Enable ufw" "ufw.enable")"
 
     run report_generate_sarif "$BATS_TEST_TMPDIR/summary.sarif"
     [ "$status" -eq 0 ]
     jq -e '.runs[0].tool.driver.rules[]
            | select(.id=="docker.exposed_ports")
            | .properties.fixType == "template_only"' \
+        "$BATS_TEST_TMPDIR/summary.sarif"
+    # Both directions, as in the JSON test above: absence from the map is not
+    # evidence a fix is direct, so an ordinary fix carries no fixType at all.
+    # Asserting only the positive lets "stamp every rule" through.
+    jq -e '.runs[0].tool.driver.rules[]
+           | select(.id=="ufw.disabled")
+           | .properties | has("fixType") | not' \
         "$BATS_TEST_TMPDIR/summary.sarif"
 }
 

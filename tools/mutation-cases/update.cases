@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_update.bats against modules/update.sh.
+# mutate-suite: modules/update.sh tests/test_fix_update.bats
 #
 # Run with:
 #   bash tools/mutate-suite.sh modules/update.sh \

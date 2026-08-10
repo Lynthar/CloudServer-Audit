@@ -95,6 +95,20 @@ SH
     [ "$status" -ne 0 ]
 }
 
+@test "live-restore check: the daemon's answer is compared case-insensitively" {
+    # `docker info` renders a Go bool, so today the answer is always lower
+    # case and dropping the ,, would change nothing observable. That is
+    # exactly why it needs pinning: the tolerance is deliberate, and without
+    # a test the next reader has no way to tell it apart from noise.
+    _daemon_reports True
+    run _docker_check_live_restore
+    [ "$status" -eq 0 ]
+
+    _daemon_reports FALSE
+    run _docker_check_live_restore
+    [ "$status" -ne 0 ]
+}
+
 # ---- the fix's postcondition ----------------------------------------
 
 @test "live-restore fix: declining the restart reports failure, not success" {
@@ -177,4 +191,40 @@ SH
 
     run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
     [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
+}
+
+@test "daemon.json: a merge that fails leaves no .tmp file and no half-written file" {
+    # The refusal path above never reaches the merge, so it cannot cover the
+    # cleanup there. `[]` is the input that separates them: valid JSON, so it
+    # passes the refusal guard, but `.["live-restore"] = true` cannot index an
+    # array, so the merge itself fails and the cleanup runs.
+    _daemon_reports false
+    confirm_critical() { return 0; }
+    printf '[]\n' > "$DOCKER_DAEMON_JSON"
+
+    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+
+    [ "$status" -ne 0 ]
+    [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
+    # The operator's file is exactly as they left it.
+    [ "$(cat "$DOCKER_DAEMON_JSON")" = "[]" ]
+}
+
+@test "daemon.json: a refused file is not snapshotted into the backup session" {
+    # What the refusal guard is FOR, and the only thing that distinguishes it
+    # from the merge failing on its own: it sits ahead of backup_file, so a
+    # file the fix declines to touch leaves no trace in the rollback session.
+    # Remove the guard and the malformed file gets snapshotted, the merge
+    # fails anyway, and the session ends up carrying an entry for a file that
+    # was never modified — same exit status, same daemon.json, different
+    # rollback.
+    _daemon_reports false
+    confirm_critical() { return 0; }
+    printf 'not json' > "$DOCKER_DAEMON_JSON"
+    _vpssec_begin_backup_session
+
+    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+
+    [ "$status" -ne 0 ]
+    [ ! -e "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}" ]
 }

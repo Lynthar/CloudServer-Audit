@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_backup_mode_restore.bats against core/common.sh
+# mutate-suite: core/common.sh tests/test_backup_mode_restore.bats
 # — the backup half of the mode-preservation contract.
 #
 # Run with:

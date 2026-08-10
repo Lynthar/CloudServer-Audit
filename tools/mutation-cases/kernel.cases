@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_kernel*.bats against modules/kernel.sh.
+# mutate-suite: modules/kernel.sh tests/test_fix_kernel.bats
 #
 # Run with:  bash tools/mutate-suite.sh modules/kernel.sh tests/test_fix_kernel.bats tools/mutation-cases/kernel.cases
 # Each entry reintroduces a defect this code actually had, or a plausible

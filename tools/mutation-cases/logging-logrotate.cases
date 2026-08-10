@@ -1,4 +1,5 @@
 # Mutation cases for tests/test_fix_logging_logrotate.bats against
+# mutate-suite: modules/logging.sh tests/test_fix_logging_logrotate.bats
 # modules/logging.sh.
 #
 # Run with:
