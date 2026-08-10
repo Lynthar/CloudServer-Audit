@@ -1,6 +1,6 @@
 # Mutation cases for tests/test_fix_ufw*.bats against modules/ufw.sh.
 #
-# Run with:  bash tools/mutate-suite.sh modules/ufw.sh <suite.bats> tools/mutation-cases/ufw.cases
+# Run with:  bash tools/mutate-suite.sh modules/ufw.sh tests/test_fix_ufw.bats tools/mutation-cases/ufw.cases
 # Each entry reintroduces a defect this code actually had, or a plausible
 # regression of a guard it relies on. All of them must stay killed.
 #

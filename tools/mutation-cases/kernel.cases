@@ -1,6 +1,6 @@
 # Mutation cases for tests/test_fix_kernel*.bats against modules/kernel.sh.
 #
-# Run with:  bash tools/mutate-suite.sh modules/kernel.sh <suite.bats> tools/mutation-cases/kernel.cases
+# Run with:  bash tools/mutate-suite.sh modules/kernel.sh tests/test_fix_kernel.bats tools/mutation-cases/kernel.cases
 # Each entry reintroduces a defect this code actually had, or a plausible
 # regression of a guard it relies on. All of them must stay killed.
 #

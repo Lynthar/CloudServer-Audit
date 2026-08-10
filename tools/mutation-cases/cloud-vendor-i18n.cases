@@ -1,0 +1,105 @@
+# Mutation cases for tests/test_cloud_vendor_i18n.bats against modules/cloud.sh.
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/cloud.sh \
+#        tests/test_cloud_vendor_i18n.bats tools/mutation-cases/cloud-vendor-i18n.cases
+#
+# The defect this suite was written for cannot be reached by planting a bug in
+# one branch: it was a data table holding display text. So the mutations below
+# come in two families —
+#
+#   * put display text back in the table (that IS the original defect), and
+#   * resolve a key at the wrong moment, or not at all
+#
+# The second family is the one worth having. Rendering early — inside
+# _find_known_agents rather than at the point of display — looks harmless and
+# even reads as tidier, but it puts a translated string where the rest of the
+# module expects an identifier. That is the shape the provider-match block was
+# already broken by once, and the reason the keys travel unresolved.
+#
+# Everything here runs against stubbed pgrep/systemctl/ps and a pinned
+# provider, so no mutation can reach a real process table or IMDS.
+
+# ---- family 1: display text back in the table -----------------------------
+
+# The original defect, exactly: a Chinese literal in the vendor column. It
+# reaches the check title verbatim, and no language file has a key for it.
+run_case "table/vendor-is-chinese-literal" 1 \
+    '    "AliYunDun|aegis|alibaba|aliyundun|yes"' \
+    '    "AliYunDun|aegis|阿里云|aliyundun|yes"'
+
+# Same defect with an ASCII literal, which the CJK assertion alone would not
+# catch — a row reading "Alibaba Cloud" is still untranslatable.
+run_case "table/vendor-is-english-literal" 1 \
+    '    "AliYunDun|aegis|alibaba|aliyundun|yes"' \
+    '    "AliYunDun|aegis|Alibaba Cloud|aliyundun|yes"'
+
+# A row naming a description key nobody wrote. This is what a newly added
+# agent looks like when the language files were not updated with it.
+run_case "table/desc-key-has-no-translation" 1 \
+    '    "AliYunDun|aegis|alibaba|aliyundun|yes"' \
+    '    "AliYunDun|aegis|alibaba|aliyundun_v2|yes"'
+
+# The same omission on a row the rendering tests never touch — only the
+# enumeration gate can catch this one, which is the whole reason it exists.
+run_case "table/untranslated-key-on-an-unexercised-row" 1 \
+    '    "newrelic-infra|newrelic-infra|generic|newrelic|optional"' \
+    '    "newrelic-infra|newrelic-infra|generic2|newrelic|optional"'
+
+# Delete a row and leave its strings behind. Nothing renders wrong and every
+# forward check still passes — only the reverse guard sees it. This is the
+# drift that accumulates quietly: a vendor the tool no longer detects goes on
+# looking supported in both language files.
+run_case "table/deleted-row-orphans-its-keys" 1 \
+    '    "newrelic-infra|newrelic-infra|generic|newrelic|optional"' \
+    '    # newrelic-infra row removed'
+
+# ---- family 2: resolving at the wrong moment, or not at all ---------------
+
+# Render inside the data producer. Every displayed string stays correct, so
+# this survives anything that only reads the report — it is caught solely by
+# the test that pins what travels on the wire.
+run_case "wire/vendor-resolved-inside-find-known-agents" 1 \
+    '            found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|running")' \
+    '            found+=("$proc_name|$service_name|$(_cloud_vendor_name "$vendor_key")|$desc_key|$can_disable|running")'
+
+run_case "wire/desc-resolved-inside-find-known-agents" 1 \
+    '            found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|running")' \
+    '            found+=("$proc_name|$service_name|$vendor_key|$(_cloud_agent_desc "$desc_key")|$can_disable|running")'
+
+# Do not resolve at all: the audit prints the raw key to the operator.
+run_case "render/agent-list-prints-the-raw-key" 1 \
+    '            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")), "' \
+    '            agent_list+="$proc_name ($vendor_key), "'
+
+# The helpers stop consulting i18n. Both are one line, and both are the kind
+# of "simplification" that passes a reading.
+run_case "render/vendor-helper-echoes-its-argument" 1 \
+    '    i18n "cloud.vendor_${1}"' \
+    '    echo "$1"'
+
+run_case "render/desc-helper-echoes-its-argument" 1 \
+    '    i18n "cloud.agent_${1}"' \
+    '    echo "$1"'
+
+# cloud_fix stops rendering the description column. The audit is unaffected,
+# so only the fix-path test sees it.
+run_case "render/cloud-fix-prints-the-raw-desc-key" 1 \
+    '                echo "    $(i18n '"'"'common.info'"'"' 2>/dev/null || echo '"'"'Info'"'"'): $(_cloud_agent_desc "$desc_key")"' \
+    '                echo "    $(i18n '"'"'common.info'"'"' 2>/dev/null || echo '"'"'Info'"'"'): $desc_key"'
+
+# ---- family 3: the provider name map --------------------------------------
+
+# Drop one provider from the arm, so it falls through to the catch-all and is
+# displayed as its own id. This is how the map silently stops covering a
+# provider that detection still returns.
+run_case "provider/alibaba-falls-through-to-the-catch-all" 1 \
+    '        alibaba|tencent|huawei|aws|azure|gcp|digitalocean|vultr|linode|oracle|hetzner|ovh|scaleway)' \
+    '        tencent|huawei|aws|azure|gcp|digitalocean|vultr|linode|oracle|hetzner|ovh|scaleway)'
+
+# A key prefix typo. i18n hands back the key itself, which is neither the id
+# nor a crash — it renders as "cloud.providername_alibaba" in the report and
+# reads, at a glance, like something was translated.
+run_case "provider/key-prefix-typo-renders-the-key-itself" 1 \
+    '            i18n "cloud.provider_name_${provider}" ;;' \
+    '            i18n "cloud.providername_${provider}" ;;'

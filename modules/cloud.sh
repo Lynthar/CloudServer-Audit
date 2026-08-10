@@ -15,61 +15,75 @@
 # Known Cloud Vendor Agents Database
 # ==============================================================================
 
-# Format: process_name|service_name|vendor|description|can_disable
+# Format: process_name|service_name|vendor_key|desc_key|can_disable
+#
+# Columns 3 and 4 are i18n key suffixes, not display text: the vendor renders
+# through `cloud.vendor_<vendor_key>` and the description through
+# `cloud.agent_<desc_key>`. They used to hold literals, half of them Chinese
+# ("阿里云", "安骑士/云安全中心"), which reached check titles verbatim — so
+# `--lang=en_US` printed Chinese on an English report.
+#
+# The vendor column is the vendor's machine-side identity, deliberately drawn
+# from the same id space as the provider ids _detect_cloud_provider returns
+# ("alibaba", "aws", ...), plus "generic" for third-party agents. cloud_audit
+# used to compare it against the detected provider using per-provider display
+# names — six of the eleven vendors, three of them Chinese literals — which is
+# what a translatable column would have silently broken. That comparison is
+# gone (it was inert), but the id space is the useful half and it stays.
 declare -ga KNOWN_CLOUD_AGENTS=(
     # Alibaba Cloud
-    "AliYunDun|aegis|阿里云|安骑士/云安全中心|yes"
-    "AliYunDunMonitor|aegis|阿里云|安骑士监控|yes"
-    "AliYunDunUpdate|aegis|阿里云|安骑士更新|yes"
-    "aliyun-service|aliyun|阿里云|阿里云服务|yes"
-    "cloudmonitor|cloudmonitor|阿里云|云监控插件|yes"
+    "AliYunDun|aegis|alibaba|aliyundun|yes"
+    "AliYunDunMonitor|aegis|alibaba|aliyundun_monitor|yes"
+    "AliYunDunUpdate|aegis|alibaba|aliyundun_update|yes"
+    "aliyun-service|aliyun|alibaba|aliyun_service|yes"
+    "cloudmonitor|cloudmonitor|alibaba|cloudmonitor|yes"
 
     # Tencent Cloud
-    "YDService|YDService|腾讯云|云镜主机安全|yes"
-    "YDLive|YDService|腾讯云|云镜实时防护|yes"
-    "tat_agent|tat_agent|腾讯云|自动化助手|yes"
-    "sgagent|sgagent|腾讯云|安全组件|yes"
-    "barad_agent|barad_agent|腾讯云|监控组件|yes"
+    "YDService|YDService|tencent|ydservice|yes"
+    "YDLive|YDService|tencent|ydlive|yes"
+    "tat_agent|tat_agent|tencent|tat_agent|yes"
+    "sgagent|sgagent|tencent|sgagent|yes"
+    "barad_agent|barad_agent|tencent|barad_agent|yes"
 
     # Huawei Cloud
-    "telescope|telescope|华为云|云监控Agent|yes"
-    "hostguard|hostguard|华为云|主机安全|yes"
-    "uniagent|uniagent|华为云|统一Agent|yes"
+    "telescope|telescope|huawei|telescope|yes"
+    "hostguard|hostguard|huawei|hostguard|yes"
+    "uniagent|uniagent|huawei|uniagent|yes"
 
     # AWS
-    "amazon-ssm-agent|amazon-ssm-agent|AWS|Systems Manager Agent|optional"
-    "amazon-cloudwatch-agent|amazon-cloudwatch-agent|AWS|CloudWatch Agent|optional"
+    "amazon-ssm-agent|amazon-ssm-agent|aws|ssm|optional"
+    "amazon-cloudwatch-agent|amazon-cloudwatch-agent|aws|cloudwatch|optional"
 
     # Azure
-    "waagent|walinuxagent|Azure|Linux VM Agent|no"
-    "WaLinuxAgent|walinuxagent|Azure|Linux VM Agent|no"
-    "OMSAgentForLinux|omsagent|Azure|Log Analytics Agent|yes"
+    "waagent|walinuxagent|azure|walinuxagent|no"
+    "WaLinuxAgent|walinuxagent|azure|walinuxagent|no"
+    "OMSAgentForLinux|omsagent|azure|omsagent|yes"
 
     # Google Cloud
-    "google_guest_agent|google-guest-agent|GCP|Guest Agent|optional"
-    "google_osconfig_agent|google-osconfig-agent|GCP|OS Config Agent|optional"
+    "google_guest_agent|google-guest-agent|gcp|google_guest|optional"
+    "google_osconfig_agent|google-osconfig-agent|gcp|google_osconfig|optional"
 
     # DigitalOcean
-    "do-agent|do-agent|DigitalOcean|Monitoring Agent|yes"
+    "do-agent|do-agent|digitalocean|do_agent|yes"
 
     # Vultr
-    "vultr-helper|vultr-helper|Vultr|Helper Agent|yes"
+    "vultr-helper|vultr-helper|vultr|vultr_helper|yes"
 
     # Linode
-    "linode-cli|linode-cli|Linode|CLI Tool|yes"
-    "longview|longview|Linode|Monitoring Agent|yes"
+    "linode-cli|linode-cli|linode|linode_cli|yes"
+    "longview|longview|linode|longview|yes"
 
     # Oracle Cloud
-    "oracle-cloud-agent|oracle-cloud-agent|Oracle Cloud|Cloud Agent|optional"
+    "oracle-cloud-agent|oracle-cloud-agent|oracle|oracle_agent|optional"
 
     # Generic/Common monitoring tools
-    "zabbix_agentd|zabbix-agent|Generic|Zabbix Agent|optional"
-    "node_exporter|prometheus-node-exporter|Generic|Prometheus Exporter|optional"
-    "telegraf|telegraf|Generic|Telegraf Agent|optional"
-    "collectd|collectd|Generic|Collectd|optional"
-    "netdata|netdata|Generic|Netdata Monitoring|optional"
-    "datadog-agent|datadog-agent|Generic|Datadog Agent|optional"
-    "newrelic-infra|newrelic-infra|Generic|New Relic Agent|optional"
+    "zabbix_agentd|zabbix-agent|generic|zabbix|optional"
+    "node_exporter|prometheus-node-exporter|generic|node_exporter|optional"
+    "telegraf|telegraf|generic|telegraf|optional"
+    "collectd|collectd|generic|collectd|optional"
+    "netdata|netdata|generic|netdata|optional"
+    "datadog-agent|datadog-agent|generic|datadog|optional"
+    "newrelic-infra|newrelic-infra|generic|newrelic|optional"
 )
 
 # Suspicious process name patterns (regex)
@@ -457,27 +471,33 @@ _detect_cloud_provider() {
     echo "$provider"
 }
 
-# Get provider display name
+# Get provider display name.
+#
+# The names used to be literals here, so a zh_CN gloss like "阿里云 (Alibaba
+# Cloud)" was printed into the cloud.provider_detected title even under
+# --lang=en_US. They live in i18n now; the provider ids below stay the
+# machine-side identity and never move.
 _get_provider_name() {
     local provider="$1"
     case "$provider" in
-        alibaba)      echo "阿里云 (Alibaba Cloud)" ;;
-        tencent)      echo "腾讯云 (Tencent Cloud)" ;;
-        huawei)       echo "华为云 (Huawei Cloud)" ;;
-        aws)          echo "AWS (Amazon Web Services)" ;;
-        aws-or-compatible) echo "EC2-compatible IMDS (provider unconfirmed)" ;;
-        azure)        echo "Microsoft Azure" ;;
-        gcp)          echo "Google Cloud Platform" ;;
-        digitalocean) echo "DigitalOcean" ;;
-        vultr)        echo "Vultr" ;;
-        linode)       echo "Linode (Akamai)" ;;
-        oracle)       echo "Oracle Cloud" ;;
-        hetzner)      echo "Hetzner" ;;
-        ovh)          echo "OVH" ;;
-        scaleway)     echo "Scaleway" ;;
+        alibaba|tencent|huawei|aws|azure|gcp|digitalocean|vultr|linode|oracle|hetzner|ovh|scaleway)
+            i18n "cloud.provider_name_${provider}" ;;
+        aws-or-compatible)
+            # Not a key on its own line only because of the dash.
+            i18n 'cloud.provider_name_aws_compatible' ;;
         unknown)      echo "$(i18n 'common.unknown' 2>/dev/null || echo 'Unknown')" ;;
         *)            echo "$provider" ;;
     esac
+}
+
+# Render an agent's vendor column (a stable key) for display.
+_cloud_vendor_name() {
+    i18n "cloud.vendor_${1}"
+}
+
+# Render an agent's description column (a stable key) for display.
+_cloud_agent_desc() {
+    i18n "cloud.agent_${1}"
 }
 
 # Check if a process is in the safe list
@@ -493,15 +513,19 @@ _is_safe_process() {
 _find_known_agents() {
     local found=()
 
+    # The vendor/desc keys travel through this pipe unresolved; callers render
+    # them at the point of display. Resolving here would bake the active
+    # language into the data, so anything downstream that wants to match on
+    # the vendor would be matching on a translated string.
     for entry in "${KNOWN_CLOUD_AGENTS[@]}"; do
-        IFS='|' read -r proc_name service_name vendor desc can_disable <<< "$entry"
+        IFS='|' read -r proc_name service_name vendor_key desc_key can_disable <<< "$entry"
 
         # Check if process is running
         if pgrep -x "$proc_name" &>/dev/null; then
-            found+=("$proc_name|$service_name|$vendor|$desc|$can_disable|running")
+            found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|running")
         # Check if service exists
         elif systemctl is-active "$service_name" &>/dev/null 2>&1; then
-            found+=("$proc_name|$service_name|$vendor|$desc|$can_disable|service")
+            found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|service")
         fi
     done
 
@@ -883,35 +907,30 @@ cloud_audit() {
     local agent_count=$(count_lines "$known_agents" '|')
 
     if [[ -n "$known_agents" && "$agent_count" -gt 0 ]]; then
-        # Build agent list for display
+        # Build agent list for display. The vendor key renders here, at the
+        # edge, so the title follows --lang.
         local agent_list=""
-        local agent_details=""
-        while IFS='|' read -r proc_name service_name vendor desc can_disable status; do
+        while IFS='|' read -r proc_name service_name vendor_key desc_key can_disable status; do
             [[ -z "$proc_name" ]] && continue
-            agent_list+="$proc_name ($vendor), "
-            agent_details+="$proc_name: $desc [$vendor]\\n"
+            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")), "
         done <<< "$known_agents"
         agent_list="${agent_list%, }"
 
+        # Vendor monitoring agents are inventory, not an exposure, so this is
+        # low on every host.
+        #
+        # A provider-match block used to sit here, computing whether every
+        # agent belonged to the detected provider and then setting the
+        # severity to "low" either way — inert since the day the base severity
+        # became low, and documented as "kept for when a foreign-vendor agent
+        # warrants escalation". It is gone rather than ported: its only
+        # remaining effect was to read the vendor column, it compared against
+        # per-provider display names (six of the eleven vendors, and Chinese
+        # literals for three of them), and no mutation of it could ever fail a
+        # test. If foreign-vendor escalation is wanted later, the vendor key
+        # is right there in the loop above and it should arrive with a test
+        # that can observe the severity actually moving.
         local severity="low"
-        # Vendor monitoring agents are inventory, not an exposure — base
-        # severity is low. (The provider-match block below is now a no-op
-        # but kept for when a foreign-vendor agent warrants escalation.)
-        if [[ "$provider" != "unknown" ]]; then
-            local all_from_provider=true
-            while IFS='|' read -r proc_name service_name vendor desc can_disable status; do
-                [[ -z "$proc_name" ]] && continue
-                case "$provider" in
-                    alibaba) [[ "$vendor" != "阿里云" ]] && all_from_provider=false ;;
-                    tencent) [[ "$vendor" != "腾讯云" ]] && all_from_provider=false ;;
-                    huawei)  [[ "$vendor" != "华为云" ]] && all_from_provider=false ;;
-                    aws)     [[ "$vendor" != "AWS" ]] && all_from_provider=false ;;
-                    azure)   [[ "$vendor" != "Azure" ]] && all_from_provider=false ;;
-                    gcp)     [[ "$vendor" != "GCP" ]] && all_from_provider=false ;;
-                esac
-            done <<< "$known_agents"
-            [[ "$all_from_provider" == "true" ]] && severity="low"
-        fi
 
         check_json=$(create_check_json \
             "cloud.agents_found" \
@@ -983,11 +1002,11 @@ cloud_fix() {
             # Feed the loop from the data, not stdin: a bare `while read` here
             # reads the process's stdin (in guide mode, the remaining plan), so
             # it must be redirected from $known_agents explicitly.
-            while IFS='|' read -r proc_name service_name vendor desc can_disable status; do
+            while IFS='|' read -r proc_name service_name vendor_key desc_key can_disable status; do
                 [[ -z "$proc_name" ]] && continue
                 echo "  • $proc_name"
-                echo "    $(i18n 'common.info' 2>/dev/null || echo 'Info'): $desc"
-                echo "    $(i18n 'cloud.vendor' 2>/dev/null || echo 'Vendor'): $vendor"
+                echo "    $(i18n 'common.info' 2>/dev/null || echo 'Info'): $(_cloud_agent_desc "$desc_key")"
+                echo "    $(i18n 'cloud.vendor' 2>/dev/null || echo 'Vendor'): $(_cloud_vendor_name "$vendor_key")"
                 echo "    $(i18n 'cloud.service' 2>/dev/null || echo 'Service'): $service_name"
                 if [[ "$can_disable" == "yes" ]]; then
                     echo "    $(i18n 'cloud.can_disable' 2>/dev/null || echo 'Can disable'): systemctl disable --now $service_name"
