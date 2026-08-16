@@ -1,0 +1,12 @@
+# Mutation cases for tests/test_query_failure_honesty.bats against
+# core/common.sh.
+# mutate-suite: core/common.sh tests/test_query_failure_honesty.bats
+#
+# backup_file: a backup that could not be taken must be a loud failure.
+
+# Un-check the cp: the pre-2026-08 shape, where a failed copy fell through
+# to the success log + path echo and the fix proceeded with no way back.
+# (One line: run cp fire-and-forget, then make the failure branch dead.)
+run_case "backupfile/cp-unchecked" 1 \
+    "        if ! cp -p \"\$file\" \"\$backup_path\"; then" \
+    "        cp -p \"\$file\" \"\$backup_path\" 2>/dev/null || true; if false; then"

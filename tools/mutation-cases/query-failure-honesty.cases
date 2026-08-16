@@ -1,0 +1,15 @@
+# Mutation cases for tests/test_query_failure_honesty.bats against
+# modules/update.sh.
+# mutate-suite: modules/update.sh tests/test_query_failure_honesty.bats
+#
+# "A failed query is not a clean result" — the update half. The suite also
+# covers logging/kernel/networking; those sources get their own cases files
+# (per-suite, per-source rule).
+
+# Collapse the error branch: a failed pkg_update_count flows into
+# update_count="" -> the (( == 0 )) arithmetic… must NOT reach no_updates.
+# Mutating the guard to `if false` skips the check_failed emission entirely,
+# which the suite's first test asserts is present on query failure.
+run_case "update/error-branch-removed" 1 \
+    "    if ! update_count=\$(pkg_update_count) || \\" \
+    "    if false || \\"

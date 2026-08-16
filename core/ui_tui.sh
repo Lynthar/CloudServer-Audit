@@ -32,19 +32,6 @@ tui_available() {
 # TUI Dialogs
 # ==============================================================================
 
-# Message box
-tui_msgbox() {
-    local title="$1"
-    local message="$2"
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --msgbox "$message" $TUI_HEIGHT $TUI_WIDTH
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --msgbox "$message" $TUI_HEIGHT $TUI_WIDTH
-        clear 2>/dev/null >/dev/tty || true
-    fi
-}
-
 # Yes/No dialog
 # Returns 0 for yes, 1 for no
 tui_yesno() {
@@ -71,35 +58,6 @@ tui_yesno() {
     fi
 }
 
-# Input box
-tui_inputbox() {
-    local title="$1"
-    local message="$2"
-    local default="${3:-}"
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --inputbox "$message" $TUI_HEIGHT $TUI_WIDTH "$default" 3>&1 1>&2 2>&3
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --inputbox "$message" $TUI_HEIGHT $TUI_WIDTH "$default" 3>&1 1>&2 2>&3
-        clear 2>/dev/null >/dev/tty || true
-    fi
-}
-
-# Menu selection (single choice)
-# Args: title message item1 tag1 item2 tag2 ...
-tui_menu() {
-    local title="$1"
-    local message="$2"
-    shift 2
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --menu "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --menu "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-        clear 2>/dev/null >/dev/tty || true
-    fi
-}
-
 # Checklist (multiple choice)
 # Args: title message item1 tag1 status1 item2 tag2 status2 ...
 # status should be "on" or "off"
@@ -112,20 +70,6 @@ tui_checklist() {
         whiptail --title "$title" --checklist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --title "$title" --checklist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-        clear 2>/dev/null >/dev/tty || true
-    fi
-}
-
-# Radio list (single choice with radio buttons)
-tui_radiolist() {
-    local title="$1"
-    local message="$2"
-    shift 2
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --radiolist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --radiolist "$message" $TUI_HEIGHT $TUI_WIDTH $TUI_MENU_HEIGHT "$@" 3>&1 1>&2 2>&3
         clear 2>/dev/null >/dev/tty || true
     fi
 }
@@ -143,87 +87,33 @@ tui_textbox() {
     fi
 }
 
-# Progress gauge
-# Usage: tui_gauge "title" percentage
-tui_gauge() {
-    local title="$1"
-    local percent="$2"
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        echo "$percent" | whiptail --title "$title" --gauge "Processing..." 6 $TUI_WIDTH "$percent"
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        echo "$percent" | dialog --title "$title" --gauge "Processing..." 6 $TUI_WIDTH "$percent"
-    fi
-}
-
-# Progress gauge with piped input
-# Usage: command | tui_gauge_pipe "title"
-tui_gauge_pipe() {
-    local title="$1"
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --gauge "Processing..." 6 $TUI_WIDTH 0
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --gauge "Processing..." 6 $TUI_WIDTH 0
-        clear 2>/dev/null >/dev/tty || true
-    fi
-}
-
-# Info box (auto-dismiss)
-tui_infobox() {
-    local title="$1"
-    local message="$2"
-
-    if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --infobox "$message" 8 $TUI_WIDTH
-    elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --infobox "$message" 8 $TUI_WIDTH
-    fi
-}
-
 # ==============================================================================
 # High-level TUI Functions for vpssec
 # ==============================================================================
 
-# Welcome screen
-tui_show_welcome() {
-    local welcome_text="$(i18n 'guide.welcome')
-
-$(i18n 'cli.usage')
-
-Version: ${VPSSEC_VERSION}
-OS: $(detect_os) $(detect_os_version)"
-
-    tui_msgbox "vpssec" "$welcome_text"
-}
-
-# Module selection screen
-tui_select_modules() {
-    local -n modules_ref=$1
-    local items=()
-
-    for module in "${!modules_ref[@]}"; do
-        local desc="${modules_ref[$module]}"
-        items+=("$module" "$desc" "on")
-    done
-
-    local selected
-    selected=$(tui_checklist "$(i18n 'guide.select_modules')" "$(i18n 'guide.select_modules')" "${items[@]}")
-
-    # Parse selected items (whiptail returns quoted space-separated list)
-    echo "$selected" | tr -d '"'
-}
-
-# Fix selection screen
+# Fix selection screen.
+#
+# The checklist TAG must be the FIX id, not the check id: whatever this
+# function emits is handed verbatim to generate_plan, which looks checks up
+# by `.fix_id`. Tagging with `.id` made every TUI selection resolve to zero
+# plan entries — the user ticked boxes, confirmed, and nothing ran (while
+# the summary said "complete"). The check id is display-only here.
+# Deduplicate tags: two failed checks can share one fix_id, and whiptail
+# rejects duplicate checklist tags.
 tui_select_fixes() {
     local -n fixes_ref=$1
     local items=()
+    local -A seen=()
 
     for i in "${!fixes_ref[@]}"; do
         local fix="${fixes_ref[$i]}"
-        local id=$(echo "$fix" | jq -r '.id')
+        local fix_id=$(echo "$fix" | jq -r '.fix_id')
         local title=$(echo "$fix" | jq -r '.title')
         local severity=$(echo "$fix" | jq -r '.severity')
+
+        [[ -z "$fix_id" || "$fix_id" == "null" ]] && continue
+        [[ -n "${seen[$fix_id]:-}" ]] && continue
+        seen[$fix_id]=1
 
         local prefix=""
         case "$severity" in
@@ -232,7 +122,7 @@ tui_select_fixes() {
             low)    prefix="[-]" ;;
         esac
 
-        items+=("$id" "$prefix $title" "on")
+        items+=("$fix_id" "$prefix $title" "on")
     done
 
     local selected
@@ -255,32 +145,3 @@ tui_confirm_execute() {
     tui_yesno "$(i18n 'common.confirm')" "$(i18n 'guide.confirm_execute')" "no"
 }
 
-# Show results summary
-tui_show_results() {
-    local score="$1"
-    local high="$2"
-    local medium="$3"
-    local low="$4"
-    local passed="$5"
-
-    local message="$(i18n 'report.score'): ${score}/100
-
-$(i18n 'report.high_issues'): $high
-$(i18n 'report.medium_issues'): $medium
-$(i18n 'report.low_issues'): $low
-$(i18n 'report.passed_checks'): $passed"
-
-    tui_msgbox "$(i18n 'report.summary')" "$message"
-}
-
-# Error dialog
-tui_show_error() {
-    local message="$1"
-    tui_msgbox "$(i18n 'common.error')" "$message"
-}
-
-# Warning dialog with confirmation
-tui_show_warning() {
-    local message="$1"
-    tui_yesno "$(i18n 'common.warning')" "$message" "no"
-}

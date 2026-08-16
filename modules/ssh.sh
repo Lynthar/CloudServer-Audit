@@ -234,6 +234,31 @@ _ssh_user_has_key() {
     [[ "$total" -gt 0 ]]
 }
 
+# True unless there is POSITIVE evidence the account cannot complete an SSH
+# login: a nologin/false shell, or a shadow account-expiry date in the past.
+# Anything we cannot read counts as "can log in" — the safety gates below
+# use this to pick a way-back-in account, and wrongly excluding the only
+# candidate would block a legitimate hardening, while wrongly including one
+# is exactly today's behavior. (A locked password does NOT block key auth,
+# so passwd -S 'L' is deliberately not evidence here.)
+_ssh_account_can_login() {
+    local user="$1"
+    local shell
+    shell=$(getent passwd "$user" 2>/dev/null | cut -d: -f7)
+    case "$shell" in
+        */nologin|*/false) return 1 ;;
+    esac
+
+    # Shadow field 8: account-expiry in days since epoch; empty = never.
+    local expire
+    expire=$(getent shadow "$user" 2>/dev/null | cut -d: -f8)
+    if [[ "$expire" =~ ^[0-9]+$ ]]; then
+        local today=$(( $(date +%s) / 86400 ))
+        (( expire <= today )) && return 1
+    fi
+    return 0
+}
+
 # True when $user can log in via a public key under the CURRENT effective
 # config. For root this additionally requires PermitRootLogin to permit key
 # auth: "no" blocks root entirely (so root's key is useless and must NOT count
@@ -1291,12 +1316,43 @@ _ssh_rescue_allow_firewall() {
 
     case "$backend" in
         ufw)
-            if [[ -n "$ip" ]]; then
+            # No detectable source IP (serial console, nested su, utmp
+            # without a host)? ASK. The old behavior silently fell back to a
+            # world-open `ufw allow <port>/tcp` — a root+password sshd
+            # reachable from anywhere for as long as the operator sits on
+            # the confirmation prompt. The operator knows where they are
+            # connecting from; we do not. Empty answer / unreadable tty
+            # adds NO rule (fail closed) — the mandatory "test the rescue
+            # login" confirmation right after this is what catches an
+            # unreachable rescue before anything is changed.
+            if [[ -z "$ip" ]]; then
+                print_warn "$(i18n 'ssh.rescue_fw_no_source')"
+                echo -n "$(i18n 'ssh.rescue_fw_ask_cidr' "port=$SSH_RESCUE_PORT") > "
+                local answer=""
+                read -r answer 2>/dev/null </dev/tty || answer=""
+                if [[ "$answer" == "any" ]]; then
+                    ip=""  # explicit world-open, handled below
+                elif [[ -n "$answer" ]] && _ssh_valid_cidr "$answer"; then
+                    ip="$answer"
+                elif [[ -n "$answer" ]]; then
+                    print_warn "$(i18n 'ssh.rescue_fw_bad_cidr' "value=$answer")"
+                    print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+                    return 0
+                else
+                    print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+                    return 0
+                fi
+                # world-open only via the explicit "any" answer above
+                if [[ -z "$ip" ]]; then
+                    if ufw allow "$SSH_RESCUE_PORT/tcp" comment "vpssec rescue" >/dev/null 2>&1; then
+                        SSH_RESCUE_FW_RULE="ufw::${SSH_RESCUE_PORT}"
+                    fi
+                fi
+            fi
+            if [[ -n "$ip" && -z "$SSH_RESCUE_FW_RULE" ]]; then
                 if ufw allow from "$ip" to any port "$SSH_RESCUE_PORT" proto tcp comment "vpssec rescue" >/dev/null 2>&1; then
                     SSH_RESCUE_FW_RULE="ufw:${ip}:${SSH_RESCUE_PORT}"
                 fi
-            elif ufw allow "$SSH_RESCUE_PORT/tcp" comment "vpssec rescue" >/dev/null 2>&1; then
-                SSH_RESCUE_FW_RULE="ufw::${SSH_RESCUE_PORT}"
             fi
             if [[ -n "$SSH_RESCUE_FW_RULE" ]]; then
                 print_ok "$(i18n 'ssh.rescue_fw_allowed' "port=$SSH_RESCUE_PORT")"
@@ -1314,11 +1370,35 @@ _ssh_rescue_allow_firewall() {
     esac
 }
 
+# Accept "addr" or "addr/prefix" as a ufw source. Both address families;
+# prefix bounds checked per family (v4 ≤ 32, v6 ≤ 128).
+_ssh_valid_cidr() {
+    local value="$1" addr prefix
+    addr="${value%%/*}"
+    validate_ip "$addr" || return 1
+    [[ "$value" == */* ]] || return 0
+    prefix="${value#*/}"
+    [[ "$prefix" =~ ^[0-9]{1,3}$ ]] || return 1
+    if [[ "$addr" == *:* ]]; then
+        (( prefix <= 128 ))
+    else
+        (( prefix <= 32 ))
+    fi
+}
+
 # Remove exactly the firewall rule added by _ssh_rescue_allow_firewall.
 _ssh_rescue_remove_firewall() {
     [[ -n "${SSH_RESCUE_FW_RULE:-}" ]] || return 0
-    local kind ip port
-    IFS=':' read -r kind ip port <<<"$SSH_RESCUE_FW_RULE"
+    local kind rest ip port
+    # First field is the kind, LAST is the port, everything between is the
+    # source address. A naive IFS=':' three-way read truncated any IPv6
+    # source (its own colons ate the fields), so teardown deleted a rule
+    # that did not exist and left the real one behind.
+    kind="${SSH_RESCUE_FW_RULE%%:*}"
+    rest="${SSH_RESCUE_FW_RULE#*:}"
+    port="${rest##*:}"
+    ip="${rest%:*}"
+    [[ "$ip" == "$port" ]] && ip=""   # "ufw::2222" leaves rest=":2222"
     case "$kind" in
         ufw)
             if [[ -n "$ip" ]]; then
@@ -1359,7 +1439,10 @@ _ssh_open_rescue_port() {
     # block the rescue login. Auth is permissive on purpose: the rescue exists
     # precisely so the operator can get back in if the change breaks their
     # normal auth. It is temporary, firewall-scoped to their IP, and torn down
-    # immediately after.
+    # immediately after. MaxAuthTries/LoginGraceTime bound what a scanner can
+    # do with the permissive auth during that window; they do not get in the
+    # operator's way (3 tries and 30s are plenty for a human with the right
+    # credential).
     cat > "$SSH_RESCUE_CONFIG" <<EOF
 Port $SSH_RESCUE_PORT
 PidFile $SSH_RESCUE_PIDFILE
@@ -1367,6 +1450,9 @@ PermitRootLogin yes
 PasswordAuthentication yes
 PubkeyAuthentication yes
 UsePAM yes
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
 EOF
 
     # Validate the rescue config in isolation before launching.
@@ -1387,6 +1473,16 @@ EOF
     for ((_i=0; _i<30; _i++)); do
         if _ssh_rescue_is_up; then
             print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
+            # From this moment a root sshd with permissive auth is listening.
+            # If vpssec dies before the paired close — SIGTERM, the operator's
+            # own SSH session dropping (HUP), a crash — that daemon and its
+            # firewall rule survived indefinitely: sshd's master re-execs on
+            # HUP rather than exiting, so even session loss did not clean it.
+            # The trap makes teardown unconditional. INT/TERM/HUP re-exit so
+            # the signal still terminates us; the EXIT trap covers normal
+            # paths and is cleared by _ssh_close_rescue_port itself.
+            trap '_ssh_close_rescue_port' EXIT
+            trap '_ssh_close_rescue_port; exit 130' INT TERM HUP
             _ssh_rescue_allow_firewall
             return 0
         fi
@@ -1415,6 +1511,11 @@ _ssh_close_rescue_port() {
     [[ -n "${SSH_RESCUE_PIDFILE:-}" && -f "$SSH_RESCUE_PIDFILE" ]] && rm -f "$SSH_RESCUE_PIDFILE"
     SSH_RESCUE_CONFIG=""
     SSH_RESCUE_PIDFILE=""
+
+    # Disarm the safety-net traps set when the rescue came up. Idempotent:
+    # clearing unset traps is a no-op, and when the EXIT trap itself invoked
+    # us, clearing here prevents a second run.
+    trap - EXIT INT TERM HUP
 }
 
 # Track the backup path of the drop-in that was overwritten by the most
@@ -1584,6 +1685,13 @@ _ssh_reload_safe() {
             return 0
         else
             print_error "$(i18n 'ssh.reload_failed')"
+            # Roll back here too. The config passed sshd -t, so leaving the
+            # drop-in would not break the next boot — but it WOULD apply the
+            # change unverified at whatever later moment sshd restarts, when
+            # no rescue port is open and nobody is watching. Of the three
+            # failure paths in this function this was the only one that kept
+            # the file.
+            _ssh_rollback_dropin
             return 1
         fi
     else
@@ -1609,8 +1717,11 @@ _ssh_fix_disable_password_auth() {
     local admin_users=$(_ssh_get_admin_users)
     local has_key_user=""
 
+    # A key alone is not a way back in if the account itself cannot log in:
+    # a nologin-shell or expired "admin" satisfied this gate and the change
+    # then locked out everyone with a working shell.
     for user in $admin_users; do
-        if _ssh_user_has_key "$user"; then
+        if _ssh_user_has_key "$user" && _ssh_account_can_login "$user"; then
             has_key_user="$user"
             break
         fi
@@ -1688,7 +1799,7 @@ _ssh_fix_disable_root_login() {
     if ! _ssh_password_auth_enabled; then
         local root_key_admin=""
         for user in $admin_users; do
-            if _ssh_user_has_key "$user"; then
+            if _ssh_user_has_key "$user" && _ssh_account_can_login "$user"; then
                 root_key_admin="$user"
                 break
             fi

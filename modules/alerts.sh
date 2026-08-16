@@ -211,7 +211,7 @@ _alerts_fix_setup_config() {
         print_msg "$(i18n 'alerts.configure_prompt')"
         print_msg ""
 
-        read -rp "Webhook URL (Slack/Discord/Telegram, leave empty to skip): " webhook_url </dev/tty
+        read -rp "Webhook URL (Slack-compatible; Discord: append /slack. Leave empty to skip): " webhook_url </dev/tty
         read -rp "Email address (leave empty to skip): " email </dev/tty
     fi
 
@@ -324,13 +324,14 @@ vpssec_alert_load_config() {
     fi
 }
 
-# Send webhook notification
+# Send webhook notification. Returns non-zero when delivery failed, so the
+# caller can decide whether to arm the throttle.
 vpssec_alert_webhook() {
     local title="$1"
     local message="$2"
     local severity="${3:-info}"  # info, warning, critical
 
-    [[ -z "$WEBHOOK_URL" ]] && return 0
+    [[ -z "$WEBHOOK_URL" ]] && return 1
 
     local color
     case "$severity" in
@@ -339,35 +340,38 @@ vpssec_alert_webhook() {
         *)        color="#00FF00" ;;
     esac
 
-    local hostname=$(hostname)
-    local timestamp=$(date -Iseconds)
+    # Slack-compatible payload, built by jq so quotes/newlines/backslashes in
+    # the message cannot break the JSON. The title routinely embeds a
+    # USERNAME (the PAM hooks pass whatever the login attempt claimed), so a
+    # hand-interpolated heredoc handed payload injection to anyone who types
+    # a crafted name at an SSH prompt. jq is guaranteed present: vpssec
+    # itself requires it and this library already uses it to load config.
+    local payload
+    payload=$(jq -n \
+        --arg color "$color" \
+        --arg title "$title" \
+        --arg text  "$message" \
+        --arg host  "$(hostname)" \
+        --arg time  "$(date -Iseconds)" \
+        '{attachments: [{color: $color, title: $title, text: $text,
+          fields: [{title: "Host", value: $host, short: true},
+                   {title: "Time", value: $time, short: true}]}]}') || return 1
 
-    # Slack-compatible payload
-    local payload=$(cat <<PAYLOAD
-{
-  "attachments": [{
-    "color": "$color",
-    "title": "$title",
-    "text": "$message",
-    "fields": [
-      {"title": "Host", "value": "$hostname", "short": true},
-      {"title": "Time", "value": "$timestamp", "short": true}
-    ]
-  }]
+    # --fail: a 4xx/5xx from the webhook endpoint is a delivery failure, not
+    # a success with an error page; timeouts keep a dead endpoint from
+    # hanging the monitoring cron.
+    curl --fail -sS -X POST -H "Content-Type: application/json" \
+        --connect-timeout 5 --max-time 15 \
+        -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1
 }
-PAYLOAD
-)
 
-    curl -s -X POST -H "Content-Type: application/json" \
-        -d "$payload" "$WEBHOOK_URL" &>/dev/null
-}
-
-# Send email notification
+# Send email notification. Returns non-zero when no channel is configured
+# or the mailer reported failure — see vpssec_alert for why that matters.
 vpssec_alert_email() {
     local subject="$1"
     local body="$2"
 
-    [[ -z "$ALERT_EMAIL" ]] && return 0
+    [[ -z "$ALERT_EMAIL" ]] && return 1
 
     local hostname=$(hostname)
 
@@ -381,6 +385,8 @@ vpssec_alert_email() {
         printf 'Subject: [vpssec] %s\n\n%s\n\nHost: %s\nTime: %s\n' \
             "$subject" "$body" "$hostname" "$(date)" | \
             msmtp "$ALERT_EMAIL"
+    else
+        return 1
     fi
 }
 
@@ -413,12 +419,19 @@ vpssec_alert() {
         fi
     fi
 
-    # Send alerts
-    vpssec_alert_webhook "$title" "$message" "$severity"
-    vpssec_alert_email "$title" "$message"
+    # Send, then arm the throttle ONLY if something was actually delivered.
+    # Stamping unconditionally meant one failed delivery (endpoint down,
+    # curl timeout) silenced every retry of that same alert for the whole
+    # throttle window — the alert that never arrived suppressed the ones
+    # that could have.
+    local delivered=1
+    vpssec_alert_webhook "$title" "$message" "$severity" && delivered=0
+    vpssec_alert_email "$title" "$message" && delivered=0
 
-    # Update throttle file
-    date +%s > "$throttle_file"
+    if [[ "$delivered" -eq 0 ]]; then
+        date +%s > "$throttle_file"
+    fi
+    return "$delivered"
 }
 
 # Initialize
@@ -439,18 +452,19 @@ RHOST="${PAM_RHOST:-unknown}"
 SERVICE="${PAM_SERVICE:-ssh}"
 TYPE="${PAM_TYPE:-unknown}"
 
+# Successful logins only. This hook is installed on the PAM *session*
+# stack (see README), so open_session is the only event it will ever see.
+# A previous version also carried an `auth` branch claiming to detect
+# FAILED logins by testing PAM_AUTHTOK — doubly wrong: the session hook
+# never receives auth events, and pam_exec does not expose the authtok
+# without expose_authtok anyway, so the branch was unreachable theater.
+# For failed-login alerting, watch the journal (sshd logs every failure)
+# or use fail2ban, which this tool can set up.
 case "$TYPE" in
     open_session)
         vpssec_alert "SSH Login: $USER" \
             "User '$USER' logged in from $RHOST" \
             "info"
-        ;;
-    auth)
-        if [[ "${PAM_AUTHTOK:-}" == "" ]]; then
-            vpssec_alert "SSH Login Failed: $USER" \
-                "Failed login attempt for '$USER' from $RHOST" \
-                "warning"
-        fi
         ;;
 esac
 EOF
@@ -464,7 +478,13 @@ EOF
 source /var/lib/vpssec/templates/alerts/alert-lib.sh
 
 UFW_RULES_FILE="/etc/ufw/user.rules"
-HASH_FILE="/tmp/vpssec-ufw-hash"
+# State lives in a root-owned 0700 directory, NOT /tmp: this script runs as
+# root from cron, and a fixed /tmp name let any local user pre-plant a
+# symlink there — root's `echo >` then truncated whatever file the link
+# pointed at.
+STATE_DIR="/var/lib/vpssec/state/alerts"
+HASH_FILE="${STATE_DIR}/ufw-rules.hash"
+mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
 
 current_hash=$(md5sum "$UFW_RULES_FILE" 2>/dev/null | cut -d' ' -f1)
 stored_hash=$(cat "$HASH_FILE" 2>/dev/null)
@@ -529,18 +549,28 @@ Edit `/var/lib/vpssec/state/alerts.json`:
 
 ### 2. Webhook URLs
 
+The payload is **Slack-format JSON**. It works with:
+
 - **Slack**: https://api.slack.com/messaging/webhooks
-- **Discord**: Server Settings → Integrations → Webhooks
-- **Telegram**: Use BotFather to create bot, then use:
-  `https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>&text=`
+- **Discord**: create a webhook (Server Settings → Integrations → Webhooks)
+  and append `/slack` to its URL — Discord translates Slack payloads on
+  that endpoint.
+- Anything else Slack-compatible (Mattermost, Rocket.Chat, ...).
+
+Telegram is **not** supported by this payload: its Bot API expects
+`chat_id`/`text` fields, not Slack attachments. Use a bridge or adapt
+`vpssec_alert_webhook` if you need Telegram.
 
 ### 3. Install Monitors
 
-**SSH Login Alerts (via PAM):**
+**SSH Login Alerts (via PAM — successful logins only):**
 ```bash
 # Add to /etc/pam.d/sshd:
 session optional pam_exec.so /usr/local/bin/ssh-login-monitor.sh
 ```
+
+For **failed** login alerting, use fail2ban (vpssec can set it up) or watch
+the journal — PAM session hooks only fire on successful logins.
 
 **Service Monitor (via cron):**
 ```bash
@@ -589,51 +619,6 @@ EOF
     return 0
 }
 
-# ==============================================================================
-# Alert Utility Functions (for use by other modules)
-# ==============================================================================
-
-# Send alert from vpssec operations
-vpssec_send_alert() {
-    local title="$1"
-    local message="$2"
-    local severity="${3:-info}"
-
-    local webhook=$(_alerts_get_webhook_url)
-    local email=$(_alerts_get_email)
-
-    # Send webhook
-    if [[ -n "$webhook" ]] && _alerts_check_curl; then
-        local hostname=$(hostname)
-        local color
-        case "$severity" in
-            critical) color="#FF0000" ;;
-            warning)  color="#FFA500" ;;
-            *)        color="#00FF00" ;;
-        esac
-
-        local payload=$(cat <<EOF
-{
-  "attachments": [{
-    "color": "$color",
-    "title": "$title",
-    "text": "$message",
-    "fields": [
-      {"title": "Host", "value": "$hostname", "short": true},
-      {"title": "Time", "value": "$(date -Iseconds)", "short": true}
-    ]
-  }]
-}
-EOF
-)
-        curl -s -X POST -H "Content-Type: application/json" \
-            -d "$payload" "$webhook" &>/dev/null &
-    fi
-
-    # Send email (printf so backslash sequences inside $message aren't
-    # re-interpreted, matching the template library's behaviour).
-    if [[ -n "$email" ]] && _alerts_check_mail_configured; then
-        printf '%s\n\nHost: %s\nTime: %s\n' "$message" "$(hostname)" "$(date)" | \
-            mail -s "[vpssec] $title" "$email" 2>/dev/null &
-    fi
-}
+# (vpssec_send_alert used to live here: a zero-caller near-duplicate of the
+# generated alert-lib.sh template. Deleted per the unwired-API rule — the
+# template library is the single implementation.)

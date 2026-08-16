@@ -446,6 +446,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # non-observation — which is precisely how the two above came to hand a
     # scored pass to any host without lsof.
     ["update.lock_state_unknown"]="info"
+    # Query failure is a non-observation: it must move no score in either
+    # direction (same reasoning as lock_state_unknown above).
+    ["update.check_failed"]="info"
     ["update.no_updates"]="required"
     ["update.updates_available"]="required"
     ["update.unattended_enabled"]="recommended"
@@ -530,6 +533,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["logging.auditd_inactive"]="info"
     ["logging.auditd_not_installed"]="info"
     ["logging.ssh_logs_ok"]="info"
+    # journalctl itself failed — a non-observation, not a finding.
+    ["logging.journal_unreadable"]="info"
     ["logging.ssh_many_failures"]="info"
     ["logging.ssh_some_failures"]="info"
     ["logging.sudo_logging_ok"]="recommended"
@@ -581,6 +586,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.network_params_high"]="recommended"
     ["kernel.network_params_medium"]="recommended"
     ["kernel.network_params_ok"]="recommended"
+    # Zero readable sysctls — a non-observation, not a finding.
+    ["kernel.network_params_unreadable"]="info"
     ["kernel.kernel_params_ok"]="recommended"
     ["kernel.kernel_params_weak"]="recommended"
     ["kernel.core_dump_ok"]="recommended"
@@ -738,6 +745,11 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # produces malformed check JSON — a vpssec bug, not a host posture gap.
     # info so a tool diagnostic never docks the user's score.
     ["_internal.malformed_check"]="info"
+    # A module that failed to load or crashed mid-audit. Visible in the
+    # report body (status=failed) but scored in neither direction — the
+    # honest signal is meta.complete=false and the exit code, not a lower
+    # number on an unrelated scale.
+    ["_internal.module_failed"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"
     ["preflight.network_ok"]="info"

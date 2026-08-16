@@ -221,43 +221,62 @@ pkg_manager_locked() {
     esac
 }
 
-# Count of pending (all) updates. Echoes an integer (0 on any error).
+# Count of pending (all) updates. Echoes an integer on success; returns
+# NON-ZERO AND PRINTS NOTHING when the query itself failed (broken sources,
+# cold cache, missing tool). The old contract — "0 on any error" — used the
+# same digit for "up to date" and "could not ask", and the caller printed a
+# green "no updates" over a query that never ran. Callers must invoke this
+# in a tested context, like every other primitive here.
 pkg_update_count() {
     local n out
     case "$VPSSEC_PKG_MGR" in
         apt)
-            n=$(apt-get -s upgrade 2>/dev/null | grep -c '^Inst ') || true
+            # Capture first: the query's own failure (exit 100 on broken
+            # sources/lock) must be distinguishable from "zero Inst lines".
+            out=$(apt-get -s upgrade 2>/dev/null) || return 1
+            n=$(grep -c '^Inst ' <<<"$out") || n=0
             ;;
         dnf)
             # check-update rc: 100 = updates available (list printed), 0 = none,
-            # 1 = error. Capture in an `if` so pipefail/set -e don't abort on 100.
+            # anything else = error/cold cache. Capture in an `if` so
+            # pipefail/set -e don't abort on 100.
             # Count only real package lines: they start in column 0 (long-NEVRA
             # continuation lines are indented) and stop at the trailing
             # "Obsoleting Packages" section. NF>=3 = "name.arch  ver  repo".
             # -C (cacheonly): the audit is read-only and MUST NOT refresh the
             # repo metadata (network I/O, can stall on dead mirrors, and would
             # defeat pkg_index_age_days by touching the very cache it ages).
-            # Counts come from the existing cache; a cold cache yields rc=1 → 0.
             local rc=0
             if out=$(LC_ALL=C dnf -q -C check-update 2>/dev/null); then rc=0; else rc=$?; fi
-            if [[ "$rc" -eq 100 ]]; then
-                n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out")
-            else
-                n=0
-            fi
+            case "$rc" in
+                100) n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out") ;;
+                0)   n=0 ;;
+                *)   return 1 ;;
+            esac
             ;;
         pacman)
             # Read-only against the already-synced db (no network refresh).
-            n=$(pacman -Qu 2>/dev/null | grep -c .) || true
+            # `pacman -Qu` exits 1 BOTH for "no updates" and for errors; the
+            # difference is that errors speak on stderr. Split the streams
+            # and let stderr decide.
+            local err_file err
+            err_file=$(mktemp) || return 1
+            out=$(pacman -Qu 2>"$err_file") || true
+            err=$(<"$err_file")
+            rm -f "$err_file"
+            [[ -n "$err" ]] && return 1
+            n=$(grep -c . <<<"$out") || n=0
             ;;
-        *) n=0 ;;
+        *) return 1 ;;
     esac
     echo "${n:-0}"
 }
 
 # Count of pending SECURITY updates. Echoes an integer, or -1 where the
 # distro has no security-update channel (Arch is rolling — callers must
-# treat <0 as "not applicable" and not penalise/score it).
+# treat <0 as "not applicable" and not penalise/score it). Returns non-zero
+# and prints nothing when the query failed — same contract as
+# pkg_update_count above, for the same reason.
 pkg_security_update_count() {
     local n out
     case "$VPSSEC_PKG_MGR" in
@@ -270,7 +289,8 @@ pkg_security_update_count() {
             # as "Debian-Security" while Ubuntu shows "<codename>-security" —
             # so a package merely NAMED *security* (its name precedes the "(")
             # is not miscounted.
-            n=$(apt-get -s upgrade 2>/dev/null | grep -ciE '^Inst .*\(.*security') || true
+            out=$(apt-get -s upgrade 2>/dev/null) || return 1
+            n=$(grep -ciE '^Inst .*\(.*security' <<<"$out") || n=0
             ;;
         dnf)
             # No dnf command cleanly yields "installed packages that have a
@@ -282,40 +302,55 @@ pkg_security_update_count() {
             # has-security-updates signal though (>0 iff any apply — verified
             # non-empty on dnf4 with security updates, 0 on dnf5 with none).
             # Callers: use as ">0?" only; clamp any displayed figure to the total.
-            out=$(LC_ALL=C dnf -q -C updateinfo list --security --available 2>/dev/null) || true
-            n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || true
+            out=$(LC_ALL=C dnf -q -C updateinfo list --security --available 2>/dev/null) || return 1
+            n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || n=0
             ;;
         pacman)
             echo "-1"; return 0
             ;;
-        *) n=0 ;;
+        *) return 1 ;;
     esac
     echo "${n:-0}"
+}
+
+# Newest mtime (epoch seconds) among the files a `find` invocation yields;
+# prints nothing when there are none. The question every caller asks is
+# "when did the LAST successful refresh happen", and repos refresh at
+# different times — `find | head -1` answered with whichever file the
+# directory enumeration surfaced first, which is neither newest nor oldest.
+_distro_newest_mtime() {
+    local newest="" f m
+    while IFS= read -r f; do
+        m=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null) || continue
+        [[ "$m" =~ ^[0-9]+$ ]] || continue
+        if [[ -z "$newest" ]] || (( m > newest )); then
+            newest="$m"
+        fi
+    done < <("$@" 2>/dev/null)
+    [[ -n "$newest" ]] && echo "$newest"
 }
 
 # How many days since the package index was last refreshed, or empty if
 # we cannot tell. Used as an "is the operator paying attention" signal.
 pkg_index_age_days() {
-    local marker="" mtime now age
+    local mtime="" now age
     case "$VPSSEC_PKG_MGR" in
         apt)
             if [[ -f /var/lib/apt/periodic/update-success-stamp ]]; then
-                marker=/var/lib/apt/periodic/update-success-stamp
+                mtime=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null) || mtime=""
             elif [[ -d /var/lib/apt/lists ]]; then
-                marker=$(find /var/lib/apt/lists -maxdepth 1 -type f -name '*Packages*' 2>/dev/null | head -1)
+                mtime=$(_distro_newest_mtime find /var/lib/apt/lists -maxdepth 1 -type f -name '*Packages*')
             fi
             ;;
         dnf)
             # Newest cache metadata under the dnf cache tree.
-            marker=$(find /var/cache/dnf -maxdepth 3 -name 'repomd.xml' 2>/dev/null | head -1)
+            mtime=$(_distro_newest_mtime find /var/cache/dnf -maxdepth 3 -name 'repomd.xml')
             ;;
         pacman)
             [[ -d /var/lib/pacman/sync ]] && \
-                marker=$(find /var/lib/pacman/sync -maxdepth 1 -type f -name '*.db' 2>/dev/null | head -1)
+                mtime=$(_distro_newest_mtime find /var/lib/pacman/sync -maxdepth 1 -type f -name '*.db')
             ;;
     esac
-    [[ -z "$marker" || ! -e "$marker" ]] && return 0
-    mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null)
     [[ -z "$mtime" ]] && return 0
     now=$(date +%s)
     age=$(( now - mtime )); (( age < 0 )) && age=0

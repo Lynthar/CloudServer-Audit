@@ -26,6 +26,9 @@ run_case "modes/recorded-after-the-copy" 1 \
     '    mode=$(stat -c '"'"'%a'"'"' "$path" 2>/dev/null) || return 0' \
     '    mode=600'
 
+# (Re-anchored 2026-08-16: the chmod grew a `2>/dev/null || \` continuation
+# when backup_file's error propagation landed — the mutant keeps the `|| \`
+# so the follow-up log_warn line stays syntactically attached and inert.)
 run_case "modes/backup-copy-left-readable" 1 \
-    '        chmod 600 "$backup_path"' \
-    '        :'
+    '        chmod 600 "$backup_path" 2>/dev/null || \' \
+    '        : || \'

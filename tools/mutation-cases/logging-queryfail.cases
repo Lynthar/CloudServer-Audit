@@ -1,0 +1,11 @@
+# Mutation cases for tests/test_query_failure_honesty.bats against
+# modules/logging.sh.
+# mutate-suite: modules/logging.sh tests/test_query_failure_honesty.bats
+#
+# journalctl failing must not read as "0 failed logins".
+
+# Swallow journalctl's exit status again: the getter then reports 0 on a
+# host whose journal cannot be read, and the audit prints ssh_logs_ok.
+run_case "logging/journalctl-rc-swallowed" 1 \
+    "    out=\$(journalctl _COMM=sshd _COMM=sshd-session --since \"24 hours ago\" 2>/dev/null) || return 1" \
+    "    out=\$(journalctl _COMM=sshd _COMM=sshd-session --since \"24 hours ago\" 2>/dev/null) || true"

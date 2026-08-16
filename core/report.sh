@@ -37,6 +37,18 @@ report_generate_json() {
     local guide_supported="false"
     is_debian_based && guide_supported="true"
 
+    # Completeness: the names of modules that did not finish (engine.sh's
+    # VPSSEC_MODULES_FAILED), and a complete=true/false derived from it. A
+    # consumer must be able to tell "scanned everything, found this" from
+    # "scanned what survived". Guarded so report generation still works when
+    # engine.sh isn't sourced (unit tests exercise report.sh alone).
+    local failed_modules_json="[]"
+    if declare -p VPSSEC_MODULES_FAILED >/dev/null 2>&1 \
+       && (( ${#VPSSEC_MODULES_FAILED[@]} > 0 )); then
+        failed_modules_json=$(printf '%s\n' "${VPSSEC_MODULES_FAILED[@]}" \
+            | jq -Rn '[inputs] | unique') || failed_modules_json="[]"
+    fi
+
     # Build via jq so every string field (hostname, os, os-release values, …)
     # is correctly escaped. The previous hand-written heredoc inlined these raw;
     # a hostname or os-release field containing a quote, backslash or control
@@ -60,6 +72,7 @@ report_generate_json() {
         --arg distro_family "$distro_family" \
         --argjson guide_supported "$guide_supported" \
         --argjson partial "$partial" \
+        --argjson failed_modules "$failed_modules_json" \
         --argjson score "$score" \
         --argjson stats "$stats" \
         --argjson checks "$checks" \
@@ -92,7 +105,9 @@ report_generate_json() {
                 guide_supported: $guide_supported,
                 lang: $lang,
                 modules: $modules,
-                partial_scope: $partial
+                partial_scope: $partial,
+                complete: ($failed_modules | length == 0),
+                modules_failed: $failed_modules
             },
             score: $score,
             stats: $stats,
@@ -692,6 +707,14 @@ report_generate_sarif() {
     local guide_supported="false"
     is_debian_based && guide_supported="true"
 
+    # Same completeness source as summary.json's meta.modules_failed.
+    local failed_modules_json="[]"
+    if declare -p VPSSEC_MODULES_FAILED >/dev/null 2>&1 \
+       && (( ${#VPSSEC_MODULES_FAILED[@]} > 0 )); then
+        failed_modules_json=$(printf '%s\n' "${VPSSEC_MODULES_FAILED[@]}" \
+            | jq -Rn '[inputs] | unique') || failed_modules_json="[]"
+    fi
+
     local sarif
     sarif=$(jq -n \
         --argjson checks "$checks" \
@@ -700,6 +723,7 @@ report_generate_sarif() {
         --arg     host    "$hostname" \
         --arg     family  "$distro_family" \
         --argjson guide   "$guide_supported" \
+        --argjson failed_modules "$failed_modules_json" \
         --arg     endtime "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
         def level:
           if   . == "high"   then "error"
@@ -760,9 +784,20 @@ report_generate_sarif() {
                   "fixes": [{ "description": { "text": (.suggestion // "") } }]
                 }
             ],
+            # executionSuccessful as a FACT, not a constant: false whenever a
+            # module failed to load or crashed mid-audit, with the names in
+            # toolExecutionNotifications. A dashboard ingesting this SARIF
+            # previously had no way to tell a complete scan from one that
+            # silently lost modules.
             "invocations": [{
-              "executionSuccessful": true,
-              "endTimeUtc": $endtime
+              "executionSuccessful": ($failed_modules | length == 0),
+              "endTimeUtc": $endtime,
+              "toolExecutionNotifications": [
+                $failed_modules[] | {
+                  "level": "error",
+                  "message": { "text": "module did not complete: \(.)" }
+                }
+              ]
             }],
             # Run-level property bag: every fix named in "fixes" above is
             # unreachable when guideSupported is false, and nothing else in
@@ -828,27 +863,19 @@ report_generate_all() {
         # warning, so a CI job that published the Markdown or fed the
         # SARIF to a dashboard silently shipped the last run's score and
         # module list. Only the JSON goes to stdout, as before.
-        _report_write_files || true
+        #
+        # Write failure is FATAL here, and the old file is never echoed:
+        # `|| true` + unconditional cat meant a failed generation served
+        # the PREVIOUS run's summary.json with exit 0 — for a CI consumer,
+        # stale data presented as fresh is strictly worse than an error.
+        if ! _report_write_files; then
+            # Direct echo, not print_error: print_msg suppresses ALL output
+            # under --json-only, which would turn this fatal error into a
+            # silent empty stdout. stderr keeps the JSON channel clean.
+            echo "vpssec: report generation failed; refusing to emit a stale summary.json (see logs/vpssec.log)" >&2
+            return 1
+        fi
         cat "${VPSSEC_REPORTS}/summary.json"
     fi
 }
 
-# Print a single check result to terminal
-report_print_check() {
-    local check_json="$1"
-
-    local id=$(echo "$check_json" | jq -r '.id')
-    local severity=$(echo "$check_json" | jq -r '.severity')
-    local status=$(echo "$check_json" | jq -r '.status')
-    local title=$(echo "$check_json" | jq -r '.title')
-    local desc=$(echo "$check_json" | jq -r '.desc')
-
-    if [[ "$status" == "passed" ]]; then
-        print_ok "$title"
-    else
-        print_severity "$severity" "$title"
-        if [[ -n "$desc" && "$desc" != "null" ]]; then
-            print_msg "    ${DIM}${desc}${NC}"
-        fi
-    fi
-}

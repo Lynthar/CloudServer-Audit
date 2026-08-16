@@ -1,0 +1,38 @@
+# Mutation cases for tests/test_guide_plan_contract.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_guide_plan_contract.bats
+#
+# Run with:
+#   bash tools/mutate-suite.sh core/engine.sh \
+#        tests/test_guide_plan_contract.bats tools/mutation-cases/engine-plan.cases
+#
+# The UI→plan→executor ID contract (2026-08 review round). Each case
+# re-introduces one half of the regression that let TUI guide mode execute
+# an empty plan and report success.
+
+# ---- generate_plan: dedup + single-check resolution ------------------------
+
+# Drop the per-fix-id dedup: a selection naming the same fix twice puts it in
+# the plan twice, and the [i/N] progress overstates the work.
+run_case "plan/dedup-removed" 1 \
+    "        [[ -n \"\${plan_seen[\$fix_id]:-}\" ]] && continue" \
+    "        :"
+
+# first() -> every match: two checks sharing a fix_id both enter the plan.
+run_case "plan/first-removed" 1 \
+    "        local check=\$(echo \"\$checks\" | jq -r --arg id \"\$fix_id\" 'first(.[] | select(.fix_id == \$id))')" \
+    "        local check=\$(echo \"\$checks\" | jq -r --arg id \"\$fix_id\" '.[] | select(.fix_id == \$id)')"
+
+# ---- execute_plan: the exit status must carry the outcome ------------------
+
+# Re-introduce the unconditional success: every fix failing still returns 0.
+run_case "plan/failures-return-zero" 1 \
+    "    (( \${#failed[@]} > 0 )) && return 1" \
+    "    :"
+
+# ---- audit_module: module failure must be recorded -------------------------
+
+# Silence the failure record: a crashed module audit leaves no check and no
+# entry in VPSSEC_MODULES_FAILED — the pre-2026-08 behavior.
+run_case "modfail/record-removed" 1 \
+    "            _module_record_failure \"\$module\" \"audit\"" \
+    "            :"

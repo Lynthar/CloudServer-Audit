@@ -234,9 +234,30 @@ _update_audit_available() {
     # Read-only: do NOT refresh the package index here. Auditing must not mutate
     # state or hit the network, and refreshing would defeat the index-age signal
     # below. Counts come from the existing metadata cache via distro.sh.
+    #
+    # Both primitives return non-zero when the QUERY failed (broken sources,
+    # cold cache, missing tool). That is not "no updates" — before this
+    # branch existed, a query error flowed into update_count=0 and the audit
+    # printed a green "system is up to date" over a question it never got
+    # answered. Same three-state treatment as the apt-lock check above:
+    # status=failed so the full block renders, category=info so a
+    # non-observation moves no score.
     local update_count security_count sec_shown
-    update_count=$(pkg_update_count)
-    security_count=$(pkg_security_update_count)
+    if ! update_count=$(pkg_update_count) || \
+       ! security_count=$(pkg_security_update_count); then
+        local check=$(create_check_json \
+            "update.check_failed" \
+            "update" \
+            "low" \
+            "failed" \
+            "$(i18n 'update.check_failed')" \
+            "$(i18n 'update.check_failed_desc')" \
+            "$(i18n 'update.check_failed_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'update.check_failed')"
+        return 0
+    fi
 
     if ((update_count == 0)); then
         local check=$(create_check_json \
@@ -298,29 +319,11 @@ _update_audit_available() {
     fi
 }
 
-# Return how many days ago `apt update` last ran, or empty if we can't
-# tell. Used as a "is the operator paying attention" signal — a host
-# that has security updates pending *and* hasn't pulled the index in
-# weeks is qualitatively worse than one that's a day behind.
-_update_apt_list_age_days() {
-    local marker=""
-    if [[ -f /var/lib/apt/periodic/update-success-stamp ]]; then
-        marker=/var/lib/apt/periodic/update-success-stamp
-    elif [[ -d /var/lib/apt/lists ]]; then
-        # Fall back to the newest mtime in the lists dir; -t sorts by mtime.
-        marker=$(find /var/lib/apt/lists -maxdepth 1 -type f -name '*Packages*' 2>/dev/null | head -1)
-    fi
-    [[ -z "$marker" ]] && return 0
-    [[ ! -e "$marker" ]] && return 0
-
-    local mtime now age_seconds
-    mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null)
-    [[ -z "$mtime" ]] && return 0
-    now=$(date +%s)
-    age_seconds=$(( now - mtime ))
-    (( age_seconds < 0 )) && age_seconds=0
-    echo $(( age_seconds / 86400 ))
-}
+# (A private `_update_apt_list_age_days` duplicate of distro.sh's
+# pkg_index_age_days lived here with zero callers — deleted, same rule as
+# _update_apt_locked / _update_get_count before it: an unwired duplicate
+# predicate only grows a second version of the truth. Its comment even
+# described a `-t` mtime sort its own find never had.)
 
 _update_audit_unattended() {
     local status

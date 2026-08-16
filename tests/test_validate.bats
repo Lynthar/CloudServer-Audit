@@ -153,3 +153,57 @@ setup() {
     run validate_input "$long" "" 100
     [ "$status" -ne 0 ]
 }
+
+# ---- validate_ip: strengthened bounds (post-2026-08 review) -----------
+# The old checks accepted 999.999.999.999 (shape only, no octet bounds)
+# and "::::" (any hex-and-colon soup). This feeds ufw source scoping for
+# the SSH rescue rule, so junk must be rejected, not passed downstream.
+
+@test "validate_ip: 999.999.999.999 is invalid (octet bounds)" {
+    run validate_ip "999.999.999.999"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: 256.1.1.1 is invalid" {
+    run validate_ip "256.1.1.1"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: '::::' is invalid" {
+    run validate_ip "::::"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: full 8-group IPv6 is valid" {
+    run validate_ip "2001:0db8:0000:0000:0000:0000:0000:0001"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_ip: fe80::1 is valid" {
+    run validate_ip "fe80::1"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_ip: nine groups is invalid" {
+    run validate_ip "1:2:3:4:5:6:7:8:9"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: two double-colons is invalid" {
+    run validate_ip "1::2::3"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: two double-colons with eight groups is invalid" {
+    # The discriminating specimen for the '::'-count rule: with the count
+    # check gone, "1::2::3" still bounces off the 8-group requirement, but
+    # THIS input satisfies it — only the double-colon counter rejects it.
+    # (Found via a surviving mutant; lesson ⑥: fix the assertion's question.)
+    run validate_ip "1::2:3:4:5:6:7::8"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_ip: seven groups without :: is invalid" {
+    run validate_ip "1:2:3:4:5:6:7"
+    [ "$status" -eq 1 ]
+}

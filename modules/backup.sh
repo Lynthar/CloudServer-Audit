@@ -364,7 +364,7 @@ set -euo pipefail
 export BORG_REPO="/mnt/backup/borg"
 # Or for remote: export BORG_REPO="user@backup-server:/path/to/repo"
 
-export BORG_PASSPHRASE="your-passphrase"
+export BORG_PASSPHRASE="CHANGE-ME-BEFORE-USE"   # required: pick a real passphrase and store it OUTSIDE this host too
 # Or use: export BORG_PASSCOMMAND="cat /root/.borg-passphrase"
 
 # Paths to backup

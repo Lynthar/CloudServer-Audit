@@ -1,0 +1,18 @@
+# Mutation cases for tests/test_guide_plan_contract.bats against
+# core/ui_tui.sh.
+# mutate-suite: core/ui_tui.sh tests/test_guide_plan_contract.bats
+#
+# THE regression of the 2026-08 round: the TUI checklist tagged rows with
+# the CHECK id while generate_plan resolves by FIX id, so every TUI-mode
+# guide run executed an empty plan and printed success.
+
+# Re-introduce it: tag with .id again.
+run_case "tuiselect/check-id-tag" 1 \
+    "        local fix_id=\$(echo \"\$fix\" | jq -r '.fix_id')" \
+    "        local fix_id=\$(echo \"\$fix\" | jq -r '.id')"
+
+# Drop the dedup: two checks sharing one fix produce duplicate checklist
+# tags (whiptail rejects those outright).
+run_case "tuiselect/dedup-removed" 1 \
+    "        [[ -n \"\${seen[\$fix_id]:-}\" ]] && continue" \
+    "        :"

@@ -147,6 +147,39 @@ _net_classify_addr() {
     echo specific
 }
 
+# For a "specific" bind: is that address routable from off-host? A service
+# bound to the VPS's own public IP is exactly as reachable as one bound to
+# 0.0.0.0, but the audit used to drop every specific bind on the floor —
+# so `mysqld` on 203.0.113.10:3306 sailed past while the summary claimed
+# "public listeners match expected services". Private/link-local/CGNAT
+# ranges return 1 (operator context required, as before); anything
+# unparseable also returns 1 so a weird address can't produce a false HIGH.
+_net_specific_addr_is_public() {
+    local family="$1" ip="$2"
+    case "$family" in
+        v4)
+            [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\. ]] || return 1
+            local o1="${BASH_REMATCH[1]}" o2="${BASH_REMATCH[2]}"
+            (( o1 == 10 )) && return 1                          # 10/8
+            (( o1 == 172 && o2 >= 16 && o2 <= 31 )) && return 1 # 172.16/12
+            (( o1 == 192 && o2 == 168 )) && return 1            # 192.168/16
+            (( o1 == 169 && o2 == 254 )) && return 1            # link-local
+            (( o1 == 100 && o2 >= 64 && o2 <= 127 )) && return 1 # CGNAT 100.64/10
+            (( o1 == 127 )) && return 1                         # loopback (defensive)
+            (( o1 == 0 || o1 >= 224 )) && return 1              # 0/8, multicast+
+            return 0
+            ;;
+        v6)
+            local lc="${ip,,}"
+            [[ "$lc" == fe8* || "$lc" == fe9* || "$lc" == fea* || "$lc" == feb* ]] && return 1  # fe80::/10
+            [[ "$lc" == fc* || "$lc" == fd* ]] && return 1      # ULA fc00::/7
+            [[ "$lc" == ::* ]] && return 1                      # ::/… specials
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 _net_port_in() {
     local needle="$1"
     shift
@@ -217,7 +250,7 @@ _net_audit_listeners() {
     # double-count every dual-stack listener. The associative array
     # acts as a set; presence on wildcard wins over loopback when
     # both are seen (worst-case classification).
-    local -A wildcard_set loopback_only_set
+    local -A wildcard_set loopback_only_set specific_public_set
     local loopback_only=1
     local proto family ip port proc class key
     while IFS=$'\t' read -r proto family ip port proc; do
@@ -238,8 +271,14 @@ _net_audit_listeners() {
                 ;;
             specific)
                 loopback_only=0
-                # Specific-bind addresses are neither flagged nor
-                # tracked — operator context required.
+                # A specific bind on a PUBLIC address is as reachable as a
+                # wildcard bind and gets the same scrutiny (the address is
+                # carried so the finding names it). Private / link-local /
+                # unparseable specific binds stay untracked as before —
+                # operator context required.
+                if _net_specific_addr_is_public "$family" "$ip"; then
+                    specific_public_set["${proto}/${port}/${ip}/${proc:-?}"]=1
+                fi
                 ;;
         esac
     done <<< "$listeners"
@@ -266,6 +305,29 @@ _net_audit_listeners() {
             dangerous+=("${proto}/${port}${proc:+ ($proc)}")
         elif ! _net_port_in "$port" "${NET_PUBLIC_PORTS_OK[@]}"; then
             exposed+=("${proto}/${port}${proc:+ ($proc)}")
+        fi
+    done
+
+    # Same classification for public-specific binds; the label carries the
+    # bound address so the operator can see WHICH interface is exposed.
+    local addr
+    for key in ${specific_public_set[@]+"${!specific_public_set[@]}"}; do
+        proto="${key%%/*}"
+        local rest="${key#*/}"
+        port="${rest%%/*}"
+        rest="${rest#*/}"
+        addr="${rest%/*}"
+        proc="${rest##*/}"
+        [[ "$proc" == "?" ]] && proc=""
+
+        if _net_proc_in "$proc" "${NET_PUBLIC_PROCESSES_OK[@]}"; then
+            continue
+        fi
+
+        if _net_port_in "$port" "${NET_DANGEROUS_PUBLIC_PORTS[@]}"; then
+            dangerous+=("${proto}/${port}@${addr}${proc:+ ($proc)}")
+        elif ! _net_port_in "$port" "${NET_PUBLIC_PORTS_OK[@]}"; then
+            exposed+=("${proto}/${port}@${addr}${proc:+ ($proc)}")
         fi
     done
 

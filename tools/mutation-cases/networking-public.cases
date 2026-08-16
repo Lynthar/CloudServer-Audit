@@ -1,0 +1,17 @@
+# Mutation cases for tests/test_query_failure_honesty.bats against
+# modules/networking.sh.
+# mutate-suite: modules/networking.sh tests/test_query_failure_honesty.bats
+#
+# A bind on the host's PUBLIC address is as exposed as a wildcard bind.
+
+# Drop specific-public tracking entirely (the pre-2026-08 behavior: the
+# `specific` class was discarded with an "operator context" comment).
+run_case "netpub/tracking-removed" 1 \
+    "                if _net_specific_addr_is_public \"\$family\" \"\$ip\"; then" \
+    "                if false; then"
+
+# Widen the 172.16/12 private range to 172.16/10: 172.32.x — a public
+# range — would silently join the never-flagged bucket.
+run_case "netpub/rfc1918-overreach" 1 \
+    "            (( o1 == 172 && o2 >= 16 && o2 <= 31 )) && return 1 # 172.16/12" \
+    "            (( o1 == 172 && o2 >= 16 && o2 <= 63 )) && return 1 # 172.16/12"

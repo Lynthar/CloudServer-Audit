@@ -418,7 +418,10 @@ _fs_find_no_owner() {
     printf '%s\n' "${results[@]}"
 }
 
-# Check sensitive file permissions
+# Check a sensitive file's permissions AND ownership. Mode alone was not
+# enough: /etc/shadow at 640 but chowned to nobody:nogroup (a botched
+# restore/copy does this) is exactly as readable to the wrong party as a
+# world-readable one, and the mode-only check called it fine.
 _fs_check_sensitive_file() {
     local file="$1"
     local expected="$2"
@@ -427,14 +430,18 @@ _fs_check_sensitive_file() {
         return 0  # File doesn't exist, skip
     fi
 
-    local actual
+    local actual owner group
     actual=$(stat -c "%a" "$file" 2>/dev/null)
+    owner=$(stat -c "%U" "$file" 2>/dev/null)
+    group=$(stat -c "%G" "$file" 2>/dev/null)
 
     if [[ -z "$actual" ]]; then
         return 1
     fi
 
-    # Check if permissions are too permissive (bitmask comparison).
+    local problems=()
+
+    # Mode: too permissive (bitmask comparison).
     #
     # The previous arithmetic test `((actual_num > expected_num))` was
     # WRONG: 0604 < 0640 numerically, but 0604 grants world-read where
@@ -448,9 +455,38 @@ _fs_check_sensitive_file() {
     local actual_num=$((8#$actual))
     local expected_num=$((8#$expected))
     local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
-
     if (( extra_bits != 0 )); then
-        echo "$file:$actual:$expected"
+        problems+=("mode $actual (expected $expected)")
+    fi
+
+    # Ownership checks only under the production condition (euid 0): the
+    # audit always runs as root, and a non-root invocation (bats fixtures
+    # in a scratch dir) owns its own test files — flagging those would make
+    # every mode assertion fail for a reason the test isn't about.
+    if [[ "$(id -u)" == "0" ]]; then
+        # Owner: every file in FS_SENSITIVE_FILES is root-owned on every
+        # supported distro; anything else is drift worth surfacing.
+        if [[ -n "$owner" && "$owner" != "root" ]]; then
+            problems+=("owner $owner (expected root)")
+        fi
+
+        # Group: only a problem when the group actually gets access bits AND
+        # is outside the small set of system groups these files legitimately
+        # use (root everywhere; shadow for Debian's shadow/gshadow; ssh_keys
+        # for RHEL host keys). A random group with zero group-bits is odd but
+        # grants nothing — stay quiet there.
+        if [[ -n "$group" ]] && (( actual_num & 070 )) ; then
+            case "$group" in
+                root|shadow|ssh_keys) : ;;
+                *) problems+=("group $group grants access") ;;
+            esac
+        fi
+    fi
+
+    if (( ${#problems[@]} > 0 )); then
+        local joined
+        joined=$(IFS='; '; printf '%s' "${problems[*]}")
+        echo "$file: $joined"
         return 1
     fi
 
@@ -577,21 +613,45 @@ _fs_check_pam_umask_enabled() {
     return 1
 }
 
-# Known legitimate binaries with capabilities (whitelist)
+# Known legitimate binaries with capabilities. The cap field is the COMPLETE
+# set the binary is allowed to hold (comma-separated when more than one):
+# matching is subset-based, so a whitelisted file whose on-disk caps include
+# anything beyond its entry is NOT exempted. The previous regex-contains
+# match let `setcap cap_net_raw,cap_sys_admin=ep /usr/bin/ping` sail through
+# because "cap_net_raw" appeared somewhere in the string — the whitelist
+# quietly covered any escalation stacked onto a whitelisted binary.
 declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/ping:cap_net_raw"
     "/usr/bin/traceroute:cap_net_raw"
     "/usr/bin/mtr-packet:cap_net_raw"
     # arping/clockdiff swap between /usr/bin and /usr/sbin across distros (RHEL vs Debian) — glob both
     "/usr/*bin/arping:cap_net_raw"
-    "/usr/*bin/clockdiff:cap_net_raw"
+    "/usr/*bin/clockdiff:cap_net_raw,cap_sys_nice"
     "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
     "/usr/bin/systemd-resolve:cap_net_bind_service"
-    # snapd sandbox helper legitimately holds cap_sys_admin (+ others)
+    # snapd sandbox helper legitimately holds cap_sys_admin
     "/usr/lib/snapd/snap-confine:cap_sys_admin"
-    # GStreamer PTP helper — legit cap_net_admin/net_bind_service/sys_nice (multiarch path)
-    "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin"
+    # GStreamer PTP helper — Debian ships net_bind_service+net_admin, some
+    # builds add sys_nice (multiarch path)
+    "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice"
 )
+
+# True when every capability in the raw getcap value $1 appears in the
+# comma-separated allowed list $2. Both getcap formats are handled:
+# modern "cap_a,cap_b=ep" and legacy "cap_a+ep" (flag suffix stripped).
+_fs_caps_subset_of() {
+    local held="$1" allowed="$2"
+    held="${held%%=*}"
+    held="${held%%+*}"
+    local cap
+    local IFS=','
+    for cap in $held; do
+        cap="${cap// /}"
+        [[ -z "$cap" ]] && continue
+        [[ ",${allowed}," == *",${cap},"* ]] || return 1
+    done
+    return 0
+}
 
 # Dangerous capabilities that grant significant privileges
 declare -ga FS_DANGEROUS_CAPS=(
@@ -646,13 +706,14 @@ _fs_find_caps_files() {
         done
         [[ "$pruned" == true ]] && continue
 
-        # Check if in whitelist
+        # Check if in whitelist. Subset semantics (see FS_CAPS_WHITELIST):
+        # the file's WHOLE capability set must be covered by its entry.
         local whitelisted=false
         for entry in "${FS_CAPS_WHITELIST[@]}"; do
             local wl_file="${entry%%:*}"
             local wl_cap="${entry#*:}"
             # Unquoted $wl_file = glob match (handles multiarch /usr/lib/*/ paths)
-            if [[ "$file" == $wl_file && "$caps" =~ $wl_cap ]]; then
+            if [[ "$file" == $wl_file ]] && _fs_caps_subset_of "$caps" "$wl_cap"; then
                 whitelisted=true
                 break
             fi
@@ -663,7 +724,7 @@ _fs_find_caps_files() {
             local dentry
             while IFS= read -r dentry; do
                 [[ -z "$dentry" ]] && continue
-                if [[ "$file" == ${dentry%%:*} && "$caps" =~ ${dentry#*:} ]]; then
+                if [[ "$file" == ${dentry%%:*} ]] && _fs_caps_subset_of "$caps" "${dentry#*:}"; then
                     whitelisted=true
                     break
                 fi

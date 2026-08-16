@@ -116,22 +116,28 @@ _logging_get_failed_logins() {
     # is the same change fail2ban had to make). journalctl ORs repeated matches
     # of the same field, so listing both COMM values is the correct union.
     #
-    # Note: grep -c outputs "0" AND exits with code 1 when no matches.
-    # Using || true prevents double output from || echo "0".
-    local count
-    count=$(journalctl _COMM=sshd _COMM=sshd-session --since "24 hours ago" 2>/dev/null | \
-        grep -c "Failed password\|authentication failure" 2>/dev/null) || true
+    # Capture journalctl's output FIRST so its own exit status is visible:
+    # "the journal says zero failures" and "the journal could not be read"
+    # are different answers, and folding the second into a 0 told the
+    # operator of an unreadable-journal host that nobody is attacking them.
+    # Returns non-zero (printing nothing) when journalctl itself failed;
+    # callers report that as an unknown, not a zero.
+    local out count
+    out=$(journalctl _COMM=sshd _COMM=sshd-session --since "24 hours ago" 2>/dev/null) || return 1
+    # Note: grep -c outputs "0" AND exits 1 when no matches; `|| count=0`
+    # (not `|| echo 0`) avoids the historical "0\n0" double-output bug.
+    count=$(grep -c "Failed password\|authentication failure" <<<"$out" 2>/dev/null) || count=0
     echo "${count:-0}"
 }
 
 _logging_get_sudo_events() {
-    # Get recent sudo events. `wc -l` prints "0" on empty input, but
-    # under `set -o pipefail` a journalctl failure still trips the
-    # pipe to non-zero, so swallow the exit code with `|| true` rather
-    # than appending a second "0" via `|| echo "0"` (see _logging_get_failed_logins
-    # above for the same idiom).
-    local count
-    count=$(journalctl _COMM=sudo --since "24 hours ago" 2>/dev/null | wc -l) || true
+    # Same contract as _logging_get_failed_logins: non-zero when journalctl
+    # itself failed, a real count otherwise.
+    local out count
+    out=$(journalctl _COMM=sudo --since "24 hours ago" 2>/dev/null) || return 1
+    count=$(wc -l <<<"$out") || count=0
+    # wc -l counts the herestring's trailing newline even when empty.
+    [[ -z "$out" ]] && count=0
     echo "${count:-0}"
 }
 
@@ -314,7 +320,25 @@ _logging_audit_auditd() {
 }
 
 _logging_audit_ssh_logs() {
-    local failed_logins=$(_logging_get_failed_logins)
+    # Query failure is its own outcome: "0 failed logins" claims the journal
+    # was read and found quiet — on a host where journalctl cannot answer,
+    # that claim is exactly what a brute-forced operator must not be told.
+    # failed + info-category, same pattern as update.check_failed.
+    local failed_logins
+    if ! failed_logins=$(_logging_get_failed_logins); then
+        local check=$(create_check_json \
+            "logging.journal_unreadable" \
+            "logging" \
+            "low" \
+            "failed" \
+            "$(i18n 'logging.journal_unreadable')" \
+            "$(i18n 'logging.journal_unreadable_desc')" \
+            "$(i18n 'logging.journal_unreadable_fix')" \
+            "")
+        state_add_check "$check"
+        print_severity "low" "$(i18n 'logging.journal_unreadable')"
+        return 0
+    fi
 
     if ((failed_logins > 100)); then
         local check=$(create_check_json \
@@ -356,7 +380,13 @@ _logging_audit_ssh_logs() {
 }
 
 _logging_audit_sudo_logs() {
-    local sudo_events=$(_logging_get_sudo_events)
+    # Unreadable journal: the ssh-logs check right above this already
+    # reported it (logging.journal_unreadable); repeating the finding per
+    # consumer would be noise. Just skip the sudo claim we cannot make.
+    local sudo_events
+    if ! sudo_events=$(_logging_get_sudo_events); then
+        return 0
+    fi
 
     # Just informational - sudo logging should be working
     if ((sudo_events > 0)); then

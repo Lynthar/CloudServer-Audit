@@ -49,7 +49,52 @@ _run_check_with_perm() {
     # check passed. 0604 grants world-read that 0640 does not.
     run _run_check_with_perm 604 640
     [ "$status" -eq 1 ]
-    [[ "$output" == *":604:640" ]]
+    [[ "$output" == *"mode 604 (expected 640)"* ]]
+}
+
+@test "sensitive perms: wrong owner FAILS even with correct mode (root only)" {
+    # Ownership drift (a botched restore chowns /etc/shadow to nobody) is
+    # as much of a leak as a weak mode. The check only enforces this as
+    # root — the audit's production condition — so skip otherwise.
+    if [[ "$(id -u)" != "0" ]]; then
+        skip "owner check active only when running as root"
+    fi
+    local f="$BATS_TEST_TMPDIR/owned"
+    : >"$f"
+    chmod 640 "$f"
+    chown nobody "$f"
+    run _fs_check_sensitive_file "$f" "640"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"owner nobody (expected root)"* ]]
+}
+
+@test "sensitive perms: foreign group with group bits FAILS (root only)" {
+    if [[ "$(id -u)" != "0" ]]; then
+        skip "group check active only when running as root"
+    fi
+    # Pick a real non-system group present on all target images.
+    local grp="daemon"
+    getent group "$grp" >/dev/null 2>&1 || skip "group $grp missing"
+    local f="$BATS_TEST_TMPDIR/grouped"
+    : >"$f"
+    chmod 640 "$f"
+    chgrp "$grp" "$f"
+    run _fs_check_sensitive_file "$f" "640"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"group $grp grants access"* ]]
+}
+
+@test "sensitive perms: shadow group with group bits passes (root only)" {
+    if [[ "$(id -u)" != "0" ]]; then
+        skip "group check active only when running as root"
+    fi
+    getent group shadow >/dev/null 2>&1 || skip "no shadow group on this distro"
+    local f="$BATS_TEST_TMPDIR/shadowed"
+    : >"$f"
+    chmod 640 "$f"
+    chgrp shadow "$f"
+    run _fs_check_sensitive_file "$f" "640"
+    [ "$status" -eq 0 ]
 }
 
 @test "sensitive perms: 0046 vs expected 0640 FAILS (world-write)" {

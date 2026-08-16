@@ -160,7 +160,13 @@ _vpssec_scan_secrets_in_content() {
 # Color and Formatting
 # ==============================================================================
 
-# Color codes
+# Color codes.
+# NO_COLOR (https://no-color.org: any non-empty value disables color) and
+# TERM=dumb (a terminal that renders escapes as garbage) both force the
+# plain palette — same effect as --no-color, no flag needed.
+if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
+    VPSSEC_COLOR=0
+fi
 if [[ "${VPSSEC_COLOR}" == "1" ]] && [[ -t 1 ]]; then
     RED='\033[0;31m'
     GREEN='\033[0;32m'
@@ -210,22 +216,27 @@ log_init() {
     echo "=== vpssec session started at $(date -Iseconds) ===" >> "${_log_file}"
 }
 
+# The 2>/dev/null comes FIRST in each redirect list on purpose: bash
+# processes redirections left to right, so with `>> file 2>/dev/null` a
+# failing append (log dir missing) prints its "No such file or directory"
+# BEFORE stderr is redirected — every log call then leaks a line onto the
+# caller's stderr, which run/bats and --json-only consumers see as output.
 log_debug() {
     if [[ "${VPSSEC_DEBUG:-0}" == "1" ]]; then
-        echo "[DEBUG] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
+        echo "[DEBUG] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
     fi
 }
 
 log_info() {
-    echo "[INFO] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
+    echo "[INFO] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
 }
 
 log_warn() {
-    echo "[WARN] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
+    echo "[WARN] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
 }
 
 log_error() {
-    echo "[ERROR] $(date -Iseconds) $*" >> "${_log_file}" 2>/dev/null || true
+    echo "[ERROR] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
 }
 
 # ==============================================================================
@@ -662,19 +673,6 @@ check_required_deps() {
     return 0
 }
 
-check_optional_deps() {
-    local missing=()
-    local deps=(whiptail dialog ufw nginx docker)
-
-    for dep in "${deps[@]}"; do
-        if ! check_command "$dep"; then
-            missing+=("$dep")
-        fi
-    done
-
-    echo "${missing[*]}"
-}
-
 # ==============================================================================
 # Input Validation Functions
 # ==============================================================================
@@ -738,17 +736,54 @@ validate_port() {
     [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 ]] && [[ "$port" -le 65535 ]]
 }
 
-# Validate IP address (basic check)
+# Validate IP address. This feeds security-relevant sinks (ufw source
+# scoping for the SSH rescue rule), so it must reject junk, not just match
+# a shape: the old checks accepted 999.999.999.999 (no octet bounds) and
+# "::::" (any hex-and-colon soup counted as IPv6).
 validate_ip() {
     local ip="$1"
-    # IPv4 basic validation
-    if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+
+    # IPv4: four dot-separated octets, each 0-255.
+    if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        local octet
+        for octet in "${BASH_REMATCH[@]:1}"; do
+            # 10# guards against leading zeros being read as octal.
+            (( 10#$octet <= 255 )) || return 1
+        done
         return 0
     fi
-    # IPv6 basic validation (simplified)
-    if [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$ip" == *:* ]]; then
-        return 0
+
+    # IPv6, structurally: hex groups of 1-4 digits separated by ':', at most
+    # one '::' (and no ':::'), and the group count consistent with 128 bits —
+    # exactly 8 groups without '::', at most 7 with it. Zone IDs, embedded
+    # IPv4 tails and other exotica are deliberately not accepted: every
+    # caller feeds the value to a firewall rule where plain form is what
+    # works.
+    if [[ "$ip" == *:* && "$ip" =~ ^[0-9a-fA-F:]+$ ]]; then
+        [[ "$ip" == *":::"* ]] && return 1
+        local compressed="${ip//::/}"
+        local double_colons=$(( (${#ip} - ${#compressed}) / 2 ))
+        (( double_colons > 1 )) && return 1
+
+        # Count hex groups (split on ':', ignore empties from '::').
+        local -a parts
+        IFS=':' read -ra parts <<<"$ip"
+        local groups=0 part
+        for part in "${parts[@]}"; do
+            [[ -z "$part" ]] && continue
+            [[ "$part" =~ ^[0-9a-fA-F]{1,4}$ ]] || return 1
+            ((groups++))
+        done
+        if (( double_colons == 1 )); then
+            (( groups >= 1 && groups <= 7 )) && return 0
+        else
+            # No '::' — must be the full 8 groups, and no stray edge colon.
+            [[ "$ip" != :* && "$ip" != *: ]] || return 1
+            (( groups == 8 )) && return 0
+        fi
+        return 1
     fi
+
     return 1
 }
 
@@ -902,9 +937,25 @@ backup_file() {
         # rollback cannot recover it from the copy.
         backup_track_mode "$file" "$backup_dir"
 
-        mkdir -p "$(dirname "$backup_path")"
-        cp -p "$file" "$backup_path"
-        chmod 600 "$backup_path"
+        # Every step checked. This function runs inside fix bodies where
+        # errexit is off (execute_fix calls fixes in an `if`), so an
+        # unchecked failing cp used to fall through to the success log and
+        # `echo` below — the caller got rc 0 and a "backup path" for a
+        # backup that does not exist, and the fix proceeded with no way
+        # back. A backup that could not be taken must be a loud failure.
+        if ! mkdir -p "$(dirname "$backup_path")"; then
+            log_error "Backup failed (mkdir): $file -> $backup_path"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")"
+            return 1
+        fi
+        if ! cp -p "$file" "$backup_path"; then
+            rm -f "$backup_path" 2>/dev/null || true
+            log_error "Backup failed (cp): $file -> $backup_path"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")"
+            return 1
+        fi
+        chmod 600 "$backup_path" 2>/dev/null || \
+            log_warn "Could not chmod 600 backup copy: $backup_path"
         log_info "Backed up: $file -> $backup_path"
         echo "$backup_path"
     else
@@ -962,6 +1013,12 @@ write_file_atomic() {
     # Set appropriate permissions (copy from target or default to 644)
     if [[ -f "$target" ]]; then
         chmod --reference="$target" "$temp_file" 2>/dev/null || chmod 644 "$temp_file"
+        # Preserve ownership too: mktemp created the temp as the invoking
+        # user (root), so without this the rename silently re-owned any
+        # non-root-owned target to root:root. Best effort — as non-root
+        # (test runs) chown fails and the warning is the honest record.
+        chown --reference="$target" "$temp_file" 2>/dev/null || \
+            log_warn "write_file_atomic: could not preserve ownership of $target"
     else
         chmod 644 "$temp_file"
     fi
@@ -976,47 +1033,9 @@ write_file_atomic() {
     fi
 }
 
-# Write drop-in configuration
-write_dropin() {
-    local base_dir="$1"
-    local filename="$2"
-    local content="$3"
-    local dropin_dir="${base_dir}.d"
-
-    mkdir -p "$dropin_dir"
-    local target="${dropin_dir}/${filename}"
-
-    backup_file "$target" 2>/dev/null || true
-    write_file_atomic "$target" "$content"
-}
-
 # ==============================================================================
 # Service Operations
 # ==============================================================================
-
-service_exists() {
-    systemctl list-unit-files "${1}.service" &>/dev/null
-}
-
-service_is_active() {
-    systemctl is-active --quiet "$1"
-}
-
-service_is_enabled() {
-    systemctl is-enabled --quiet "$1"
-}
-
-service_reload() {
-    local service="$1"
-    log_info "Reloading service: $service"
-    systemctl reload "$service"
-}
-
-service_restart() {
-    local service="$1"
-    log_info "Restarting service: $service"
-    systemctl restart "$service"
-}
 
 # ==============================================================================
 # Network Utilities
@@ -1099,11 +1118,6 @@ get_ssh_ports() {
 
 get_listening_ports() {
     ss -tlnp 2>/dev/null | tail -n +2 | awk '{print $4}' | grep -oE '[0-9]+$' | sort -nu
-}
-
-check_port_open() {
-    local port="$1"
-    ss -tln | grep -q ":${port}\s"
 }
 
 # ==============================================================================
@@ -1627,6 +1641,17 @@ select_modules() {
 }
 
 vpssec_init() {
+    # `status` is documented as not needing root, and it only READS. The
+    # mkdir/chmod/log-append below all fail for a non-root user on a
+    # root-owned install (and abort under set -e before status_mode ever
+    # runs), so the read-only command gets a read-only init: i18n and
+    # nothing else.
+    if [[ "${VPSSEC_MODE:-}" == "status" ]]; then
+        i18n_load "${VPSSEC_LANG}"
+        log_info "vpssec initialized read-only for status (version: ${VPSSEC_VERSION})"
+        return 0
+    fi
+
     # Create necessary directories with secure permissions
     mkdir -p "${VPSSEC_STATE}" "${VPSSEC_REPORTS}" "${VPSSEC_BACKUPS}" "${VPSSEC_LOGS}" "${VPSSEC_TEMPLATES}"
 
@@ -1664,7 +1689,14 @@ vpssec_init() {
             else
                 print_error "Another vpssec instance is already running."
             fi
-            print_msg "If this is wrong (e.g. a previous run was killed), remove ${_run_lock} and retry."
+            # No "remove the lock file" advice here, on purpose. flock is
+            # released by the kernel the instant the holder exits — a killed
+            # run never blocks this branch. The only way to get here is a
+            # LIVE process holding the lock, and deleting the file then
+            # lets a new run recreate it on a fresh inode and take a "lock"
+            # the first process isn't holding: two mutating runs at once,
+            # exactly what the lock exists to prevent.
+            print_msg "Wait for it to finish, or stop it: kill ${_other_pid:-<pid>}"
             exit 1
         fi
         # Record our PID for the next caller's diagnostics.

@@ -103,13 +103,30 @@ install_cosign_pinned() {
     print_warn "cosign not in package manager — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
     print_warn "  trust root for cosign shifts from distro archive to github.com (same as run.sh itself)"
 
+    # Downloads land in a fresh 0700 mktemp dir, mirroring the main tarball
+    # path. The previous "/tmp/cosign...$$" names were guessable ($$ is a
+    # small integer), so a local user could pre-plant a symlink and have
+    # root's curl -o write through it — the hash check catches tampered
+    # CONTENT afterwards, but the overwrite of the symlink's target has
+    # already happened by then.
+    local cosign_tmp
+    cosign_tmp=$(mktemp -d) || {
+        print_error "mktemp failed for cosign download"
+        return 1
+    }
+    chmod 700 "$cosign_tmp"
+    # Self-clearing RETURN trap: fires once when THIS function returns (any
+    # path), then unsets itself so it cannot fire on later functions. This
+    # replaces six per-path rm calls and cannot be forgotten on a new path.
+    # shellcheck disable=SC2064  # expand now: cosign_tmp is a local
+    trap "rm -rf '$cosign_tmp'; trap - RETURN" RETURN
+
     if command -v dpkg &>/dev/null; then
         # Debian/Ubuntu: pinned .deb. Hash-check before dpkg so a
         # compromised sigstore can't run a malicious maintainer script.
-        local deb_file="/tmp/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.$$.deb"
+        local deb_file="${cosign_tmp}/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb"
         if ! curl -fsSL "${base_url}/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb" -o "$deb_file"; then
             print_error "Download failed: cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb"
-            rm -f "$deb_file"
             return 1
         fi
         local got_hash
@@ -118,24 +135,20 @@ install_cosign_pinned() {
             print_error "cosign .deb SHA256 mismatch — refusing to install"
             print_error "  expected: $want_deb_hash"
             print_error "  got:      $got_hash"
-            rm -f "$deb_file"
             return 1
         fi
         print_ok "cosign .deb hash verified"
         if ! dpkg -i "$deb_file" >/dev/null 2>&1; then
             print_error "dpkg -i failed for $deb_file"
-            rm -f "$deb_file"
             return 1
         fi
-        rm -f "$deb_file"
     else
         # RHEL/Arch / anything without dpkg: pinned static binary. Same
         # trust trade-off; hash is checked before the file is made
         # executable or run.
-        local bin_file="/tmp/cosign-linux-${arch_sfx}.$$"
+        local bin_file="${cosign_tmp}/cosign-linux-${arch_sfx}"
         if ! curl -fsSL "${base_url}/cosign-linux-${arch_sfx}" -o "$bin_file"; then
             print_error "Download failed: cosign-linux-${arch_sfx}"
-            rm -f "$bin_file"
             return 1
         fi
         local got_hash
@@ -144,16 +157,13 @@ install_cosign_pinned() {
             print_error "cosign binary SHA256 mismatch — refusing to install"
             print_error "  expected: $want_bin_hash"
             print_error "  got:      $got_hash"
-            rm -f "$bin_file"
             return 1
         fi
         print_ok "cosign binary hash verified"
         if ! install -Dm0755 "$bin_file" /usr/local/bin/cosign 2>/dev/null; then
             print_error "failed to install cosign to /usr/local/bin"
-            rm -f "$bin_file"
             return 1
         fi
-        rm -f "$bin_file"
         # Make sure the freshly-installed binary is reachable for the
         # verify-blob call below even if /usr/local/bin wasn't on PATH.
         export PATH="/usr/local/bin:${PATH}"

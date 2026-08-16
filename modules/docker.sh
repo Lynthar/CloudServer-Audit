@@ -863,27 +863,30 @@ _docker_fix_generate_proxy_template() {
 
     cat > "$output_file" <<'EOF'
 # vpssec generated template - Docker Reverse Proxy Configuration
-# This template shows how to bind containers to localhost only
-# and use a reverse proxy (Traefik/Nginx) for external access
-
-version: '3.8'
+# Publish nothing from app containers; let the reverse proxy be the only
+# ingress. Before first use:   docker network create proxy
+# (the `proxy` network is declared external so several compose projects
+# can share one Traefik).
 
 services:
-  # Example: Your application bound to localhost only
+  # Example application. NO host `ports:` at all — Traefik reaches it over
+  # the shared `proxy` network, so nothing listens on the host. A service
+  # must sit on the SAME network as Traefik to be routable; keep `internal`
+  # for app<->db traffic that Traefik should never see.
   # app:
   #   image: your-app:latest
-  #   ports:
-  #     - "127.0.0.1:8080:8080"  # Only accessible from localhost
   #   networks:
+  #     - proxy
   #     - internal
   #   labels:
   #     - "traefik.enable=true"
   #     - "traefik.http.routers.app.rule=Host(`app.example.com`)"
   #     - "traefik.http.routers.app.tls.certresolver=letsencrypt"
+  #     - "traefik.http.services.app.loadbalancer.server.port=8080"
 
   # Traefik reverse proxy
   traefik:
-    image: traefik:v2.10
+    image: traefik:v3.5
     container_name: traefik
     restart: unless-stopped
     security_opt:
@@ -892,6 +895,13 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      # SECURITY NOTE: access to the Docker socket is root-equivalent on
+      # the host — the `:ro` mount option only stops replacing the socket
+      # FILE; the API behind it stays fully read-write. Anyone who can make
+      # Traefik talk to this socket can start privileged containers. For
+      # stricter setups, front the socket with a filtering proxy (e.g.
+      # linuxserver/socket-proxy or tecnativa/docker-socket-proxy) and point
+      # Traefik's endpoint at that instead.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/acme.json:/acme.json
@@ -900,16 +910,16 @@ services:
 
 networks:
   proxy:
-    external: true
+    external: true    # create once: docker network create proxy
   internal:
     internal: true
 
-# Security best practices applied:
-# 1. Bind internal services to 127.0.0.1 only
-# 2. Use no-new-privileges security option
-# 3. Mount docker.sock as read-only
-# 4. Use internal networks for service communication
-# 5. Only expose ports through reverse proxy with TLS
+# Security practices applied:
+# 1. App containers publish no host ports; Traefik is the only ingress
+# 2. no-new-privileges on the proxy container
+# 3. Docker socket exposure documented honestly (root-equivalent; see note)
+# 4. `internal` network for backend traffic Traefik should never route
+# 5. TLS via Let's Encrypt on the proxy
 EOF
 
     # Generate Traefik config

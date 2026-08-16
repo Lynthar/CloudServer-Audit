@@ -236,7 +236,10 @@
     "custom_port": "SSH 使用非默认端口",
     "no_admin_for_root": "未找到非 root 管理员用户，无法安全禁用 root 登录",
     "move_file_failed": "移动配置文件失败",
-    "reload_failed": "重载 SSH 失败"
+    "reload_failed": "重载 SSH 失败",
+    "rescue_fw_no_source": "无法识别你的来源 IP（控制台登录或环境变量被清除）。",
+    "rescue_fw_ask_cidr": "允许访问救援端口 {port} 的来源 IP/CIDR（输入 any = 全网开放；留空 = 不添加规则）",
+    "rescue_fw_bad_cidr": "不是有效的 IP/CIDR：{value}——将不添加防火墙规则"
   },
   "ufw": {
     "title": "UFW 防火墙",
@@ -339,7 +342,10 @@
     "no_reboot": "无需重启",
     "check_timesync": "检查时间同步",
     "timesync_ok": "时间已同步",
-    "timesync_failed": "时间同步未配置"
+    "timesync_failed": "时间同步未配置",
+    "check_failed": "无法查询待更新数量",
+    "check_failed_desc": "包管理器的更新查询失败（源损坏、元数据缓存为空或缺少工具）。这不等于“没有更新”——这个问题根本没有得到回答。",
+    "check_failed_fix": "手动刷新软件包索引（apt-get update / dnf makecache / pacman -Sy）后重新审计"
   },
   "docker": {
     "title": "Docker 安全",
@@ -563,7 +569,10 @@
     "configuring_audit_rules": "正在配置审计规则...",
     "audit_rules_configured": "审计规则已配置",
     "audit_rules_failed": "审计规则配置失败",
-    "audit_immutable_hint": "合规/法证场景建议取消 /etc/audit/rules.d/99-vpssec.rules 里 '-e 2' 的注释并重启；启用后审计规则直到下次重启前不可被修改。"
+    "audit_immutable_hint": "合规/法证场景建议取消 /etc/audit/rules.d/99-vpssec.rules 里 '-e 2' 的注释并重启；启用后审计规则直到下次重启前不可被修改。",
+    "journal_unreadable": "无法读取 systemd 日志",
+    "journal_unreadable_desc": "journalctl 执行失败，SSH 失败登录与 sudo 活动无法统计。这不代表主机安静——日志根本没有被读取。",
+    "journal_unreadable_fix": "确认 systemd-journald 正在运行，且 /var/log/journal 或 /run/log/journal 下存在日志文件"
   },
   "cloudflared": {
     "title": "Cloudflare Tunnel",
@@ -692,7 +701,8 @@
     "restore_none_skipped": "未恢复任何文件：全部 {skipped} 项均被安全检查跳过（详见 logs/vpssec.log）",
     "restore_partial": "部分恢复：已恢复 {restored} 个文件，跳过 {skipped} 个（详见 logs/vpssec.log）",
     "restore_count": "已恢复 {restored} 个文件",
-    "restored_partial": "回滚已完成，但有部分条目被跳过"
+    "restored_partial": "回滚已完成，但有部分条目被跳过",
+    "snapshot_failed": "无法备份 {file}——本次修改已中止（未改动任何内容）。"
   },
   "fail2ban": {
     "title": "Fail2ban 防护",
@@ -813,7 +823,10 @@
     "auditd_not_installed": "Linux 审计守护进程未安装",
     "auditd_active": "审计守护进程运行中",
     "auditd_few_rules": "审计守护进程规则配置较少",
-    "auditd_not_running": "审计守护进程未运行"
+    "auditd_not_running": "审计守护进程未运行",
+    "network_params_unreadable": "内核网络参数无法读取",
+    "network_params_unreadable_desc": "检查清单中的所有 net.* sysctl 均不可读（受限容器或缺少 /proc/sys）——实际验证了 0 个参数，因此不做任何加固判定。",
+    "persist_failed": "有 {count} 个 sysctl 值未能写入持久化配置——该更改在重启后将失效"
   },
   "filesystem": {
     "title": "文件系统安全",
@@ -1097,7 +1110,8 @@
     "resume_empty_plan": "保存的计划为空或文件缺失，无法续跑。",
     "resume_already_done": "保存计划中的所有修复均已完成。",
     "resume_executing": "正在续跑：剩余 {count} 项 (共 {total} 项)",
-    "resume_complete_hint": "运行 'vpssec audit' 查看更新后的状态。"
+    "resume_complete_hint": "运行 'vpssec audit' 查看更新后的状态。",
+    "plan_empty": "所选项目未解析出任何可执行的修复——没有执行任何操作。这通常意味着界面传给计划器的 ID 无法识别，请反馈此问题。"
   },
   "fix": {
     "alert_only": "仅告警 - 需要手动修复",
@@ -1141,7 +1155,8 @@
     "latest_backup": "最新备份: {time}",
     "interrupted": "上一个加固计划在第 {current} 步（共 {total} 步）被中断。",
     "interrupted_hint": "运行 'vpssec guide' 续跑保存的计划，或运行 'vpssec rollback' 撤销已应用的部分变更。",
-    "reloading_services": "正在重载服务..."
+    "reloading_services": "正在重载服务...",
+    "state_unreadable": "当前用户无法读取状态目录（该目录有意归 root 所有）。请运行：sudo vpssec status"
   },
   "timezone": {
     "title": "时区与时间同步",
@@ -1385,7 +1400,11 @@
     "temp_file_failed": "创建临时文件失败",
     "fix_failed": "修复失败: {id}",
     "fix_func_not_found": "修复函数未找到: {func}",
-    "audit_func_not_found": "审计函数未找到: {func}"
+    "audit_func_not_found": "审计函数未找到: {func}",
+    "module_failed": "模块未完成：{module}",
+    "module_failed_desc": "{module} 模块的审计中途退出（退出码 {rc}），其余检查从未执行。本报告对该模块而言是不完整的。",
+    "module_failed_load_desc": "{module} 模块加载失败，其所有检查均未运行。本报告对该模块而言是不完整的。",
+    "module_failed_fix": "用 --debug 重新运行并查看 logs/vpssec.log；若持续出现请反馈。"
   },
   "fixwarn": {
     "baseline.selinux_enable": "启用 SELinux 需要重启系统，且可能导致服务被拒绝",

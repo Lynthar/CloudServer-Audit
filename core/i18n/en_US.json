@@ -236,7 +236,10 @@
     "custom_port": "SSH using non-default port",
     "no_admin_for_root": "No non-root admin user found. Cannot safely disable root login.",
     "move_file_failed": "Failed to move config file",
-    "reload_failed": "Failed to reload SSH"
+    "reload_failed": "Failed to reload SSH",
+    "rescue_fw_no_source": "Could not determine your source IP (console login or stripped environment).",
+    "rescue_fw_ask_cidr": "Source IP/CIDR allowed to reach rescue port {port} ('any' = open to the world; empty = add no rule)",
+    "rescue_fw_bad_cidr": "Not a valid IP/CIDR: {value} — adding no firewall rule"
   },
   "ufw": {
     "title": "UFW Firewall",
@@ -339,7 +342,10 @@
     "no_reboot": "No reboot required",
     "check_timesync": "Checking time synchronization",
     "timesync_ok": "Time is synchronized",
-    "timesync_failed": "Time synchronization not configured"
+    "timesync_failed": "Time synchronization not configured",
+    "check_failed": "Could not query pending updates",
+    "check_failed_desc": "The package manager's update query failed (broken sources, cold metadata cache, or missing tool). This is NOT \"no updates\" — the question went unanswered.",
+    "check_failed_fix": "Refresh the package index manually (apt-get update / dnf makecache / pacman -Sy) and re-run the audit"
   },
   "docker": {
     "title": "Docker Security",
@@ -563,7 +569,10 @@
     "configuring_audit_rules": "Configuring audit rules...",
     "audit_rules_configured": "Audit rules configured",
     "audit_rules_failed": "Failed to configure audit rules",
-    "audit_immutable_hint": "For compliance / forensic integrity, consider uncommenting '-e 2' in /etc/audit/rules.d/99-vpssec.rules and rebooting; once applied, audit rules cannot be modified without another reboot."
+    "audit_immutable_hint": "For compliance / forensic integrity, consider uncommenting '-e 2' in /etc/audit/rules.d/99-vpssec.rules and rebooting; once applied, audit rules cannot be modified without another reboot.",
+    "journal_unreadable": "Could not read the systemd journal",
+    "journal_unreadable_desc": "journalctl failed, so failed SSH logins and sudo activity could not be counted. This is not evidence of quiet — the journal went unread.",
+    "journal_unreadable_fix": "Check that systemd-journald is running and journal files exist under /var/log/journal or /run/log/journal"
   },
   "cloudflared": {
     "title": "Cloudflare Tunnel",
@@ -692,7 +701,8 @@
     "restore_none_skipped": "Nothing was restored: all {skipped} entries were skipped by safety checks (see logs/vpssec.log)",
     "restore_partial": "Partially restored: {restored} file(s) restored, {skipped} skipped (see logs/vpssec.log)",
     "restore_count": "{restored} file(s) restored",
-    "restored_partial": "Rollback finished, but some entries were skipped"
+    "restored_partial": "Rollback finished, but some entries were skipped",
+    "snapshot_failed": "Could not back up {file} — aborting this change (nothing was modified)."
   },
   "fail2ban": {
     "title": "Fail2ban Protection",
@@ -813,7 +823,10 @@
     "auditd_not_installed": "Linux audit daemon not installed",
     "auditd_active": "Audit daemon is active",
     "auditd_few_rules": "Audit daemon has few rules configured",
-    "auditd_not_running": "Audit daemon is not running"
+    "auditd_not_running": "Audit daemon is not running",
+    "network_params_unreadable": "Kernel network parameters could not be read",
+    "network_params_unreadable_desc": "Every net.* sysctl in the check list was unreadable (restricted container or missing /proc/sys) — 0 parameters were actually verified, so no hardening claim is made.",
+    "persist_failed": "Failed to persist {count} sysctl value(s) to the drop-in — the change would not survive a reboot"
   },
   "filesystem": {
     "title": "Filesystem Security",
@@ -1097,7 +1110,8 @@
     "resume_empty_plan": "Saved plan is empty or missing; cannot resume.",
     "resume_already_done": "All fixes from the saved plan are already complete.",
     "resume_executing": "Resuming: {count} fix(es) remaining out of {total}",
-    "resume_complete_hint": "Run 'vpssec audit' to see the updated state."
+    "resume_complete_hint": "Run 'vpssec audit' to see the updated state.",
+    "plan_empty": "Selection resolved to zero executable fixes — nothing was run. The UI handed over IDs the planner does not recognize; please report this."
   },
   "fix": {
     "alert_only": "Alert only - manual fix required",
@@ -1141,7 +1155,8 @@
     "latest_backup": "Latest backup: {time}",
     "interrupted": "Previous plan interrupted at fix {current} of {total}.",
     "interrupted_hint": "Run 'vpssec guide' to resume the saved plan, or 'vpssec rollback' to undo partial changes.",
-    "reloading_services": "Reloading services..."
+    "reloading_services": "Reloading services...",
+    "state_unreadable": "State is not readable as this user (it is root-owned by design). Run: sudo vpssec status"
   },
   "timezone": {
     "title": "Timezone & Time Sync",
@@ -1385,7 +1400,11 @@
     "temp_file_failed": "Failed to create temp file",
     "fix_failed": "Fix failed: {id}",
     "fix_func_not_found": "Fix function not found: {func}",
-    "audit_func_not_found": "Audit function not found: {func}"
+    "audit_func_not_found": "Audit function not found: {func}",
+    "module_failed": "Module did not complete: {module}",
+    "module_failed_desc": "The {module} audit stopped partway (exit {rc}); its remaining checks were never evaluated. This report is incomplete for that module.",
+    "module_failed_load_desc": "The {module} module failed to load; none of its checks ran. This report is incomplete for that module.",
+    "module_failed_fix": "Re-run with --debug and check logs/vpssec.log; report the failure if it persists."
   },
   "fixwarn": {
     "baseline.selinux_enable": "Enabling SELinux requires system reboot and may cause service issues",

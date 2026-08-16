@@ -1,0 +1,11 @@
+# Mutation cases for tests/test_query_failure_honesty.bats against
+# modules/kernel.sh.
+# mutate-suite: modules/kernel.sh tests/test_query_failure_honesty.bats
+#
+# Zero readable sysctls must not be crowned "network params OK".
+
+# Make the unreadable branch unreachable: total_issues==0 with passed==0
+# then falls through to the green network_params_ok again.
+run_case "kernel/unreadable-branch-dead" 1 \
+    "        if (( passed == 0 )); then" \
+    "        if (( passed < 0 )); then"

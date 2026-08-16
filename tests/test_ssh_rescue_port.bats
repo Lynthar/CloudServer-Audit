@@ -54,3 +54,33 @@ setup() {
     run _ssh_pick_rescue_port
     [ "$status" -ne 0 ]
 }
+
+# ---- _ssh_valid_cidr: operator-entered rescue scope --------------------
+# When the source IP cannot be detected, the operator types the CIDR that
+# may reach the rescue port; this is the gate between their input and a
+# `ufw allow from` rule.
+
+@test "rescue cidr: plain IPv4 accepted" {
+    _ssh_valid_cidr "203.0.113.7"
+}
+
+@test "rescue cidr: IPv4 with prefix accepted" {
+    _ssh_valid_cidr "203.0.113.0/24"
+}
+
+@test "rescue cidr: IPv4 prefix over 32 rejected" {
+    _vpssec_refute _ssh_valid_cidr "203.0.113.0/33"
+}
+
+@test "rescue cidr: IPv6 with prefix accepted" {
+    _ssh_valid_cidr "2001:db8::/64"
+}
+
+@test "rescue cidr: IPv6 prefix over 128 rejected" {
+    _vpssec_refute _ssh_valid_cidr "2001:db8::/129"
+}
+
+@test "rescue cidr: junk rejected" {
+    _vpssec_refute _ssh_valid_cidr "not-a-cidr"
+    _vpssec_refute _ssh_valid_cidr "999.1.1.1/24"
+}

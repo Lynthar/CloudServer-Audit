@@ -60,7 +60,14 @@ check_system() {
                 print_ok "Supported OS: $PRETTY_NAME"
                 ;;
             *)
-                print_warn "Untested OS: $PRETTY_NAME (may work)"
+                # Honest scope note: the AUDIT runs on RHEL-family and Arch
+                # too, but this installer only knows how to install missing
+                # dependencies with apt — a bare "may work" promised more
+                # than the apt-get below could deliver (verified: it exits
+                # 127 on a clean Rocky 9 / Arch container).
+                print_warn "OS: $PRETTY_NAME — vpssec's audit supports Debian/Ubuntu/RHEL-family/Arch,"
+                print_warn "but THIS installer auto-installs dependencies via apt only."
+                print_warn "On other distros, install missing dependencies manually first."
                 ;;
         esac
     else
@@ -77,6 +84,12 @@ check_system() {
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         print_warn "Missing dependencies: ${missing[*]}"
+        if ! command -v apt-get &>/dev/null; then
+            # No apt on this host: say what to do instead of running a
+            # command that cannot exist here (exit 127 mid-install).
+            print_error "No apt-get on this system — install these manually, then re-run: ${missing[*]}"
+            exit 1
+        fi
         print_info "Installing dependencies..."
         apt-get update -qq
         apt-get install -y "${missing[@]}"
@@ -110,21 +123,36 @@ install_vpssec() {
             # Download as tarball. GitHub tarballs extract to "<repo>-<branch>",
             # so the top-level dir here must match the repo name, not a stale
             # pre-rename guess.
+            #
+            # Extract into a fresh mktemp dir, NOT bare /tmp: the extracted
+            # top-level path was predictable (/tmp/<repo>-main), so a local
+            # user could pre-create that directory — they then owned the
+            # parent of everything root extracted and could swap entries
+            # (the `vpssec` script itself sits at that top level) between
+            # extraction and the mv into INSTALL_DIR.
             local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz"
             local repo_name="${GITHUB_REPO##*/}"
+            local staging
+            staging=$(mktemp -d) || { print_error "mktemp failed"; exit 1; }
+            chmod 700 "$staging"
             print_info "Downloading from $tarball_url"
-            curl -fsSL "$tarball_url" | tar -xz -C /tmp
+            curl -fsSL "$tarball_url" | tar -xz -C "$staging"
             safe_remove_install_dir
-            mv "/tmp/${repo_name}-main" "$INSTALL_DIR"
+            mv "${staging}/${repo_name}-main" "$INSTALL_DIR"
+            rm -rf "$staging"
         fi
     else
-        # Download specific version
+        # Download specific version (same mktemp staging as the latest path).
         local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/tags/v${VPSSEC_VERSION}.tar.gz"
         local repo_name="${GITHUB_REPO##*/}"
+        local staging
+        staging=$(mktemp -d) || { print_error "mktemp failed"; exit 1; }
+        chmod 700 "$staging"
         print_info "Downloading version $VPSSEC_VERSION..."
-        curl -fsSL "$tarball_url" | tar -xz -C /tmp
+        curl -fsSL "$tarball_url" | tar -xz -C "$staging"
         safe_remove_install_dir
-        mv "/tmp/${repo_name}-${VPSSEC_VERSION}" "$INSTALL_DIR"
+        mv "${staging}/${repo_name}-${VPSSEC_VERSION}" "$INSTALL_DIR"
+        rm -rf "$staging"
     fi
 
     # Create required directories

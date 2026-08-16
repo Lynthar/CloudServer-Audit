@@ -834,6 +834,26 @@ _kernel_audit_network_params() {
     fi
 
     if [[ $total_issues -eq 0 ]]; then
+        # Zero issues found by READING ZERO parameters is not a pass — it is
+        # a /proc/sys we could not ask (restricted container, mount gone).
+        # Emitting the green check with "0 parameters checked" buried in the
+        # desc told the operator their network sysctls were hardened when
+        # none were ever looked at. failed + info-category (unscored), same
+        # pattern as update.check_failed.
+        if (( passed == 0 )); then
+            local check=$(create_check_json \
+                "kernel.network_params_unreadable" \
+                "kernel" \
+                "low" \
+                "failed" \
+                "$(i18n 'kernel.network_params_unreadable')" \
+                "$(i18n 'kernel.network_params_unreadable_desc')" \
+                "" \
+                "")
+            state_add_check "$check"
+            print_severity "low" "$(i18n 'kernel.network_params_unreadable')"
+            return 0
+        fi
         local check=$(create_check_json \
             "kernel.network_params_ok" \
             "kernel" \
@@ -1105,15 +1125,22 @@ _kernel_fix_ipv6() {
     fi
 
     local fixed=0
+    local persist_failed=0
 
     for setting in "${ipv6_params[@]}"; do
         local param="${setting%%=*}"
         local value="${setting#*=}"
 
-        # Apply immediately
+        # Apply immediately, persist, and count a parameter as fixed only
+        # when BOTH landed. A runtime-only success used to count: the
+        # setting evaporated on reboot while the fix reported done and
+        # ok.json recorded a completion the next boot contradicted.
         if sysctl -w "$param=$value" 2>/dev/null; then
-            _kernel_write_sysctl "$param" "$value"
-            ((fixed++)) || true
+            if _kernel_write_sysctl "$param" "$value"; then
+                ((fixed++)) || true
+            else
+                ((persist_failed++)) || true
+            fi
         fi
     done
 
@@ -1121,6 +1148,10 @@ _kernel_fix_ipv6() {
     # per-call (previously: N params = N reloads).
     ((fixed > 0)) && _kernel_reload_sysctl_dropin
 
+    if (( persist_failed > 0 )); then
+        print_error "$(i18n 'kernel.persist_failed' "count=$persist_failed")"
+        return 1
+    fi
     if [[ "$fixed" -gt 0 ]]; then
         print_ok "$(i18n 'kernel.ipv6_hardened' "count=$fixed")"
         return 0
@@ -1133,11 +1164,18 @@ _kernel_fix_ipv6() {
 _kernel_fix_aslr() {
     print_info "$(i18n 'kernel.enabling_aslr')"
 
-    # Apply immediately
-    sysctl -w kernel.randomize_va_space=2 2>/dev/null
+    # Apply immediately (the audit-predicate postcondition below verifies
+    # the runtime value, so the write itself may be fire-and-forget).
+    sysctl -w kernel.randomize_va_space=2 2>/dev/null || true
 
-    # Make persistent
-    _kernel_write_sysctl "kernel.randomize_va_space" "2"
+    # Make persistent — and treat a failed persist as a failed fix: the
+    # runtime postcondition alone passed when only `sysctl -w` landed, so a
+    # host whose drop-in write failed reverted to weak ASLR on reboot with
+    # a "completed" entry in ok.json.
+    if ! _kernel_write_sysctl "kernel.randomize_va_space" "2"; then
+        print_error "$(i18n 'kernel.persist_failed' "count=1")"
+        return 1
+    fi
     _kernel_reload_sysctl_dropin
 
     if [[ "$(_kernel_check_aslr)" == "full" ]]; then
@@ -1212,18 +1250,31 @@ _kernel_fix_network_params() {
         return 0
     fi
 
-    # Apply and persist
+    # Apply and persist, counting what actually landed. Both halves were
+    # fire-and-forget before (fix functions run with errexit off, so the
+    # bare failing commands just fell through), and the unconditional
+    # print_ok below reported "hardened N" even when every write bounced
+    # off a read-only /proc/sys or a failed drop-in write.
+    local applied=0 apply_failed=0
     for setting in "${params_to_set[@]}"; do
         local param="${setting%%=*}"
         local value="${setting#*=}"
 
-        sysctl -w "$param=$value" 2>/dev/null
-        _kernel_write_sysctl "$param" "$value"
+        if sysctl -w "$param=$value" 2>/dev/null && \
+           _kernel_write_sysctl "$param" "$value"; then
+            ((applied++)) || true
+        else
+            ((apply_failed++)) || true
+        fi
     done
 
-    _kernel_reload_sysctl_dropin
+    ((applied > 0)) && _kernel_reload_sysctl_dropin
 
-    print_ok "$(i18n 'kernel.network_hardened' "count=${#params_to_set[@]}")"
+    if (( apply_failed > 0 )); then
+        print_error "$(i18n 'kernel.persist_failed' "count=$apply_failed")"
+        return 1
+    fi
+    print_ok "$(i18n 'kernel.network_hardened' "count=$applied")"
     return 0
 }
 
@@ -1258,18 +1309,28 @@ _kernel_fix_kernel_params() {
         return 0
     fi
 
-    # Apply and persist
+    # Apply and persist — same counted pattern (and rationale) as
+    # _kernel_fix_network_params above.
+    local applied=0 apply_failed=0
     for setting in "${params_to_set[@]}"; do
         local param="${setting%%=*}"
         local value="${setting#*=}"
 
-        sysctl -w "$param=$value" 2>/dev/null
-        _kernel_write_sysctl "$param" "$value"
+        if sysctl -w "$param=$value" 2>/dev/null && \
+           _kernel_write_sysctl "$param" "$value"; then
+            ((applied++)) || true
+        else
+            ((apply_failed++)) || true
+        fi
     done
 
-    _kernel_reload_sysctl_dropin
+    ((applied > 0)) && _kernel_reload_sysctl_dropin
 
-    print_ok "$(i18n 'kernel.kernel_hardened' "count=${#params_to_set[@]}")"
+    if (( apply_failed > 0 )); then
+        print_error "$(i18n 'kernel.persist_failed' "count=$apply_failed")"
+        return 1
+    fi
+    print_ok "$(i18n 'kernel.kernel_hardened' "count=$applied")"
     return 0
 }
 

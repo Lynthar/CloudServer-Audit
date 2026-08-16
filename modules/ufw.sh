@@ -847,28 +847,3 @@ _ufw_fix_review_rules() {
 # UFW Utility Functions for Other Modules
 # ==============================================================================
 
-# Allow a port (can be called from other modules)
-ufw_allow_port() {
-    local port="$1"
-    local proto="${2:-tcp}"
-    local comment="${3:-vpssec}"
-
-    if _ufw_enabled; then
-        ufw allow "$port/$proto" comment "$comment" 2>/dev/null
-    fi
-}
-
-# Allow from specific IP
-ufw_allow_from() {
-    local ip="$1"
-    local port="${2:-}"
-    local comment="${3:-vpssec}"
-
-    if _ufw_enabled; then
-        if [[ -n "$port" ]]; then
-            ufw allow from "$ip" to any port "$port" comment "$comment" 2>/dev/null
-        else
-            ufw allow from "$ip" comment "$comment" 2>/dev/null
-        fi
-    fi
-}

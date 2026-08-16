@@ -100,30 +100,6 @@ state_get_checks() {
     fi
 }
 
-# Get checks by status
-state_get_checks_by_status() {
-    local status="$1"
-    state_get_checks | jq -r --arg status "$status" '[.[] | select(.status == $status)]'
-}
-
-# Get checks by severity
-state_get_checks_by_severity() {
-    local severity="$1"
-    state_get_checks | jq -r --arg sev "$severity" '[.[] | select(.severity == $sev)]'
-}
-
-# Get checks by module
-state_get_checks_by_module() {
-    local module="$1"
-    state_get_checks | jq -r --arg mod "$module" '[.[] | select(.module == $mod)]'
-}
-
-# Count checks by status
-state_count_checks() {
-    local status="$1"
-    state_get_checks | jq -r --arg status "$status" '[.[] | select(.status == $status)] | length'
-}
-
 # ==============================================================================
 # Fix State Management
 # ==============================================================================
@@ -156,24 +132,6 @@ state_mark_fix_complete() {
     ) 200>"$lock_file"
 
     log_info "Fix marked complete: $fix_id"
-}
-
-# Check if a fix was already applied
-state_is_fix_applied() {
-    local fix_id="$1"
-    local result=$(jq -r --arg id "$fix_id" '.completed_fixes[] | select(.id == $id) | .id' "$STATE_OK_FILE" 2>/dev/null)
-    [[ -n "$result" ]]
-}
-
-# Get all completed fixes
-state_get_completed_fixes() {
-    jq -r '.completed_fixes' "$STATE_OK_FILE" 2>/dev/null || echo '[]'
-}
-
-# Clear fix state (for testing or reset)
-state_clear_fixes() {
-    echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
-    log_info "Fix state cleared"
 }
 
 # ==============================================================================
@@ -407,8 +365,16 @@ backup_restore() {
             continue
         fi
 
-        mkdir -p "$original_dir"
-        cp -p "$backup_file" "$original_path"
+        # A restore that did not happen must not be counted as restored.
+        # rollback_mode runs this with errexit suppressed (rc-captured), so
+        # an unchecked failing cp used to fall straight through to
+        # ((restored++)) — the operator was told their file came back when
+        # it had not. Count it as skipped and keep restoring the rest.
+        if ! mkdir -p "$original_dir" || ! cp -p "$backup_file" "$original_path"; then
+            log_error "Restore FAILED (copy error): $backup_file -> $original_path"
+            ((skipped++)) || true
+            continue
+        fi
         # cp -p copies the mode of the BACKUP copy, which backup_file
         # deliberately chmods to 600. Put the file's own mode back.
         _backup_restore_mode "$original_path" "$modes_manifest"
@@ -434,9 +400,16 @@ backup_restore() {
                 ((skipped++)) || true
                 continue
             fi
-            if [[ -f "$created_path" ]] && rm -f "$created_path"; then
-                log_info "Removed fix-created file on rollback: $created_path"
-                ((restored++)) || true
+            if [[ -f "$created_path" ]]; then
+                if rm -f "$created_path"; then
+                    log_info "Removed fix-created file on rollback: $created_path"
+                    ((restored++)) || true
+                else
+                    # A created file we could not delete is an incomplete
+                    # rollback — count it so the exit status says so.
+                    log_error "Rollback could not remove fix-created file: $created_path"
+                    ((skipped++)) || true
+                fi
             fi
         done < "$created_manifest"
     fi
@@ -467,21 +440,15 @@ backup_restore() {
     return 0
 }
 
-# Restore latest backup
-backup_restore_latest() {
-    local latest=$(backup_get_latest)
-    if [[ -n "$latest" ]]; then
-        backup_restore "$latest"
-    else
-        log_error "No backups found"
-        return 1
-    fi
-}
-
-# Get backup contents (for preview)
+# Get backup contents (for preview). Same timestamp-shape gate as
+# backup_restore / backup_cleanup: the preview used to be the one entry
+# point that concatenated an unvalidated argument into the path, so
+# `vpssec rollback ../../etc`-style input listed arbitrary directories.
 backup_list_contents() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
+
+    [[ "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
 
     if [[ -d "$backup_dir" ]]; then
         find "$backup_dir" -type f | while read -r f; do
