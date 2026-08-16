@@ -20,8 +20,8 @@
 # ---- the path variables that make the fixes reachable ----------------
 
 run_case "paths/backup-target-inlined" 1 \
-    '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true' \
-    '    backup_file /etc/login.defs >/dev/null 2>&1 || true'
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null || return 1' \
+    '    backup_file /etc/login.defs >/dev/null || return 1'
 
 run_case "paths/audit-reader-inlined" 1 \
     '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' "$FS_LOGIN_DEFS" 2>/dev/null)' \
@@ -38,7 +38,7 @@ run_case "umask/missing-file-not-refused" 1 \
     '    if false; then'
 
 run_case "umask/backup-skipped" 1 \
-    '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true' \
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null || return 1' \
     '    :'
 
 run_case "umask/existing-line-not-rewritten" 1 \
@@ -104,11 +104,23 @@ run_case "perms/bitmask-back-to-numeric-compare" 1 \
     '        if (( extra_bits != 0 )); then' \
     '        if (( actual_num > expected_num )); then'
 
+# The mutant is `if false`, not `:`: the backup call lives in an if/then whose
+# body counts the failure, so replacing the whole line with `:` leaves a
+# dangling `fi`. `if false` skips the backup and the failure branch alike.
 run_case "perms/backup-skipped" 1 \
-    '            backup_file "$file" >/dev/null 2>&1 || true' \
-    '            :'
+    '            if ! backup_file "$file" >/dev/null; then' \
+    '            if false; then'
 
-run_case "perms/chmod-failure-uncounted" 1 \
+# A failed backup must be COUNTED, not just returned: the loops that call this
+# helper ignore its status, so an uncounted failure leaves the fix reporting
+# success for a file it never backed up.
+run_case "perms/backup-failure-uncounted" 1 \
+    '                ((failed++)) || true' \
+    '                :'
+
+# Occurrence 2: the backup-failure counter above is now the first verbatim
+# match of this line.
+run_case "perms/chmod-failure-uncounted" 2 \
     '                ((failed++)) || true' \
     '                :'
 
@@ -131,3 +143,8 @@ run_case "perms/sshd-dropins-skipped" 2 \
 run_case "perms/already-correct-file-touched" 1 \
     '        local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))' \
     '        local extra_bits=1'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "umask/backup-failure-swallowed" 1 \
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null || return 1' \
+    '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true'

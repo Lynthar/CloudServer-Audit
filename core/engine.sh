@@ -3,9 +3,7 @@
 # Core engine - module loading, scheduling, and execution
 # Copyright (c) 2024
 
-# ==============================================================================
-# Security Levels
-# ==============================================================================
+# --- Security Levels ---
 
 # Source security level configuration
 VPSSEC_SECURITY_LEVELS_FILE="${VPSSEC_CORE}/security_levels.sh"
@@ -14,19 +12,11 @@ if [[ -f "$VPSSEC_SECURITY_LEVELS_FILE" ]]; then
     source "$VPSSEC_SECURITY_LEVELS_FILE"
 fi
 
-# ==============================================================================
-# Module Management
-# ==============================================================================
+# --- Module Management ---
 
-# Available modules (order matters for execution)
-# Organized from basic to advanced:
-#   1. System Basics: preflight, cloud, timezone
-#   2. Access Control: users, ssh
-#   3. Network Security: ufw, fail2ban
-#   4. System Hardening: update, kernel, filesystem, baseline
-#   5. Service Security: docker, nginx, cloudflared, webapp
-#   6. Security Scanning: malware
-#   7. Operations & Compliance: logging, backup, alerts
+# Execution order, basics first: system basics, access control, network,
+# hardening, services, scanning, operations. Adding a module means appending
+# here AND to VPSSEC_MODULE_CATEGORY below.
 declare -ga VPSSEC_MODULE_ORDER=(
     # System Basics
     "preflight"
@@ -100,13 +90,9 @@ declare -gA VPSSEC_MODULE_ENABLED=()
 declare -gA VPSSEC_MODULE_LOADED=()
 declare -gA VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
 
-# Modules that did NOT complete this run: failed to source, missing their
-# audit function, or their audit returned non-zero. This is what makes an
-# incomplete audit VISIBLE — each entry becomes an _internal.module_failed
-# check, a meta.modules_failed row in summary.json, SARIF
-# executionSuccessful=false, and a non-zero audit exit code. Previously all
-# three failure kinds went only to the log and every downstream consumer
-# read the partial result as a complete, successful scan.
+# Modules that did NOT complete: failed to source, missing audit function, or
+# audit returned non-zero. This is the ONLY signal for an incomplete audit —
+# add new failure modes here rather than inventing a parallel one.
 declare -ga VPSSEC_MODULES_FAILED=()
 
 # Load-failed modules, separately: loading happens BEFORE state_init, so
@@ -177,12 +163,8 @@ module_available() {
             return 0
             ;;
         docker)
-            # podman counts: the module's own availability probe knows how to
-            # say "a runtime is present that this audit cannot inspect"
-            # (docker.daemon_unreachable, found=podman) — but that code only
-            # runs if the module LOADS. Gating on the docker CLI alone kept
-            # podman-only hosts on the old "not installed, passed" path the
-            # probe was built to replace.
+            # podman counts: the module's own probe reports an uninspectable
+            # runtime, but only if the module actually loads.
             check_command docker || check_command podman || return 1
             ;;
         nginx)
@@ -216,11 +198,8 @@ module_available() {
     return 0
 }
 
-# Trim whitespace around each comma-separated token and re-join. The
-# validator below already trimmed for LOOKUP, but the loop's substring
-# match used the raw string — so `--include="ssh, ufw"` validated fine
-# and then silently dropped ufw (", ufw," never equals ",ufw,"). One
-# normalization, used by both.
+# Trim each comma-separated token and re-join. Validation and the matching
+# loop MUST share this, or `--include="ssh, ufw"` validates and drops ufw.
 _module_normalize_filter() {
     local list="$1" out="" token
     local IFS=','
@@ -241,24 +220,16 @@ module_load_all() {
     include=$(_module_normalize_filter "$include")
     exclude=$(_module_normalize_filter "$exclude")
 
-    # Context modules run with every filtered audit, as the README has
-    # always promised: preflight (environment facts), cloud (provider
-    # detection that users.sh keys default-account lists off) and timezone.
-    # The interactive category menu already appended them; the --include=
-    # path did not, so `--include=users` and menu-selected "users" ran
-    # different classification logic. An explicit --exclude still wins —
-    # the exclude check in the loop below runs after this.
+    # Context modules run with every filtered audit: users.sh keys its
+    # cloud-init account list off the detected provider, so an --include
+    # without them classifies differently. An explicit --exclude still wins.
     if [[ -n "$include" ]]; then
         include="preflight,cloud,timezone,${include}"
     fi
 
-    # Validate filter tokens against known module names.
-    # Rationale: previously a typo like `--include=ssg` silently
-    # produced an empty audit (no module name matched), which the
-    # caller could mistake for "everything passed". Fail loud on
-    # unknown include tokens; warn-only on unknown exclude tokens
-    # because a wrong exclude is at worst conservative (you ran an
-    # extra module you didn't want to skip).
+    # Unknown include tokens are fatal — a typo would otherwise produce an
+    # empty audit that reads as "everything passed". Unknown exclude tokens
+    # only warn: a wrong exclude is at worst conservative.
     _module_validate_filter "$include" "include" "fatal"
     _module_validate_filter "$exclude" "exclude" "warn"
 
@@ -296,13 +267,9 @@ module_load_all() {
     done
 }
 
-# Validate a comma-separated list of module names.
-#
-# Args: <list> <flag-name> <severity>
-#   list      — comma-separated, possibly empty
-#   flag-name — "include" or "exclude" (only used in messages)
-#   severity  — "fatal" exits with code 2 on any unknown token;
-#               "warn" prints a warning and lets the run continue
+# Validate a comma-separated module list.
+# Args: <list> <flag-name: include|exclude> <severity: fatal|warn>
+# fatal exits 2 on any unknown token; warn continues.
 _module_validate_filter() {
     local list="$1"
     local flag="$2"
@@ -352,9 +319,7 @@ module_get_enabled() {
     done
 }
 
-# ==============================================================================
-# Audit Mode Execution
-# ==============================================================================
+# --- Audit Mode Execution ---
 
 # Run audit for a single module
 audit_module() {
@@ -371,20 +336,16 @@ audit_module() {
         log_info "Running audit: $module"
         print_subheader "$(i18n "${module}.title")"
 
-        # Execute audit, capturing the module's REAL exit code. `if ! fn; then
-        # r=$?` would capture the status of `!` (always 0), so the warning
-        # always logged "returned non-zero: 0". `if fn; then : ; else r=$?`
-        # records the actual non-zero in the else branch, and the `if` still
-        # suppresses set -e so one module's failure can't abort the whole audit.
+        # `if fn; then : ; else r=$?` captures the module's REAL status —
+        # `if ! fn` would capture the status of `!`, which is always 0.
+        # The `if` still suppresses set -e so one module cannot abort the run.
         local audit_result=0
         if "$audit_func"; then
             :
         else
             audit_result=$?
             log_warn "Audit function $audit_func returned non-zero: $audit_result"
-            # Don't abort the whole audit — but don't hide it either. The
-            # module stopped partway, so its remaining checks were simply
-            # never asked; without a visible record, "module crashed" and
+            # Recorded, not hidden: without this, "module crashed" and
             # "module found nothing wrong" produce identical reports.
             _module_record_failure "$module" "audit"
             state_add_check "$(create_check_json \
@@ -425,30 +386,9 @@ _record_unavailable_modules() {
     done
 }
 
-# Run one full audit pass: state_init → enumerate modules → invoke
-# every <module>_audit → record unavailable modules. Used by both
-# `audit_all` (read-only mode) and `guide_mode` (which needs the same
-# audit results before computing fixes). Pulled out of the two
-# callers so a behavioural change to the audit pass only has to land
-# in one place.
-#
-# Side effects (intentional, preserved from the previous inline
-# implementations):
-#   * state/checks.json is reset and refilled (state_init handles
-#     the .prev backup).
-#   * VPSSEC_QUIET_SCAN is exported as 1 during the loop and reset
-#     to 0 on return — both callers expect QUIET_SCAN=0 immediately
-#     afterwards (audit_all calls report_generate_all, guide_mode
-#     calls report_print_details / report_print_summary).
-#   * The per-module progress line is rewritten in place via \r;
-#     we clear it before returning so the next print starts on a
-#     fresh column.
-#
-# Loop variables (`module`, `mod_title`, etc.) are declared local
-# here even though the previous inline blocks let `module` leak as
-# a global — leaking was harmless (no caller referenced it after
-# return) but making it local means a future caller can't be
-# surprised by a stale value.
+# One full audit pass, shared by audit_all and guide_mode.
+# Side effects both callers rely on: checks.json is reset and refilled, and
+# VPSSEC_QUIET_SCAN is 1 during the loop but 0 again on return.
 _run_audit_pass() {
     state_init
 
@@ -473,23 +413,14 @@ _run_audit_pass() {
     print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
     print_msg ""
 
-    # Pre-warm the cloud-detection cache in *this* shell before any
-    # module spawns a `$(...)` subshell. The getters in core/common.sh
-    # write VPSSEC_CLOUD_PROVIDER / VPSSEC_CLOUD_TIER as `declare -g`
-    # globals, but a subshell's assignment dies with the subshell — so
-    # without this pre-warm every $(vpssec_cloud_provider) call across
-    # the audit would re-run DMI detection. Calling the getters here
-    # (no command substitution) sets the globals in the parent shell;
-    # every subsequent subshell inherits the cached values.
+    # Pre-warm the cloud cache in THIS shell, with no command substitution:
+    # a subshell's assignment dies with it, so every later
+    # $(vpssec_cloud_provider) would otherwise re-run DMI detection.
     vpssec_cloud_provider >/dev/null
     vpssec_cloud_tier >/dev/null
 
-    # Progress ticker. It has to bypass print_msg (it needs \r and no
-    # newline), which is exactly why it also bypassed print_msg's
-    # --json-only guard: under `--json-only` these lines were written to
-    # STDOUT ahead of the JSON document, so `vpssec audit --json-only |
-    # jq .` failed with "Invalid numeric literal" — the one thing that
-    # flag exists to make possible. Suppress it in JSON mode.
+    # Bypasses print_msg for \r, so it must repeat print_msg's --json-only
+    # guard: otherwise these lines precede the JSON document on stdout.
     _progress() {
         [[ "${VPSSEC_JSON_ONLY:-0}" == "1" ]] && return 0
         # shellcheck disable=SC2059  # caller supplies the format string
@@ -542,21 +473,15 @@ audit_all() {
     # Generate reports and print summary
     report_generate_all
 
-    # Exit contract: 0 only for a COMPLETE audit. Reports are written and
-    # printed above regardless — the non-zero status is for automation,
-    # which otherwise had no way to tell a full scan from one that lost
-    # modules on the way (meta.modules_failed carries the names). 3 is
-    # distinct from 1/2 so callers can separate "incomplete" from generic
-    # failure.
+    # Exit contract: 0 only for a COMPLETE audit; 3 = incomplete, distinct
+    # from generic failure. Reports are written and printed either way.
     if (( ${#VPSSEC_MODULES_FAILED[@]} > 0 )); then
         return 3
     fi
     return 0
 }
 
-# ==============================================================================
-# Guide Mode Execution
-# ==============================================================================
+# --- Guide Mode Execution ---
 
 # Get available fixes from audit results
 get_available_fixes() {
@@ -601,12 +526,9 @@ generate_plan() {
 
     local checks=$(state_get_checks)
 
-    # One plan entry per unique fix id. Both halves matter: the selection can
-    # name the same fix twice (two failed checks share one fix_id and both
-    # rows get ticked), and `select(.fix_id == $id)` matches every such check
-    # — either way the plan would run the same fix repeatedly and the "[i/N]"
-    # progress would overstate the work. `first()` keeps one representative
-    # check; the fix function only receives the fix_id anyway.
+    # One plan entry per unique fix id: the selection can name a fix twice and
+    # the select() matches every check sharing it. first() keeps one
+    # representative check; the fix function only receives the fix_id.
     local -A plan_seen=()
     for fix_id in $selected_fixes; do
         [[ -n "${plan_seen[$fix_id]:-}" ]] && continue
@@ -645,12 +567,9 @@ execute_fix() {
             return 1
         fi
 
-        # Enforce confirmation for confirm/risky fixes centrally so none can be
-        # applied without acknowledgement. Fixes in FIX_SELF_CONFIRMED prompt
-        # themselves at a more precise point and are skipped here to avoid a
-        # double prompt (see fix_needs_engine_confirmation). Risky fixes use
-        # confirm_critical (ignores --yes, requires a typed "yes" + tty);
-        # confirm-class fixes use confirm (honors --yes for non-critical runs).
+        # Confirmation is enforced centrally so no confirm/risky fix can apply
+        # unacknowledged. FIX_SELF_CONFIRMED fixes prompt themselves and are
+        # skipped here. Risky uses confirm_critical, which ignores --yes.
         if fix_needs_engine_confirmation "$fix_id"; then
             local warning
             warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
@@ -673,14 +592,9 @@ execute_fix() {
     if declare -f "$fix_func" > /dev/null; then
         log_info "Executing fix: $fix_id"
         if "$fix_func" "$fix_id"; then
-            # A fix returning 0 means "my work succeeded", which is not the
-            # same as "the finding is resolved". For the fixes in
-            # FIX_TEMPLATE_ONLY it never can be — they write a template, or a
-            # file the operator still has to wire in. Recording a completion
-            # for those put a line in ok.json that the next audit contradicted,
-            # and the alternative convention (return 1) reported a FAILURE for
-            # work that succeeded. Keep the exit status honest about the work
-            # and take the second fact from the map.
+            # Returning 0 means "my work succeeded", not "the finding is
+            # resolved" — for FIX_TEMPLATE_ONLY it never can be. The exit
+            # status stays honest about the work; the map carries the rest.
             if fix_is_template_only "$fix_id"; then
                 log_info "Fix applied, manual step remains: $fix_id"
                 print_warn "$(i18n 'fix.manual_step_remains')"
@@ -714,12 +628,9 @@ execute_plan() {
     local backup_dir="$VPSSEC_BACKUP_SESSION"
     log_info "Backup session created: $backup_dir"
 
-    # Read the whole plan into an array FIRST, then iterate. Feeding the loop
-    # from `< <(jq ...)` would make that pipe the stdin of every fix body, so a
-    # fix that reads stdin (an apt/debconf prompt, or a `while read` without its
-    # own redirect) would swallow the remaining plan JSON and silently skip the
-    # rest of the fixes. Buffering here frees stdin so fix bodies inherit the
-    # real terminal instead.
+    # Buffered first, then iterated: feeding the loop from `< <(jq ...)` makes
+    # that pipe the stdin of every fix body, and a fix that reads stdin would
+    # swallow the remaining plan.
     local -a fix_lines=()
     local _line
     while IFS= read -r _line; do
@@ -764,12 +675,8 @@ execute_plan() {
                         if execute_fix "$fix_id"; then
                             print_ok "$(i18n 'common.success')"
                             completed+=("$fix_id")
-                            # Remove from failed. Bash `${arr[@]/pat}`
-                            # replaces pat with empty — it does NOT
-                            # delete the element, so the previous
-                            # version left a zero-length slot and made
-                            # ${#failed[@]} overcount. Rebuild the
-                            # array instead.
+                            # Rebuilt, not filtered: `${arr[@]/pat}` blanks
+                            # the element instead of removing it.
                             local _kept=()
                             local _f
                             for _f in "${failed[@]}"; do
@@ -779,11 +686,9 @@ execute_plan() {
                         fi
                         ;;
                     3)
-                        # Rollback and exit. Restore THIS plan's session (which
-                        # holds every fix's backup), not merely the latest dir.
-                        # backup_restore now returns 1 (nothing restored) / 2
-                        # (partial) — swallow it here so `set -e` doesn't kill
-                        # the run mid-rollback, but tell the user which it was.
+                        # Restore THIS plan's session, not merely the latest
+                        # dir. rc is swallowed so set -e cannot kill the run
+                        # mid-rollback, but the outcome is reported.
                         print_warn "$(i18n 'backup.restoring')"
                         local _rb_rc=0
                         backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")" || _rb_rc=$?
@@ -805,12 +710,8 @@ execute_plan() {
     # Clear progress
     state_clear_progress
 
-    # Prune old backup sessions. Each guide run creates a new
-    # timestamped directory under backups/, so without cleanup the
-    # directory grows unbounded. 30 sessions is a generous retention
-    # window for an interactive tool — easily covers months of
-    # occasional hardening work — and rollback works against any of
-    # them as long as the timestamp dir survives.
+    # Each guide run adds a timestamped directory, so prune. Rollback works
+    # against any session that survives.
     backup_cleanup 30 || true
 
     # Print summary
@@ -830,28 +731,14 @@ execute_plan() {
     # its own directory again.
     VPSSEC_BACKUP_SESSION=""
 
-    # The exit status must carry the outcome the summary above just printed.
-    # This used to be an unconditional `return 0`, so a plan whose every fix
-    # failed still reported success to the caller (and through it, to the
-    # process exit code any wrapper script was watching).
+    # The exit status must carry the outcome the summary just printed.
     (( ${#failed[@]} > 0 )) && return 1
     return 0
 }
 
-# Resume the previously-interrupted plan.
-#
-# Strategy: load state/last_plan.json (the full plan the user
-# approved), filter out fix_ids already in state/progress.json's
-# `.completed` array, and feed the remainder to execute_plan.
-#
-# What this DOES re-run: the fix that was in flight when the
-# interrupt happened (progress.current_fix). vpssec's fix functions
-# are idempotent (backup + atomic write + validate), so re-applying
-# a half-applied change converges to the intended end state. What
-# this does NOT do: cope with system changes made *between*
-# interruption and resume by other actors. The user is asked to
-# opt into resume explicitly; if they suspect the system has moved
-# on, they should pick "discard" instead.
+# Resume the interrupted plan: last_plan.json minus progress.json's completed
+# ids. The in-flight fix IS re-run (fix functions are idempotent). System
+# changes made by other actors meanwhile are NOT handled.
 _guide_resume() {
     local plan plan_count
     plan=$(state_load_plan)
@@ -867,16 +754,9 @@ _guide_resume() {
     progress=$(state_load_progress)
     completed=$(echo "$progress" | jq -c '.completed // []')
 
-    # Single jq pass: drop every fix whose fix_id is already in the
-    # completed array. progress.current_fix is intentionally NOT in
-    # completed (it's only moved there after execute_fix returns
-    # success) so a mid-fix interrupt re-runs that fix on resume.
-    #
-    # NB: the jq variable is `$completed_ids`, not `$done`. The bash
-    # keyword `done` inside a single-quoted jq filter triggers
-    # ShellCheck SC1010 even though it's syntactically opaque to bash.
-    # Renaming the jq variable is the cheapest way to keep the linter
-    # quiet without rewriting the filter.
+    # current_fix is deliberately not in completed, so a mid-fix interrupt
+    # re-runs it. The jq variable avoids the name `done`, which trips
+    # ShellCheck SC1010 inside a single-quoted filter.
     remaining_fixes=$(echo "$plan" | jq --argjson completed_ids "$completed" \
         '.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))')
     remaining_count=$(echo "$remaining_fixes" | jq 'length')
@@ -890,12 +770,8 @@ _guide_resume() {
     print_header "$(i18n 'guide.resume_executing' "count=$remaining_count" "total=$plan_count")"
     print_msg ""
 
-    # Replace the on-disk plan with only the remaining fixes;
-    # execute_plan re-creates progress.json against this trimmed
-    # plan so a *second* interrupt-then-resume composes correctly.
-    # A fresh backup session is created inside execute_plan; the
-    # backup directory from the original (interrupted) run remains
-    # rollback-able by its timestamp.
+    # The on-disk plan is trimmed so a second interrupt-then-resume composes.
+    # The interrupted run's backup dir stays rollback-able by its timestamp.
     local resume_plan
     resume_plan=$(echo "$plan" | jq --argjson fixes "$remaining_fixes" \
         '.fixes = $fixes')
@@ -906,10 +782,7 @@ _guide_resume() {
     local plan_rc=0
     execute_plan || plan_rc=$?
 
-    # Deliberately don't re-audit + re-render the report here:
-    # auditing 19 modules takes ~10s and the user can trigger it
-    # with `vpssec audit` if they want a current view. Match the
-    # existing post-execute_plan flow which also doesn't re-audit.
+    # No re-audit here, matching the normal post-execute_plan flow.
     print_msg ""
     print_info "$(i18n 'guide.resume_complete_hint')"
     return "$plan_rc"
@@ -917,20 +790,15 @@ _guide_resume() {
 
 # Guide mode main flow
 guide_mode() {
-    # Guide/fix paths are apt/dpkg-based and only validated on Debian/
-    # Ubuntu. The audit path is distro-aware (RHEL/Arch), but automated
-    # remediation is not ported — refuse here instead of running apt
-    # against a system that lacks it. Audit still works on those hosts.
+    # Fix paths are apt/dpkg-based; only the audit is distro-aware.
+    # Refuse rather than run apt on a system that lacks it.
     if ! is_debian_based; then
         print_warn "$(i18n 'guide.fix_debian_only')"
         return 0
     fi
 
-    # Resume gate. If state/progress.json exists, the previous plan
-    # was killed mid-execution. Ask before re-auditing — saves the
-    # user from waiting through a fresh ~10s scan they might not
-    # want, and lets them decide to either continue applying fixes
-    # they already approved, or wipe progress and start over.
+    # progress.json exists = the previous plan was killed mid-execution.
+    # Ask before re-auditing, so the user can resume or start over.
     if state_has_progress; then
         local _progress _current _total _completed_count _ts
         _progress=$(state_load_progress)
@@ -1087,10 +955,8 @@ guide_mode() {
     # Generate and show plan
     local plan=$(generate_plan "$selected_fixes")
 
-    # Refuse to proceed on an empty plan. A selection that resolved to zero
-    # fixes means the UI handed over ids the planner cannot map (the TUI
-    # once emitted check ids here) — silently "executing" nothing while the
-    # summary prints success is the worst possible outcome of that mismatch.
+    # An empty plan means the UI handed over ids the planner cannot map.
+    # Executing nothing while printing success is the worst outcome.
     local plan_count=$(echo "$plan" | jq '.fixes | length')
     if (( plan_count == 0 )); then
         print_error "$(i18n 'guide.plan_empty')"
@@ -1146,20 +1012,15 @@ guide_mode() {
         return 0
     fi
 
-    # Execute plan. Capture the status instead of calling bare: execute_plan
-    # now returns non-zero when fixes failed, and under set -e a bare call
-    # would abort guide_mode right here — skipping the re-audit and final
-    # report the user needs most in exactly that case.
+    # Status captured, not called bare: under set -e a non-zero execute_plan
+    # would abort here and skip the re-audit and final report.
     print_header "$(i18n 'guide.executing')"
     local plan_rc=0
     execute_plan || plan_rc=$?
 
-    # Re-audit before rendering the final report. execute_plan has applied
-    # (or rolled back) changes, so the checks.json from the pre-fix audit is
-    # now stale: without a fresh pass, fixes that just succeeded still show as
-    # "failed" and the score / summary.sarif misrepresent the post-hardening
-    # state (a CI/dashboard consuming the SARIF would see false-positive open
-    # findings). _run_audit_pass calls state_init to reset and refill it.
+    # Re-audit before the final report: the pre-fix checks.json is now stale,
+    # so successful fixes would still render as failed and the SARIF would
+    # carry false-positive open findings.
     _run_audit_pass
 
     # Final report (now reflects the post-fix state)
@@ -1168,9 +1029,7 @@ guide_mode() {
     return "$plan_rc"
 }
 
-# ==============================================================================
-# Rollback Mode
-# ==============================================================================
+# --- Rollback Mode ---
 
 rollback_mode() {
     local timestamp="${1:-}"
@@ -1236,12 +1095,9 @@ rollback_mode() {
         return 0
     fi
 
-    # Execute rollback.
-    #
-    # backup_restore distinguishes three outcomes; collapsing them into
-    # a boolean is what made a rollback that touched zero files print a
-    # green "restored". 2 (partial) still reloads services — the files
-    # that DID come back need to take effect — but reports honestly.
+    # backup_restore has three outcomes; do not collapse them to a boolean.
+    # 2 (partial) still reloads services, since the restored files must take
+    # effect, but reports the partial result honestly.
     local restore_rc=0
     backup_restore "$timestamp" || restore_rc=$?
 
@@ -1265,9 +1121,7 @@ rollback_mode() {
     return "$restore_rc"
 }
 
-# ==============================================================================
-# Status Mode
-# ==============================================================================
+# --- Status Mode ---
 
 status_mode() {
     print_header "vpssec $(i18n 'cli.cmd_status')"
@@ -1297,11 +1151,8 @@ status_mode() {
         print_msg "  Latest backup: $latest_backup"
     fi
 
-    # Progress info. We only persist progress.json during plan
-    # execution and clear it on completion or rollback, so its
-    # presence here means the previous run was killed mid-fix.
-    # `vpssec guide` offers to resume that plan (_guide_resume);
-    # the hint text points there.
+    # progress.json is only present between a mid-fix kill and the next
+    # guide run, which offers to resume it.
     if state_has_progress; then
         local progress=$(state_load_progress)
         local current=$(echo "$progress" | jq -r '.current_fix')

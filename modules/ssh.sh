@@ -3,22 +3,13 @@
 # SSH hardening module
 # Copyright (c) 2024
 
-# ==============================================================================
-# SSH Configuration Paths
-# ==============================================================================
+# --- SSH Configuration Paths ---
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 SSH_DROPIN_DIR="/etc/ssh/sshd_config.d"
-# sshd uses the FIRST obtained value for each keyword, and processes
-# Include globs in LEXICAL order (see sshd_config(5)). On Debian/Ubuntu the
-# `Include /etc/ssh/sshd_config.d/*.conf` sits at the top of sshd_config, and
-# cloud images ship `50-cloud-init.conf` (often `PasswordAuthentication yes`).
-# A `99-` drop-in is read AFTER `50-`, so its value is NOT the first obtained
-# and is silently ignored — our hardening would never take effect. Sort BEFORE
-# `50-cloud-init.conf` (and any higher-numbered drop-in) with a `00-` prefix so
-# our values win. This is the opposite of sysctl.d (last-wins), where kernel.sh
-# correctly uses `99-`. Post-reload we additionally assert the effective value
-# with `sshd -T` (_ssh_verify_effective) rather than trusting file precedence.
+# The `00-` prefix is load-bearing: sshd takes the FIRST value and reads
+# Include globs in lexical order, so a 99- drop-in loses to cloud-init's.
+# Opposite of sysctl.d. Precedence is still asserted by _ssh_verify_effective.
 SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening.conf"
 # Older vpssec releases wrote the losing `99-` file; migrate it to the new name
 # on first fix so prior settings carry over and the stale (ignored) file goes.
@@ -29,9 +20,7 @@ SSH_RESCUE_CONFIG=""     # temp rescue config path
 SSH_RESCUE_PIDFILE=""    # temp rescue pidfile path
 SSH_RESCUE_FW_RULE=""    # firewall rule added for the rescue port, for exact teardown
 
-# ==============================================================================
-# SSH Helper Functions
-# ==============================================================================
+# --- SSH Helper Functions ---
 
 # Get effective SSH config value using sshd -T (most accurate method)
 # Falls back to file parsing if sshd -T is not available
@@ -40,23 +29,15 @@ _ssh_get_config() {
     local default="$2"
     local value=""
 
-    # Method 1: Use sshd -T for accurate effective configuration.
-    # This handles Match blocks, Include directives, and all override
-    # rules correctly. The `-C` connection-spec is critical: without
-    # it, sshd -T evaluates Match blocks against the *current* user/
-    # host/addr (typically root when vpssec runs), so any `Match User
-    # root` override silently became the reported "base value". The
-    # OpenSSH-recommended workaround for audit tools is to pass a
-    # connection spec that won't match any Match clause — Lynis
-    # SSH-7408 uses the same trick.
+    # sshd -T resolves Match, Include and every override rule. The -C spec
+    # is critical: without it Match is evaluated against the CURRENT user,
+    # so a `Match User root` override becomes the reported base value.
     if command -v sshd &>/dev/null; then
         local key_lower="${key,,}"
         value=$(sshd -T -C user=doesnotexist,host=none,addr=none 2>/dev/null \
             | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
-        # Some hardened or chrooted sshd builds reject the -C probe
-        # (e.g. unprivileged or missing /etc/ssh/moduli). Retry without
-        # it before falling through to file parsing — still better
-        # than nothing for the non-Match-block portion of the config.
+        # Some hardened or chrooted sshd builds reject -C. Retry without it
+        # before falling through to file parsing.
         if [[ -z "$value" ]]; then
             value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
         fi
@@ -128,12 +109,9 @@ _ssh_empty_password_allowed() {
     [[ "${value,,}" == "yes" ]]
 }
 
-# Check for non-root sudo users.
-# This feeds the safety gate in _ssh_fix_disable_root_login — an empty
-# result blocks root-login disable and asks the user to create an admin
-# first. Previously this looked only at the sudo/wheel groups, missing
-# users granted sudo via /etc/sudoers or /etc/sudoers.d/* (a common
-# Ansible/Terraform setup), which wrongly blocked a safe hardening fix.
+# Non-root sudo users. Feeds the safety gate in disable_root_login, where an
+# empty result blocks the fix — so it must cover file-based grants in
+# /etc/sudoers and sudoers.d, not just the sudo/wheel groups.
 _ssh_get_admin_users() {
     local admin_users=()
 
@@ -149,12 +127,9 @@ _ssh_get_admin_users() {
         fi
     done
 
-    # File-based grants: direct `user ALL=...` entries in /etc/sudoers
-    # and /etc/sudoers.d/*. We intentionally skip `%group` entries —
-    # those require resolving group membership which we already cover
-    # via the sudo/wheel scan above for the two common cases, and
-    # enumerating every referenced group is out of scope for a simple
-    # safety check.
+    # Direct `user ALL=...` entries only. %group entries are deliberately
+    # skipped: the two common groups are covered by the scan above, and
+    # resolving arbitrary group membership is out of scope here.
     local sudoers_files=("/etc/sudoers")
     local f
     if [[ -d /etc/sudoers.d ]]; then
@@ -176,27 +151,18 @@ _ssh_get_admin_users() {
     printf '%s\n' "${admin_users[@]}" | sort -u
 }
 
-# Resolve the EFFECTIVE AuthorizedKeysFile paths for a user. Honors a
-# customized `AuthorizedKeysFile` (read from sshd -T, the merged config) with
-# sshd's token expansion (%h=home, %u=user, %%=%); relative paths are taken
-# under the user's home, exactly as sshd resolves them. Echoes one absolute
-# path per line. Empty output means "no static key files apply" — either
-# `AuthorizedKeysFile none`, or an unresolvable home. This is what lets
-# _ssh_user_has_key check the file sshd will ACTUALLY read: the old hardcoded
-# ~/.ssh/authorized_keys both missed keys in a relocated file AND falsely
-# counted a stale default-path file when AuthorizedKeysFile pointed elsewhere.
+# The EFFECTIVE AuthorizedKeysFile paths for a user, with sshd's token
+# expansion and relative paths resolved under home. One absolute path per
+# line; empty means no static key file applies.
 _ssh_effective_authorizedkeysfiles() {
     local user="$1"
     local home_dir
     home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
     [[ -z "$home_dir" ]] && return 0
 
-    # Capture sshd -T first, THEN awk over a herestring. Piping `sshd -T | awk
-    # '...exit'` makes awk close the pipe early, sshd takes SIGPIPE, and under
-    # `set -o pipefail` the command substitution returns non-zero — which, when
-    # this runs inside a process-substitution subshell (as _ssh_user_has_key
-    # calls it) with set -e active, aborts the function before it prints anything
-    # (found via container test: the key check silently returned "no key").
+    # Captured first, THEN awk over a herestring: piping into an awk that
+    # exits early gives sshd SIGPIPE, and under pipefail that aborts this
+    # function before it prints anything.
     local akf sshd_dump
     sshd_dump=$(sshd -T 2>/dev/null || true)
     akf=$(awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^[[:space:]]+/,""); print; exit}' <<<"$sshd_dump")
@@ -215,14 +181,9 @@ _ssh_effective_authorizedkeysfiles() {
     done
 }
 
-# Check if a user has at least one usable key in the file(s) sshd will read.
-#
-# Delegates to count_authorized_keys (core/common.sh), which skips comment/blank
-# lines and matches ssh-/ecdsa-/sk- at line start or after the optional-options
-# prefix (`from="..." ssh-ed25519 AAAA...`) — this closed an earlier lockout bug
-# where a rotated-out `# ssh-ed25519 ...` comment line read as "has key". Now
-# also honors the effective AuthorizedKeysFile so a relocated key file is found
-# and a stale default-path file is not miscounted (see resolver above).
+# Does this user have a usable key in the file(s) sshd will actually read?
+# Delegates to count_authorized_keys, which never counts a commented-out key —
+# reading a rotated-out key as "has key" is a lockout.
 _ssh_user_has_key() {
     local user="$1"
     local total=0 path n
@@ -234,13 +195,9 @@ _ssh_user_has_key() {
     [[ "$total" -gt 0 ]]
 }
 
-# True unless there is POSITIVE evidence the account cannot complete an SSH
-# login: a nologin/false shell, or a shadow account-expiry date in the past.
-# Anything we cannot read counts as "can log in" — the safety gates below
-# use this to pick a way-back-in account, and wrongly excluding the only
-# candidate would block a legitimate hardening, while wrongly including one
-# is exactly today's behavior. (A locked password does NOT block key auth,
-# so passwd -S 'L' is deliberately not evidence here.)
+# True unless there is POSITIVE evidence the account cannot log in: a
+# nologin shell or a past expiry date. Anything unreadable counts as "can
+# log in". A locked password is NOT evidence — it does not block key auth.
 _ssh_account_can_login() {
     local user="$1"
     local shell
@@ -259,12 +216,9 @@ _ssh_account_can_login() {
     return 0
 }
 
-# True when $user can log in via a public key under the CURRENT effective
-# config. For root this additionally requires PermitRootLogin to permit key
-# auth: "no" blocks root entirely (so root's key is useless and must NOT count
-# toward the disable-password-auth safety gate), whereas "prohibit-password" /
-# "without-password" / "forced-commands-only" all still allow key login. For
-# non-root users PermitRootLogin is irrelevant.
+# Can $user log in by key under the CURRENT effective config? For root this
+# also requires PermitRootLogin to permit key auth: under "no" root's key is
+# useless and must NOT count toward the disable-password safety gate.
 _ssh_can_login_with_key() {
     local user="$1"
     if [[ "$user" == "root" ]]; then
@@ -368,9 +322,7 @@ _ssh_check_authkeys_permissions() {
     return 0
 }
 
-# ==============================================================================
-# SSH Audit
-# ==============================================================================
+# --- SSH Audit ---
 
 ssh_audit() {
     local module="ssh"
@@ -428,12 +380,9 @@ ssh_audit() {
     print_item "$(i18n 'ssh.check_agent_forwarding')"
     _ssh_audit_agent_forwarding
 
-    # Lynis SSH-7408 also flags these defaults-flipping options.
-    # They alter the security boundary directly (not just hygiene),
-    # so a misconfiguration here is more impactful than the six
-    # options above — though we still classify as low severity to
-    # match the existing SSH-option category and let the operator
-    # decide.
+    # These alter the security boundary rather than hygiene, so they matter
+    # more than the options above — still low severity, to match the
+    # existing SSH-option category.
     print_item "$(i18n 'ssh.check_ignore_rhosts')"
     _ssh_audit_ignore_rhosts
 
@@ -492,15 +441,9 @@ _ssh_audit_password_auth() {
 
 _ssh_audit_root_login() {
     if _ssh_root_login_enabled; then
-        # When PasswordAuthentication is off, PermitRootLogin=yes only
-        # exposes root via key-based auth — operationally equivalent to
-        # any other key-authorised sudoer. Calling that "high" against
-        # every key-only server made the signal noisy and didn't match
-        # how operators actually run things. We still flag it (defence
-        # in depth: a single misplaced authorized_key on root is worse
-        # than on a non-root user, and disabling root login is still
-        # the recommended hardening), but at medium so the system score
-        # tracks real exposure rather than a CIS checkbox.
+        # With password auth off, PermitRootLogin=yes exposes root only by
+        # key. Still flagged, but at medium, so the score tracks real
+        # exposure rather than a checkbox.
         local sev="high"
         local title_key="ssh.root_login_enabled"
         local info="PermitRootLogin=yes (allows root via password and key)"
@@ -701,11 +644,9 @@ _ssh_audit_login_grace_time() {
         seconds="${grace_time%s}"
     fi
 
-    # A grace time of 0 means UNLIMITED (no unauthenticated-session timeout) —
-    # a weakness, not a pass. The safe range is 1..60s; 0, anything >60, or a
-    # non-numeric value falls through to the "too long / disabled" branch. The
-    # regex guard also stops a non-numeric value from aborting the audit under
-    # set -u (the bare `-le` would treat it as a variable name).
+    # 0 means UNLIMITED, which is a weakness, not a pass. The safe range is
+    # 1..60; everything else falls through to the too-long branch. The regex
+    # guard also stops a non-numeric value aborting the audit under set -u.
     if [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 )); then
         local check=$(create_check_json \
             "ssh.login_grace_time_ok" \
@@ -1214,9 +1155,7 @@ _ssh_audit_port() {
     fi
 }
 
-# ==============================================================================
-# SSH Fix Functions
-# ==============================================================================
+# --- SSH Fix Functions ---
 
 ssh_fix() {
     local fix_id="$1"
@@ -1257,27 +1196,9 @@ ssh_fix() {
     esac
 }
 
-# ==============================================================================
-# Rescue SSH daemon
-#
-# Before any change that can cut SSH access (disable password auth, disable
-# root login) we start a SECOND, independent sshd on a temporary port with
-# permissive auth, so the operator always has a way back in if the change
-# breaks the main daemon. Invariants below each fix a real lockout bug:
-#   - The rescue port is chosen dynamically and must be free AND different from
-#     the live SSH port. A fixed 2222 silently collided when the audit's own
-#     "use a non-default port" advice had already put sshd on 2222.
-#   - Success is verified by confirming OUR daemon (tracked by pid) bound the
-#     port, not merely that something is listening — otherwise a pre-existing
-#     listener (e.g. the production sshd on 2222) reads as a false success.
-#   - On an active firewall the port is allowed (scoped to the operator's
-#     current IP when known) so the rescue is actually reachable.
-#   - Teardown kills only our tracked pid (a port grep could match and kill the
-#     production sshd) and removes exactly the firewall rule it added.
-# Guide/fix runs are Debian/Ubuntu-only (engine gate), so ufw is auto-managed
-# here; other backends degrade to a reachability warning that the mandatory
-# pre-change confirmation (operator tests `ssh -p <port>`) backs.
-# ==============================================================================
+# Rescue SSH daemon: a second sshd on a temporary port, started BEFORE any
+# change that can cut SSH access. Four invariants bound it, each of which has
+# already prevented a lockout — do not loosen any (see the design notes).
 
 # Pick a free TCP port for the rescue daemon: never the live SSH port, never an
 # already-listening port. Prefer 2222, then scan small high-port ranges.
@@ -1305,10 +1226,9 @@ _ssh_rescue_is_up() {
         | grep -q "pid=${SSH_RESCUE_PID}\b"
 }
 
-# Allow the rescue port through the firewall, scoped to the operator's current
-# SSH client IP when known. Records what we added so close removes exactly it.
-# Only ufw is auto-managed; other active backends warn and lean on the
-# reachability confirmation.
+# Open the rescue port, scoped to the operator's client IP when known, and
+# record what was added so teardown removes exactly that. Only ufw is
+# auto-managed; other backends warn and lean on the reachability check.
 _ssh_rescue_allow_firewall() {
     local backend ip
     backend=$(fw_backend 2>/dev/null || echo none)
@@ -1316,15 +1236,9 @@ _ssh_rescue_allow_firewall() {
 
     case "$backend" in
         ufw)
-            # No detectable source IP (serial console, nested su, utmp
-            # without a host)? ASK. The old behavior silently fell back to a
-            # world-open `ufw allow <port>/tcp` — a root+password sshd
-            # reachable from anywhere for as long as the operator sits on
-            # the confirmation prompt. The operator knows where they are
-            # connecting from; we do not. Empty answer / unreadable tty
-            # adds NO rule (fail closed) — the mandatory "test the rescue
-            # login" confirmation right after this is what catches an
-            # unreachable rescue before anything is changed.
+            # No detectable source IP: ASK, never fall back to world-open.
+            # Empty answer or unreadable tty adds NO rule — the mandatory
+            # reachability confirmation catches an unreachable rescue.
             if [[ -z "$ip" ]]; then
                 print_warn "$(i18n 'ssh.rescue_fw_no_source')"
                 echo -n "$(i18n 'ssh.rescue_fw_ask_cidr' "port=$SSH_RESCUE_PORT") > "
@@ -1391,9 +1305,8 @@ _ssh_rescue_remove_firewall() {
     [[ -n "${SSH_RESCUE_FW_RULE:-}" ]] || return 0
     local kind rest ip port
     # First field is the kind, LAST is the port, everything between is the
-    # source address. A naive IFS=':' three-way read truncated any IPv6
-    # source (its own colons ate the fields), so teardown deleted a rule
-    # that did not exist and left the real one behind.
+    # source. A three-way IFS=':' read truncates any IPv6 source, so teardown
+    # deletes a rule that never existed and leaves the real one behind.
     kind="${SSH_RESCUE_FW_RULE%%:*}"
     rest="${SSH_RESCUE_FW_RULE#*:}"
     port="${rest##*:}"
@@ -1433,16 +1346,9 @@ _ssh_open_rescue_port() {
     }
     chmod 600 "$SSH_RESCUE_CONFIG"
 
-    # Minimal, standalone config — deliberately NOT Include-ing the live
-    # sshd_config: the include re-imports its Port (causing a duplicate bind
-    # that aborts the daemon) and any restrictive/in-flux directive that could
-    # block the rescue login. Auth is permissive on purpose: the rescue exists
-    # precisely so the operator can get back in if the change breaks their
-    # normal auth. It is temporary, firewall-scoped to their IP, and torn down
-    # immediately after. MaxAuthTries/LoginGraceTime bound what a scanner can
-    # do with the permissive auth during that window; they do not get in the
-    # operator's way (3 tries and 30s are plenty for a human with the right
-    # credential).
+    # Standalone, never Include-ing the live sshd_config: that re-imports its
+    # Port and any in-flux directive that could block the rescue. Auth is
+    # permissive on purpose; MaxAuthTries and LoginGraceTime bound it.
     cat > "$SSH_RESCUE_CONFIG" <<EOF
 Port $SSH_RESCUE_PORT
 PidFile $SSH_RESCUE_PIDFILE
@@ -1473,14 +1379,9 @@ EOF
     for ((_i=0; _i<30; _i++)); do
         if _ssh_rescue_is_up; then
             print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
-            # From this moment a root sshd with permissive auth is listening.
-            # If vpssec dies before the paired close — SIGTERM, the operator's
-            # own SSH session dropping (HUP), a crash — that daemon and its
-            # firewall rule survived indefinitely: sshd's master re-execs on
-            # HUP rather than exiting, so even session loss did not clean it.
-            # The trap makes teardown unconditional. INT/TERM/HUP re-exit so
-            # the signal still terminates us; the EXIT trap covers normal
-            # paths and is cleared by _ssh_close_rescue_port itself.
+            # Armed the moment the daemon is confirmed listening: without it
+            # a killed vpssec leaves a root-and-password sshd running forever,
+            # since sshd re-execs on HUP rather than exiting.
             trap '_ssh_close_rescue_port' EXIT
             trap '_ssh_close_rescue_port; exit 130' INT TERM HUP
             _ssh_rescue_allow_firewall
@@ -1518,18 +1419,14 @@ _ssh_close_rescue_port() {
     trap - EXIT INT TERM HUP
 }
 
-# Track the backup path of the drop-in that was overwritten by the most
-# recent _ssh_write_hardening_config call, so that _ssh_reload_safe can
-# roll back on a full-context `sshd -t` failure. "NEW" means no prior
-# drop-in existed (rollback means deleting the new file); empty means
-# no call has run yet.
+# Backup path of the drop-in overwritten by the most recent write, so
+# _ssh_reload_safe can roll back. "NEW" = no prior drop-in existed, so
+# rollback deletes the file; empty = no call has run yet.
 SSH_LAST_DROPIN_BACKUP=""
 
-# Migrate the legacy `99-vpssec-hardening.conf` (which loses to 50-cloud-init)
-# to the new `00-` name. Only acts when the legacy file exists and the new one
-# does not, so a fresh install or an already-migrated host is a no-op. Best
-# effort: a failure just leaves the legacy file (still harmless — 00- wins over
-# it once written), so we don't abort the fix.
+# Migrate the legacy 99- drop-in, which loses to 50-cloud-init, to the 00-
+# name. Acts only when the legacy file exists and the new one does not.
+# Best effort: a failure leaves the legacy file, which 00- outranks anyway.
 _ssh_migrate_legacy_dropin() {
     [[ -f "$SSH_HARDENING_DROPIN_LEGACY" ]] || return 0
     [[ -e "$SSH_HARDENING_DROPIN" ]] && return 0
@@ -1538,12 +1435,9 @@ _ssh_migrate_legacy_dropin() {
     fi
 }
 
-# Assert that sshd's EFFECTIVE value for a keyword matches what we intended,
-# using `sshd -T` (the fully-merged config). This is the real guard against the
-# drop-in-precedence trap: even if file ordering is wrong or another drop-in /
-# Match block overrides us, we detect that the value did not actually change and
-# report failure instead of a false success. Keyword and values are compared
-# case-insensitively (sshd -T lowercases keywords and most boolean values).
+# Assert sshd's EFFECTIVE value via the fully-merged `sshd -T` — the real
+# guard against the precedence trap, where a wrong file order or a Match
+# override would otherwise read as success. Compared case-insensitively.
 _ssh_verify_effective() {
     local key="${1,,}"
     local expected="${2,,}"
@@ -1563,21 +1457,15 @@ _ssh_write_hardening_config() {
 
     mkdir -p "$SSH_DROPIN_DIR"
 
-    # Backup existing drop-in (if any) so we can restore it if the
-    # post-write full-context sshd -t run fails. The previous version
-    # created a backup but never used it, leaving a potentially broken
-    # drop-in on disk that would block sshd on the next service
-    # restart/reboot.
+    # Backed up so the full-context sshd -t failure path can restore it: a
+    # broken drop-in left on disk blocks sshd at the next restart.
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN" 2>/dev/null) || SSH_LAST_DROPIN_BACKUP=""
+        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN") || return 1
     else
-        # New drop-in. SSH_LAST_DROPIN_BACKUP="NEW" drives this module's own
-        # reload-failure rollback (_ssh_rollback_dropin deletes the file). ALSO
-        # call backup_file so, inside a plan backup session, the file is recorded
-        # as fix-created and a later plan-level rollback (backup_restore) deletes
-        # it too — without this the created drop-in survived "rollback" and left
-        # SSH hardening applied after the user asked to undo it.
-        backup_file "$SSH_HARDENING_DROPIN" >/dev/null 2>&1 || true
+        # "NEW" drives this module's own reload-failure rollback. backup_file
+        # is called as well so the plan-level rollback also deletes it —
+        # without both, the drop-in survives "rollback".
+        backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1
         SSH_LAST_DROPIN_BACKUP="NEW"
     fi
 
@@ -1593,11 +1481,8 @@ _ssh_write_hardening_config() {
         echo "$content"
     } > "$temp_file"
 
-    # Validate the drop-in by having sshd parse it as a standalone config.
-    # Directives in our drop-in are all valid top-level sshd_config directives;
-    # any directive not present is silently defaulted, so this catches syntax
-    # errors without needing the real sshd_config on disk. The full-context
-    # validation (main config + all drop-ins) is done by _ssh_reload_safe.
+    # Standalone parse: catches syntax errors without the real sshd_config on
+    # disk. Full-context validation happens in _ssh_reload_safe.
     if sshd -t -f "$temp_file" 2>/dev/null; then
         chmod 644 "$temp_file"
         if mv "$temp_file" "$SSH_HARDENING_DROPIN"; then
@@ -1615,11 +1500,8 @@ _ssh_write_hardening_config() {
     fi
 }
 
-# Restore the drop-in to whatever state it was in before the most
-# recent _ssh_write_hardening_config call. Used by _ssh_reload_safe on
-# full-context validation failure so we don't leave a drop-in that
-# looks syntactically fine in isolation but conflicts with the rest of
-# sshd_config.
+# Restore the drop-in to its state before the most recent write. Used when
+# full-context validation fails on a file that parses fine in isolation.
 _ssh_rollback_dropin() {
     local backup="${SSH_LAST_DROPIN_BACKUP:-}"
 
@@ -1647,21 +1529,9 @@ _ssh_rollback_dropin() {
     SSH_LAST_DROPIN_BACKUP=""
 }
 
-# Reload SSH service safely.
-#
-# The pre-write `sshd -t -f temp_file` in _ssh_write_hardening_config
-# only validates the drop-in in isolation. The full-context `sshd -t`
-# below pulls in the main sshd_config and every other drop-in and can
-# fail even when our file is individually fine (e.g. a duplicate
-# directive in another drop-in, a mismatched algorithm list, or a
-# Match block interaction). On that failure we MUST roll back — a bad
-# drop-in left on disk will prevent sshd from starting on the next
-# service restart or reboot, which is exactly the lockout scenario
-# the rescue port is supposed to prevent.
-# Optional trailing args are (key expected) pairs asserted with sshd -T AFTER
-# the reload — e.g. `_ssh_reload_safe PasswordAuthentication no`. A mismatch
-# means our drop-in did not win the merge (precedence trap / Match override), so
-# we roll back and report failure rather than claim a change that never landed.
+# Reload sshd safely. The full-context `sshd -t` can fail on a drop-in that
+# parses alone, and that failure MUST roll back. Optional trailing
+# (key expected) pairs are asserted with sshd -T after the reload.
 _ssh_reload_safe() {
     # Test config first
     if sshd -t 2>/dev/null; then
@@ -1685,12 +1555,9 @@ _ssh_reload_safe() {
             return 0
         else
             print_error "$(i18n 'ssh.reload_failed')"
-            # Roll back here too. The config passed sshd -t, so leaving the
-            # drop-in would not break the next boot — but it WOULD apply the
-            # change unverified at whatever later moment sshd restarts, when
-            # no rescue port is open and nobody is watching. Of the three
-            # failure paths in this function this was the only one that kept
-            # the file.
+            # Roll back here too: the config parses, so leaving it would not
+            # break the next boot — it would apply the change unverified at
+            # whatever later restart, with no rescue port open.
             _ssh_rollback_dropin
             return 1
         fi
@@ -1708,12 +1575,9 @@ _ssh_fix_disable_password_auth() {
         print_info "$(i18n 'ssh.current_connection' "ip=$current_ip")"
     fi
 
-    # Safety gate: at least one account that can ACTUALLY log in via key must
-    # survive the password-off change. A non-root admin with a usable key is the
-    # safest guarantee (it survives even if root login is disabled too). Only
-    # fall back to root's key when root login still permits key auth — the old
-    # gate counted root's key unconditionally, so on PermitRootLogin=no with a
-    # keyless sudo admin it passed and then locked everyone out.
+    # Safety gate: at least one account that can ACTUALLY log in by key must
+    # survive. A non-root admin with a key is safest. Root's key counts ONLY
+    # when PermitRootLogin still permits key auth.
     local admin_users=$(_ssh_get_admin_users)
     local has_key_user=""
 
@@ -1729,11 +1593,9 @@ _ssh_fix_disable_password_auth() {
 
     if [[ -z "$has_key_user" ]]; then
         if _ssh_can_login_with_key "root"; then
-            # Root's key is the only way back in. Legitimate on a fresh cloud
-            # image with no admin yet, but fragile: warn, and note that also
-            # disabling root login would remove this last path (the
-            # disable_root_login gate enforces a non-root admin key when
-            # password auth is off).
+            # Root's key is the only way back in — legitimate on a fresh
+            # image, but fragile. Warn that disabling root login too would
+            # remove this last path.
             print_warn "$(i18n 'ssh.only_root_key_warning')"
         else
             print_error "$(i18n 'ssh.no_key_user')"
@@ -1790,12 +1652,9 @@ _ssh_fix_disable_root_login() {
         return 1
     fi
 
-    # Joint-lockout guard: if password auth is already off (e.g. an earlier fix
-    # in this same plan disabled it), then removing root login leaves ONLY the
-    # non-root admins' keys as a way in — so at least one of them must actually
-    # have a usable key. With password auth still on, admins can log in by
-    # password, so this extra requirement doesn't apply. This makes the
-    # disable_password + disable_root combination safe in either apply order.
+    # Joint-lockout guard: with password auth already off, removing root login
+    # leaves only the non-root admins' keys, so one must actually exist. This
+    # makes disable_password + disable_root safe in either apply order.
     if ! _ssh_password_auth_enabled; then
         local root_key_admin=""
         for user in $admin_users; do

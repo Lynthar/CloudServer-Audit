@@ -106,3 +106,36 @@ setup() {
     _vpssec_refute grep -q 'Asia/Tokyo' <<<"$output"
     _vpssec_refute grep -qE '^\s+[0-9]\) ' <<<"$output"
 }
+
+# ---- the backup contract ---------------------------------------------
+#
+# STATED GAP: _timezone_fix_set_timezone's two backup calls sit after a
+# `read </dev/tty`, so no non-interactive test can reach them. The locale fix
+# below covers the module's other two.
+
+@test "locale: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    TZ_LOCALE_GEN="$etc/locale.gen"
+    printf '# en_US.UTF-8 UTF-8\n' > "$TZ_LOCALE_GEN"
+    LANG=C
+    _vpssec_stub localectl 0 ''
+    _vpssec_stub cp 1
+
+    run _timezone_fix_set_locale
+    [ "$status" -ne 0 ]
+    grep -q '^# en_US.UTF-8' "$TZ_LOCALE_GEN"
+}
+
+@test "locale: a locale.gen that already has the target is not rewritten" {
+    # The other side of the guard: without it the fix rewrites a file it has
+    # no reason to touch and re-runs locale-gen on every call.
+    TZ_LOCALE_GEN="$etc/locale.gen"
+    printf 'en_US.UTF-8 UTF-8\n' > "$TZ_LOCALE_GEN"
+    LANG=C
+    _vpssec_stub localectl 0 ''
+    _vpssec_stub locale-gen
+
+    run _timezone_fix_set_locale
+    [ "$status" -eq 0 ]
+    _vpssec_refute _vpssec_stub_called locale-gen
+}

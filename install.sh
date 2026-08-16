@@ -60,11 +60,8 @@ check_system() {
                 print_ok "Supported OS: $PRETTY_NAME"
                 ;;
             *)
-                # Honest scope note: the AUDIT runs on RHEL-family and Arch
-                # too, but this installer only knows how to install missing
-                # dependencies with apt — a bare "may work" promised more
-                # than the apt-get below could deliver (verified: it exits
-                # 127 on a clean Rocky 9 / Arch container).
+                # The audit runs on RHEL and Arch, but this installer can
+                # only install dependencies with apt, so say so.
                 print_warn "OS: $PRETTY_NAME — vpssec's audit supports Debian/Ubuntu/RHEL-family/Arch,"
                 print_warn "but THIS installer auto-installs dependencies via apt only."
                 print_warn "On other distros, install missing dependencies manually first."
@@ -120,16 +117,9 @@ install_vpssec() {
                 git clone "https://github.com/${GITHUB_REPO}.git" "$INSTALL_DIR"
             fi
         else
-            # Download as tarball. GitHub tarballs extract to "<repo>-<branch>",
-            # so the top-level dir here must match the repo name, not a stale
-            # pre-rename guess.
-            #
-            # Extract into a fresh mktemp dir, NOT bare /tmp: the extracted
-            # top-level path was predictable (/tmp/<repo>-main), so a local
-            # user could pre-create that directory — they then owned the
-            # parent of everything root extracted and could swap entries
-            # (the `vpssec` script itself sits at that top level) between
-            # extraction and the mv into INSTALL_DIR.
+            # GitHub tarballs extract to "<repo>-<branch>", so this tracks
+            # the repo name. Extracted into a fresh mktemp dir, never bare
+            # /tmp — a predictable path is a local user's foothold.
             local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz"
             local repo_name="${GITHUB_REPO##*/}"
             local staging
@@ -158,27 +148,14 @@ install_vpssec() {
     # Create required directories
     mkdir -p "$INSTALL_DIR"/{state,reports,backups,logs,templates}
 
-    # NOTE: chmod +x and the /usr/local/bin symlink are intentionally NOT
-    # done here. They run in post_install, AFTER verify_integrity has
-    # confirmed the extracted tree matches the manifest — otherwise a
-    # tamper detected by the integrity check would already have left a live,
-    # executable vpssec in PATH (reachable via `sudo vpssec`).
+    # chmod +x and the symlink belong in post_install, AFTER verify_integrity:
+    # otherwise a detected tamper has already left an executable in PATH.
     print_ok "vpssec extracted to $INSTALL_DIR (pending integrity check)"
 }
 
-# Create uninstall script
-#
-# The paths are BAKED IN with %q rather than written as literals. The old
-# version hardcoded `/opt/vpssec`, so `INSTALL_DIR=/srv/vpssec ./install.sh`
-# produced an uninstaller that deleted a directory it had never installed to
-# (someone else's copy, or nothing) and left the real install in place.
-#
-# It also asked "Remove state and backups?" one line AFTER `rm -rf` had
-# already taken them: state and backups live under $INSTALL_DIR, not under
-# the /var/lib/vpssec that prompt offered to delete — a path nothing in this
-# codebase uses. So the question could not be honoured in either direction,
-# and every uninstall silently destroyed the backups `vpssec rollback`
-# restores from. It is now asked first and actually acted on.
+# Create the uninstall script. Paths are baked in with %q, not written as
+# literals, so a non-default INSTALL_DIR uninstalls itself. State and backups
+# live under INSTALL_DIR, so the prompt about them must come BEFORE rm -rf.
 create_uninstaller() {
     {
         printf '#!/bin/bash\n'
@@ -238,28 +215,9 @@ EOF
     chmod +x "$INSTALL_DIR/uninstall.sh"
 }
 
-# Verify the integrity of every runtime-critical file against the
-# checked-in manifest. The manifest covers entry script, core/,
-# modules/, and the install/run scripts; tests, docs, README and
-# friends are excluded.
-#
-# Threat model: this is defense-in-depth, NOT a substitute for
-# release signing. TLS-protected GitHub clone/tarball + a manifest
-# that ships in the same archive only catches partial or corrupted
-# extraction, not deliberate compromise of the upstream repository
-# (an attacker who can rewrite repo files can also rewrite the
-# manifest). Real supply-chain assurance requires verifying the
-# manifest itself against a signed release tag — that's a separate
-# effort.
-#
-# Behaviour:
-#   - manifest absent  → log a warning and continue (tolerates
-#                        installs from older revisions before this
-#                        infrastructure existed, and `git clone`
-#                        from a fork or branch that hasn't run the
-#                        manifest generator).
-#   - manifest present and verifies → log OK, continue.
-#   - manifest present but mismatch → abort install with exit 1.
+# Verify runtime files against the manifest: absent = warn, verifies =
+# continue, mismatch = abort. Defence in depth only — the manifest ships in
+# the same archive, so it catches partial extraction, not a bad upstream.
 verify_integrity() {
     local manifest="$INSTALL_DIR/manifest.sha256"
 
@@ -268,10 +226,8 @@ verify_integrity() {
         return 0
     fi
 
-    # `sha256sum -c` reads paths relative to the current directory.
-    # cd into the install root so the manifest's "modules/foo.sh"
-    # resolves correctly. --quiet suppresses the per-file "OK"
-    # spam on success but still prints failed lines.
+    # sha256sum -c reads paths relative to cwd, so cd into the install root.
+    # --quiet hides per-file OK lines but still prints failures.
     print_info "Verifying file integrity against manifest.sha256..."
     if ( cd "$INSTALL_DIR" && sha256sum --quiet -c manifest.sha256 ); then
         print_ok "Integrity check passed (manifest matches)"
@@ -286,10 +242,8 @@ verify_integrity() {
 post_install() {
     print_info "Running post-install setup..."
 
-    # Expose the binary ONLY now — main() runs verify_integrity before this,
-    # so the integrity check has already passed. Making it executable and
-    # symlinking it into PATH here (rather than in install_vpssec) means a
-    # failed integrity check leaves nothing executable in /usr/local/bin.
+    # Exposed only now, after verify_integrity has passed, so a failed
+    # integrity check leaves nothing executable in /usr/local/bin.
     chmod +x "$INSTALL_DIR/vpssec"
     ln -sf "$INSTALL_DIR/vpssec" "$BIN_LINK"
 

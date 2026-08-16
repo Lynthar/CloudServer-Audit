@@ -1,0 +1,33 @@
+# Mutation cases for tests/test_fix_timezone_noninteractive.bats against
+# modules/timezone.sh.
+# mutate-suite: modules/timezone.sh tests/test_fix_timezone_noninteractive.bats
+#
+# Run with:
+#   bash tools/mutate-suite.sh modules/timezone.sh \
+#        tests/test_fix_timezone_noninteractive.bats tools/mutation-cases/timezone.cases
+#
+# First cases file for this module: until 2026-08-16 modules/timezone.sh was
+# never mutated at all.
+#
+# STATED GAP, so this file is not read as more coverage than it is: the module
+# has four backup_file call sites and only the two in _timezone_fix_set_locale
+# are mutated here. The other two sit after a `read </dev/tty` inside
+# _timezone_fix_set_timezone, which no non-interactive suite can reach, so a
+# mutation planted there would survive for want of a driver rather than for
+# want of an assertion — and a survivor that means "untestable" is
+# indistinguishable from one that means "untested".
+
+# ---- the backup contract ---------------------------------------------
+
+# A swallowed backup failure lets the fix rewrite /etc/locale.gen with no way
+# back. Reachable because TZ_LOCALE_GEN is a path variable; before this batch
+# the literal was inlined and no test could point it anywhere safe.
+run_case "locale/backup-failure-swallowed" 1 \
+    '            backup_file "$TZ_LOCALE_GEN" >/dev/null || return 1' \
+    '            backup_file "$TZ_LOCALE_GEN" >/dev/null 2>&1 || true'
+
+# The guard that decides whether locale.gen needs editing at all. Inverting it
+# makes the fix rewrite a file that already had the locale enabled.
+run_case "locale/gen-guard-inverted" 1 \
+    '        if ! grep -q "^${target_locale}" "$TZ_LOCALE_GEN"; then' \
+    '        if true; then'

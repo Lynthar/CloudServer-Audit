@@ -17,8 +17,8 @@
 # /etc/apt/apt.conf.d and leave every later case running against a changed host.
 
 run_case "paths/auto-upgrades-inlined" 1 \
-    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
-    '    backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null 2>&1 || true'
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
+    '    backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null || return 1'
 
 run_case "paths/dropin-inlined" 1 \
     '    local uu_dropin="$UPDATE_UU_DROPIN"' \
@@ -27,20 +27,20 @@ run_case "paths/dropin-inlined" 1 \
 # ---- the rollback contract -------------------------------------------
 
 run_case "rollback/auto-upgrades-backup-skipped" 1 \
-    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
     '    :'
 
 run_case "rollback/auto-upgrades-backup-guarded-again" 1 \
-    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true' \
-    '    [[ -f "$UPDATE_AUTO_UPGRADES_CONF" ]] && backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true'
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
+    '    [[ -f "$UPDATE_AUTO_UPGRADES_CONF" ]] && { backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1; }'
 
 run_case "rollback/dropin-backup-skipped" 1 \
-    '    backup_file "$uu_dropin" >/dev/null 2>&1 || true' \
+    '    backup_file "$uu_dropin" >/dev/null || return 1' \
     '    :'
 
 run_case "rollback/dropin-backup-guarded-again" 1 \
-    '    backup_file "$uu_dropin" >/dev/null 2>&1 || true' \
-    '    [[ -f "$uu_dropin" ]] && backup_file "$uu_dropin" >/dev/null 2>&1 || true'
+    '    backup_file "$uu_dropin" >/dev/null || return 1' \
+    '    [[ -f "$uu_dropin" ]] && { backup_file "$uu_dropin" >/dev/null || return 1; }'
 
 # ---- write failures --------------------------------------------------
 
@@ -133,3 +133,8 @@ run_case "predicate/private-installed-copy-restored" 1 \
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_error "Unknown update fix: $fix_id"' \
     '            return 0'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true'

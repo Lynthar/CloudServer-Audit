@@ -415,3 +415,16 @@ SH
     run kernel_fix "kernel.not_a_real_fix"
     [ "$status" -eq 1 ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "sysctl drop-in: a backup that cannot be taken aborts the write" {
+    _vpssec_begin_backup_session
+    mkdir -p "$SYSCTL_D"
+    printf '# existing\n' > "$VPSSEC_SYSCTL_CONF"
+    _vpssec_stub cp 1
+
+    run _kernel_write_sysctl "kernel.randomize_va_space" "2"
+    [ "$status" -ne 0 ]
+    [ "$(cat "$VPSSEC_SYSCTL_CONF")" = "# existing" ]
+}

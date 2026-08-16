@@ -24,16 +24,16 @@
 # coverage while the suite stays green, so each gets its own case.
 
 run_case "paths/conf-inlined" 1 \
-    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true' \
-    '    backup_file /etc/nginx/sites-available/99-catchall.conf >/dev/null 2>&1 || true'
+    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
+    '    backup_file /etc/nginx/sites-available/99-catchall.conf >/dev/null || return 1'
 
 run_case "paths/cert-inlined" 1 \
-    '    backup_file "$NGINX_CATCHALL_CERT" >/dev/null 2>&1 || true' \
-    '    backup_file /etc/nginx/ssl/default.crt >/dev/null 2>&1 || true'
+    '    backup_file "$NGINX_CATCHALL_CERT" >/dev/null || return 1' \
+    '    backup_file /etc/nginx/ssl/default.crt >/dev/null || return 1'
 
 run_case "paths/key-inlined" 1 \
-    '    backup_file "$NGINX_CATCHALL_KEY" >/dev/null 2>&1 || true' \
-    '    backup_file /etc/nginx/ssl/default.key >/dev/null 2>&1 || true'
+    '    backup_file "$NGINX_CATCHALL_KEY" >/dev/null || return 1' \
+    '    backup_file /etc/nginx/ssl/default.key >/dev/null || return 1'
 
 run_case "paths/sites-enabled-inlined" 1 \
     '    if [[ ! -d "$NGINX_SITES_ENABLED" ]]; then' \
@@ -59,19 +59,19 @@ run_case "paths/heredoc-key-inlined" 1 \
 # files exist, which is precisely when .vpssec_created has to record them.
 
 run_case "rollback/conf-backup-skipped" 1 \
-    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true' \
+    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
     '    :'
 
 run_case "rollback/conf-backup-guarded" 1 \
-    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true' \
-    '    [[ -f "$NGINX_CATCHALL_CONF" ]] && backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true'
+    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
+    '    [[ -f "$NGINX_CATCHALL_CONF" ]] && { backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1; }'
 
 run_case "rollback/cert-backup-skipped" 1 \
-    '    backup_file "$NGINX_CATCHALL_CERT" >/dev/null 2>&1 || true' \
+    '    backup_file "$NGINX_CATCHALL_CERT" >/dev/null || return 1' \
     '    :'
 
 run_case "rollback/key-backup-skipped" 1 \
-    '    backup_file "$NGINX_CATCHALL_KEY" >/dev/null 2>&1 || true' \
+    '    backup_file "$NGINX_CATCHALL_KEY" >/dev/null || return 1' \
     '    :'
 
 # Registering the symlink is worse than not registering it: backup_restore
@@ -82,7 +82,7 @@ run_case "rollback/key-backup-skipped" 1 \
 # snapshot content instead and model a different bug.
 run_case "rollback/symlink-registered" 1 \
     '    if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then' \
-    '    backup_file "$NGINX_CATCHALL_LINK" >/dev/null 2>&1 || true; if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then'
+    '    backup_file "$NGINX_CATCHALL_LINK" >/dev/null || return 1; if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then'
 
 # The printed line and the logged line are separate assertions on purpose: a
 # printed line scrolls away, and this one may be wanted days later.
@@ -198,3 +198,8 @@ run_case "postcondition/removed" 1 \
 run_case "postcondition/accepts-partial-coverage" 1 \
     '    if [[ "$state" != "both" ]]; then' \
     '    if [[ "$state" == "none" ]]; then'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
+    '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true'

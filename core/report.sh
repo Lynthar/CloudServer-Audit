@@ -3,9 +3,7 @@
 # Report generation module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Report Generation
-# ==============================================================================
+# --- Report Generation ---
 
 # Generate JSON report
 report_generate_json() {
@@ -20,28 +18,20 @@ report_generate_json() {
     local virt=$(detect_virtualization)
 
     local modules_checked="${VPSSEC_INCLUDE:-all}"
-    # Machine-readable counterpart of the "partial score" warning shown
-    # in the terminal: a consumer comparing scores across runs needs to
-    # know the denominator changed. stats.scored_total carries the
-    # denominator itself.
+    # Machine-readable form of the terminal's "partial score" warning;
+    # stats.scored_total carries the denominator itself.
     local partial="false"
     score_is_partial && partial="true"
 
-    # The audit runs on Debian, RHEL and Arch; hardening and rollback do not.
-    # Without these two a consumer reading summary.json cannot tell that every
-    # fix_id in the file is unreachable on the host it was produced on.
-    # guide_supported is named after the thing that is actually gated —
-    # guide_mode, wholesale, on is_debian_based — rather than after individual
-    # fixes, so it stays true if a fix ever grows a non-Debian path.
+    # The audit runs on three families; hardening does not. Without these a
+    # consumer cannot tell that every fix_id in the file is unreachable here.
+    # Named for guide_mode, the thing actually gated, not for single fixes.
     local distro_family="${VPSSEC_DISTRO_FAMILY:-unknown}"
     local guide_supported="false"
     is_debian_based && guide_supported="true"
 
-    # Completeness: the names of modules that did not finish (engine.sh's
-    # VPSSEC_MODULES_FAILED), and a complete=true/false derived from it. A
-    # consumer must be able to tell "scanned everything, found this" from
-    # "scanned what survived". Guarded so report generation still works when
-    # engine.sh isn't sourced (unit tests exercise report.sh alone).
+    # Completeness, so a consumer can tell "scanned everything" from "scanned
+    # what survived". Guarded: unit tests exercise report.sh without engine.sh.
     local failed_modules_json="[]"
     if declare -p VPSSEC_MODULES_FAILED >/dev/null 2>&1 \
        && (( ${#VPSSEC_MODULES_FAILED[@]} > 0 )); then
@@ -49,12 +39,9 @@ report_generate_json() {
             | jq -Rn '[inputs] | unique') || failed_modules_json="[]"
     fi
 
-    # Build via jq so every string field (hostname, os, os-release values, …)
-    # is correctly escaped. The previous hand-written heredoc inlined these raw;
-    # a hostname or os-release field containing a quote, backslash or control
-    # char would make summary.json invalid JSON or allow field injection.
-    # score/stats/checks are already valid JSON from jq-based producers, so they
-    # go in as --argjson (with empty-guards in case a producer returned nothing).
+    # Built via jq so every string field is escaped: a hostname or os-release
+    # value with a quote or control char would otherwise break the document.
+    # score/stats/checks are already valid JSON, so they go in as --argjson.
     [[ -n "$score" ]]  || score=0
     [[ -n "$stats" ]]  || stats='{}'
     [[ -n "$checks" ]] || checks='[]'
@@ -78,15 +65,9 @@ report_generate_json() {
         --argjson checks "$checks" \
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         '
-        # Mark the findings whose fix cannot resolve them on its own, so a
-        # consumer can tell "run this and the finding goes away" from "run this
-        # and you still have work to do". Set only where it is TRUE: absence
-        # from FIX_TEMPLATE_ONLY is not evidence that a fix is direct — that
-        # list is curated, not exhaustive — and stamping fix_type:"direct" on
-        # every other check would assert something nobody verified.
-        # $fid is bound before the pipe on purpose: inside `$tmpl_fixes | ...`
-        # the input `.` is the ARRAY, so a bare `.fix_id` there indexes it and
-        # jq aborts the whole document with "Cannot index array with string".
+        # Set ONLY where true: absence from FIX_TEMPLATE_ONLY is no evidence
+        # that a fix is direct. $fid binds before the pipe because inside
+        # `$tmpl_fixes | ...` the input is the array, not the check.
         ($checks | map(
             (.fix_id // "") as $fid
             | if $fid != "" and ($tmpl_fixes | index($fid))
@@ -199,18 +180,9 @@ EOF
     local label_info=$(i18n "common.info")
     local label_recommendations=$(i18n "report.recommendations")
 
-    # Each of the four sections below used to run one `jq` per
-    # (category × module) — ~84 process spawns to slice a document we
-    # already hold in memory, most of them returning nothing. They are
-    # now one jq per section; _md_section does the whole grouping and
-    # ordering inside jq. See the comment on _md_section for the
-    # ordering contract.
-    #
-    # Heading levels: `##` section (High/Medium/Low/Passed), `###`
-    # category, `####` individual finding. The findings used to be `###`
-    # too, i.e. siblings of the category they belong to, so every
-    # Markdown renderer flattened the structure and the category
-    # headings read as just another finding.
+    # One jq per section, never per (category x module). Heading levels:
+    # ## section, ### category, #### finding — a finding at ### would be a
+    # sibling of its own category and flatten the document.
     _md_section "$checks" high   "$label_info" "$label_recommendations" >> "$output_file"
 
     cat >> "$output_file" <<EOF
@@ -252,12 +224,8 @@ EOF
 EOF
 
     if ((high > 0)); then
-        # Derive the --include= hint from the actual set of modules
-        # that produced high-severity failed checks. The previous
-        # literal `--include=ssh,ufw` was misleading when the high
-        # severity items were elsewhere (kernel, webapp, docker, etc.)
-        # and encouraged the user to skip the modules that actually
-        # needed attention.
+        # Derived from the modules that actually produced high-severity
+        # failures; a literal hint sends the user to the wrong modules.
         local high_modules
         high_modules=$(state_get_checks \
             | jq -r '[.[] | select(.status == "failed" and (.severity == "high" or .severity == "critical")) | .module] | unique | join(",")')
@@ -292,21 +260,9 @@ EOF
     echo "$output_file"
 }
 
-# Render one Markdown section (all findings at a given severity, or all
-# passed checks) grouped under `###` category headings.
-#
+# Render one Markdown section grouped under ### category headings.
 # Args: <checks-json> <high|medium|low|passed> <info-label> <recs-label>
-#
-# Ordering contract, preserved from the four hand-rolled loops this
-# replaced: categories in VPSSEC_CATEGORY_ORDER, modules within a
-# category in VPSSEC_MODULE_ORDER, checks within a module in emission
-# order. A category with nothing to show is omitted entirely (no empty
-# heading). That ordering is why this can't just be `group_by(.module)`
-# — jq's group_by sorts, and the display order is deliberate.
-#
-# The category/module order and the translated category titles are
-# resolved in bash (they come from i18n and from arrays engine.sh
-# owns) and handed to jq as data, so the whole section costs ONE jq.
+# Order is categories, then modules, then emission — never group_by, it sorts.
 _md_section() {
     local checks="$1"
     local kind="$2"
@@ -342,13 +298,9 @@ _md_section() {
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         --arg tmpl_label "$(i18n 'fix.template_only')" '
         . as $checks
-        # One check -> its Markdown block, always ending in exactly one
-        # newline. "passed" is a one-liner; the failure severities get
-        # the full detail block, and only `low` omits the Fix ID line
-        # (matching the previous output).
-        # Appended to the Fix ID line when running that fix leaves the finding
-        # standing. Without it the report reads as if every listed Fix ID makes
-        # the finding go away, which is false for the template generators.
+        # One check -> one Markdown block ending in exactly one newline.
+        # The note on the Fix ID line marks fixes that leave the finding
+        # standing, so the report does not imply every Fix ID clears one.
         | def tmpl_note($c):
             if (($c.fix_id // "") != "") and ($tmpl_fixes | index($c.fix_id))
             then " _(\($tmpl_label))_"
@@ -366,14 +318,8 @@ _md_section() {
             then $c.status == "passed"
             else $c.status == "failed" and $c.severity == $kind
             end;
-        # Findings are separated by a blank line; the passed list is a
-        # contiguous bullet list. The old per-module loops appended each
-        # module block with the trailing newline already stripped by
-        # command substitution, so at every module boundary the next
-        # heading was glued onto the previous line
-        # ("...LOG_UNKFAIL_ENAB=yes#### 未发现非 root 的 sudo 用户") and
-        # stopped being a heading at all. Doing the join in jq removes
-        # that whole class of error.
+        # The join happens in jq: command substitution strips the trailing
+        # newline, which glued the next heading onto the previous line.
         (if $kind == "passed" then "" else "\n" end) as $sep
         | [ $groups[]
             | .cat as $title
@@ -421,23 +367,14 @@ _render_module_clean() {
     # Module header - bold cyan, simple style
     REPLY_LINES+=("${BOLD}${CYAN}${mod_title}${NC}")
 
-    # ONE jq per module, emitting status/severity/title as TSV. This
-    # used to be a `jq -c` to slice the module out, another `jq -c` to
-    # split it into lines, and then THREE `jq -r` per check to read
-    # .status / .severity / .title back out of a JSON object we had
-    # already parsed — ~3 process spawns per check, which made this the
-    # single most expensive function in the whole run.
-    #
-    # Tab is a safe delimiter: create_check_json escapes control
-    # characters, so a literal tab can never appear inside a field.
+    # ONE jq per module, emitting status/severity/title as TSV. Tab is safe:
+    # create_check_json escapes control characters, so no field can hold one.
     local status severity title
     while IFS=$'\t' read -r status severity title; do
         [[ -z "$status" ]] && continue
 
-        # Truncate title if too long. Compare against DISPLAY cells so
-        # CJK titles (where each char is 2 cells but bash counts 1
-        # code point) get truncated correctly instead of overflowing
-        # the column.
+        # Compared in DISPLAY cells: bash counts a CJK char as one code
+        # point but it occupies two cells.
         local max_title_len=$((col_width - 6))
         if (( $(_display_width "$title") > max_title_len )); then
             local target=$(( max_title_len - 2 ))
@@ -486,10 +423,8 @@ _print_columns_clean() {
             right_line="${_right_arr[$idx]}"
         fi
 
-        # Pad left column to fixed width using DISPLAY cells, not code
-        # points. ${#left_visible} undercounts CJK characters (1 code
-        # point but 2 display cells), which made the ` │` separator
-        # drift right on CJK-heavy rows.
+        # Padded in DISPLAY cells: ${#var} undercounts CJK and drifts
+        # the separator right.
         local pad_needed=$(( col_width - $(_display_width "$left_line") ))
         local padding=""
         ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
@@ -639,11 +574,8 @@ report_print_summary() {
     print_msg ""
     print_msg "  ${BOLD}$(i18n 'report.score'):${NC} ${score_color}${BOLD}${score}/100${NC}"
 
-    # The score is a pass rate minus an absolute penalty, so it is only
-    # comparable between runs over the same module set (see the KNOWN
-    # LIMITATION note in calculate_score). Say so, and always print the
-    # denominator — "0/100 over 3 scored checks" is a very different
-    # statement from "0/100 over 60".
+    # The score is only comparable across runs over the same module set, so
+    # say so and always print the denominator alongside it.
     if score_is_partial; then
         print_msg "  ${DIM}$(i18n 'report.score_partial' "count=${scored_total}" "modules=${VPSSEC_INCLUDE:-all}")${NC}"
     else
@@ -665,12 +597,8 @@ report_print_summary() {
     stats_line+="${GREEN}●${NC} ${passed} $(i18n 'common.safe')"
     echo -e "$stats_line"
 
-    # Advisory findings look identical to scoring ones in the body
-    # listing, so the count that DOESN'T move the score was invisible:
-    # a user reading "36 low" next to "score 40" had no way to tell
-    # which of the 36 were dragging the number down. stats.info was
-    # already computed and written to summary.json — it just never
-    # reached a human.
+    # Advisory findings look identical to scoring ones in the body, so the
+    # count that does NOT move the score has to be stated here.
     if ((info > 0)); then
         print_msg "  ${DIM}$(i18n 'report.info_note' "count=${info}")${NC}"
     fi
@@ -683,20 +611,9 @@ report_print_summary() {
     print_msg ""
 }
 
-# Generate SARIF report (for CI/CD integration).
-#
-# The whole document is built by ONE jq invocation. It used to be built
-# incrementally in bash: 6 `jq -r` field reads per check, a `jq -n` per
-# result, a `jq -e` existence probe per rule, and — the quadratic part —
-# `results=$(echo "$results" | jq '. += [$r]')`, which re-parsed and
-# re-serialised the entire growing array once per finding. Measured on an
-# 89-check host this single function dominated report generation; at 356
-# checks it took over two minutes.
-#
-# Output shape is unchanged, including rules being derived from ALL
-# checks (not just failures) and de-duplicated first-wins in encounter
-# order — hence the explicit reduce rather than `unique_by(.id)`, which
-# would re-sort them.
+# Generate SARIF. The whole document is ONE jq invocation; building it
+# incrementally in bash is quadratic. Rules derive from ALL checks and are
+# de-duplicated first-wins in encounter order, hence reduce, not unique_by.
 report_generate_sarif() {
     local output_file="${1:-${VPSSEC_REPORTS}/summary.sarif}"
     local checks=$(state_get_checks)
@@ -784,11 +701,8 @@ report_generate_sarif() {
                   "fixes": [{ "description": { "text": (.suggestion // "") } }]
                 }
             ],
-            # executionSuccessful as a FACT, not a constant: false whenever a
-            # module failed to load or crashed mid-audit, with the names in
-            # toolExecutionNotifications. A dashboard ingesting this SARIF
-            # previously had no way to tell a complete scan from one that
-            # silently lost modules.
+            # executionSuccessful is a FACT, not a constant: false whenever a
+            # module failed, with the names in toolExecutionNotifications.
             "invocations": [{
               "executionSuccessful": ($failed_modules | length == 0),
               "endTimeUtc": $endtime,
@@ -815,12 +729,8 @@ report_generate_sarif() {
     echo "$output_file"
 }
 
-# Write all three report files.
-#
-# The report_generate_* functions RETURN their output path on stdout —
-# that is their calling convention. Capturing it here is not cosmetic:
-# calling them bare printed three raw paths to the terminal immediately
-# before the formatted "report saved" lines.
+# Write all three report files. The report_generate_* functions return their
+# output path on stdout, so their output MUST be captured, not left bare.
 _report_write_files() {
     mkdir -p "${VPSSEC_REPORTS}"
     local rc=0
@@ -857,17 +767,9 @@ report_generate_all() {
             print_msg ""
         fi
     else
-        # JSON-only mode. Regenerate ALL three files, not just the JSON:
-        # this branch used to refresh summary.json alone and leave the
-        # previous run's summary.md / summary.sarif on disk with no
-        # warning, so a CI job that published the Markdown or fed the
-        # SARIF to a dashboard silently shipped the last run's score and
-        # module list. Only the JSON goes to stdout, as before.
-        #
-        # Write failure is FATAL here, and the old file is never echoed:
-        # `|| true` + unconditional cat meant a failed generation served
-        # the PREVIOUS run's summary.json with exit 0 — for a CI consumer,
-        # stale data presented as fresh is strictly worse than an error.
+        # Regenerate ALL three files, or a CI job shipping the Markdown or
+        # SARIF publishes the previous run's data. Only the JSON goes to
+        # stdout; write failure is FATAL and the old file is NEVER echoed.
         if ! _report_write_files; then
             # Direct echo, not print_error: print_msg suppresses ALL output
             # under --json-only, which would turn this fatal error into a

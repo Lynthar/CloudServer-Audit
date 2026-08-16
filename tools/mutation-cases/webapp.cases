@@ -17,7 +17,7 @@ run_case "tokens/duplicate-instead-of-replace" 1 \
     '    if false; then'
 
 run_case "tokens/no-backup" 1 \
-    '    bak=$(backup_file "$NGINX_CONF")' \
+    '    bak=$(backup_file "$NGINX_CONF") || return 1' \
     '    bak=""'
 
 run_case "tokens/no-rollback-on-reject" 1 \
@@ -33,8 +33,8 @@ run_case "tokens/write-not-persisted" 1 \
     '    if false; then'
 
 run_case "headers/backup-guarded-again" 1 \
-    '    bak=$(backup_file "$headers_conf")' \
-    '    [[ -f "$headers_conf" ]] && bak=$(backup_file "$headers_conf")'
+    '    bak=$(backup_file "$headers_conf") || return 1' \
+    '    [[ -f "$headers_conf" ]] && { bak=$(backup_file "$headers_conf") || return 1; }'
 
 run_case "headers/xss-auditor-re-enabled" 1 \
     'add_header X-XSS-Protection "0" always;' \
@@ -49,7 +49,7 @@ run_case "headers/validation-gate-removed" 2 \
     '    if true; then'
 
 run_case "hsts/backup-skipped" 1 \
-    '    backup_file "$hsts_conf" >/dev/null 2>&1 || true' \
+    '    backup_file "$hsts_conf" >/dev/null || return 1' \
     '    :'
 
 # This case used to replace the print_warn with `return 0`, modelling "the fix
@@ -67,7 +67,7 @@ run_case "hsts/success-reported-as-failure" 2 \
     '    return 1'
 
 run_case "ssl/backup-skipped" 1 \
-    '    backup_file "$ssl_conf" >/dev/null 2>&1 || true' \
+    '    backup_file "$ssl_conf" >/dev/null || return 1' \
     '    :'
 
 run_case "ssl/written-into-conf.d" 1 \
@@ -85,3 +85,8 @@ run_case "ssl/validation-ignored" 1 \
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_warn "Unknown fix_id: $fix_id"' \
     '            return 0'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    bak=$(backup_file "$NGINX_CONF") || return 1' \
+    '    bak=$(backup_file "$NGINX_CONF" 2>/dev/null) || bak=""'

@@ -3,27 +3,21 @@
 # State management for tracking checks, fixes, and backups
 # Copyright (c) 2024
 
-# ==============================================================================
-# State File Paths
-# ==============================================================================
+# --- State File Paths ---
 
 STATE_OK_FILE="${VPSSEC_STATE}/ok.json"
 STATE_PLAN_FILE="${VPSSEC_STATE}/last_plan.json"
 STATE_PROGRESS_FILE="${VPSSEC_STATE}/progress.json"
 STATE_CHECKS_FILE="${VPSSEC_STATE}/checks.json"
 
-# ==============================================================================
-# State Initialization
-# ==============================================================================
+# --- State Initialization ---
 
 state_init() {
     mkdir -p "${VPSSEC_STATE}"
 
-    # Set secure permissions on state directory
     chmod 700 "${VPSSEC_STATE}"
 
-    # Initialize ok.json if not exists (atomic check with mkdir lock pattern)
-    # Using a lock to prevent race condition
+    # Locked so concurrent runs do not both seed ok.json.
     local lock_file="${VPSSEC_STATE}/.init.lock"
     (
         flock -n 200 || exit 0  # Skip if another process is initializing
@@ -32,28 +26,18 @@ state_init() {
         fi
     ) 200>"$lock_file"
 
-    # Initialize checks.json (always start fresh for each run).
-    # Preserve the previous run's checks as .prev so partial results
-    # from an interrupted run (Ctrl+C, OOM kill, module crash) can be
-    # inspected post-mortem instead of being wiped silently.
+    # Fresh checks.json each run; the previous one is kept as .prev
+    # so an interrupted run's partial results stay inspectable.
     if [[ -f "$STATE_CHECKS_FILE" ]]; then
         cp -p "$STATE_CHECKS_FILE" "${STATE_CHECKS_FILE}.prev" 2>/dev/null || true
     fi
     echo '[]' > "$STATE_CHECKS_FILE"
 }
 
-# ==============================================================================
-# Check State Management
-# ==============================================================================
+# --- Check State Management ---
 
-# Add a check result to state (thread-safe with file locking).
-#
-# Defence in depth: if a module produced invalid JSON (historically the
-# hand-written heredocs in cloud/malware/users/webapp did this whenever
-# an interpolated $var contained a quote, newline or CR), swap it for a
-# synthetic "malformed check" record so the breakage is visible in the
-# report instead of silently disappearing. The downstream jq append
-# would have dropped it anyway; this path adds diagnostics.
+# Append a check to state under a write lock. Invalid JSON is replaced by a
+# synthetic "malformed check" record so the breakage shows up in the report.
 state_add_check() {
     local check_json="$1"
     local lock_file="${VPSSEC_STATE}/.checks.lock"
@@ -73,12 +57,9 @@ state_add_check() {
     fi
 
     (
-        flock -x 200  # Exclusive lock for write operation
-
-        # Initialize if file doesn't exist
+        flock -x 200
         [[ -f "$STATE_CHECKS_FILE" ]] || echo '[]' > "$STATE_CHECKS_FILE"
 
-        # Read current state, add check, write to temp file, then move atomically
         local temp_file
         temp_file=$(mktemp "${STATE_CHECKS_FILE}.XXXXXX") || return 1
 
@@ -100,9 +81,7 @@ state_get_checks() {
     fi
 }
 
-# ==============================================================================
-# Fix State Management
-# ==============================================================================
+# --- Fix State Management ---
 
 # Record a completed fix (thread-safe with file locking)
 state_mark_fix_complete() {
@@ -112,9 +91,7 @@ state_mark_fix_complete() {
     local lock_file="${VPSSEC_STATE}/.ok.lock"
 
     (
-        flock -x 200  # Exclusive lock for write operation
-
-        # Initialize if file doesn't exist
+        flock -x 200
         [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
 
         # Read, modify, write atomically
@@ -134,9 +111,7 @@ state_mark_fix_complete() {
     log_info "Fix marked complete: $fix_id"
 }
 
-# ==============================================================================
-# Plan State Management
-# ==============================================================================
+# --- Plan State Management ---
 
 # Save execution plan
 state_save_plan() {
@@ -159,9 +134,7 @@ state_clear_plan() {
     rm -f "$STATE_PLAN_FILE"
 }
 
-# ==============================================================================
-# Progress Tracking (for interrupted operations)
-# ==============================================================================
+# --- Progress Tracking (for interrupted operations) ---
 
 # Save progress
 state_save_progress() {
@@ -199,9 +172,7 @@ state_has_progress() {
     [[ -f "$STATE_PROGRESS_FILE" ]]
 }
 
-# ==============================================================================
-# Backup Management
-# ==============================================================================
+# --- Backup Management ---
 
 # List all backups
 backup_list() {
@@ -215,10 +186,8 @@ backup_get_latest() {
     backup_list | head -n1
 }
 
-# Create a new backup session directory. execute_plan assigns the returned
-# path to the global VPSSEC_BACKUP_SESSION, so every backup_file call during the
-# plan lands here and a rollback can restore the whole plan. (The former
-# backup_file_to_session helper was unused — backup_file is now session-aware.)
+# execute_plan assigns the returned path to VPSSEC_BACKUP_SESSION, so every
+# backup_file call during the plan lands here and rollback restores it as one.
 backup_create_session() {
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -227,45 +196,9 @@ backup_create_session() {
     echo "$backup_dir"
 }
 
-# Restore from a specific backup.
-#
-# Defense-in-depth path checks (none of these block a known live
-# attack today, but they make backup_restore *not* a "write to any
-# host path" primitive even if backup contents are partially
-# tampered or the timestamp argument is malformed):
-#
-#   1. timestamp must match the YYYYMMDD_HHMMSS format that
-#      backup_create_session emits. This refuses things like
-#      `vpssec rollback ../../etc` or selecting a hand-placed
-#      `evil/` directory under backups/.
-#   2. Each entry under backup_dir must be a *regular* file, not
-#      a symlink. find -type f normally excludes symlinks, but a
-#      directory symlink along the path can let find traverse
-#      out of backup_dir; we cross-check that the resolved file
-#      stays inside backup_dir.
-#   3. Each restore destination must be a regular file (or absent)
-#      and its parent must be a real directory, not a symlink. A
-#      symlink-replaced parent could redirect cp into an
-#      attacker-chosen location. This is a TOCTOU window between
-#      backup time and restore time; treating any symlink in the
-#      destination path as "abort and skip" is the cheap mitigation.
-#
-# Exit status (callers MUST distinguish these — this used to be an
-# unconditional `return 0`, so a rollback that restored nothing, or
-# skipped every entry on a symlink check, still printed a green
-# "restored" to the user):
-#   0 — every entry restored, nothing skipped
-#   2 — partial: some entries restored, some skipped
-#   1 — nothing restored (empty backup dir, or every entry skipped)
-# Counts are also written to stdout via print_*, not only to the log.
-# Re-apply the mode recorded by backup_track_mode. A backup directory made
-# before this manifest existed simply has no entry, so the file keeps
-# whatever cp -p gave it — restoring content without the mode is still
-# better than refusing to restore.
-#
-# The path reaches awk through ENVIRON, never `-v`: awk expands escape
-# sequences in a -v assignment, so a path containing a backslash would
-# arrive mangled and match nothing, silently skipping the chmod.
+# Re-apply the mode recorded by backup_track_mode; a backup with no entry
+# keeps whatever cp -p gave it. The path reaches awk through ENVIRON, never
+# `-v` — awk expands escapes in -v, mangling any path with a backslash.
 _backup_restore_mode() {
     local path="$1" manifest="$2"
     [[ -f "$manifest" ]] || return 0
@@ -275,9 +208,7 @@ _backup_restore_mode() {
         BEGIN { want = ENVIRON["VPSSEC_MODE_PATH"] }
         { m = $1; sub(/^[0-7]+ /, ""); if ($0 == want) { print m; exit } }
     ' "$manifest" 2>/dev/null) || return 0
-    # Emptiness is the only case to guard: the awk above matches a line only
-    # when its first field is octal (that is what the sub() strips before
-    # comparing the path), so anything it prints is already a valid mode.
+    # Anything awk printed is already a valid mode; only emptiness needs a guard.
     [[ -n "$mode" ]] || return 0
 
     if ! chmod "$mode" "$path" 2>/dev/null; then
@@ -285,13 +216,15 @@ _backup_restore_mode() {
     fi
 }
 
+# Restore one backup session. 0 = all restored, 2 = partial, 1 = nothing;
+# callers MUST distinguish all three. The numbered path checks below keep
+# this from being a write-to-any-path primitive (see the design notes).
 backup_restore() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
 
-    # Check 1: timestamp shape. The same regex backup_cleanup uses,
-    # extracted here so a typo'd or attacker-chosen argument can't
-    # become a write primitive via a hand-placed sibling directory.
+    # Check 1: timestamp shape, so a crafted argument cannot select a
+    # hand-placed sibling directory. Same regex as backup_cleanup.
     if [[ ! "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
         log_error "Refusing to restore: timestamp '$timestamp' does not match YYYYMMDD_HHMMSS"
         return 1
@@ -304,9 +237,7 @@ backup_restore() {
 
     log_info "Restoring from backup: $timestamp"
 
-    # Resolve backup_dir once for symlink-escape detection on each
-    # found file. realpath handles the "is this still under
-    # backup_dir after symlink resolution" question.
+    # Resolved once, for the symlink-escape check on each found file.
     local backup_dir_real
     backup_dir_real=$(realpath "$backup_dir" 2>/dev/null) || {
         log_error "Cannot resolve backup directory: $backup_dir"
@@ -317,19 +248,16 @@ backup_restore() {
     local restored=0
     local modes_manifest="${backup_dir}/${VPSSEC_MODES_MANIFEST}"
 
-    # Find all backed up files and restore them
     while IFS= read -r -d '' backup_file; do
-        # Check 2a: source must not itself be a symlink. find -type f
-        # follows symlinks during the test, which means a symlink
-        # pointing at an arbitrary host file would be matched.
+        # Check 2a: source must not be a symlink — find -type f follows them,
+        # so a symlink to an arbitrary host file would be matched.
         if [[ -L "$backup_file" ]]; then
             log_warn "Skipping symlinked backup entry: $backup_file"
             ((skipped++)) || true
             continue
         fi
 
-        # Check 2b: source must still resolve to under backup_dir.
-        # This catches a directory symlink farther up the path.
+        # Check 2b: catches a directory symlink farther up the path.
         local backup_file_real
         backup_file_real=$(realpath "$backup_file" 2>/dev/null) || {
             log_warn "Cannot resolve backup file, skipping: $backup_file"
@@ -347,46 +275,35 @@ backup_restore() {
         local original_dir
         original_dir=$(dirname "$original_path")
 
-        # Check 3a: destination directory must not be a symlink. A
-        # TOCTOU swap between backup and restore could swing
-        # /etc/ssh into an attacker-controlled tree; refusing to
-        # write through symlinks closes that window.
+        # Check 3a: a symlinked parent could redirect cp elsewhere.
         if [[ -L "$original_dir" ]]; then
             log_warn "Skipping restore: parent directory is a symlink: $original_dir"
             ((skipped++)) || true
             continue
         fi
 
-        # Check 3b: existing destination must not be a symlink.
-        # cp -p would dereference and write through it.
+        # Check 3b: cp -p would dereference an existing symlink target.
         if [[ -L "$original_path" ]]; then
             log_warn "Skipping restore: target path is a symlink: $original_path"
             ((skipped++)) || true
             continue
         fi
 
-        # A restore that did not happen must not be counted as restored.
-        # rollback_mode runs this with errexit suppressed (rc-captured), so
-        # an unchecked failing cp used to fall straight through to
-        # ((restored++)) — the operator was told their file came back when
-        # it had not. Count it as skipped and keep restoring the rest.
+        # Checked explicitly: errexit is off here, so a failing cp would
+        # otherwise fall through and be counted as restored.
         if ! mkdir -p "$original_dir" || ! cp -p "$backup_file" "$original_path"; then
             log_error "Restore FAILED (copy error): $backup_file -> $original_path"
             ((skipped++)) || true
             continue
         fi
-        # cp -p copies the mode of the BACKUP copy, which backup_file
-        # deliberately chmods to 600. Put the file's own mode back.
+        # cp -p copied the backup's mode, which backup_file chmods to 600.
         _backup_restore_mode "$original_path" "$modes_manifest"
         log_info "Restored: $backup_file -> $original_path"
         ((restored++)) || true
     done < <(find "$backup_dir" -type f ! -name '.vpssec_created' ! -name '.vpssec_modes' -print0)
 
-    # Delete files that fixes CREATED during this plan (they had no prior
-    # version, so restoring is not enough — the file must be removed). Paths are
-    # recorded by backup_track_created. Apply the same symlink-safety as restore:
-    # never delete through a symlinked target or parent, and only remove a
-    # regular file that still exists.
+    # Files a fix CREATED have no prior version, so rollback must delete them.
+    # Same symlink safety as restore: never delete through a symlinked path.
     local created_manifest="${backup_dir}/.vpssec_created"
     if [[ -f "$created_manifest" ]]; then
         local created_path created_parent
@@ -405,8 +322,7 @@ backup_restore() {
                     log_info "Removed fix-created file on rollback: $created_path"
                     ((restored++)) || true
                 else
-                    # A created file we could not delete is an incomplete
-                    # rollback — count it so the exit status says so.
+                    # Counted, so the exit status reports the incomplete rollback.
                     log_error "Rollback could not remove fix-created file: $created_path"
                     ((skipped++)) || true
                 fi
@@ -414,10 +330,7 @@ backup_restore() {
         done < "$created_manifest"
     fi
 
-    # Surface the counts to the TERMINAL, not just the log, and let the
-    # exit status carry the outcome. A rollback that restored nothing is
-    # a failure from the operator's point of view — they asked for their
-    # config back and did not get it — so it must not read as success.
+    # Counts go to the terminal, not just the log; restored == 0 is a failure.
     if (( restored == 0 )); then
         if (( skipped > 0 )); then
             log_error "Restore failed: 0 restored, ${skipped} skipped (see logs/vpssec.log)"
@@ -440,10 +353,8 @@ backup_restore() {
     return 0
 }
 
-# Get backup contents (for preview). Same timestamp-shape gate as
-# backup_restore / backup_cleanup: the preview used to be the one entry
-# point that concatenated an unvalidated argument into the path, so
-# `vpssec rollback ../../etc`-style input listed arbitrary directories.
+# Preview one backup. Same timestamp-shape gate as backup_restore, so an
+# unvalidated argument cannot list arbitrary directories.
 backup_list_contents() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -466,11 +377,7 @@ backup_cleanup() {
         ((count++)) || true
         if ((count > keep)); then
             local backup_path="${VPSSEC_BACKUPS}/${timestamp}"
-            # Safety: validate path is under backup directory.
-            # backup_create_session formats timestamps as YYYYMMDD_HHMMSS
-            # (underscore). The regex used to check for a hyphen, which
-            # never matched, so backup_cleanup was a no-op and old
-            # backups accumulated indefinitely.
+            # Underscore, matching what backup_create_session emits.
             if [[ -n "$timestamp" ]] && [[ "$backup_path" =~ ^${VPSSEC_BACKUPS}/[0-9]{8}_[0-9]{6}$ ]] && [[ -d "$backup_path" ]]; then
                 rm -rf "$backup_path"
                 log_info "Removed old backup: $timestamp"
@@ -479,62 +386,18 @@ backup_cleanup() {
     done
 }
 
-# ==============================================================================
-# Score Calculation
-# ==============================================================================
+# --- Score Calculation ---
 
-# Scoring inclusion rules live in the jq program inside
-# _check_metrics_refresh below — a single implementation shared by the
-# score and the summary statistics. There used to be two bash copies of
-# this walk (calculate_score and get_check_stats), and they had already
-# drifted apart on how info-category checks were bucketed.
-#
-# The rules, for reference:
-#   required | recommended  — always scored
-#   conditional             — scored only if the parent component
-#                             (docker / nginx / cloudflared) is present,
-#                             detected from the presence of any
-#                             <module>.* check other than
-#                             <module>.not_installed
-#   optional                — scored only under --strict
-#                             (VPSSEC_SECURITY_LEVEL=strict): weak SSH
-#                             algorithms, weak SGID, nginx DoS
-#                             hardening, ... are shown but do not move
-#                             the score by default
-#   info                    — never scored
-#   unlisted id             — treated as info (fail-safe: a forgotten
-#                             classification must not silently lower
-#                             the score)
-
-# ==============================================================================
-# Check Metrics — one jq reduction, memoised
-# ==============================================================================
-#
-# Every number the score / summary / report layers need comes from ONE
-# jq pass over checks.json, cached on (path, mtime, size).
-#
-# Why this exists: calculate_score() and get_check_stats() used to walk
-# the array in bash and spawn three `jq -r` calls PER CHECK just to pull
-# .id / .status / .severity. report_generate_json, report_generate_markdown
-# and report_print_summary each call BOTH functions, so one report re-parsed
-# the same immutable data six times — ~1600 jq process creations on an
-# 89-check host, which measured as several times more wall-clock than the
-# scan itself. The two public functions below are now thin readers over
-# this cache; their outputs are unchanged.
-#
-# Keeping the classification logic in jq (rather than calling the bash
-# helpers per check) also removes the per-check `echo | jq -r '.docker'`
-# inside _check_counts_in_score's `conditional` branch.
+# --- Check Metrics: one jq reduction over checks.json, cached on
+# (path, mtime, size). The scoring inclusion rules live in that jq
+# program and nowhere else — see the design notes. ---
 
 declare -gA VPSSEC_METRICS=()
 _VPSSEC_METRICS_KEY=""
 _VPSSEC_CATMAP_JSON=""
 
-# Serialise CHECK_SCORE_CATEGORY (core/security_levels.sh) into a JSON
-# object once per process so jq can classify every check without a
-# round-trip per id. Returns an empty string when the map is not loaded
-# — the caller then falls back to the historical "unlisted = required"
-# default that _check_counts_in_score used in that situation.
+# Serialise CHECK_SCORE_CATEGORY into JSON once per process so jq can classify
+# every check without a round-trip per id. Empty string = map not loaded.
 _score_category_map_json() {
     if [[ -n "$_VPSSEC_CATMAP_JSON" ]]; then
         printf '%s' "$_VPSSEC_CATMAP_JSON"
@@ -550,10 +413,8 @@ _score_category_map_json() {
     printf '%s' "$_VPSSEC_CATMAP_JSON"
 }
 
-# Cache key for checks.json. Size alone is not enough (state_init
-# truncates back to "[]"), mtime alone is not enough (1s granularity);
-# together they are, because every state_add_check grows the file.
-# An empty key means "cannot fingerprint" -> never serve from cache.
+# Cache key. mtime and size are each insufficient alone; together they hold
+# because every state_add_check grows the file. Empty = never serve from cache.
 _checks_fingerprint() {
     local file="$STATE_CHECKS_FILE"
     [[ -f "$file" ]] || { printf '%s|missing' "$file"; return 0; }
@@ -624,10 +485,8 @@ _check_metrics_refresh() {
                 | ($chk.severity // "low") as $sev
                 | (scored($catmap; $default_cat; $installed; $strict; $id)) as $in
                 | .total += 1
-                # info == "carried in the report but not scored". Tracked as a
-                # SEPARATE dimension: the check still flows into the severity /
-                # passed buckets below so the summary counts match the body,
-                # which filters purely on .severity.
+                # info = carried in the report but not scored. A separate
+                # dimension: the check still falls into a severity bucket below.
                 | (if $in then . else .info += 1 end)
                 | (if   $st == "passed" then .passed += 1
                    elif $st == "failed" then
@@ -656,8 +515,7 @@ _check_metrics_refresh() {
         [[ -n "$k" ]] && VPSSEC_METRICS["$k"]="$v"
     done <<< "$metrics_out"
 
-    # Defensive zero-fill: a malformed/absent checks.json must yield a
-    # complete metric set rather than "unbound variable" downstream.
+    # A malformed/absent checks.json must still yield a complete metric set.
     for k in total high medium low passed info scored_total high_failed medium_failed low_failed; do
         [[ -n "${VPSSEC_METRICS[$k]:-}" ]] || VPSSEC_METRICS["$k"]=0
     done
@@ -678,62 +536,9 @@ calculate_score() {
     local medium_fail="${VPSSEC_METRICS[medium_failed]:-0}"
     local low_fail="${VPSSEC_METRICS[low_failed]:-0}"
 
-    # Score calculation (pass-rate based, with severity penalty on top).
-    #
-    # History:
-    #   v1 — additive/capped (-80/-40/-15) hit its combined cap of
-    #        -135 on any real server with a handful of mediums; could
-    #        not distinguish "needs hardening" from "rooted".
-    #   v2 — pass_rate − (8h + 2m + 0.5l). Better, but the penalty
-    #        still saturated for typical cloud VPSes: 4 high alone
-    #        consumed 32 points on top of a base that was already at
-    #        ~57 (a server with ~57% pass rate ⇒ 0). The classification
-    #        pass that landed alongside this trim cuts most of the
-    #        spurious highs, so the residual penalty here can be
-    #        reduced too without losing signal on actually-bad hosts.
-    #   v3 — pass_rate − (5h + 1.5m + 0.25l). Same shape, lower
-    #        weights. A server with no failures still gets 100; a
-    #        rooted box (10h + 20m + 30l = 87.5 penalty on top of a
-    #        ~33% pass rate) still floors at 0.
-    #
-    # Final formula:
-    #     base    = 100 × passed / scored_total     (the pass rate, 0..100)
-    #     penalty = 5×high + 1.5×medium + 0.25×low  (additive, severity-weighted)
-    #     score   = clamp(0, 100, base − penalty)
-    #
-    # info-category checks (see security_levels.sh) are excluded from
-    # `scored_total`, so they don't dilute the pass rate in either
-    # direction — a clean way to carry advisory findings in the report
-    # without them distorting the number.
-    #
-    # Expected outcomes (all on a 50-check scored total):
-    #   0 failures                   → 100 (Excellent)
-    #   1 medium only                → 97  (Excellent)
-    #   1 high only                  → 93  (Excellent)
-    #   3 high only                  → 79  (Good)
-    #   3 high + 6 medium + 3 low    → 53  (Needs work)
-    #   7 high + 11 medium + 3 low (the typical fresh-VPS shape after
-    #    the v3 classification trim drops 5 spurious highs to ≈2 high)
-    #                                ≈ ~40 — distinguishable from
-    #                                "actually broken"
-    #   10 high + 20 medium + 30 low → 0   (Broken)
-    #
-    # KNOWN LIMITATION — the score is only comparable across runs with
-    # the SAME module set. `base` is a rate (scales with scored_total)
-    # but `penalty` is absolute (does not), so on a small subset the
-    # penalty eats a proportionally larger share; and when every scored
-    # check in the subset fails, base is 0 and the score floors at 0
-    # regardless of how mild the findings are. `vpssec audit
-    # --include=ufw` on a host with two medium findings therefore reads
-    # "0/100" — technically correct for that denominator, badly
-    # misleading as an absolute verdict.
-    #
-    # Deliberately NOT fixed by normalising the penalty: that would
-    # move every existing host's score and invalidate the expected
-    # outcomes above (and the README examples / tests that pin them).
-    # Instead the presentation layer labels a filtered run as a PARTIAL
-    # score and prints scored_total alongside it — see
-    # score_is_partial() below and report_print_summary().
+    # base = 100 x passed/scored_total; penalty = 5*high + 1.5*medium + 0.25*low;
+    # score = clamp(0,100, base - penalty). Only comparable across runs with the
+    # same module set -- score_is_partial() flags the rest. See the design notes.
 
     if (( scored_total == 0 )); then
         echo 100
@@ -757,19 +562,9 @@ calculate_score() {
     echo "$score"
 }
 
-# Summary statistics for the terminal / Markdown / JSON reports.
-#
-# Severity and score-category are ORTHOGONAL dimensions here:
-#   - high/medium/low/passed count every check by `.severity`, so the
-#     summary line matches the body listing (which filters purely on
-#     severity). Info-category checks are included.
-#   - `info` counts checks EXCLUDED from the score (info category, or a
-#     conditional check whose component isn't installed). It overlaps
-#     the buckets above on purpose: it answers "how many of these are
-#     advisory only", not "which bucket do they live in".
-#   - `scored_total` is the denominator calculate_score() actually used.
-#     Exposed so a reader can tell a 40/100 computed over 60 checks
-#     from one computed over 4.
+# Summary statistics for the reports. Severity and score-category are
+# orthogonal: `info` counts checks excluded from the score and deliberately
+# overlaps the severity buckets. `scored_total` is the score's denominator.
 get_check_stats() {
     _check_metrics_refresh
     printf '{"high": %d, "medium": %d, "low": %d, "passed": %d, "info": %d, "scored_total": %d, "total": %d}\n' \
@@ -782,10 +577,8 @@ get_check_stats() {
         "${VPSSEC_METRICS[total]:-0}"
 }
 
-# True when this run only audited part of the module set, so the score
-# is not comparable with a full-run score (see the KNOWN LIMITATION note
-# in calculate_score). Both filters count: --exclude shrinks the
-# denominator exactly the same way --include does.
+# True when this run audited only part of the module set, so the score is not
+# comparable with a full run. Both --include and --exclude shrink the denominator.
 score_is_partial() {
     [[ -n "${VPSSEC_INCLUDE:-}" || -n "${VPSSEC_EXCLUDE:-}" ]]
 }

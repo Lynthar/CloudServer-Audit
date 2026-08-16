@@ -3,40 +3,22 @@
 # Fix safety classification and score categories
 # Copyright (c) 2024
 
-# ==============================================================================
-# Fix Safety Classifications
-# ==============================================================================
-#
-# FIX_SAFE       - Can be auto-fixed in guide mode
-# FIX_CONFIRM    - Requires user confirmation before fixing
-# FIX_RISKY      - High-risk, requires explicit confirmation + safeguards
-# FIX_ALERT_ONLY - No auto-fix available, only alert user
-#
-# ==============================================================================
+# --- Fix safety: SAFE = auto-applied, CONFIRM = warned, RISKY = explicit
+# confirmation with safeguards, ALERT_ONLY = never auto-fixed. A SAFE fix may
+# neither restart a service nor prompt. Membership notes: see the design notes ---
 
 # Safe fixes - can be auto-applied in guide mode
 declare -gA FIX_SAFE=(
-    # Fail2ban - service management and config.
-    # configure_ssh_jail is intentionally NOT here: since it moved to a
-    # jail.d/99-vpssec-sshd.local drop-in it no longer destroys the operator's
-    # jail.local, but it still OVERRIDES the bantime/maxretry/ignoreip they set
-    # there (jail.d wins over jail.local, and the *.local tier wins over
-    # *.conf) — a behaviour change worth a warning, so it stays CONFIRM-class.
-    # enable_ssh_jail is NOT here either: it is an alias for the same writer,
-    # and it fires on hosts that have a custom jail.local without an sshd jail
-    # — exactly the config whose owner should see the warning first.
+    # configure_ssh_jail / enable_ssh_jail stay CONFIRM: the drop-in still
+    # overrides an operator's own bantime/maxretry/ignoreip.
     ["fail2ban.install"]="true"
     ["fail2ban.enable_service"]="true"
 
-    # Update - package management. install/enable_unattended are NOT here:
-    # they turn on automatic, unattended installation of packages (a real
-    # behaviour change an operator should consent to), so they are
-    # CONFIRM-class.
+    # install/enable_unattended stay CONFIRM: they turn on unattended
+    # package installation.
 
-    # Baseline - security services. enable_apparmor and disable_unused are
-    # NOT auto-safe: enforcing all packaged AppArmor profiles can confine a
-    # running service, and stopping "unused" services can kill one the
-    # operator depends on (mDNS, printing). Both are CONFIRM-class.
+    # enable_apparmor / disable_unused stay CONFIRM: both can break a
+    # running service.
 
     # Logging - logging configuration
     ["logging.enable_persistent_journal"]="true"
@@ -45,16 +27,9 @@ declare -gA FIX_SAFE=(
     ["logging.enable_auditd"]="true"
     ["logging.setup_audit_rules"]="true"
 
-    # Kernel - sysctl hardening. harden_ipv6 is NOT here: it disables
-    # accept_ra, which drops the SLAAC default route + global address on
-    # RA-configured hosts (the common cloud-VPS case) — on an IPv6-only box
-    # that cuts the live session. It is CONFIRM-class, and the fix itself
-    # additionally skips the RA-disabling params when the host relies on RA.
-    # harden_kernel is NOT auto-safe: it disables unprivileged user
-    # namespaces (breaks Docker rootless / podman / snap / the Chrome &
-    # Electron sandbox / bwrap tooling) and restricts SysRq. Both are
-    # defence-in-depth on a hardened host but can silently break running
-    # workloads, so it is CONFIRM-class (surfaces a warning first).
+    # harden_ipv6 stays CONFIRM: disabling accept_ra drops the SLAAC route on
+    # an RA-configured host. harden_kernel stays CONFIRM: it disables
+    # unprivileged user namespaces, breaking rootless containers and sandboxes.
     ["kernel.enable_aslr"]="true"
     ["kernel.disable_core_dump"]="true"
 
@@ -73,11 +48,8 @@ declare -gA FIX_SAFE=(
     ["ufw.install"]="true"
     ["ufw.allow_ssh"]="true"
 
-    # Docker - enable_live_restore is NOT here: it goes through the same
-    # writer as enable_no_new_privileges and needs a `systemctl restart docker`
-    # to take effect, which briefly pauses every running container. A fix that
-    # restarts a service is not "auto-apply, no questions asked" — it is
-    # CONFIRM-class.
+    # enable_live_restore stays CONFIRM: it needs a docker restart, which
+    # pauses every running container.
 
     # Template generation only
     ["docker.generate_proxy_template"]="true"
@@ -85,20 +57,13 @@ declare -gA FIX_SAFE=(
     ["cloudflared.setup_service"]="true"
     ["backup.generate_templates"]="true"
     ["alerts.setup_config"]="true"
-    # No alerts.generate_templates entry: no check ever emits it as a fix_id,
-    # so it could never be selected — it only showed up in `vpssec help alerts`
-    # as an auto-applied fix the user could never actually get. Generating the
-    # monitor templates is a step inside alerts.setup_config, not a fix of its
-    # own.
+    # No alerts.generate_templates: no check emits it as a fix_id. Template
+    # generation is a step inside alerts.setup_config.
 
-    # Timezone - safe configurations. set_timezone is NOT here: it prompts an
-    # interactive menu, and it is offered on PASSING checks as well (so a guide
-    # user can change the timezone deliberately). Auto-applying it would stop a
-    # select-all run on a host that has nothing wrong with its timezone.
+    # set_timezone stays CONFIRM: it prompts, and it is offered on passing
+    # checks too, so auto-applying would stall a select-all run.
     ["timezone.enable_ntp"]="true"
-    # No timezone.sync_time entry: no check emitted it, so the fix was
-    # unreachable through the engine while still being advertised by
-    # `vpssec help timezone`. The actionable case (NTP off / not synced) is
+    # No timezone.sync_time: no check emits it. The actionable case is
     # covered by timezone.enable_ntp.
     ["timezone.set_rtc_utc"]="true"
     ["timezone.set_locale"]="true"
@@ -171,10 +136,7 @@ declare -gA FIX_RISKY=(
     # Can lock user out of server
     ["ufw.enable"]="Can lock you out if SSH not allowed"
 
-    # Flips the firewall to deny-all inbound on an already-active firewall:
-    # can drop running services (web/db/app) not explicitly allowed, and can
-    # lock you out if the SSH rule is wrong. Honoring --yes here is unsafe,
-    # so it is RISKY (confirm_critical ignores --yes), not CONFIRM.
+    # RISKY, not CONFIRM: honouring --yes on a deny-all flip is unsafe.
     ["ufw.set_default_deny"]="Flips the firewall to deny-all inbound; can drop running services not explicitly allowed, and can lock you out if the SSH rule is wrong"
 
     # Can break system packages
@@ -271,10 +233,8 @@ declare -gA FIX_ALERT_ONLY=(
     ["webapp.sensitive_files"]="Remove or protect sensitive files"
     ["webapp.backup_files"]="Remove backup files from web root"
 
-    # === Review-only findings (previously emitted unclassified fix_ids that
-    # resolved to "unknown"). Their dispatch handlers, where present, only
-    # print guidance and return 1 — no mutation — so they belong in the
-    # alert-only set: shown in the report, filtered out of the auto-fix UI. ===
+    # === Review-only findings: their handlers print guidance and return 1
+    # without mutating anything, so they are shown but never auto-fixed. ===
     ["ssh.configure_access_control"]="Restrict access with AllowUsers/AllowGroups manually (wrong values can lock you out)"
     ["filesystem.review_caps"]="Review file capabilities; remove if not needed"
     ["ufw.review_rules"]="Review and tighten overly-permissive firewall rules manually"
@@ -284,14 +244,9 @@ declare -gA FIX_ALERT_ONLY=(
     ["users.pwquality"]="Install/configure libpam-pwquality manually"
 )
 
-# Fixes that perform their own confirmation. Each is also in FIX_CONFIRM or
-# FIX_RISKY, but the module runs confirm_critical itself at a more precise
-# point than the engine can — after its own precondition checks (SSH key /
-# admin-user presence, current firewall rules) and with a fully translated
-# prompt. execute_fix therefore skips its central confirm/risky gate for these
-# to avoid prompting twice; every OTHER confirm/risky fix is gated by the
-# engine. Removing a module's confirm_critical means removing it here too
-# (guarded by tests/test_security_levels.bats).
+# Fixes that run confirm_critical themselves, at a more precise point than the
+# engine can. execute_fix skips its central gate for these to avoid a double
+# prompt. Removing a module's confirm_critical means removing it here too.
 declare -gA FIX_SELF_CONFIRMED=(
     ["ssh.disable_password_auth"]="true"        # confirm_critical after SSH-key precondition (modules/ssh.sh)
     ["ssh.disable_root_login"]="true"           # confirm_critical after admin-user precondition (modules/ssh.sh)
@@ -300,42 +255,9 @@ declare -gA FIX_SELF_CONFIRMED=(
     ["docker.enable_live_restore"]="true"       # same writer, same confirm_critical (modules/docker.sh)
 )
 
-# Fixes that CANNOT resolve the finding they hang off, however well they run.
-#
-# They generate a template, or write a file the operator still has to wire in.
-# The work they do succeeds; the finding stays. Two facts, and a fix's exit
-# status can only carry one of them — which is how two opposite conventions
-# grew side by side, each defensible on its own terms:
-#
-#   - these four returned 0, so execute_fix called state_mark_fix_complete and
-#     ok.json recorded a completion the very next audit contradicted; while
-#   - webapp's SSL fix returned 1 to avoid exactly that, and so reported a
-#     FAILURE for a file it had written perfectly well.
-#
-# The map is the second fact, held separately. A fix in here still returns 0
-# for "I did my work"; execute_fix consults this map and skips the completion
-# record, telling the operator what remains instead. The value is that text —
-# it is both the English source string and the fallback, the same arrangement
-# FIX_CONFIRM uses, and `fixtmpl.<fix_id>` overrides it when translated.
-#
-# Membership is a claim about the fix's REACH, not its quality. Do not add a
-# fix that asserts its own postcondition: cloudflared.setup_service looks like
-# it belongs here and does not — it installs, enables and starts the service,
-# then returns 0 only if `_cloudflared_service_active` agrees.
-#
-# It is also a claim about the fix ALWAYS, since the key is a fix_id. A fix
-# that leaves a manual step only on some hosts cannot be expressed here and
-# should keep returning 1 on that branch: `_baseline_fix_selinux_set_enforcing`
-# is the example — it sets enforcing at runtime and, when the config file is
-# absent, cannot make it persist. That is a failure to achieve the goal on that
-# host, not a property of the fix.
-#
-# The membership list was closed with a sweep, not a reading: `return 1`
-# preceded within three lines by a print_ok/print_warn rather than a
-# print_error found 20 candidates across the tree, of which 19 are legitimate
-# refusals (unknown-fix dispatch fallbacks, failed postconditions, "manual
-# action required" fixes that produce no artifact at all, restore-after-
-# validation-failure) and one — webapp.nginx_hsts — was this family.
+# Fixes that CANNOT resolve the finding they hang off. They still return 0;
+# execute_fix skips the completion record and prints the value as the manual
+# step. Membership claims the fix's REACH, always (see the design notes).
 declare -gA FIX_TEMPLATE_ONLY=(
     ["docker.generate_proxy_template"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"
     ["cloudflared.generate_config"]="A tunnel config template was written; copy it to /etc/cloudflared and create the tunnel to finish"
@@ -346,18 +268,9 @@ declare -gA FIX_TEMPLATE_ONLY=(
     ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
 )
 
-# ==============================================================================
-# Check Score Categories
-# ==============================================================================
-#
-# Defines how each check affects the security score:
-#   required     - Always counts in score (core security)
-#   recommended  - Counts if component is installed
-#   conditional  - Only counts if the component is installed
-#   optional     - Counts with lower weight
-#   info         - Never affects score (informational only)
-#
-# ==============================================================================
+# --- Score categories. The score measures configuration posture, so
+# heuristic IOCs, tool prerequisites and operator preferences are info
+# (shown, never scored). Full rules: see the design notes ---
 
 declare -gA CHECK_SCORE_CATEGORY=(
     # === SSH Module - required (core security) ===
@@ -422,10 +335,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
 
     # === Fail2ban Module - recommended ===
     ["fail2ban.not_installed"]="recommended"
-    # No fail2ban.installed entry: the module never emits a check with that
-    # id. Not being installed is reported as fail2ban.not_installed, and the
-    # installed case simply proceeds to the service/jail checks. The entry
-    # that used to sit here was the only stale key in this map.
+    # No fail2ban.installed: the module never emits that id. Absence is
+    # reported as fail2ban.not_installed.
     ["fail2ban.service_active"]="recommended"
     ["fail2ban.service_inactive"]="recommended"
     ["fail2ban.service_not_enabled"]="recommended"
@@ -441,10 +352,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # === Update Module - required ===
     ["update.apt_available"]="required"
     ["update.apt_locked"]="required"
-    # Deliberately info, i.e. unscored: it reports that the lock state could
-    # NOT be measured. Scoring it either way would put a number on a
-    # non-observation — which is precisely how the two above came to hand a
-    # scored pass to any host without lsof.
+    # Unscored on purpose: it reports that the lock state could NOT be
+    # measured, and scoring a non-observation is how a host earns a free pass.
     ["update.lock_state_unknown"]="info"
     # Query failure is a non-observation: it must move no score in either
     # direction (same reasoning as lock_state_unknown above).
@@ -649,18 +558,13 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["users.recent_users"]="info"
     ["users.ssh_keys_perms"]="recommended"
     ["users.ssh_keys_info"]="info"
-    # Heuristic name match (bare admin/test/oracle/service/support, etc.) is
-    # shown for operator review but must NOT move the score: these names are
-    # frequently legitimate, so a match is a likely false positive and a
-    # security score should never drop on one. (Detection itself is unchanged.)
+    # Heuristic name match: shown for review, but these names are frequently
+    # legitimate and a likely false positive must not lower the score.
     ["users.suspicious_names"]="info"
     ["users.unusual_home"]="recommended"
-    # pwquality not installed / bash history protection are operator
-    # preferences (pam_pwquality is not Debian-default; HISTCONTROL is
-    # audit convenience), not security baseline items — explicitly
-    # scored as info so a default-configured host isn't penalised.
-    # These checks are emitted only on the "weak/insecure" path; there
-    # is no corresponding "ok" check_id to classify.
+    # Operator preferences, not baseline items: pam_pwquality is not a Debian
+    # default and HISTCONTROL is audit convenience, so a default-configured
+    # host must not be penalised.
     ["users.pwquality_weak"]="info"
     ["users.history_insecure"]="info"
     # Lynis AUTH-* cross-check additions
@@ -727,12 +631,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # honest, scoring it would penalise a host for vpssec's own gap.
     ["webapp.other_webserver"]="info"
 
-    # === Score-category round: previously-unlisted check_ids, classified
-    # per the hardening-posture rubric. The score measures configuration
-    # posture, so heuristic IOCs, tool-prerequisite/context checks, and
-    # operator-preference items are info (shown, but never move the score —
-    # a false positive must not lower it). Genuine posture gaps count. ===
-    # Heuristic IOC / advisory
+    # === Heuristic IOC / advisory: shown, never scored. ===
     ["filesystem.suspicious_cron"]="info"
     ["filesystem.cron_ok"]="info"
     ["filesystem.non_standard_caps"]="info"
@@ -740,15 +639,11 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["filesystem.caps_unavailable"]="info"
     ["kernel.container_detected"]="info"
     ["cloudflared.tunnel_list_unavailable"]="info"
-    # Tool-prerequisite / context (preflight audits vpssec itself, not the host)
-    # _internal.malformed_check is emitted (state.sh) only when a module
-    # produces malformed check JSON — a vpssec bug, not a host posture gap.
-    # info so a tool diagnostic never docks the user's score.
+    # Tool prerequisites and vpssec's own diagnostics: preflight audits vpssec,
+    # not the host, and malformed_check is a vpssec bug. Never scored.
     ["_internal.malformed_check"]="info"
-    # A module that failed to load or crashed mid-audit. Visible in the
-    # report body (status=failed) but scored in neither direction — the
-    # honest signal is meta.complete=false and the exit code, not a lower
-    # number on an unrelated scale.
+    # Visible in the report but scored in neither direction: the honest signal
+    # is meta.complete=false and the exit code.
     ["_internal.module_failed"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"
@@ -779,20 +674,11 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["update.no_reboot"]="recommended"
 )
 
-# ==============================================================================
-# Fix Safety Helper Functions
-# ==============================================================================
+# --- Fix Safety Helper Functions ---
 
-# Get fix safety classification.
-#
-# Implementation note: every map access uses `${MAP[$key]:-}` rather
-# than `${MAP[$key]}`. Under `set -u` (enabled by common.sh), reading
-# a missing associative-array key raises "unbound variable" and aborts
-# the function; the previous version was silently masked in production
-# by callers' `... 2>/dev/null || echo "unknown"` fallback, which
-# meant *every non-SAFE fix* was misclassified as "unknown" — the
-# whole safety badge / risky-confirmation system was bypassed
-# unnoticed. The `:-` default is the canonical fix.
+# Get fix safety classification. Every map read here MUST use ${MAP[$key]:-}:
+# under set -u a missing key aborts the function, and a caller's 2>/dev/null
+# then silently turns every non-SAFE fix into "unknown".
 get_fix_safety() {
     local fix_id="$1"
 
@@ -809,20 +695,9 @@ get_fix_safety() {
     fi
 }
 
-# Get fix warning message. Same `${MAP[$key]:-}` discipline as
-# get_fix_safety: missing-key access under `set -u` would otherwise
-# abort the function and let the caller's `2>/dev/null` swallow it.
-#
-# Localisation: the map values are the English source strings AND the
-# fallback. A translation, when one exists, lives under the i18n key
-# `fixwarn.<fix_id>` and wins. This is the single most consequential
-# i18n gap in the tool — these are the strings a user reads in `guide`
-# mode immediately before confirming something that can cut their SSH
-# session ("Can lock you out if SSH key not configured properly"), and
-# a Chinese-locale run showed them in English inside an otherwise
-# translated prompt. Keeping the English in the map rather than
-# replacing it with a bare key means an untranslated or misspelled key
-# degrades to a readable warning instead of printing "fixwarn.ufw.enable".
+# Get fix warning; same ${MAP[$key]:-} discipline as get_fix_safety. A
+# `fixwarn.<fix_id>` translation wins, but the English stays in the map so a
+# missing key degrades to a readable warning rather than a key name.
 get_fix_warning() {
     local fix_id="$1"
     local fallback=""
@@ -873,13 +748,8 @@ fix_is_risky() {
     [[ "$safety" == "risky" ]]
 }
 
-# True when execute_fix itself must prompt before applying this fix.
-#
-# A fix needs the engine to confirm it when it is confirm- or risky-class
-# (fix_requires_confirmation) AND it does not confirm itself. Fixes listed in
-# FIX_SELF_CONFIRMED call confirm_critical from their own module at a more
-# precise point, so the engine must not also prompt or the user would be asked
-# twice. This is the single predicate execute_fix branches on.
+# True when execute_fix itself must prompt: confirm- or risky-class AND not
+# self-confirming. This is the single predicate execute_fix branches on.
 fix_needs_engine_confirmation() {
     local fix_id="$1"
     fix_requires_confirmation "$fix_id" || return 1
@@ -894,21 +764,15 @@ fix_is_template_only() {
     [[ -n "${FIX_TEMPLATE_ONLY[$fix_id]:-}" ]]
 }
 
-# The FIX_TEMPLATE_ONLY keys as a JSON array, for the reporting layer.
-#
-# One call per document, never per check — report.sh's whole performance rule
-# is one jq per section, and a `fix_is_template_only` per finding would put the
-# per-check subprocess right back. Consumers pass this in as --argjson and do
-# the membership test inside their existing jq program.
+# FIX_TEMPLATE_ONLY keys as a JSON array for the reporting layer. Call once
+# per document, never per check: consumers pass it as --argjson and test
+# membership inside their existing jq program.
 fix_template_only_ids_json() {
     printf '%s\n' "${!FIX_TEMPLATE_ONLY[@]}" | jq -Rs 'split("\n") | map(select(. != ""))'
 }
 
-# What still has to be done by hand after a template-only fix succeeds. Prefers
-# a `fixtmpl.<fix_id>` translation, falling back to the English in the map —
-# the same arrangement as get_fix_warning, and for the same reason: a missing
-# key must degrade to a readable sentence, not print the key at the moment the
-# operator is deciding whether the work is finished.
+# The manual step remaining after a template-only fix succeeds. Prefers a
+# `fixtmpl.<fix_id>` translation, falling back to the English in the map.
 get_fix_manual_step() {
     local fix_id="$1"
     local fallback="${FIX_TEMPLATE_ONLY[$fix_id]:-}"
@@ -922,19 +786,11 @@ get_fix_manual_step() {
     fi
 }
 
-# ==============================================================================
-# Score Category Helper Functions
-# ==============================================================================
+# --- Score Category Helper Functions ---
 
-# Get score category for a check.
-#
-# Default for an UNLISTED id is "info" (does not affect the score), not
-# "recommended". This is fail-safe and matches the module scoring philosophy
-# documented above ("a false positive must not lower the score"): a check_id
-# someone forgot to classify — or a future heuristic IOC — must not silently
-# drag the score down until it is deliberately promoted to a scoring tier.
-# Every id vpssec currently emits IS classified (enforced by the CI manifest
-# + the emitted-id audit), so this default only guards future additions.
+# Get score category. An UNLISTED id defaults to "info", not "recommended":
+# a check nobody classified must not silently drag the score down until it is
+# deliberately promoted. Every emitted id is classified today; CI enforces it.
 get_check_score_category() {
     local check_id="$1"
     echo "${CHECK_SCORE_CATEGORY[$check_id]:-info}"

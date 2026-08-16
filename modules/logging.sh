@@ -3,9 +3,7 @@
 # Logging and audit module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Logging Configuration
-# ==============================================================================
+# --- Logging Configuration ---
 
 JOURNALD_CONF="/etc/systemd/journald.conf"
 JOURNALD_CONF_D="/etc/systemd/journald.conf.d"
@@ -20,9 +18,7 @@ RSYSLOG_CONF="/etc/rsyslog.conf"
 AUDIT_RULES_D="/etc/audit/rules.d"
 AUDIT_RULES_FILE="${AUDIT_RULES_D}/99-vpssec.rules"
 
-# ==============================================================================
-# Logging Helper Functions
-# ==============================================================================
+# --- Logging Helper Functions ---
 
 _logging_journald_persistent() {
     # Check if journal is configured for persistent storage
@@ -55,10 +51,8 @@ _logging_journald_max_size_from_text() {
     ' <<<"$1"
 }
 
-# Last definition wins across main + drop-in files (matches systemd
-# semantics). Original implementation read only the main file, so
-# vpssec writing its own drop-in via _logging_fix_enable_persistent_journal
-# became invisible to the next audit — self-inconsistent display.
+# Last definition wins across the main file and drop-ins, matching systemd.
+# Reading only the main file makes vpssec's own drop-in invisible here.
 _logging_journald_max_size() {
     local size=""
     if command -v systemd-analyze >/dev/null 2>&1; then
@@ -98,30 +92,9 @@ _logging_check_audit_rules() {
 }
 
 _logging_get_failed_logins() {
-    # Get recent failed login attempts.
-    #
-    # Filter by `_COMM=sshd` (the binary name as recorded by the
-    # kernel), not `_SYSTEMD_UNIT=sshd.service`. The latter is the
-    # canonical RHEL/CentOS unit name; on Debian/Ubuntu — every OS
-    # this project targets — the unit is `ssh.service` and
-    # `sshd.service` is only a systemd alias that may not match
-    # journal-recorded metadata. With the wrong filter this query
-    # silently returned zero on every Debian/Ubuntu host, hiding
-    # active brute-force activity.
-    #
-    # Match BOTH _COMM=sshd and _COMM=sshd-session. OpenSSH >= 9.8 (Debian 13,
-    # Ubuntu 24.10+) split per-session work — including the authentication
-    # failure log lines — into a separate `sshd-session` process, so filtering
-    # on `_COMM=sshd` alone returns zero even during an active brute-force (this
-    # is the same change fail2ban had to make). journalctl ORs repeated matches
-    # of the same field, so listing both COMM values is the correct union.
-    #
-    # Capture journalctl's output FIRST so its own exit status is visible:
-    # "the journal says zero failures" and "the journal could not be read"
-    # are different answers, and folding the second into a 0 told the
-    # operator of an unreadable-journal host that nobody is attacking them.
-    # Returns non-zero (printing nothing) when journalctl itself failed;
-    # callers report that as an unknown, not a zero.
+    # Filters on _COMM (the unit is ssh.service on Debian) and matches BOTH
+    # sshd and sshd-session, since OpenSSH 9.8+ logs auth failures from the
+    # latter. Non-zero with no output = query failed, which is not zero.
     local out count
     out=$(journalctl _COMM=sshd _COMM=sshd-session --since "24 hours ago" 2>/dev/null) || return 1
     # Note: grep -c outputs "0" AND exits 1 when no matches; `|| count=0`
@@ -141,9 +114,7 @@ _logging_get_sudo_events() {
     echo "${count:-0}"
 }
 
-# ==============================================================================
-# Logging Audit
-# ==============================================================================
+# --- Logging Audit ---
 
 logging_audit() {
     local module="logging"
@@ -203,10 +174,8 @@ _logging_audit_logrotate() {
         # Check if critical log files have rotation configured
         local missing=()
 
-        # Critical log files to check, per distro (from distro.sh). Defaults to
-        # the Debian set; on Debian/Ubuntu distro_log_paths returns exactly this,
-        # so behaviour is unchanged. RHEL→messages/secure/dnf.rpm.log,
-        # Arch→pacman.log (everything else is journald-only there).
+        # Per-distro critical logs from distro.sh; this is the Debian
+        # fallback. RHEL uses messages/secure/dnf.rpm.log, Arch pacman.log.
         local logs="syslog auth.log dpkg.log"
         if declare -f distro_log_paths >/dev/null 2>&1; then
             local dl; dl=$(distro_log_paths)
@@ -214,10 +183,8 @@ _logging_audit_logrotate() {
         fi
 
         for log in $logs; do
-            # Search BOTH /etc/logrotate.conf and /etc/logrotate.d: many
-            # distros configure core logs (wtmp/btmp, and on some setups
-            # syslog) directly in logrotate.conf, so searching only the .d
-            # directory falsely reported rotation as missing.
+            # BOTH logrotate.conf and logrotate.d: many distros configure
+            # core logs directly in the former.
             if [[ -f "/var/log/$log" ]] && ! grep -rq "$log" "$LOGROTATE_CONF" "$LOGROTATE_D" 2>/dev/null; then
                 missing+=("$log")
             fi
@@ -321,9 +288,7 @@ _logging_audit_auditd() {
 
 _logging_audit_ssh_logs() {
     # Query failure is its own outcome: "0 failed logins" claims the journal
-    # was read and found quiet — on a host where journalctl cannot answer,
-    # that claim is exactly what a brute-forced operator must not be told.
-    # failed + info-category, same pattern as update.check_failed.
+    # was read and found quiet. Emitted failed + info, like update.check_failed.
     local failed_logins
     if ! failed_logins=$(_logging_get_failed_logins); then
         local check=$(create_check_json \
@@ -416,9 +381,7 @@ _logging_audit_sudo_logs() {
     fi
 }
 
-# ==============================================================================
-# Logging Fix Functions
-# ==============================================================================
+# --- Logging Fix Functions ---
 
 logging_fix() {
     local fix_id="$1"
@@ -453,18 +416,11 @@ _logging_fix_enable_persistent_journal() {
     mkdir -p "$JOURNAL_DIR"
     systemd-tmpfiles --create --prefix "$JOURNAL_DIR"
 
-    # Create drop-in configuration atomically; back up any prior drop-in so a
-    # bad restart can be rolled back. A partial file here could degrade
-    # journald on the restart below.
-    #
-    # Call backup_file unconditionally. Guarding it on the file already
-    # existing is what left the FIRST run with no manifest entry: backup_file
-    # records an absent path as fix-created (.vpssec_created), which is the
-    # only thing that lets a rollback delete the drop-in. Without it the
-    # operator could undo the plan and still be left with journald
-    # reconfigured. The logrotate fix below already writes it this way.
+    # backup_file is UNCONDITIONAL: it also records an absent path as
+    # fix-created, which is the only thing that lets a rollback delete this
+    # drop-in. Never guard it on the file already existing.
     mkdir -p "$JOURNALD_CONF_D"
-    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true
+    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1
     write_file_atomic "$JOURNALD_DROPIN" '# vpssec journald configuration
 [Journal]
 Storage=persistent
@@ -488,19 +444,12 @@ MaxRetentionSec=1month'
 _logging_fix_setup_logrotate() {
     print_info "$(i18n 'logging.configuring_logrotate')"
 
-    # Propagate the install failure. The previous version discarded apt's exit
-    # status and then returned 0 unconditionally, so on a host with no network
-    # (or a held apt lock) the fix printed "configured", the engine recorded it
-    # via state_mark_fix_complete, and the next audit re-flagged logrotate as
-    # missing — a fix that permanently disagrees with its own audit.
+    # The install status must propagate: returning 0 regardless records a
+    # completion the next audit contradicts.
     if ! check_command logrotate; then
-        # Refresh the index first (fail2ban/ufw's install fixes already do
-        # this): without it, a host whose /var/lib/apt/lists is empty or stale
-        # gets "Unable to locate package" and the install can never succeed.
-        # Unlike those two we do NOT gate the install on update's exit status —
-        # one broken third-party repo makes `apt-get update` non-zero, and
-        # logrotate is very likely still installable from the rest of the index.
-        # The install's own status is what decides.
+        # Refresh first, or an empty apt cache gives "Unable to locate
+        # package". NOT gated on update's status: one broken third-party repo
+        # makes it non-zero while the package is still installable.
         DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then
             print_error "$(i18n 'logging.logrotate_install_failed')"
@@ -508,15 +457,11 @@ _logging_fix_setup_logrotate() {
         fi
     fi
 
-    # The logrotate package ships /etc/logrotate.conf as a conffile, so this
-    # branch only runs when the install above could not supply one. Go through
-    # backup_file + write_file_atomic like every other /etc write in this
-    # project: the bare `cat >` it replaces could truncate the file if
-    # interrupted, and left no backup entry — so backup_file's session manifest
-    # (.vpssec_created) never learned about the new file and a rollback could
-    # not delete it.
+    # Only reached when the install could not supply the conffile. Goes
+    # through backup_file + write_file_atomic like every other /etc write:
+    # a bare `cat >` truncates on interrupt and leaves no rollback entry.
     if [[ ! -f "$LOGROTATE_CONF" ]]; then
-        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true
+        backup_file "$LOGROTATE_CONF" >/dev/null || return 1
         if ! write_file_atomic "$LOGROTATE_CONF" '# vpssec logrotate configuration
 weekly
 rotate 4
@@ -540,13 +485,9 @@ _logging_fix_install_auditd() {
     if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
         print_ok "$(i18n 'logging.auditd_installed')"
 
-        # The two follow-ups are a convenience, and their status deliberately
-        # does NOT decide this one. This fix_id answers the check
-        # logging.auditd_not_installed, and the install is what that check
-        # measures; the service and the rules have their own checks and their
-        # own fix_ids, so a failure there is reported by them on the next run
-        # rather than being recast as "the install failed". Each prints its own
-        # error, so nothing is swallowed silently.
+        # The follow-ups are a convenience and deliberately do NOT decide this
+        # fix: it answers logging.auditd_not_installed, which measures the
+        # install. The service and rules have their own checks and fix_ids.
         _logging_fix_enable_auditd || true
         _logging_fix_setup_audit_rules || true
         return 0
@@ -576,10 +517,8 @@ _logging_fix_setup_audit_rules() {
 
     mkdir -p "$AUDIT_RULES_D"
 
-    # Build the rules content, then write atomically (tempfile + rename). The
-    # bare `cat >` could leave a truncated 99-vpssec.rules on an interrupted
-    # write — which auditd would then reject on the next load — and its write
-    # failure went unchecked.
+    # Built then written atomically: a truncated 99-vpssec.rules is rejected
+    # by auditd on the next load.
     local rules_content
     rules_content=$(cat <<'EOF'
 # vpssec audit rules for security monitoring
@@ -637,22 +576,17 @@ _logging_fix_setup_audit_rules() {
 EOF
 )
 
-    # Back up before writing, unconditionally: an existing 99-vpssec.rules is
-    # about to be replaced and must be restorable, and an absent one has to be
-    # recorded as fix-created so a rollback deletes it. This write had no
-    # backup call at all, so rolling back a plan that configured auditd left
-    # the rules loading on every boot.
-    backup_file "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true
+    # Unconditional: an existing file must be restorable, and an absent one
+    # must be recorded as fix-created so a rollback deletes it.
+    backup_file "$AUDIT_RULES_FILE" >/dev/null || return 1
 
     if ! write_file_atomic "$AUDIT_RULES_FILE" "$rules_content"; then
         print_error "$(i18n 'logging.audit_rules_failed')"
         return 1
     fi
 
-    # Load the rules, then report honestly whether the KERNEL actually took
-    # them (auditctl -l) rather than declaring success merely because the file
-    # exists. augenrules/auditctl can fail (auditd inactive, syntax error,
-    # already immutable via -e 2) while the file sits on disk looking fine.
+    # Report whether the KERNEL took the rules (auditctl -l), not whether the
+    # file exists: augenrules can fail while the file looks fine on disk.
     augenrules --load 2>/dev/null || auditctl -R "$AUDIT_RULES_FILE" 2>/dev/null || true
 
     if auditctl -l 2>/dev/null | grep -q '.'; then

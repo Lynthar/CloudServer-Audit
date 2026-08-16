@@ -1,72 +1,23 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# core/distro.sh - distribution abstraction layer (READ-ONLY / audit subset)
-#
-# Mirrors the cloud-provider pattern (VPSSEC_CLOUD_PROVIDER/_TIER in
-# core/common.sh): detect once, cache in declare -g globals, let any
-# module reuse the value. The difference from cloud: distro detection
-# must live in core/ (always sourced) and be populated EAGERLY at source
-# time, because nearly every module needs it and is_supported_os /
-# check_required_deps run before modules load. Detection is cheap
-# (reads /etc/os-release + a few `command -v`), so no lazy getter or
-# subshell pre-warm dance is required — the globals are set in the
-# parent shell before any module's $(...) subshell forks.
-#
-# Two layers, as designed:
-#   * cheap globals (VPSSEC_DISTRO_ID / _FAMILY / _PKG_MGR) for read-only
-#     branching ("skip this on Arch"); _FAMILY is the analog of cloud
-#     "tier" — modules branch on the family bucket, not the exact ID.
-#   * a thin function interface (pkg_* / *_whitelist / *_paths) for
-#     behavioural divergence, so modules call one fn instead of growing
-#     scattered `case $ID` blocks.
-#
-# SCOPE: this is the audit (read-only) subset only. Every Debian/Ubuntu
-# branch reproduces the current module behaviour verbatim, so wiring a
-# module to call these instead of its inline logic is a no-op on
-# Debian/Ubuntu. Fix-path primitives (pkg_install, fw_allow_port,
-# auto_update_configure, sshd_binary_path, ...) are deliberately NOT
-# here — they belong to the later guide-mode multi-distro effort.
-#
-# STATUS: consumed by the read-only audit path. Modules currently wired
-# to this layer:
-#   * ufw.sh        — fw_backend
-#   * update.sh     — pkg_update_count / pkg_security_update_count /
-#                     pkg_index_age_days / pkg_reboot_required /
-#                     auto_update_installed / auto_update_status /
-#                     pkg_manager_locked
-#   * baseline.sh   — pkg_is_installed / distro_insecure_packages
-#   * filesystem.sh — file_owned_by_package / distro_suid_whitelist /
-#                     distro_sgid_whitelist / distro_caps_whitelist
-#   * logging.sh    — distro_log_paths
-# Defined but not yet wired to any caller (available for future audit
-# wiring): fw_is_enabled, cron_spool_dir, grub_cfg_path,
-# pam_password_files, pam_session_files. Validated on the RHEL 8/9/10
-# family (Rocky/Alma/CentOS Stream) and Arch for the wired read paths;
-# fix-path primitives remain out of scope (guide_mode gates on
-# is_debian_based).
+# Distribution abstraction for the READ-ONLY audit. Detected once at source
+# time into VPSSEC_DISTRO_ID / _FAMILY / _PKG_MGR; modules branch on _FAMILY.
+# Fix-path primitives are deliberately absent (see the design notes).
 
-# ==============================================================================
-# Detection layer
-# ==============================================================================
+# --- Detection layer ---
 
 declare -g VPSSEC_DISTRO_ID=""      # raw /etc/os-release ID: debian|ubuntu|rocky|almalinux|centos|fedora|arch|...
 declare -g VPSSEC_DISTRO_FAMILY=""  # debian|rhel|arch|suse|unknown  (the "tier"-style bucket)
 declare -g VPSSEC_PKG_MGR=""        # apt|dnf|pacman|zypper|unknown
 
-# Read a single /etc/os-release field without leaking its other
-# variables into our shell (the file would otherwise define NAME,
-# VERSION_ID, PRETTY_NAME, ... as globals). Indirect expansion ${!1}
-# fetches the field named by $1.
+# Read one /etc/os-release field without sourcing the file, which would
+# define NAME, VERSION_ID, PRETTY_NAME and the rest as our globals.
 _distro_osrelease_field() {
     [[ -r /etc/os-release ]] || return 0
     ( . /etc/os-release 2>/dev/null; printf '%s' "${!1:-}" )
 }
 
-# Map ID + ID_LIKE to a coarse family. ID is checked first, then each
-# ID_LIKE token — this is what lets Rocky/Alma (ID=rocky, ID_LIKE="rhel
-# centos fedora"), Manjaro/EndeavourOS (ID_LIKE=arch) and Mint
-# (ID_LIKE="ubuntu debian") resolve correctly without enumerating every
-# downstream.
+# Map ID + ID_LIKE to a coarse family, ID first. This resolves Rocky/Alma,
+# Manjaro and Mint without enumerating every downstream distro.
 _distro_family_from() {
     local id="$1" like="$2" tok
     for tok in "$id" $like; do
@@ -111,9 +62,7 @@ distro_detect() {
     return 0
 }
 
-# ==============================================================================
-# Package / update primitives
-# ==============================================================================
+# --- Package / update primitives ---
 
 # Where the kernel publishes currently-held file locks. A variable rather
 # than a literal so the predicate below is reachable from a test.
@@ -127,28 +76,8 @@ DISTRO_APT_LOCK_FILES=(
 )
 
 # Is a lock held on PATH? Echoes exactly one of: held / free / unknown.
-#
-# Primary source is /proc/locks, which needs no package installed at all —
-# apt takes an flock on each of its lock files and the kernel publishes it
-# as "MAJOR:MINOR:INODE" in field 5, hex major/minor and decimal inode.
-# lsof is kept as a fallback for a host whose procfs is unreadable.
-#
-# Known blind spot, measured rather than assumed: /proc/locks omits any lock
-# whose owning pid the kernel cannot resolve in the READER's pid namespace.
-# A lock held only through an inherited descriptor whose original locker has
-# exited is therefore invisible here even though it is genuinely held (a
-# second flock is still refused). That does not affect the case this exists
-# for — apt and dpkg hold their locks from a live process in our own
-# namespace — but it is why the tests hold the lock from a live process
-# rather than the `exec 9>f; flock -n 9` idiom, which silently proves
-# nothing.
-#
-# The third answer is the point. This used to be three bare `lsof` calls
-# ORed together: on a host without lsof each exits 127, the || chain yields
-# 1, and the caller read that as "not locked" — so `update.apt_available`,
-# a SCORED check, passed for something that was never looked at. vpssec's
-# own verification container has no lsof, so that green line was in every
-# smoke run. "I could not tell" must not be spelled the same as "no".
+# The third answer is the point — "I could not tell" must never be spelled
+# the same as "no". Sources and blind spots: see the design notes.
 _pkg_lock_held() {
     local path="$1"
 
@@ -181,10 +110,8 @@ _pkg_lock_held() {
     printf 'unknown\n'
 }
 
-# Is the native package database locked (an install/upgrade in flight)?
-# Returns 0 = locked, 1 = not locked, **2 = could not determine**. Read-only.
-# Callers must handle all three — see _pkg_lock_held for what the third one
-# costs when it is collapsed into "not locked".
+# Is the package database locked? 0 = locked, 1 = not locked,
+# 2 = could not determine. Callers MUST handle all three.
 pkg_manager_locked() {
     case "$VPSSEC_PKG_MGR" in
         apt)
@@ -200,12 +127,9 @@ pkg_manager_locked() {
             return 1
             ;;
         dnf)
-            # dnf/rpm hold a transaction lock; a running dnf/yum/PackageKit
-            # process is the reliable read-only signal (the lock file path
-            # has moved across rpm versions).
-            #
-            # Same trap as the apt branch: without pgrep every probe exits
-            # 127 and the || chain says "not locked".
+            # A running dnf/yum/PackageKit process is the reliable read-only
+            # signal; the lock file path has moved across rpm versions.
+            # pgrep is required, or every probe exits 127 and reads as free.
             check_command pgrep || return 2
             pgrep -x dnf >/dev/null 2>&1 || \
             pgrep -x yum >/dev/null 2>&1 || \
@@ -221,12 +145,9 @@ pkg_manager_locked() {
     esac
 }
 
-# Count of pending (all) updates. Echoes an integer on success; returns
-# NON-ZERO AND PRINTS NOTHING when the query itself failed (broken sources,
-# cold cache, missing tool). The old contract — "0 on any error" — used the
-# same digit for "up to date" and "could not ask", and the caller printed a
-# green "no updates" over a query that never ran. Callers must invoke this
-# in a tested context, like every other primitive here.
+# Count of pending updates. Echoes an integer, or returns NON-ZERO AND PRINTS
+# NOTHING when the query failed. Never conflate those: one digit cannot mean
+# both "up to date" and "could not ask". Call in a tested context.
 pkg_update_count() {
     local n out
     case "$VPSSEC_PKG_MGR" in
@@ -237,15 +158,9 @@ pkg_update_count() {
             n=$(grep -c '^Inst ' <<<"$out") || n=0
             ;;
         dnf)
-            # check-update rc: 100 = updates available (list printed), 0 = none,
-            # anything else = error/cold cache. Capture in an `if` so
-            # pipefail/set -e don't abort on 100.
-            # Count only real package lines: they start in column 0 (long-NEVRA
-            # continuation lines are indented) and stop at the trailing
-            # "Obsoleting Packages" section. NF>=3 = "name.arch  ver  repo".
-            # -C (cacheonly): the audit is read-only and MUST NOT refresh the
-            # repo metadata (network I/O, can stall on dead mirrors, and would
-            # defeat pkg_index_age_days by touching the very cache it ages).
+            # rc 100 = updates, 0 = none, else error; captured in an `if` so
+            # set -e does not abort on 100. Only column-0 lines are packages.
+            # -C is required: a read-only audit must not refresh metadata.
             local rc=0
             if out=$(LC_ALL=C dnf -q -C check-update 2>/dev/null); then rc=0; else rc=$?; fi
             case "$rc" in
@@ -255,10 +170,8 @@ pkg_update_count() {
             esac
             ;;
         pacman)
-            # Read-only against the already-synced db (no network refresh).
-            # `pacman -Qu` exits 1 BOTH for "no updates" and for errors; the
-            # difference is that errors speak on stderr. Split the streams
-            # and let stderr decide.
+            # `pacman -Qu` exits 1 for BOTH "no updates" and errors; only
+            # stderr tells them apart, so the streams are split.
             local err_file err
             err_file=$(mktemp) || return 1
             out=$(pacman -Qu 2>"$err_file") || true
@@ -272,36 +185,23 @@ pkg_update_count() {
     echo "${n:-0}"
 }
 
-# Count of pending SECURITY updates. Echoes an integer, or -1 where the
-# distro has no security-update channel (Arch is rolling — callers must
-# treat <0 as "not applicable" and not penalise/score it). Returns non-zero
-# and prints nothing when the query failed — same contract as
-# pkg_update_count above, for the same reason.
+# Count of pending SECURITY updates, or -1 where the distro has no security
+# channel (callers must treat <0 as not-applicable, never as zero).
+# Non-zero with no output means the query failed.
 pkg_security_update_count() {
     local n out
     case "$VPSSEC_PKG_MGR" in
         apt)
-            # Count only the install lines. `apt-get -s upgrade` prints both
-            # an "Inst" and a "Conf" line per package, so a bare `grep -c
-            # security` double-counted. Anchor on "^Inst " (mirrors the total
-            # count) and require "security" to appear INSIDE the origin
-            # parenthetical — case-insensitive, since Debian shows the origin
-            # as "Debian-Security" while Ubuntu shows "<codename>-security" —
-            # so a package merely NAMED *security* (its name precedes the "(")
-            # is not miscounted.
+            # Anchored on "^Inst " because apt prints Inst and Conf per
+            # package. "security" must appear inside the origin parenthetical,
+            # so a package merely NAMED *security* is not counted.
             out=$(apt-get -s upgrade 2>/dev/null) || return 1
             n=$(grep -ciE '^Inst .*\(.*security' <<<"$out") || n=0
             ;;
         dnf)
-            # No dnf command cleanly yields "installed packages that have a
-            # pending security update": `updateinfo list` enumerates EVERY
-            # package named in an applicable security advisory (incl. ones not
-            # installed or already current), and `repoquery --security` ignores
-            # --security under dnf5. So this is an UPPER BOUND on real-box data
-            # it can exceed the total update count. It IS a reliable
-            # has-security-updates signal though (>0 iff any apply — verified
-            # non-empty on dnf4 with security updates, 0 on dnf5 with none).
-            # Callers: use as ">0?" only; clamp any displayed figure to the total.
+            # UPPER BOUND, not a count: updateinfo lists every package named
+            # in an applicable advisory, so on real hosts it can exceed the
+            # total. Use as ">0?" only and clamp any displayed figure.
             out=$(LC_ALL=C dnf -q -C updateinfo list --security --available 2>/dev/null) || return 1
             n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || n=0
             ;;
@@ -313,11 +213,9 @@ pkg_security_update_count() {
     echo "${n:-0}"
 }
 
-# Newest mtime (epoch seconds) among the files a `find` invocation yields;
-# prints nothing when there are none. The question every caller asks is
-# "when did the LAST successful refresh happen", and repos refresh at
-# different times — `find | head -1` answered with whichever file the
-# directory enumeration surfaced first, which is neither newest nor oldest.
+# Newest mtime among the files a find yields; prints nothing when there are
+# none. Callers ask when the LAST refresh happened, so `find | head -1` —
+# whichever file enumeration surfaced first — is the wrong answer.
 _distro_newest_mtime() {
     local newest="" f m
     while IFS= read -r f; do
@@ -374,10 +272,8 @@ pkg_installed_kernel() {
             rpm -q --last kernel 2>/dev/null | awk 'NR==1{sub(/^kernel-/,"",$1); print $1}'
             ;;
         pacman)
-            # Arch's kernel package name varies (linux / linux-lts / linux-zen /
-            # linux-hardened), so don't query a fixed package. /usr/lib/modules/
-            # lists every installed kernel's module dir, and the dir name matches
-            # `uname -r` exactly (e.g. 6.18.31-1-lts) — newest = latest installed.
+            # Arch's kernel package name varies, so read /usr/lib/modules/
+            # instead: each dir name matches `uname -r` exactly.
             [[ -d /usr/lib/modules ]] || return 0
             ls -1 /usr/lib/modules/ 2>/dev/null | sort -V | tail -1
             ;;
@@ -433,15 +329,9 @@ pkg_reboot_required() {
     esac
 }
 
-# Parse one answer out of a merged `apt-config dump`. Both are pure functions
-# of their argument so they can be tested without an apt host, and they live
-# here rather than in modules/update.sh because `auto_update_status` below is
-# the single implementation of this predicate: the audit asks it for its
-# verdict and the unattended-upgrades fix asks it whether it succeeded. There
-# used to be a second copy of the whole three-step check inside the module,
-# reachable only from the fix's postcondition — the two agreed, but an edit to
-# either would have made the fix report success on a host the audit still
-# flagged, which is the shape that has already bitten this project five times.
+# Parse one answer out of a merged `apt-config dump`; pure functions of their
+# argument, so they test without an apt host. auto_update_status below is the
+# SINGLE implementation both the audit and the fix's postcondition must use.
 _auto_update_apt_periodic_from_dump() {
     local val
     val=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$1")
@@ -471,11 +361,8 @@ auto_update_installed() {
 auto_update_status() {
     case "$VPSSEC_PKG_MGR" in
         apt)
-            # apt-daily-upgrade.timer is the periodic driver; the
-            # unattended-upgrades service only flushes at shutdown. Checking
-            # the service let a masked timer read as enabled (false pass).
-            # is-enabled returns 0 for enabled/static, non-zero for
-            # masked/disabled — the correct gate.
+            # The timer is the periodic driver; the service only flushes at
+            # shutdown, so checking it lets a masked timer read as enabled.
             if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
                 echo "service_disabled"; return 1
             fi
@@ -526,20 +413,16 @@ pkg_is_installed() {
     esac
 }
 
-# Does some installed package own this file? 0 = owned, 1 = not owned,
-# 2 = cannot determine (no query tool / unknown pkg manager). Callers
-# MUST invoke this in a tested context (`if` / `&&`) so a non-zero result
-# from the query tool doesn't trip `set -e` inside the function body.
+# Does an installed package own this file? 0 = owned, 1 = not, 2 = cannot
+# determine. Callers MUST invoke this in a tested context (`if` / `&&`).
 file_owned_by_package() {
     local path="$1"
     case "$VPSSEC_PKG_MGR" in
         apt)
             command -v dpkg-query >/dev/null 2>&1 || return 2
             dpkg-query -S "$path" &>/dev/null && return 0
-            # usrmerge: dpkg records some files under the pre-merge path
-            # (/bin, /sbin) and does NOT resolve the /bin -> /usr/bin
-            # symlink, so `dpkg -S /usr/bin/foo` misses a file the db
-            # stored as /bin/foo (and vice versa). Retry the aliased path
+            # usrmerge: dpkg stores some files under the pre-merge path and
+            # does not resolve /bin -> /usr/bin, so retry the aliased path
             # before concluding the binary is orphaned.
             local alt=""
             case "$path" in
@@ -563,10 +446,8 @@ file_owned_by_package() {
     esac
 }
 
-# Per-family package names for the "insecure legacy server" scan in
-# baseline.sh (telnet/rsh/tftp/nis/...). The Debian list is taken
-# verbatim from modules/baseline.sh; the RHEL/Arch lists are
-# best-effort and should be confirmed against real boxes.
+# Per-family package names for baseline.sh's insecure-legacy-server scan.
+# The RHEL/Arch lists are best-effort and unconfirmed on real hosts.
 distro_insecure_packages() {
     case "$VPSSEC_DISTRO_FAMILY" in
         debian)
@@ -582,18 +463,9 @@ distro_insecure_packages() {
     esac
 }
 
-# The command that would install / remove PACKAGES on this host, as advice
-# printed to the operator. vpssec never runs these: hardening is Debian-only
-# and installs there through the module's own apt calls.
-#
-# They exist because the audit was telling RHEL and Arch operators to run
-# `apt install aide`. The audit supports those distros, so a suggestion that
-# cannot run on the host it is shown to is the tool asserting something the
-# operator can disprove in one command.
-#
-# Both return non-zero and print nothing when the package manager is unknown,
-# rather than guessing — so callers must invoke them in a tested context and
-# have something honest to say when there is no answer.
+# The command to SUGGEST to the operator; vpssec never runs these. Never
+# write `apt install` into a suggestion: the audit supports three families.
+# Returns non-zero and prints nothing when the manager is unknown.
 pkg_install_hint() {
     (( $# )) || return 1
     case "$VPSSEC_PKG_MGR" in
@@ -618,13 +490,9 @@ pkg_remove_hint() {
     esac
 }
 
-# Package names providing the given COMMANDS, for feeding to pkg_install_hint.
-#
-# A command name is not a package name, and the preflight suggestion was
-# built as though it were: `apt install ss` fails on Debian too, because ss
-# ships in iproute2. Only the commands vpssec actually requires are mapped;
-# anything unrecognised passes through unchanged, which is right for the ones
-# whose package shares their name (jq, sed, tar, grep).
+# Package names for the given COMMANDS, to feed pkg_install_hint. A command
+# name is not a package name — `apt install ss` fails on Debian too.
+# Unmapped names pass through, which is right for jq, sed, tar and grep.
 distro_packages_for_commands() {
     local cmd pkg out=()
     for cmd in "$@"; do
@@ -644,12 +512,9 @@ distro_packages_for_commands() {
     printf '%s\n' "${out[*]}"
 }
 
-# The file-integrity package to recommend, or empty where there is none in
-# the distribution's own repositories.
-#
-# AIDE is packaged by Debian and RHEL but lives in the AUR on Arch, so
-# suggesting `pacman -S aide` there would replace one command that cannot run
-# with another. An empty answer means "name the tools, do not name a command".
+# The file-integrity package to recommend, or empty where the distro has
+# none in its own repositories (AIDE is AUR-only on Arch).
+# Empty means "name the tools, do not name a command".
 distro_integrity_package() {
     case "$VPSSEC_DISTRO_FAMILY" in
         debian|rhel|suse) echo "aide" ;;
@@ -657,9 +522,7 @@ distro_integrity_package() {
     esac
 }
 
-# ==============================================================================
-# Firewall primitives (read-only)
-# ==============================================================================
+# --- Firewall primitives (read-only) ---
 
 # Active firewall backend: ufw|firewalld|nftables|iptables|none — same probe
 # order as ufw.sh's _detect_firewall (which this is meant to replace). Probes
@@ -686,9 +549,7 @@ fw_is_enabled() {
     [[ "$(fw_backend)" != "none" ]]
 }
 
-# ==============================================================================
-# Path / config-location primitives
-# ==============================================================================
+# --- Path / config-location primitives ---
 
 # syslog-style log files (under /var/log) to existence-check for the
 # logrotate audit. RHEL/Arch route most logging through journald, so the
@@ -739,10 +600,8 @@ pam_session_files() {
     esac
 }
 
-# Extra legitimate SUID binary paths beyond the cross-distro base
-# whitelist in filesystem.sh. The base list is Debian-pathed; these are
-# the RHEL/Arch locations that would otherwise be flagged as "suspicious
-# SUID". Best-effort — refine against real boxes during validation.
+# RHEL/Arch SUID paths beyond filesystem.sh's Debian-pathed base whitelist.
+# Best-effort; refine against real hosts.
 distro_suid_whitelist() {
     case "$VPSSEC_DISTRO_FAMILY" in
         rhel)
@@ -807,9 +666,7 @@ distro_caps_whitelist() {
     esac
 }
 
-# ==============================================================================
 # Eager init: populate the globals at source time (parent shell) so every
 # module and subshell inherits them. Guarded so it can never abort the
 # source under `set -e`.
-# ==============================================================================
 distro_detect || true

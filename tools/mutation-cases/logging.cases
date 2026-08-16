@@ -17,12 +17,12 @@
 # share a line verbatim; see the header of tools/mutate-suite.sh.
 
 run_case "journal/backup-skipped" 1 \
-    '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true' \
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \
     '    :'
 
 run_case "journal/backup-guarded-again" 1 \
-    '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true' \
-    '    [[ -f "$JOURNALD_DROPIN" ]] && backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true'
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \
+    '    [[ -f "$JOURNALD_DROPIN" ]] && { backup_file "$JOURNALD_DROPIN" >/dev/null || return 1; }'
 
 run_case "journal/postcondition-removed" 2 \
     '    if _logging_journald_persistent; then' \
@@ -37,7 +37,7 @@ run_case "journal/no-restart" 1 \
     '    :'
 
 run_case "rules/backup-skipped" 1 \
-    '    backup_file "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true' \
+    '    backup_file "$AUDIT_RULES_FILE" >/dev/null || return 1' \
     '    :'
 
 run_case "rules/delete-all-introduced" 1 \
@@ -75,3 +75,8 @@ run_case "install/overstrict-on-service" 1 \
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_warn "Logging fix not implemented: $fix_id"' \
     '            return 0'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \
+    '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true'

@@ -3,9 +3,7 @@
 # TUI interface using whiptail/dialog
 # Copyright (c) 2024
 
-# ==============================================================================
-# TUI Detection and Setup
-# ==============================================================================
+# --- TUI Detection and Setup ---
 
 TUI_BACKEND=""
 TUI_WIDTH=78
@@ -28,9 +26,7 @@ tui_available() {
     [[ -n "$TUI_BACKEND" ]] && [[ -t 0 ]]
 }
 
-# ==============================================================================
-# TUI Dialogs
-# ==============================================================================
+# --- TUI Dialogs ---
 
 # Yes/No dialog
 # Returns 0 for yes, 1 for no
@@ -39,12 +35,9 @@ tui_yesno() {
     local message="$2"
     local default="${3:-no}"
 
-    # Both whiptail AND dialog default the highlight to "Yes" for --yesno and
-    # accept --defaultno to preselect "No". So the rule is identical for both
-    # backends: pass --defaultno unless the caller asked for a "yes" default.
-    # The previous per-backend logic was inverted for dialog — a "no" default
-    # (the fail-safe used by the plan-execution confirm) got NO flag, so dialog
-    # highlighted "Yes" and a bare Enter EXECUTED the plan instead of cancelling.
+    # Identical rule for both backends: whiptail and dialog each highlight
+    # "Yes" by default and each accept --defaultno, so pass it unless the
+    # caller asked for a "yes" default.
     local default_opt=""
     [[ "$default" != "yes" ]] && default_opt="--defaultno"
 
@@ -87,19 +80,11 @@ tui_textbox() {
     fi
 }
 
-# ==============================================================================
-# High-level TUI Functions for vpssec
-# ==============================================================================
+# --- High-level TUI Functions for vpssec ---
 
-# Fix selection screen.
-#
-# The checklist TAG must be the FIX id, not the check id: whatever this
-# function emits is handed verbatim to generate_plan, which looks checks up
-# by `.fix_id`. Tagging with `.id` made every TUI selection resolve to zero
-# plan entries — the user ticked boxes, confirmed, and nothing ran (while
-# the summary said "complete"). The check id is display-only here.
-# Deduplicate tags: two failed checks can share one fix_id, and whiptail
-# rejects duplicate checklist tags.
+# Fix selection. The checklist TAG must be the FIX id: what this emits goes
+# verbatim to generate_plan, which looks checks up by .fix_id. The check id is
+# display-only. Tags are deduped — whiptail rejects duplicates.
 tui_select_fixes() {
     local -n fixes_ref=$1
     local items=()

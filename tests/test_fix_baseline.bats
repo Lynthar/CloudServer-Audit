@@ -217,15 +217,19 @@ _config_mode() {
 }
 
 @test "selinux: a write the atomic writer refuses does not claim persistence" {
-    # validate_path rejects a path containing '..', which is how the write is
-    # made to fail here without mocking write_file_atomic — the real guard
-    # chain runs. The live file must survive intact.
+    # The lever is write_file_atomic's final rename, not a '..' path: backup_file
+    # validates the same path and now aborts the fix before the write, which left
+    # this test passing on the backup guard while no longer reaching the one it
+    # names. The message assertion is what makes the difference observable —
+    # status and file contents look the same either way.
     _selinux_present
     _permissive_config
-    BASELINE_SELINUX_CONFIG="$etc/selinux/../selinux/config"
+    VPSSEC_QUIET_SCAN=0
+    _vpssec_stub mv 1
 
     run _baseline_fix_selinux_enforcing
     [ "$status" -eq 1 ]
+    grep -q 'Could not write' <<<"$output"
     grep -qx 'SELINUX=permissive' "$etc/selinux/config"
 }
 
@@ -551,4 +555,16 @@ SH
     run baseline_fix "baseline.selinux_enable"
     [ "$status" -eq 1 ]
     grep -qi 'reboot' <<<"$output"
+}
+
+@test "selinux: a backup that cannot be taken aborts before the config rewrite" {
+    # The runtime flip has already happened at this point, so the config file
+    # is the only thing left to protect — and it decides the mode at next boot.
+    _selinux_present
+    _permissive_config
+    _vpssec_stub cp 1
+
+    run _baseline_fix_selinux_enforcing
+    [ "$status" -ne 0 ]
+    grep -qx 'SELINUX=permissive' "$BASELINE_SELINUX_CONFIG"
 }

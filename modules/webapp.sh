@@ -1,32 +1,18 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# Web Application Security module
-# Copyright (c) 2024
-#
-# This module checks:
-# - Nginx security configuration
-# - Apache security configuration
-# - PHP security settings
-# - SSL/TLS configuration
-# - Sensitive file exposure
-#
-# Some fixes can be auto-applied (security headers),
-# while others require manual review.
+# Web application security: nginx, Apache, PHP, SSL/TLS and sensitive-file
+# exposure. Some fixes auto-apply; others write a template the operator must
+# wire in and are listed in FIX_TEMPLATE_ONLY.
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
+# --- Configuration ---
 
 # Nginx configuration paths
 NGINX_CONF="/etc/nginx/nginx.conf"
 NGINX_CONFD="/etc/nginx/conf.d"
 NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
 NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
-# Snippets are NOT auto-included by nginx (unlike conf.d/*, which nginx pulls
-# into http{}). SSL directives like ssl_protocols belong in a server{} block;
-# writing them to conf.d duplicates the ones the Debian default nginx.conf
-# already sets in http{} → "duplicate directive" emerg on the next reload.
-# We stage them here and instruct the operator to `include` the snippet.
+# Snippets are NOT auto-included, unlike conf.d/*. SSL directives belong in a
+# server{} block, and writing them to conf.d duplicates what nginx.conf already
+# sets in http{} — a "duplicate directive" emerg on the next reload.
 NGINX_SNIPPETS="/etc/nginx/snippets"
 
 # Apache configuration paths
@@ -35,23 +21,9 @@ APACHE_CONF_ALT="/etc/httpd/conf/httpd.conf"
 APACHE_MODS_ENABLED="/etc/apache2/mods-enabled"
 APACHE_SITES_ENABLED="/etc/apache2/sites-enabled"
 
-# SSL certificate paths — SERVER certificates only.
-#
-# /etc/ssl/certs is deliberately NOT here. It is the system CA trust
-# store, populated by the `ca-certificates` package, and it is normal
-# and correct for it to contain expired roots (Baltimore CyberTrust,
-# E-Tugra, Hongkong Post Root CA 1, ...). Scanning it made
-# webapp.ssl_cert_expiry fire on EVERY Debian/Ubuntu host — including
-# hosts with no web server at all, so the module printed "no web server
-# detected" and "4 certificates expired" in adjacent lines — and the
-# attached remediation ("renew your SSL certificates") is not something
-# an operator can act on for a root CA.
-#
-# _webapp_cert_is_ca below is the second line of defence: it skips any
-# CA certificate found in these directories too (Let's Encrypt's
-# chain.pem is the intermediate, renewed by certbot, not by the
-# operator), and covers /etc/pki/tls/certs on RHEL, which mixes the
-# httpd server cert with ca-bundle.crt.
+# SERVER certificate paths only. /etc/ssl/certs is deliberately absent: it is
+# the package-managed CA trust store, where expired roots are normal and not
+# an operator action. _webapp_cert_is_ca guards CA certs found here.
 SSL_CERT_PATHS=(
     "/etc/nginx/ssl"
     "/etc/letsencrypt/live"
@@ -85,11 +57,9 @@ SENSITIVE_PATHS=(
     "adminer.php"
     ".DS_Store"
     "Thumbs.db"
-    # composer.json / package.json were removed: they are dependency
-    # MANIFESTS, not secrets, and are routinely present in a PHP/Node app's
-    # web root. Flagging them as a HIGH (required-category) "sensitive file"
-    # was a frequent false positive that penalized the score and diluted the
-    # genuinely-dangerous entries above (.env, *.sql, *.bak credentials).
+    # No composer.json / package.json: dependency manifests are not secrets
+    # and are routine in a web root, so flagging them as HIGH diluted the
+    # genuinely dangerous entries above.
     ".env.local"
     ".env.production"
 )
@@ -153,22 +123,16 @@ PHP_DANGEROUS_FUNCTIONS=(
 # Certificate expiry warning threshold (days)
 CERT_EXPIRY_WARNING_DAYS=30
 
-# ==============================================================================
-# Helper Functions
-# ==============================================================================
+# --- Helper Functions ---
 
 # Check if Nginx is installed
 _webapp_nginx_installed() {
     command -v nginx &>/dev/null && [[ -f "$NGINX_CONF" ]]
 }
 
-# Check if Apache is installed
-# Web servers this module does NOT audit, but whose presence makes
-# "no web server detected" a false statement about the host.
-#
-# Echoes the names found, space-separated. Detection is by binary only: these
-# ship no config path vpssec knows, and the point is not to audit them but to
-# stop reporting a passed check that says the host serves nothing.
+# Web servers this module does NOT audit, but whose presence makes "no web
+# server detected" a false statement about the host. Detected by binary only:
+# the point is not to audit them, but to stop claiming the host serves nothing.
 _webapp_other_webserver() {
     local found=() candidate
     for candidate in caddy openresty lighttpd traefik haproxy; do
@@ -185,12 +149,9 @@ _webapp_apache_installed() {
     ([[ -f "$APACHE_CONF" ]] || [[ -f "$APACHE_CONF_ALT" ]])
 }
 
-# Check if PHP is installed (CLI or FPM).
-#
-# Production PHP on Debian/Ubuntu typically ships only `php-fpm`
-# without the CLI binary. The original `command -v php` test missed
-# every such host, so the entire PHP security audit was silently
-# skipped on the deployments where it matters most.
+# Is PHP installed, as CLI or FPM? Production PHP typically ships only
+# php-fpm with no CLI binary, so `command -v php` alone skips the entire
+# audit exactly where it matters most.
 _webapp_php_installed() {
     command -v php &>/dev/null && return 0
     command -v php-fpm &>/dev/null && return 0
@@ -210,10 +171,8 @@ _webapp_list_fpm_inis() {
     done
 }
 
-# Read a single php.ini directive from the file plus its conf.d/.
-# Mirrors PHP's last-occurrence-wins semantics for repeated entries.
-# `key` is the directive name (e.g. `display_errors`, `disable_functions`);
-# `ini_file` is the main php.ini to anchor the lookup.
+# Read one php.ini directive from the file plus its conf.d/, with PHP's
+# last-occurrence-wins semantics. Args: <key> <main php.ini>.
 _webapp_read_ini_directive() {
     local key="$1"
     local ini_file="$2"
@@ -224,11 +183,9 @@ _webapp_read_ini_directive() {
         sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
 }
 
-# Read FPM pool overrides for a directive. Pools can set
-# `php_admin_value[key] = ...` (force) or `php_value[key] = ...`
-# (allow override at runtime). We surface the *last* observed value
-# across all pools, which mirrors what an audit cares about: if any
-# pool weakens the directive, the user is exposed.
+# FPM pool overrides for a directive: php_admin_value forces, php_value
+# allows runtime override. The LAST observed value across all pools wins —
+# if any pool weakens the directive, the host is exposed.
 _webapp_read_pool_directive() {
     local key="$1"
     local fpm_ini="$2"
@@ -240,12 +197,9 @@ _webapp_read_pool_directive() {
         sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
 }
 
-# Get all Nginx configuration files (legacy fallback).
-#
-# Kept as a fallback for environments where `nginx -T` fails — e.g.
-# nginx installed but syntax-broken so -T aborts. Detection helpers
-# prefer _webapp_nginx_dump below because it reflects the real effective
-# configuration (Includes, Match blocks and all).
+# Legacy file-list fallback for when `nginx -T` fails, e.g. a syntax-broken
+# config. Detection helpers must prefer _webapp_nginx_dump, which reflects
+# the real effective configuration.
 _webapp_get_nginx_configs() {
     local configs=()
 
@@ -268,21 +222,9 @@ _webapp_get_nginx_configs() {
     printf '%s\n' "${configs[@]}"
 }
 
-# Dump the resolved nginx configuration.
-#
-# Previously detection helpers grepped a hardcoded list of file paths
-# and missed any config pulled in via `include` from a non-standard
-# directory (commonly `/etc/nginx/snippets/*.conf` or a custom
-# `conf.d/security.conf`). This caused duplicate-fix scenarios:
-# server_tokens / security headers / HSTS already configured in an
-# included snippet would be reported as missing, and the fix would
-# write them a second time.
-#
-# Uses `nginx -T` (test + dump resolved config) which is the
-# authoritative source. Cached in a shell variable so we fork nginx
-# at most once per audit. Falls back to concatenating the file list
-# if -T fails — a broken config makes the audit less precise but not
-# blind.
+# The resolved nginx configuration via `nginx -T`, the authoritative source:
+# a hardcoded file list misses anything pulled in by `include`. Cached so
+# nginx forks at most once per audit; falls back to the file list.
 _WEBAPP_NGINX_DUMP_CACHED=0
 _WEBAPP_NGINX_DUMP=""
 _webapp_nginx_dump() {
@@ -310,21 +252,9 @@ _webapp_nginx_dump() {
     printf '%s\n' "$_WEBAPP_NGINX_DUMP"
 }
 
-# Get effective PHP configuration value for a directive.
-#
-# The original implementation invoked bare `php -i`, which loads
-# `/etc/php/<ver>/cli/php.ini` — the CLI SAPI's config, totally
-# independent of the FPM SAPI that actually serves web requests.
-# A site running with `display_errors=On` in FPM passed this audit
-# because CLI said "Off". This is the PHP-side analogue of the
-# sshd_config.d drop-in blindness bug.
-#
-# Strategy: when FPM is installed, inspect every FPM php.ini (one per
-# version), apply conf.d overrides, then apply pool.d overrides. Return
-# the most recently observed value, which under the audit lens means
-# "the value an exposed pool is currently using". When FPM is NOT
-# installed (only CLI), fall back to the original `php -i` behaviour
-# so non-FPM-served PHP hosts are still covered.
+# Effective PHP value for a directive. NEVER read it from `php -i`: that is
+# the CLI SAPI, independent of the FPM SAPI that serves web requests. With FPM
+# present this walks each FPM php.ini, then conf.d, then pool.d, last winning.
 _webapp_get_php_config() {
     local key="$1"
     local result=""
@@ -368,9 +298,7 @@ _webapp_get_php_ini() {
     fi
 }
 
-# ==============================================================================
-# Nginx Security Check Functions
-# ==============================================================================
+# --- Nginx Security Check Functions ---
 
 # Check server_tokens setting
 _webapp_nginx_server_tokens() {
@@ -404,22 +332,9 @@ _webapp_nginx_security_headers() {
     printf '%s\n' "${missing_headers[@]}"
 }
 
-# Check HSTS configuration.
-#
-# Original test was `grep -qi "Strict-Transport-Security"` against the
-# entire merged config. That accepted:
-#   - commented lines (the vpssec fix function itself writes a
-#     COMMENTED template — so a fresh fix-then-audit cycle marked the
-#     header as "configured" while sending nothing on the wire);
-#   - mentions inside comments or other contexts that were not actual
-#     `add_header` directives.
-# It also did not require the `always` token, so HSTS would be
-# omitted on 4xx/5xx responses — a known leak vector.
-#
-# Now: require an uncommented `add_header Strict-Transport-Security`
-# directive, and surface whether `always` was present so the caller
-# can degrade the finding rather than reporting a hard pass on a
-# subtly-broken config.
+# HSTS must be an UNCOMMENTED add_header directive: a bare grep accepts the
+# commented template this module's own fix writes. Whether `always` is
+# present is surfaced too — without it the header is omitted on errors.
 _webapp_nginx_hsts() {
     local dump
     dump=$(_webapp_nginx_dump)
@@ -471,11 +386,9 @@ _webapp_nginx_ssl_protocols() {
     # every occurrence and scan for weak entries.
     while IFS= read -r protocols; do
         [[ -z "$protocols" ]] && continue
-        # Compare each whitespace-separated token EXACTLY (case-insensitive).
-        # The previous `grep -qi "$weak_proto"` was a substring match, so the
-        # weak token "TLSv1" also matched the strong "TLSv1.2"/"TLSv1.3" and
-        # flagged every correctly-hardened server. webapp.nginx_weak_ssl is a
-        # required-category check, so that was a hard, undeserved score hit.
+        # Each token compared EXACTLY: a substring match makes the weak
+        # "TLSv1" match "TLSv1.2", flagging every correctly hardened server
+        # on a required-category check.
         local tok wl
         for tok in $protocols; do
             for wl in "${WEAK_SSL_PROTOCOLS[@]}"; do
@@ -498,13 +411,9 @@ _webapp_nginx_ssl_ciphers() {
     local ciphers
     while IFS= read -r ciphers; do
         [[ -z "$ciphers" ]] && continue
-        # Drop EXCLUDED cipher tokens before matching. OpenSSL cipher strings use
-        # `!FOO` (and `-FOO`) to remove ciphers, so a Mozilla-recommended list
-        # like `ECDHE-...:!aNULL:!MD5:!RC4:!3DES` actually DISABLES those weak
-        # ciphers — matching "MD5"/"RC4" as a substring there flagged a correctly
-        # hardened server (and webapp.nginx_weak_ciphers is a scored, required
-        # check). Split on ':' and keep only the ciphers that are actually
-        # offered (tokens not starting with '!' or '-').
+        # Excluded tokens are dropped first: OpenSSL uses `!FOO` / `-FOO` to
+        # REMOVE a cipher, so a hardened list that disables MD5 and RC4 would
+        # otherwise match as though it offered them.
         local filtered
         filtered=$(echo "$ciphers" | tr ':' '\n' | grep -vE '^[!-]' | paste -sd':' -)
         local weak_cipher
@@ -518,9 +427,7 @@ _webapp_nginx_ssl_ciphers() {
     printf '%s\n' "${weak[@]}" | sort -u
 }
 
-# ==============================================================================
-# Apache Security Check Functions
-# ==============================================================================
+# --- Apache Security Check Functions ---
 
 # Get Apache main configuration file (single-file callers)
 _webapp_get_apache_conf() {
@@ -529,12 +436,9 @@ _webapp_get_apache_conf() {
     echo ""
 }
 
-# All Apache config files where the global hardening directives may live. On
-# Debian, ServerTokens / TraceEnable / ServerSignature are conventionally set in
-# conf-enabled/security.conf (the canonical location), NOT apache2.conf — so
-# reading only the main file made these checks permanently false-positive on a
-# correctly hardened Debian host. Emits one existing path per line, main file
-# first, includes after (later includes win, matching Apache's last-match rule).
+# Every Apache config where the global hardening directives may live. On
+# Debian they are conventionally in conf-enabled/security.conf, not
+# apache2.conf. Main file first, includes after — later includes win.
 _webapp_apache_conf_files() {
     local files=()
     [[ -f "$APACHE_CONF" ]] && files+=("$APACHE_CONF")
@@ -641,9 +545,7 @@ _webapp_apache_modules() {
     printf '%s\n' "${dangerous[@]}"
 }
 
-# ==============================================================================
-# PHP Security Check Functions
-# ==============================================================================
+# --- PHP Security Check Functions ---
 
 # Check expose_php
 _webapp_php_expose() {
@@ -652,9 +554,7 @@ _webapp_php_expose() {
 }
 
 # True when a PHP boolean ini value is enabled. PHP accepts On/True/Yes/1 in
-# ANY case (and Off/False/No/0/'' as disabled), so a case-sensitive `== "On"`
-# check both missed `display_errors = on` (a real exposure) and misread
-# `session.cookie_httponly = on` as unset (a false positive).
+# ANY case, so a case-sensitive comparison misreads it in both directions.
 _webapp_php_is_true() {
     local v="${1,,}"
     [[ "$v" == "1" || "$v" == "on" || "$v" == "true" || "$v" == "yes" ]]
@@ -684,18 +584,9 @@ _webapp_php_open_basedir() {
     echo "${val:-none}"
 }
 
-# Check disable_functions for missing entries.
-#
-# The original `grep -qi "$func"` did substring matching, so checking
-# for `popen` reported success whenever the configured list contained
-# `proc_open` (ditto `exec` ↔ `mb_exec_dir`). Hosts that disabled only
-# the harder-to-name `proc_open` were therefore reported as also
-# disabling `popen`, masking real exposures.
-#
-# Use a comma-separated, whitespace-tolerant token match anchored on
-# the boundaries PHP itself uses for this directive. PHP_DANGEROUS_*
-# values are simple identifiers, so plain string anchoring is enough
-# (no need to regex-escape).
+# Missing entries in disable_functions, matched as comma-separated TOKENS.
+# A substring match reports `popen` as disabled whenever `proc_open` is in
+# the list, masking the real exposure.
 _webapp_php_disable_functions() {
     local disabled=$(_webapp_get_php_config "disable_functions")
     local not_disabled=()
@@ -737,19 +628,11 @@ _webapp_php_session_security() {
     printf '%s\n' "${issues[@]}"
 }
 
-# ==============================================================================
-# SSL/TLS Security Check Functions
-# ==============================================================================
+# --- SSL/TLS Security Check Functions ---
 
-# True if $1 is a CA certificate (basicConstraints CA:TRUE).
-#
-# An expired CA in a trust store or a chain file is not an operator
-# action item — trust stores are package-managed and intermediates are
-# renewed by the ACME client. Only end-entity (server) certificates
-# belong in webapp.ssl_cert_expiry.
-#
-# `openssl x509 -ext basicConstraints` needs OpenSSL 1.1.1+; on older
-# builds it errors out and we fall back to grepping the full text dump.
+# Is $1 a CA certificate? An expired CA is not an operator action item —
+# trust stores are package-managed and intermediates are renewed by the ACME
+# client. Needs OpenSSL 1.1.1+; older builds fall back to the text dump.
 _webapp_cert_is_ca() {
     local cert="$1"
     local bc
@@ -786,38 +669,27 @@ _webapp_ssl_cert_expiry() {
             elif [[ $days_left -lt $CERT_EXPIRY_WARNING_DAYS ]]; then
                 findings+=("$cert|expiring|$days_left days left")
             fi
-        # `find -L` follows symlinks so `-type f` tests the TARGET: Let's
-        # Encrypt (the most common VPS cert source) stores the real cert in
-        # /etc/letsencrypt/archive and exposes /etc/letsencrypt/live/<domain>/
-        # *.pem as SYMLINKS. Without -L, `-type f` rejected those symlinks and
-        # every LE certificate — including expired ones — was silently skipped.
+        # -L is required: Let's Encrypt exposes live/<domain>/*.pem as
+        # SYMLINKS into archive/, so without it `-type f` rejects every
+        # LE certificate, expired ones included.
         done < <(find -L "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" \) -type f -print0 2>/dev/null)
     done
 
     printf '%s\n' "${findings[@]}"
 }
 
-# NOTE: a `_webapp_ssl_self_signed` helper used to live here with zero
-# call sites anywhere in the repo. It was removed rather than wired up:
-# its test was `issuer == subject`, which is the DEFINITION of a root
-# CA, so enabling it would have reported the entire trust store as
-# "self-signed certificates in production" — a worse version of the
-# false positive that _webapp_cert_is_ca now guards against. A real
-# self-signed-server-cert check needs to start from the certificate the
-# web server is actually configured to serve, not from a directory walk.
+# There is deliberately no self-signed-certificate check: `issuer == subject`
+# is the definition of a root CA, so a directory walk would report the whole
+# trust store. A real one must start from the cert the server actually serves.
 
-# ==============================================================================
-# Sensitive File Exposure Check Functions
-# ==============================================================================
+# --- Sensitive File Exposure Check Functions ---
 
 # Check for sensitive files in web roots
 _webapp_sensitive_files() {
     local findings=()
 
-    # Build a single find name-expression once: -name a -o -name b -o ...
-    # The original ran one find per pattern (20+ calls per web root) and
-    # bypassed _fs_run_find/_FS_PRUNE_PATHS — the project-wide invariants
-    # documented in CLAUDE.md.
+    # One find name-expression, built once. Per-pattern finds also bypass
+    # _fs_run_find and _FS_PRUNE_PATHS, which every walk must go through.
     local name_expr=()
     local first=1 path
     for path in "${SENSITIVE_PATHS[@]}"; do
@@ -883,9 +755,7 @@ _webapp_backup_files() {
     printf '%s\n' "${findings[@]}"
 }
 
-# ==============================================================================
-# Audit Function
-# ==============================================================================
+# --- Audit Function ---
 
 webapp_audit() {
     log_info "Running web application security audit"
@@ -968,10 +838,8 @@ webapp_audit() {
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
         elif [[ "$hsts" == "weak" ]]; then
-            # Header exists but lacks the `always` token, so it is
-            # only sent on the small set of response codes nginx
-            # implicitly applies add_header to. Error responses still
-            # leak.
+            # Present but without `always`, so it is sent only on the codes
+            # nginx implicitly applies add_header to. Error responses leak.
             check_json=$(create_check_json \
                 "webapp.nginx_hsts_weak" \
                 "webapp" \
@@ -1285,13 +1153,9 @@ webapp_audit() {
         state_add_check "$check_json"
     fi
 
-    # Summary if neither audited web server was found.
-    #
-    # "No web server detected" is a claim about the host, and on a machine
-    # running caddy or openresty it is false — a passed check reading "nothing
-    # to check here" while the host serves traffic. Say which one is there and
-    # that vpssec does not audit it, so the operator knows the gap is in the
-    # tool rather than in their host.
+    # "No web server detected" is a claim about the host, and it is false on
+    # one running caddy or openresty. Name what is there and say vpssec does
+    # not audit it, so the gap reads as the tool's, not the host's.
     if [[ "$has_webserver" == "false" ]]; then
         local other
         other=$(_webapp_other_webserver)
@@ -1322,9 +1186,7 @@ webapp_audit() {
     return 0
 }
 
-# ==============================================================================
-# Fix Functions
-# ==============================================================================
+# --- Fix Functions ---
 
 webapp_fix() {
     local fix_id="$1"
@@ -1461,12 +1323,9 @@ webapp_fix() {
 _webapp_fix_nginx_server_tokens() {
     print_info "$(i18n 'webapp.fixing_server_tokens' 2>/dev/null || echo 'Adding server_tokens off...')"
 
-    # Check if already ACTIVE (uncommented) in nginx.conf. The old
-    # `server_tokens\s*off` also matched the `# server_tokens off;` line that
-    # ships commented in Debian's default nginx.conf, so this FIX_SAFE fix
-    # reported "already configured", changed nothing, and the audit (which reads
-    # the effective config via nginx -T) re-flagged it forever. Require the
-    # directive to be uncommented: no `#` may precede it on the line.
+    # Must be UNCOMMENTED: Debian's default nginx.conf ships the directive
+    # commented out, so a bare match makes this FIX_SAFE fix report "already
+    # configured", change nothing, and be re-flagged forever.
     if grep -qE '^[^#]*server_tokens[[:space:]]+off' "$NGINX_CONF" 2>/dev/null; then
         print_ok "$(i18n 'webapp.already_configured' 2>/dev/null || echo 'Already configured')"
         return 0
@@ -1476,18 +1335,13 @@ _webapp_fix_nginx_server_tokens() {
     # validate. NGINX_CONF exists (we grep'd it above), so backup_file echoes
     # the backup path.
     local bak
-    bak=$(backup_file "$NGINX_CONF")
+    bak=$(backup_file "$NGINX_CONF") || return 1
 
     local updated
     if grep -qE '^[^#]*server_tokens[[:space:]]' "$NGINX_CONF" 2>/dev/null; then
-        # An ACTIVE server_tokens directive already exists with some other
-        # value — typically an explicit `server_tokens on;`. Rewrite it in
-        # place. Appending a second one instead puts two server_tokens in the
-        # same http{} context, which nginx rejects as a duplicate directive:
-        # `nginx -t` then fails, the block below restores the backup, and the
-        # fix reports failure. So the hosts that had most explicitly opted
-        # into leaking their version were the exact hosts this fix could
-        # never repair.
+        # Rewritten in place, never appended: a second server_tokens in the
+        # same http{} is a duplicate directive, so nginx -t fails and the fix
+        # rolls back — on exactly the hosts that opted into leaking.
         updated=$(sed -E 's/^([^#]*)server_tokens[[:space:]]+[^;]*;/\1server_tokens off;/' "$NGINX_CONF")
     elif grep -qE '^http[[:space:]]*\{' "$NGINX_CONF" 2>/dev/null; then
         updated=$(sed '/^http[[:space:]]*{/a\    server_tokens off;' "$NGINX_CONF")
@@ -1525,21 +1379,12 @@ _webapp_fix_nginx_security_headers() {
     # Create a drop-in configuration
     local headers_conf="$NGINX_CONFD/security-headers.conf"
 
-    # Track whether the file pre-existed (and back it up) so we can restore the
-    # prior version, or remove the one we write, if validation fails below.
-    # This drop-in lives in conf.d which nginx auto-includes, so a broken file
-    # left behind would fail the next reload — and this fix is auto-applied.
-    # backup_file is called unconditionally: for an existing file it snapshots
-    # the prior version, and for an absent one it records the path as
-    # fix-created in the session manifest, which is the only thing that lets a
-    # plan rollback delete it. Guarding the call on the file already existing
-    # meant a first run left an active conf.d drop-in that no rollback could
-    # remove — the operator undid the plan and vpssec's headers stayed on the
-    # wire. pre_existed is tracked separately because the validation failure
-    # path below has to choose between restoring and removing.
+    # backup_file is UNCONDITIONAL: for an absent path it records the file as
+    # fix-created, the only thing that lets a rollback delete this drop-in.
+    # pre_existed is separate: the failure path chooses restore or remove.
     local pre_existed="false" bak=""
     [[ -f "$headers_conf" ]] && pre_existed="true"
-    bak=$(backup_file "$headers_conf")
+    bak=$(backup_file "$headers_conf") || return 1
 
     local content
     content=$(cat << 'EOF'
@@ -1600,12 +1445,10 @@ _webapp_fix_nginx_hsts() {
 
     # Unconditional, as in the headers fix above: an absent path has to be
     # recorded as fix-created or a rollback cannot delete this file.
-    backup_file "$hsts_conf" >/dev/null 2>&1 || true
+    backup_file "$hsts_conf" >/dev/null || return 1
 
-    # Written through the atomic writer rather than `cat >`, which is what
-    # every other /etc write in this project uses. This lands in conf.d,
-    # which nginx auto-includes, so a truncated file from an interrupted
-    # redirect is config nginx has to parse on its next reload.
+    # Atomic writer, not `cat >`: this lands in auto-included conf.d, so a
+    # truncated file is config nginx must parse on its next reload.
     local content
     content=$(cat << 'EOF'
 # HSTS - added by vpssec
@@ -1626,24 +1469,15 @@ EOF
 
     print_ok "$(i18n 'webapp.hsts_template_created' 2>/dev/null || echo 'HSTS template created'): $hsts_conf"
     print_warn "$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')"
-    # The header is written commented out, so the HSTS finding is NOT resolved
-    # — but the template was created, and returning 1 to express the first fact
-    # reported a failure for the second. webapp.nginx_hsts is in
-    # FIX_TEMPLATE_ONLY, which is what withholds the completion record.
+    # The header is written commented out, so the finding is NOT resolved —
+    # but the template was created. FIX_TEMPLATE_ONLY withholds the completion
+    # record; this exit status is about the work.
     return 0
 }
 
-# Fix: Nginx SSL configuration
-#
-# Writes a hardened SSL snippet the operator includes inside their SSL
-# server{} block. It is deliberately placed in snippets/ (NOT conf.d/): the
-# directives here — ssl_protocols, ssl_prefer_server_ciphers — are already set
-# in the Debian default nginx.conf http{} block, and conf.d/* is auto-included
-# into that same http{}, so dropping them there produces a "duplicate
-# directive" emerg that breaks the next reload/restart. Because the snippet is
-# not auto-included it cannot affect the live config until the operator wires
-# it in, so this fix reports a manual step (return 1) rather than a false
-# "resolved" — the weak-SSL finding stays until the include is added.
+# Write a hardened SSL snippet for the operator to include in their server{}
+# block. snippets/, NOT conf.d/: these directives are already set in the
+# default http{} block, so an auto-included copy is a duplicate emerg.
 _webapp_fix_nginx_ssl() {
     print_info "$(i18n 'webapp.updating_ssl' 2>/dev/null || echo 'Creating secure SSL configuration...')"
 
@@ -1655,7 +1489,7 @@ _webapp_fix_nginx_ssl() {
 
     # Unconditional: see _webapp_fix_nginx_security_headers. A snippet this
     # fix created must be deletable by a rollback.
-    backup_file "$ssl_conf" >/dev/null 2>&1 || true
+    backup_file "$ssl_conf" >/dev/null || return 1
 
     local content
     content=$(cat << 'EOF'
@@ -1705,11 +1539,9 @@ EOF
 
     print_ok "$(i18n 'webapp.ssl_config_created' 2>/dev/null || echo 'Secure SSL configuration created'): $ssl_conf"
     print_warn "$(i18n 'webapp.include_in_ssl' 2>/dev/null || echo 'Include in each SSL server block, then reload nginx'): include snippets/ssl-security.conf;"
-    # The snippet is inert until the operator includes it, so the weak-SSL
-    # finding is NOT resolved — but the write itself succeeded, and this used to
-    # return 1 to express the first fact at the cost of reporting a failure for
-    # the second. Both fix_ids are in FIX_TEMPLATE_ONLY now, which is what stops
-    # execute_fix recording a completion; the exit status here is about the work.
+    # The snippet is inert until the operator includes it, so the finding is
+    # NOT resolved — but the write succeeded. FIX_TEMPLATE_ONLY is what stops
+    # the completion record; this exit status is about the work.
     return 0
 }
 

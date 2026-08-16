@@ -3,16 +3,12 @@
 # Alert hooks module - webhook and email notifications
 # Copyright (c) 2024
 
-# ==============================================================================
-# Alert Configuration
-# ==============================================================================
+# --- Alert Configuration ---
 
 ALERTS_CONFIG_FILE="${VPSSEC_STATE}/alerts.json"
 ALERTS_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/alerts"
 
-# ==============================================================================
-# Alert Helper Functions
-# ==============================================================================
+# --- Alert Helper Functions ---
 
 _alerts_config_exists() {
     [[ -f "$ALERTS_CONFIG_FILE" ]]
@@ -38,22 +34,14 @@ _alerts_check_curl() {
     check_command curl
 }
 
-# True when there is somebody to ask for a webhook URL.
-#
-# Extracted from _alerts_fix_setup_config so the decision is testable: the
-# inline `[[ -t 0 ]]` it replaces could only ever be exercised by whatever
-# stdin the test runner happened to supply, which is never a terminal — so
-# no test could tell the old gate from the new one. It was wrong twice over
-# anyway: it asks about stdin while the prompts read from /dev/tty, and it
-# ignores --yes / --json-only, so `guide --yes` on a real terminal parked on
-# "Webhook URL:" forever. Same pair of predicates as timezone.sh's menu.
+# Is there somebody to ask for a webhook URL? Both predicates are required:
+# a readable /dev/tty (the prompts do not read stdin) AND no --yes /
+# --json-only, or an automated run parks on the prompt forever.
 _alerts_should_prompt() {
     ! _noninteractive && _tty_readable
 }
 
-# ==============================================================================
-# Alert Audit
-# ==============================================================================
+# --- Alert Audit ---
 
 alerts_audit() {
     local module="alerts"
@@ -77,13 +65,9 @@ _alerts_audit_config() {
         [[ -n "$email" ]] && { ((configured++)) || true; }
 
         if ((configured > 0)); then
-            # Report only PRESENCE (yes/no), never the secret values. A
-            # webhook URL (Slack/Discord/Telegram bot token) and an email
-            # address are bearer secrets; the previous
-            # `${var:+yes}${var:-no}` expansion silently expanded to
-            # "yes<the-full-URL>" whenever the var was set, leaking the
-            # secret into reports/summary.{md,json,sarif} (and the copy
-            # run.sh drops in /tmp).
+            # PRESENCE only, never the values: a webhook URL and an email
+            # address are bearer secrets, and this text lands in every report
+            # format plus the copy run.sh leaves in /tmp.
             local webhook_status="no" email_status="no"
             [[ -n "$webhook" ]] && webhook_status="yes"
             [[ -n "$email" ]] && email_status="yes"
@@ -165,9 +149,7 @@ _alerts_audit_capabilities() {
     fi
 }
 
-# ==============================================================================
-# Alert Fix Functions
-# ==============================================================================
+# --- Alert Fix Functions ---
 
 alerts_fix() {
     local fix_id="$1"
@@ -176,10 +158,8 @@ alerts_fix() {
         alerts.setup_config)
             _alerts_fix_setup_config
             ;;
-        # No alerts.generate_templates case: nothing emits that fix_id, so the
-        # branch was unreachable. _alerts_fix_generate_templates is still very
-        # much alive — _alerts_fix_setup_config calls it directly as its last
-        # step.
+        # No generate_templates case: nothing emits that fix_id. The function
+        # itself is alive — setup_config calls it as its last step.
         *)
             log_warn "Alerts fix not implemented: $fix_id"
             return 1
@@ -190,11 +170,9 @@ alerts_fix() {
 _alerts_fix_setup_config() {
     print_info "$(i18n 'alerts.setting_up')"
 
-    # Its own message rather than the write failure's: an uncreatable state
-    # directory and an unwritable alerts.json need different things from the
-    # operator, and sharing one string also made the two indistinguishable to
-    # a test — dropping this guard entirely still produced the write failure's
-    # message one step later, so nothing could tell the guards apart.
+    # Its own message, not the write failure's: an uncreatable directory and
+    # an unwritable file need different things from the operator, and sharing
+    # one string leaves nothing able to tell the two guards apart.
     local _config_dir
     _config_dir=$(dirname "$ALERTS_CONFIG_FILE")
     if ! mkdir -p "$_config_dir"; then
@@ -215,12 +193,9 @@ _alerts_fix_setup_config() {
         read -rp "Email address (leave empty to skip): " email </dev/tty
     fi
 
-    # Build the JSON with `jq -n --arg` rather than heredoc-interpolating
-    # `$webhook_url` / `$email` directly — a URL or address containing
-    # `"` or `\` would otherwise produce malformed JSON and break
-    # downstream `jq -r '.webhook_url'` reads in _alerts_get_webhook_url.
-    # Both paths share one builder: the non-interactive template is just
-    # this with both values empty.
+    # Built with jq -n --arg, never heredoc interpolation: a URL containing
+    # a quote or backslash produces malformed JSON that breaks the downstream
+    # read. Both paths share this builder; the template is it with empty values.
     local config_json
     if ! config_json=$(jq -n \
         --arg webhook "$webhook_url" \
@@ -275,13 +250,9 @@ _alerts_fix_setup_config() {
     return 0
 }
 
-# Write one generated artifact from stdin, and say so when it could not be
-# written. Each of these was a bare `cat >` whose status the fix discarded,
-# so a full disk or a read-only templates tree still ended in "alert hooks
-# generated" and a return 0.
-#
-# MODE is passed to chmod verbatim; `+x` rather than an absolute mode so the
-# caller's umask still decides who may read a generated script.
+# Write one generated artifact from stdin, reporting when it could not be
+# written — a bare `cat >` whose status is discarded ends in "generated" on a
+# full disk. MODE goes to chmod verbatim; `+x` leaves umask in charge of read.
 _alerts_write_template() {
     local name="$1" mode="${2:-}"
     local path="${ALERTS_TEMPLATES_DIR}/${name}"
@@ -591,21 +562,9 @@ vpssec_alert "Test Alert" "This is a test notification" "info"
 ```
 EOF
 
-    # Bake the RUNTIME paths into the generated artifacts. They are authored
-    # with a `/var/lib/vpssec/...` literal so the quoted heredocs don't expand
-    # $WEBHOOK_URL / $1 etc., but vpssec actually keeps state and templates under
-    # $VPSSEC_STATE / $VPSSEC_TEMPLATES (e.g. /opt/vpssec/... when installed) —
-    # and install.sh even `rm -rf /var/lib/vpssec`. Without this rewrite the
-    # generated monitors/cron/README point at a path that does not exist, so
-    # `source .../alert-lib.sh` fails and every alert silently never fires. The
-    # `state|templates` order matters (templates lives under neither, state is a
-    # distinct tree), and | is a safe sed delimiter since paths contain /.
-    #
-    # The status is checked and stderr left visible on purpose: this used to be
-    # `2>/dev/null || true`, which swallowed exactly the failure the paragraph
-    # above describes as fatal. Artifacts that still point at /var/lib/vpssec
-    # are artifacts whose every alert silently never fires, so shipping them
-    # with a green "alert hooks generated" is worse than reporting the failure.
+    # Bake the RUNTIME paths in: the artifacts hold a /var/lib/vpssec literal
+    # so the quoted heredocs stay unexpanded, but the real trees are elsewhere.
+    # Without this every generated alert silently never fires.
     if ! find "$ALERTS_TEMPLATES_DIR" -type f -exec sed -i \
         -e "s|/var/lib/vpssec/templates|${VPSSEC_TEMPLATES}|g" \
         -e "s|/var/lib/vpssec/state|${VPSSEC_STATE}|g" \

@@ -250,3 +250,28 @@ _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
     [ "$status" -eq 0 ]
     [ ! -e "$SSH_HARDENING_DROPIN" ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "hardening drop-in: a backup that cannot be taken aborts the write" {
+    _vpssec_begin_backup_session
+    printf '# existing\n' > "$SSH_HARDENING_DROPIN"
+    _vpssec_stub cp 1
+
+    run _ssh_write_hardening_config "PasswordAuthentication no"
+    [ "$status" -ne 0 ]
+    [ "$(cat "$SSH_HARDENING_DROPIN")" = "# existing" ]
+}
+
+@test "hardening drop-in: a first-run backup that cannot be recorded aborts the write" {
+    # The other branch: with no drop-in yet, backup_file registers the path as
+    # fix-created instead of snapshotting it, and that registration is what a
+    # rollback needs in order to delete the file.
+    _vpssec_begin_backup_session
+    mkdir -p "$VPSSEC_BACKUP_SESSION/$VPSSEC_CREATED_MANIFEST"
+    rm -f "$SSH_HARDENING_DROPIN"
+
+    run _ssh_write_hardening_config "PasswordAuthentication no"
+    [ "$status" -ne 0 ]
+    [ ! -f "$SSH_HARDENING_DROPIN" ]
+}

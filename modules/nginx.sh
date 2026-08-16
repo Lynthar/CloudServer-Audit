@@ -3,9 +3,7 @@
 # Nginx catchall module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Nginx Paths
-# ==============================================================================
+# --- Nginx Paths ---
 
 NGINX_CONF_DIR="/etc/nginx"
 NGINX_SITES_AVAILABLE="${NGINX_CONF_DIR}/sites-available"
@@ -18,21 +16,15 @@ NGINX_SSL_DIR="${NGINX_CONF_DIR}/ssl"
 NGINX_CATCHALL_CERT="${NGINX_SSL_DIR}/default.crt"
 NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/default.key"
 
-# ==============================================================================
-# Nginx Helper Functions
-# ==============================================================================
+# --- Nginx Helper Functions ---
 
 _nginx_installed() {
     check_command nginx
 }
 
-# Determine catchall coverage from a full nginx config dump (typically
-# `nginx -T` output). Echoes one of: both | 80only | 443only | none.
-# Best-effort awk parser that tracks brace depth to scope server blocks
-# and looks within each block for (a) a listen directive on port 80 / 443
-# carrying default_server and (b) a `return 444;` directive in the same
-# block. Strips inline `#` comments. Comments at column 0 are stripped
-# too — nginx config doesn't put `#` in quoted values.
+# Catchall coverage from a full nginx config dump: both | 80only | 443only |
+# none. Tracks brace depth to scope server blocks, requiring a default_server
+# listen AND a `return 444;` in the SAME block. Inline comments are stripped.
 _nginx_catchall_state_from_text() {
     awk '
         function reset_block() { d80=0; d443=0; ret=0 }
@@ -53,18 +45,14 @@ _nginx_catchall_state_from_text() {
 
             if (in_server) {
                 if (/listen/ && /default_server/) {
-                    # Match port 80 / 443 with a colon-or-whitespace
-                    # boundary, accommodating: `listen 80 ...`,
-                    # `listen 0.0.0.0:80 ...`, `listen [::]:80 ...`,
-                    # `listen *:80 ...`. The trailing class prevents
-                    # 8080 / 4430 from matching.
+                    # Colon-or-whitespace boundary, so bare, IPv4, IPv6 and
+                    # wildcard listen forms all match. The trailing class is
+                    # what stops 8080 and 4430.
                     if ($0 ~ /:80([[:space:]]|;)/    || $0 ~ /[[:space:]]80([[:space:]]|;)/)  d80  = 1
                     if ($0 ~ /:443([[:space:]]|;)/   || $0 ~ /[[:space:]]443([[:space:]]|;)/) d443 = 1
                 }
-                # Boundary: line-start or after { ; whitespace, so a
-                # one-liner like server { listen 80 default_server; return 444; }
-                # parses correctly while substrings such as something_return
-                # do not false-match.
+                # Line-start or after { ; whitespace, so a one-line server
+                # block parses while something_return does not match.
                 if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1
             }
 
@@ -94,13 +82,9 @@ _nginx_catchall_state() {
         return 0
     fi
 
-    # Fallback when nginx -T is unavailable. File-level imprecision: we
-    # can't track server-block scope across files so we accept any file
-    # containing both a default_server listen on the port AND a
-    # `return 444;` line. The previous implementation chained
-    #   grep -r ... | head -1 | xargs -I{} grep -l "return 444"
-    # which fed xargs the entire `path:matched-line` from grep -r and
-    # looked for a file literally named "path:matched-line".
+    # Fallback when nginx -T is unavailable, and file-level imprecise: block
+    # scope cannot be tracked across files, so any file with both a
+    # default_server listen and a `return 444;` counts.
     local f found_80=0 found_443=0
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
@@ -130,16 +114,9 @@ _nginx_test_config() {
     nginx -t 2>&1
 }
 
-# ----- DoS-hardening helpers (timeouts + rate limiting) ----------------------
-# nginx -T flattens every included config file into a single stream, so a
-# single awk pass can find the *effective* last setting for a directive
-# across http/server/location contexts. Per nginx semantics, a directive
-# declared in a more specific context overrides a less specific one for
-# that context's traffic; we treat "any occurrence > threshold" as a
-# finding because that means at least one served hostname / location is
-# weaker than the policy. Using END { print last } as the proxy is good
-# enough for 90% of real configs; the alternative (full block-scope
-# parsing) is too brittle for an auditor.
+# --- DoS hardening. nginx -T flattens every include into one stream, so one
+# awk pass finds a directive's effective last value. Any occurrence past the
+# threshold is the finding: one served location weaker than policy. ---
 
 # Read the effective value of a directive from a `nginx -T` dump. If the
 # directive doesn't appear anywhere, return the supplied default.
@@ -169,11 +146,9 @@ _nginx_has_directive() {
     ' <<<"$config"
 }
 
-# nginx time values can be a bare integer (seconds), or carry a ms/s/m/h
-# suffix. Some directives accept multiple values (e.g. `keepalive_timeout
-# 65s 60s` — server-side + Keep-Alive header) — first token wins for
-# audit purposes. Anything unparseable returns 0 (treated as "safe"
-# rather than fabricating a number that would trigger a false flag).
+# nginx time values: a bare integer of seconds, or an ms/s/m/h suffix. The
+# first token wins where a directive takes several. Anything unparseable
+# returns 0 — safe, rather than a fabricated number that would false-flag.
 _nginx_parse_seconds() {
     local val="$1"
     # First whitespace-separated token only.
@@ -194,9 +169,7 @@ _nginx_parse_seconds() {
     esac
 }
 
-# ==============================================================================
-# Nginx Audit
-# ==============================================================================
+# --- Nginx Audit ---
 
 nginx_audit() {
     local module="nginx"
@@ -222,10 +195,8 @@ nginx_audit() {
     print_item "$(i18n 'nginx.check_default_server')"
     _nginx_audit_catchall
 
-    # Check DoS hardening (timeouts, rate limiting, slow-attack defenses).
-    # References: CIS NGINX Benchmark v2.0.1 (control 5.2.1 for
-    # client_header_timeout / client_body_timeout) + nginx official
-    # DDoS-mitigation guide (trac #2590, nginx.org blog).
+    # Timeouts, rate limiting and slow-attack defences, per CIS NGINX
+    # Benchmark 5.2.1 and nginx's own DDoS-mitigation guidance.
     print_item "$(i18n 'nginx.check_dos_hardening' 2>/dev/null || echo 'Checking DoS hardening')"
     _nginx_audit_dos_hardening
 }
@@ -430,9 +401,7 @@ _nginx_audit_dos_hardening() {
     fi
 }
 
-# ==============================================================================
-# Nginx Fix Functions
-# ==============================================================================
+# --- Nginx Fix Functions ---
 
 nginx_fix() {
     local fix_id="$1"
@@ -448,13 +417,9 @@ nginx_fix() {
     esac
 }
 
-# The catchall config text. A function rather than a heredoc inlined in the
-# fix so the certificate paths come from the module path variables — which is
-# what makes the fix testable against a scratch tree instead of only against
-# a real /etc/nginx. The heredoc is deliberately expanding (<<EOF); the
-# openssl hint below is one long line rather than the backslash-continued
-# three it used to be, because in an expanding heredoc a trailing backslash
-# is a line continuation and would silently glue the comment together.
+# The catchall config text, as a function so the certificate paths come from
+# the module variables and the fix is testable against a scratch tree. The
+# heredoc EXPANDS, so no backslash continuations: they glue lines together.
 _nginx_catchall_config() {
     cat <<EOF
 # vpssec - Nginx catchall configuration
@@ -488,14 +453,9 @@ EOF
 _nginx_fix_add_catchall() {
     print_info "$(i18n 'nginx.creating_catchall')"
 
-    # sites-enabled is checked FIRST, before anything is written. A config in
-    # sites-available that nothing links to is never read by nginx, so on a
-    # host laid out around conf.d/ the old code skipped the `ln` silently,
-    # `nginx -t` passed (there was nothing new to parse), the reload
-    # succeeded, two print_ok's fired and the fix returned 0 — while the
-    # catchall was not live and the next audit still reported it missing.
-    # Refuse instead, and print the include line that would make this layout
-    # work, the way baseline's disable_unused prints its way back.
+    # Checked FIRST, before anything is written: a sites-available config
+    # nothing links to is never read, so every later step would succeed while
+    # the catchall is not live. Refuse, and print the include line instead.
     if [[ ! -d "$NGINX_SITES_ENABLED" ]]; then
         print_error "$(i18n 'nginx.sites_enabled_missing' "dir=$NGINX_SITES_ENABLED")"
         print_info "$(i18n 'nginx.sites_enabled_hint' "dir=$NGINX_SITES_ENABLED")"
@@ -503,27 +463,19 @@ _nginx_fix_add_catchall() {
         return 1
     fi
 
-    # Whether these existed before this invocation decides what the
-    # validation-failure path is allowed to delete (see below).
-    # -e follows a symlink, so it answers about the TARGET: a dangling link
-    # already at that path reads as absent, and the validation-failure path
-    # would then delete something this run did not create. -L is what asks
-    # about the link itself.
+    # These decide what the validation-failure path may delete. -L, not -e,
+    # for the link: -e follows it and answers about the TARGET, so a dangling
+    # link reads as absent and would then be deleted.
     local conf_existed=0 link_existed=0
     [[ -e "$NGINX_CATCHALL_CONF" ]] && conf_existed=1
     [[ -L "$NGINX_CATCHALL_LINK" || -e "$NGINX_CATCHALL_LINK" ]] && link_existed=1
 
-    # backup_file is called UNCONDITIONALLY. Its second job is recording an
-    # absent path in .vpssec_created, which is the only thing that lets a
-    # rollback delete a file the fix created — and on a first run, which is
-    # the common case here, none of these exist. The module used to call
-    # neither backup_file nor write_file_atomic at all, so the config, the
-    # certificate and the key were invisible to `vpssec rollback`.
-    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true
+    # UNCONDITIONAL: recording an absent path in .vpssec_created is the only
+    # thing that lets a rollback delete what this fix creates, and on a first
+    # run — the common case — none of these exist yet.
+    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1
     # write_file_atomic creates the parent directory and reports its own
-    # failures, so sites-available needs no separate mkdir with a status to
-    # discard. The bare `cat >` this replaces was the last non-atomic /etc
-    # writer in the repo.
+    # failures, so no separate mkdir with a status to discard.
     if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)"; then
         print_error "$(i18n 'nginx.catchall_write_failed' "file=$NGINX_CATCHALL_CONF")"
         return 1
@@ -533,14 +485,9 @@ _nginx_fix_add_catchall() {
         return 1
     fi
 
-    # Enable the site. The symlink is deliberately NOT registered for
-    # rollback: backup_restore skips a created path that is a symlink
-    # (symlink-escape safety, core/state.sh) and counts it as *skipped*, so
-    # registering it would both leave the link in place and drag the
-    # rollback's exit status from 0 to 2 — a rollback that did everything it
-    # could would then report "partial" and alarm the operator. Print and log
-    # the exact command that undoes it instead. -n so a symlink-to-a-directory
-    # already sitting at that path is replaced rather than dereferenced into.
+    # The symlink is deliberately NOT registered for rollback: a created path
+    # that is a symlink counts as skipped and drags a complete rollback to
+    # "partial". Print and log the undo command instead.
     if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then
         print_error "$(i18n 'nginx.symlink_failed' "link=$NGINX_CATCHALL_LINK")"
         return 1
@@ -549,25 +496,15 @@ _nginx_fix_add_catchall() {
     print_info "$(i18n 'nginx.symlink_revert_hint' "cmd=$revert")"
     log_info "nginx.add_catchall revert command: $revert"
 
-    # Test config first; on failure undo what THIS invocation staged and
-    # bail. Only what this run created is removed: the old code deleted the
-    # config unconditionally, so an operator who already had a
-    # 99-catchall.conf lost it to a validation failure caused by something
-    # else entirely. Anything that pre-existed is left for `vpssec rollback`,
-    # which now has the snapshot.
+    # On failure, undo only what THIS invocation staged: deleting
+    # unconditionally costs an operator their own pre-existing file. Anything
+    # that pre-existed is left for `vpssec rollback`, which has the snapshot.
     local test_output
     if ! test_output=$(_nginx_test_config); then
         print_error "$(i18n 'nginx.nginx_test_failed')"
-        # Surface nginx's own message. Measured on a stock Debian 12 host with
-        # nginx-light: this fix ALWAYS lands here, because the distro's own
-        # sites-enabled/default already carries `listen 80 default_server`, and
-        # nginx refuses a second one with "a duplicate default server for
-        # 0.0.0.0:80 in /etc/nginx/sites-enabled/default:22". That is the most
-        # common outcome in the field, and "configuration test failed" alone
-        # tells the operator neither which file nor which line. Deciding what
-        # to do about the competing default_server is theirs — this fix does
-        # not edit another site's config — but they cannot decide without the
-        # message.
+        # Surface nginx's own message: on a stock Debian host this branch is
+        # the COMMON outcome, and "configuration test failed" alone names
+        # neither the file nor the line the operator must decide about.
         [[ -n "$test_output" ]] && print_info "$(i18n 'nginx.nginx_test_output' "msg=$test_output")"
         (( link_existed )) || rm -f "$NGINX_CATCHALL_LINK"
         if (( conf_existed )); then
@@ -579,25 +516,18 @@ _nginx_fix_add_catchall() {
     fi
     print_ok "$(i18n 'nginx.catchall_created' "path=$NGINX_CATCHALL_CONF")"
 
-    # Reload nginx. The config tested clean, but if the reload itself fails
-    # the catch-all is staged on disk yet NOT live, so the host is still
-    # exposed to the hostname/cert leak this fix is meant to close. Report
-    # that as a failure (return 1) instead of the previous silent success:
-    # the old `if reload; then return 0; fi` fell through with no return, so
-    # bash returned 0 (the `if` completes successfully even when the
-    # condition is false) and the fix was recorded as done.
+    # A failed reload leaves the catchall staged but NOT live, so the host is
+    # still exposed. That must return 1: `if reload; then return 0; fi` falls
+    # through to a successful `if` and records the fix as done.
     if ! systemctl reload nginx 2>/dev/null; then
         print_error "$(i18n 'nginx.reload_failed_staged')"
         return 1
     fi
     print_ok "$(i18n 'nginx.nginx_reloaded')"
 
-    # Postcondition: ask the audit's own question. `nginx -t` passing says
-    # the config PARSES and the reload says it was loaded; neither says this
-    # host now has a catchall on both ports — a custom nginx.conf that
-    # includes only conf.d/, or a competing default_server that wins the
-    # bind, leaves the answer at what it was. Without this the fix reported
-    # a success the very next audit contradicted.
+    # Postcondition via the audit's own question: `nginx -t` says the config
+    # parses and the reload says it loaded, but neither says this host now
+    # has a catchall on both ports.
     local state
     state=$(_nginx_catchall_state)
     if [[ "$state" != "both" ]]; then
@@ -607,13 +537,9 @@ _nginx_fix_add_catchall() {
     return 0
 }
 
-# Create the SSL directory and the self-signed certificate the 443 catchall
-# references. Split out of the fix because every one of these four statuses
-# used to be discarded, and errexit is OFF inside a fix (execute_fix calls it
-# in a condition context), so a failing openssl continued straight into the
-# reload. It surfaced eventually as "nginx test failed", which sends the
-# operator looking at their config rather than at a certificate that was
-# never generated.
+# Create the SSL directory and self-signed certificate the 443 catchall needs.
+# Split out so each status is checked: errexit is off inside a fix, so a
+# failing openssl otherwise continues into the reload.
 _nginx_ensure_catchall_cert() {
     [[ -f "$NGINX_CATCHALL_CERT" ]] && return 0
 
@@ -626,8 +552,8 @@ _nginx_ensure_catchall_cert() {
     # Unconditional for the reason given at the config write: inside this
     # branch neither file is in a state worth keeping, and on a first run
     # .vpssec_created is what lets a rollback remove them.
-    backup_file "$NGINX_CATCHALL_CERT" >/dev/null 2>&1 || true
-    backup_file "$NGINX_CATCHALL_KEY" >/dev/null 2>&1 || true
+    backup_file "$NGINX_CATCHALL_CERT" >/dev/null || return 1
+    backup_file "$NGINX_CATCHALL_KEY" >/dev/null || return 1
 
     if ! openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
             -keyout "$NGINX_CATCHALL_KEY" \

@@ -1,23 +1,11 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# Networking module — listening sockets analysis + interface posture
-# Copyright (c) 2024
-#
-# Why this module exists:
-# Lynis NETW-3012 (and related) audit listening sockets and surface
-# services bound to 0.0.0.0 / ::. On a cloud VPS, that's the single
-# most common real-world misconfiguration that turns a private service
-# into an internet-exposed one (DB, cache, monitoring exporter, …).
-# vpssec's preflight previously only reported the *count* of listeners.
+# Networking module: listening-socket analysis and interface posture.
+# Surfaces services bound to a public address; all findings are alert-only.
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
+# --- Configuration ---
 
-# Ports that should almost never face the public internet. Bound to a
-# wildcard address → HIGH severity. The list is conservative — well-
-# documented public services (22/80/443/53) deliberately omitted; intent
-# for those is operator-specific.
+# Ports that should almost never face the public internet; HIGH when bound
+# to a wildcard. Deliberately conservative — 22/80/443/53 are omitted.
 declare -ga NET_DANGEROUS_PUBLIC_PORTS=(
     21      # FTP (cleartext credentials)
     23      # Telnet (cleartext credentials/session) — merged from preflight
@@ -43,10 +31,8 @@ declare -ga NET_DANGEROUS_PUBLIC_PORTS=(
     27019   # MongoDB config server
 )
 
-# Ports where wildcard binding is the typical / expected setup on a
-# VPS. We don't emit any finding for these even when public. Operators
-# who explicitly want to flag SSH on 0.0.0.0 can do so via separate
-# SSH-module checks.
+# Ports where wildcard binding is expected on a VPS: no finding even when
+# public. SSH on 0.0.0.0 is covered by the ssh module instead.
 declare -ga NET_PUBLIC_PORTS_OK=(
     22      # SSH (default port)
     80      # HTTP
@@ -57,28 +43,20 @@ declare -ga NET_PUBLIC_PORTS_OK=(
             # a "non-standard public listener" was a scored false positive.
 )
 
-# Processes whose listeners are always considered "expected public"
-# regardless of which port they bind to. The reason port 22 isn't
-# enough: operators routinely move SSH to a high port (2222, 22022,
-# 33xxx, ...) — ssh.sh's port check already approves that move, so
-# networking module flagging the same listener as "non-standard
-# public listener" produces a contradictory pair of findings. Match
-# by process name closes the loop.
+# Processes whose listeners are expected public on ANY port. Port 22 alone
+# is not enough: ssh.sh approves a moved SSH port, so matching by port would
+# make this module contradict it on the same listener.
 declare -ga NET_PUBLIC_PROCESSES_OK=(
     sshd
 )
 
-# ==============================================================================
-# Helpers
-# ==============================================================================
+# --- Helpers ---
 
 _net_have_ss() { command -v ss >/dev/null 2>&1; }
 
-# Emit TSV: proto<TAB>family<TAB>ip<TAB>port<TAB>process for each
-# listening socket. `ss -tulnpH` is preferred (header-less, modern);
-# falls back to netstat where ss is missing.
-#
-# IP family classification keys downstream checks: "v4", "v6", or "".
+# Emit TSV: proto, family, ip, port, process per listening socket.
+# Prefers `ss -tulnpH`, falling back to netstat.
+# The family field ("v4" / "v6" / "") keys the downstream checks.
 _net_list_listeners() {
     local raw
     if _net_have_ss; then
@@ -147,13 +125,9 @@ _net_classify_addr() {
     echo specific
 }
 
-# For a "specific" bind: is that address routable from off-host? A service
-# bound to the VPS's own public IP is exactly as reachable as one bound to
-# 0.0.0.0, but the audit used to drop every specific bind on the floor —
-# so `mysqld` on 203.0.113.10:3306 sailed past while the summary claimed
-# "public listeners match expected services". Private/link-local/CGNAT
-# ranges return 1 (operator context required, as before); anything
-# unparseable also returns 1 so a weird address can't produce a false HIGH.
+# Is a specific bind routable from off-host? A service on the VPS's own
+# public IP is as reachable as one on 0.0.0.0. Private/link-local/CGNAT
+# return 1, and so does anything unparseable — never a false HIGH.
 _net_specific_addr_is_public() {
     local family="$1" ip="$2"
     case "$family" in
@@ -201,15 +175,9 @@ _net_proc_in() {
     return 1
 }
 
-# Detect interfaces in promiscuous mode. On a server, promisc usually
-# means tcpdump/wireshark is running — or something far worse.
-#
-# Exclude loopback and the virtual/bridge/container interface families
-# that legitimately run promiscuous as their normal mode (Docker bridges
-# and veth pairs, libvirt virbr, CNI/flannel/k8s bridges). Flagging those
-# is a guaranteed false positive on any container/KVM host; a sniffer on a
-# real NIC still shows up. veth pairs render as "vethXXXX@ifN" — strip the
-# @peer suffix before matching.
+# Interfaces in promiscuous mode, excluding loopback and the virtual/bridge/
+# container families, for which it is the normal mode. veth pairs render as
+# "vethXXXX@ifN", so the @peer suffix is stripped before matching.
 _net_promiscuous_interfaces() {
     command -v ip >/dev/null 2>&1 || return 0
     ip -o link show 2>/dev/null \
@@ -219,9 +187,7 @@ _net_promiscuous_interfaces() {
         || true
 }
 
-# ==============================================================================
-# Audit
-# ==============================================================================
+# --- Audit ---
 
 networking_audit() {
     local module="networking"
@@ -243,13 +209,9 @@ _net_audit_listeners() {
         return
     fi
 
-    # First pass: collapse (proto, port, proc) tuples seen on
-    # wildcard / loopback / specific. ss(8) emits separate rows for
-    # the IPv4 and IPv6 sockets of the same service (sshd on
-    # 0.0.0.0:22 and [::]:22 are two rows), so iterating raw would
-    # double-count every dual-stack listener. The associative array
-    # acts as a set; presence on wildcard wins over loopback when
-    # both are seen (worst-case classification).
+    # Collapse (proto, port, proc) into a set: ss emits one row per address
+    # family, so raw iteration double-counts every dual-stack listener.
+    # Wildcard beats loopback when both are seen — worst case wins.
     local -A wildcard_set loopback_only_set specific_public_set
     local loopback_only=1
     local proto family ip port proc class key
@@ -271,11 +233,9 @@ _net_audit_listeners() {
                 ;;
             specific)
                 loopback_only=0
-                # A specific bind on a PUBLIC address is as reachable as a
-                # wildcard bind and gets the same scrutiny (the address is
-                # carried so the finding names it). Private / link-local /
-                # unparseable specific binds stay untracked as before —
-                # operator context required.
+                # A public specific bind gets the same scrutiny as a
+                # wildcard one, and carries the address so the finding
+                # can name it.
                 if _net_specific_addr_is_public "$family" "$ip"; then
                     specific_public_set["${proto}/${port}/${ip}/${proc:-?}"]=1
                 fi
@@ -415,12 +375,8 @@ _net_audit_promisc() {
     fi
 }
 
-# ==============================================================================
-# Fix Functions — none; all networking findings are alert-only.
-# Binding databases to localhost is a per-service config change that
-# cannot be safely automated (each daemon has its own config file and
-# restart semantics).
-# ==============================================================================
+# No fix functions: all networking findings are alert-only. Rebinding a
+# service to localhost is per-daemon config that cannot be safely automated.
 
 networking_fix() {
     local fix_id="$1"

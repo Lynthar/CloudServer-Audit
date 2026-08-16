@@ -3,17 +3,15 @@
 # Timezone module - timezone and time synchronization checks
 # Copyright (c) 2024
 
-# System paths this module reads and writes. Named variables rather than
-# literals for the same reason logging.sh has LOGROTATE_CONF and docker.sh has
-# DOCKER_DAEMON_JSON: it is the seam that lets a test point the module at a
-# scratch tree instead of the host's real /etc.
+# Named rather than inlined: this is the seam that lets a test point the
+# module at a scratch tree instead of the host's real /etc.
 TZ_CONF="/etc/timezone"
 TZ_LOCALTIME="/etc/localtime"
 TZ_ZONEINFO="/usr/share/zoneinfo"
+TZ_LOCALE_GEN="/etc/locale.gen"
+TZ_DEFAULT_LOCALE="/etc/default/locale"
 
-# ==============================================================================
-# Timezone Audit
-# ==============================================================================
+# --- Timezone Audit ---
 
 timezone_audit() {
     local module="timezone"
@@ -35,12 +33,9 @@ timezone_audit() {
     _timezone_check_locale
 }
 
-# Resolve the effective system timezone. Echoes "<tz>|<source>"; <tz> is empty
-# when nothing is configured. Kept as a shared getter because both the audit
-# (which logs the source) and _timezone_fix_set_timezone (which only needs to
-# know whether a timezone exists at all) ask the same question — a second copy
-# of this fallback chain is exactly the kind of duplication that lets the fix
-# and the audit drift apart.
+# Effective system timezone as "<tz>|<source>"; <tz> empty when unconfigured.
+# Shared by the audit and the fix on purpose: a second copy of this fallback
+# chain is how a fix and its audit drift apart.
 _timezone_current() {
     local tz=""
     local src=""
@@ -145,12 +140,8 @@ _timezone_check_ntp() {
         fi
     fi
 
-    # Check for chrony / chronyd. Debian/Ubuntu name the unit
-    # `chrony.service`; RHEL/Fedora and some derivatives use
-    # `chronyd.service`. Probing only `chronyd` silently misclassified
-    # synced Debian hosts as "NTP disabled" — every Debian/Ubuntu
-    # install with chrony fell through to the openntpd branch and
-    # then the no-NTP-found case.
+    # Both unit names are required: Debian/Ubuntu use chrony.service while
+    # RHEL and some derivatives use chronyd.service.
     if [[ "$ntp_status" == "unknown" ]] && \
         ( systemctl is-active chrony &>/dev/null || \
           systemctl is-active chronyd &>/dev/null ); then
@@ -164,18 +155,15 @@ _timezone_check_ntp() {
                 ntp_status="active_not_synced"
             fi
         else
-            # chrony unit is active but chronyc could not be queried (not
-            # installed in PATH, socket perms, etc.). The daemon IS running,
-            # so never fall through to the "NTP disabled" branch — that was a
-            # false positive that told operators to enable already-running NTP.
+            # Unit active but chronyc unqueryable. The daemon IS running, so
+            # never fall through to the NTP-disabled branch.
             ntp_status="active_not_synced"
         fi
     fi
 
-    # Check for ntpd / ntpsec. Debian 12+ replaced the legacy `ntp`
-    # package with `ntpsec` (unit: `ntpsec.service`); the original
-    # `ntp.service` form only exists on older Debian / non-Debian
-    # distros. `ntpd.service` is a systemd alias on some images.
+    # Debian 12+ replaced the `ntp` package with `ntpsec`; `ntp.service`
+    # survives only on older or non-Debian distros, and `ntpd.service` is a
+    # systemd alias on some images.
     if [[ "$ntp_status" == "unknown" ]] && \
         ( systemctl is-active ntpsec &>/dev/null || \
           systemctl is-active ntp &>/dev/null || \
@@ -237,14 +225,9 @@ _timezone_check_ntp() {
     log_info "NTP status: $ntp_status (service: $ntp_service)"
 }
 
-# Check that the hardware clock is kept in UTC.
-#
-# The former network time-drift probe (curl to worldtimeapi.org) was
-# removed: that service is defunct, the call went over plaintext HTTP,
-# it stalled every audit up to 5s, and on failure it silently always
-# reported "time accurate". Clock correctness is already covered locally
-# and authoritatively by the NTP-sync check above (_timezone_check_ntp);
-# a read-only security audit should not phone a third-party endpoint.
+# Check that the hardware clock is kept in UTC. Clock correctness itself is
+# covered locally by _timezone_check_ntp — do not add a network time probe;
+# a read-only audit should not phone a third-party endpoint.
 _timezone_check_drift() {
     command -v timedatectl &>/dev/null || return 0
 
@@ -311,9 +294,7 @@ _timezone_check_locale() {
     log_info "System locale: $current_locale"
 }
 
-# ==============================================================================
-# Timezone Fix
-# ==============================================================================
+# --- Timezone Fix ---
 
 timezone_fix() {
     local fix_id="$1"
@@ -342,14 +323,9 @@ timezone_fix() {
 _timezone_fix_set_timezone() {
     print_info "$(i18n 'timezone.setting_timezone')"
 
-    # This fix is deliberately attached to the PASSED checks too
-    # (timezone.using_utc / timezone.configured) so a guide user can opt to
-    # change the timezone — which also makes it reachable on a host whose
-    # timezone is already correct. The menu below cannot be answered under
-    # --yes / --json-only / no readable /dev/tty, so the fix used to return 1
-    # there and the engine recorded a failure for something the operator never
-    # asked for. Leave an already-configured host alone and report success;
-    # only a host with NO timezone at all genuinely needs a human here.
+    # Also attached to the PASSED checks so a guide user can change the
+    # timezone deliberately. The menu cannot be answered non-interactively,
+    # so an already-configured host is left alone and reported as success.
     local current_tz=""
     IFS='|' read -r current_tz _ <<< "$(_timezone_current)"
     if _noninteractive || ! _tty_readable; then
@@ -410,9 +386,10 @@ _timezone_fix_set_timezone() {
         return 1
     fi
 
-    # Create backup
-    backup_file "$TZ_CONF"
-    backup_file "$TZ_LOCALTIME"
+    # Create backup. stdout is discarded: it carries the snapshot path, which
+    # these two bare calls used to print into the operator's output.
+    backup_file "$TZ_CONF" >/dev/null || return 1
+    backup_file "$TZ_LOCALTIME" >/dev/null || return 1
 
     # Set timezone
     if command -v timedatectl &>/dev/null; then
@@ -465,13 +442,9 @@ _timezone_fix_enable_ntp() {
     return 1
 }
 
-# NOTE: a `_timezone_fix_sync_time` used to live here, wired to a
-# `timezone.sync_time` fix_id that no check ever emitted. It was therefore
-# unreachable through the engine while still being listed by
-# `vpssec help timezone` as an auto-applied fix, which is worse than absent:
-# it advertised something the user could never select. The actionable case
-# (NTP disabled or not synchronised) is handled by timezone.enable_ntp, whose
-# check does emit its fix_id.
+# No sync_time fix: a fix_id no check emits is unreachable through the engine
+# while still being advertised by `vpssec help`. The actionable case is
+# handled by timezone.enable_ntp, whose check does emit its fix_id.
 
 # Fix: Set RTC to UTC
 _timezone_fix_rtc_utc() {
@@ -492,13 +465,9 @@ _timezone_fix_rtc_utc() {
 _timezone_fix_set_locale() {
     print_info "$(i18n 'timezone.setting_locale')"
 
-    # Do NOT override an already-valid locale. This fix is offered even on the
-    # PASSED locale_ok check (so a user CAN opt to change locale in guide) and it
-    # is FIX_SAFE (auto-applied under select-all). Forcing en_US.UTF-8 onto a
-    # host whose zh_CN.UTF-8 / de_DE.UTF-8 is perfectly fine would silently
-    # change the operator's language — not a safe auto-fix. Only set a default
-    # when the locale is genuinely unset (C / POSIX / empty), mirroring the
-    # audit's own locale_not_set condition.
+    # NEVER override an already-valid locale: this fix is FIX_SAFE and is
+    # offered on the passing check too, so forcing en_US.UTF-8 would silently
+    # change the operator's language. Only a genuinely unset locale is set.
     local current_locale=""
     if command -v localectl &>/dev/null; then
         current_locale=$(localectl status 2>/dev/null | grep "System Locale" | sed 's/.*LANG=//' | cut -d' ' -f1)
@@ -514,12 +483,12 @@ _timezone_fix_set_locale() {
     # Generate locale if needed. Build the edited file in memory and write it
     # atomically rather than `sed -i` in place: an interrupted in-place edit
     # could truncate /etc/locale.gen.
-    if [[ -f /etc/locale.gen ]]; then
-        if ! grep -q "^${target_locale}" /etc/locale.gen; then
-            backup_file "/etc/locale.gen" >/dev/null 2>&1 || true
+    if [[ -f "$TZ_LOCALE_GEN" ]]; then
+        if ! grep -q "^${target_locale}" "$TZ_LOCALE_GEN"; then
+            backup_file "$TZ_LOCALE_GEN" >/dev/null || return 1
             local gen_content
-            gen_content=$(sed "s/^# *${target_locale}/${target_locale}/" /etc/locale.gen)
-            if write_file_atomic "/etc/locale.gen" "$gen_content"; then
+            gen_content=$(sed "s/^# *${target_locale}/${target_locale}/" "$TZ_LOCALE_GEN")
+            if write_file_atomic "$TZ_LOCALE_GEN" "$gen_content"; then
                 locale-gen &>/dev/null
             fi
         fi
@@ -534,9 +503,9 @@ _timezone_fix_set_locale() {
     fi
 
     # Manual method (atomic write instead of a bare redirect).
-    if [[ -f /etc/default/locale ]]; then
-        backup_file "/etc/default/locale" >/dev/null 2>&1 || true
-        if write_file_atomic "/etc/default/locale" "LANG=$target_locale"; then
+    if [[ -f "$TZ_DEFAULT_LOCALE" ]]; then
+        backup_file "$TZ_DEFAULT_LOCALE" >/dev/null || return 1
+        if write_file_atomic "$TZ_DEFAULT_LOCALE" "LANG=$target_locale"; then
             print_ok "$(i18n 'timezone.locale_set' "locale=$target_locale")"
             return 0
         fi

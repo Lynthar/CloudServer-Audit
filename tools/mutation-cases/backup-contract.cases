@@ -28,7 +28,7 @@
 # every stock Docker install — got the file created and `vpssec rollback` had
 # no record of it.
 run_case "created/backup-call-removed" 1 \
-    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true' \
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
     '    :'
 
 # The same defect in the shape it actually shipped in: the call exists, but
@@ -36,16 +36,16 @@ run_case "created/backup-call-removed" 1 \
 # function call backup_file" answers yes to both this and the correct code,
 # which is why the assertion has to be about the manifest and not the call.
 run_case "created/backup-guarded-by-f" 1 \
-    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true' \
-    '    [[ -f "$DOCKER_DAEMON_JSON" ]] && backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true'
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
+    '    [[ -f "$DOCKER_DAEMON_JSON" ]] && { backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1; }'
 
 # Registration must happen BEFORE the write. Afterwards the path exists, so
 # backup_file takes the "snapshot an existing file" branch and records the
 # fix's own output as the pre-plan original — a rollback then restores the
 # hardened file instead of deleting it.
 run_case "created/backup-after-write" 1 \
-    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true' \
-    '    trap '"'"'backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true'"'"' RETURN'
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
+    '    trap '"'"'backup_file "$DOCKER_DAEMON_JSON" >/dev/null || true'"'"' RETURN'
 
 # ---- the ordering the batch also changed ----------------------------------
 

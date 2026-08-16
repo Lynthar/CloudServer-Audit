@@ -164,3 +164,16 @@ SH
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called apt-get
 }
+
+@test "logrotate: a backup that cannot be recorded aborts the fix" {
+    # This call site only fires when the package shipped no conffile, so the
+    # failing branch has to be the created-file manifest rather than cp.
+    _vpssec_absent_command logrotate
+    _vpssec_stub apt-get 0
+    _vpssec_begin_backup_session
+    mkdir -p "$VPSSEC_BACKUP_SESSION/$VPSSEC_CREATED_MANIFEST"
+
+    run _logging_fix_setup_logrotate
+    [ "$status" -ne 0 ]
+    [ ! -f "$LOGROTATE_CONF" ]
+}

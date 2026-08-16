@@ -1,46 +1,27 @@
 #!/bin/bash
-# vpssec - VPS Security Check & Hardening Tool
-# One-line runner with sigstore-verified release:
-#   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
-#
-# Usage:
-#   curl ... | sudo bash                          # interactive (audit/guide menu)
-#   curl ... | sudo bash -s -- audit              # direct audit
-#   curl ... | sudo bash -s -- guide              # direct guide
-#   curl ... | sudo bash -s -- --lang=en_US       # English UI
-#
-# Environment overrides:
-#   VPSSEC_VERSION    pin to a specific release (e.g. "v0.0.9"); default "latest"
-#   VPSSEC_NO_VERIFY  set to 1 to skip cosign verification (NOT recommended)
+# One-line runner with a sigstore-verified release. Args after `-s --` are
+# passed to vpssec. VPSSEC_VERSION pins a release tag (default "latest");
+# VPSSEC_NO_VERIFY=1 skips cosign verification entirely.
 
 set -euo pipefail
 
 VPSSEC_REPO="Lynthar/CloudServer-Audit"
 VPSSEC_VERSION="${VPSSEC_VERSION:-latest}"
 VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
-# Populated by a root-owned `mktemp -d` in download_and_verify (mode 0700).
-# A predictable /tmp/vpssec-$$ path let a local attacker pre-plant a symlink
-# and win a race against root's curl -o / cd; mktemp picks an unguessable
-# name and fails if it already exists, closing that window.
+# A root-owned `mktemp -d` (0700). Never a predictable /tmp path: $$ is a
+# small integer, and a pre-planted symlink turns root's curl -o into an
+# arbitrary-file overwrite.
 VPSSEC_TMP=""
 
-# Sigstore identity check: only signatures issued to THIS repo's
-# release workflow at a v* tag are accepted. The cosign cert embeds
-# the workflow URL + OIDC issuer; cosign verify-blob enforces the
-# match. A compromised upstream cannot forge a passing signature
-# without also compromising sigstore's Fulcio CA + Rekor log.
+# Only signatures issued to THIS repo's release workflow at a v* tag pass.
+# The cosign cert embeds the workflow URL and OIDC issuer; verify-blob
+# enforces the match.
 COSIGN_IDENTITY_REGEX="^https://github\.com/${VPSSEC_REPO}/\.github/workflows/release\.yml@refs/tags/v.+$"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
-# Pinned cosign for the apt-fallback install path (Debian, etc.). The
-# SHA256 below is verified locally before dpkg ever sees the .deb, so a
-# future compromise of the sigstore release pipeline still can't ship a
-# tampered cosign through this script — the hash check fails first.
-# Bump both VERSION and the per-arch hashes together; the bump workflow
-# at .github/workflows/cosign-bump.yml automates this weekly.
-# cosign v3.x verifies bundles signed by older v2.x cosign (sigstore
-# bundle verification is backwards compatible across majors), so this
-# pin can move independently of release.yml's signer pin.
+# Pinned cosign for the apt-fallback path. The hash is verified before dpkg
+# ever sees the .deb. Bump VERSION and the per-arch hashes together —
+# cosign-bump.yml does this weekly. Moves independently of release.yml.
 COSIGN_PIN_VERSION="3.1.3"
 # .deb assets — Debian/Ubuntu (installed via dpkg)
 COSIGN_PIN_SHA256_AMD64="75357d96161da4d06d37c4b2831fa6978483cdce661999e5951b586f9ee1d710"
@@ -73,21 +54,13 @@ print_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Root + basic tools + cosign (unless verification is opted-out). We
-# best-effort `apt install cosign` since Ubuntu 22.04+ ships it in
-# universe. If that's unavailable, install_cosign_pinned() falls back to
-# a pinned, SHA256-verified asset from sigstore's GitHub release — the
-# .deb via dpkg on Debian/Ubuntu, or the static linux binary into
-# /usr/local/bin on RHEL/Arch and other non-dpkg distros. Architectures
-# without a pinned hash still bail with manual-install instructions.
+# Root, basic tools, and cosign unless verification is opted out.
+# `apt install cosign` is best-effort; install_cosign_pinned() is the
+# fallback. Architectures with no pinned hash bail with instructions.
 install_cosign_pinned() {
-    # Fallback used when apt has no cosign package. Resolves uname -m to a
-    # sigstore arch suffix and installs a pinned, SHA256-verified asset
-    # from cosign's GitHub release: the .deb via dpkg on Debian/Ubuntu, or
-    # the static linux binary into /usr/local/bin on RHEL/Arch and any
-    # other non-dpkg distro. The hash is always checked BEFORE the asset
-    # is installed or executed, so a compromised sigstore can't push a
-    # tampered cosign through this script. Returns non-zero on any failure.
+    # Installs a pinned, SHA256-verified cosign asset: .deb via dpkg on
+    # Debian, static binary into /usr/local/bin elsewhere. The hash is always
+    # checked BEFORE the asset is installed or executed.
     local arch arch_sfx want_deb_hash want_bin_hash
     arch=$(uname -m)
     case "$arch" in
@@ -103,21 +76,16 @@ install_cosign_pinned() {
     print_warn "cosign not in package manager — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
     print_warn "  trust root for cosign shifts from distro archive to github.com (same as run.sh itself)"
 
-    # Downloads land in a fresh 0700 mktemp dir, mirroring the main tarball
-    # path. The previous "/tmp/cosign...$$" names were guessable ($$ is a
-    # small integer), so a local user could pre-plant a symlink and have
-    # root's curl -o write through it — the hash check catches tampered
-    # CONTENT afterwards, but the overwrite of the symlink's target has
-    # already happened by then.
+    # Fresh 0700 mktemp dir, like the tarball path. A hash check catches
+    # tampered content only afterwards — the overwrite has already happened.
     local cosign_tmp
     cosign_tmp=$(mktemp -d) || {
         print_error "mktemp failed for cosign download"
         return 1
     }
     chmod 700 "$cosign_tmp"
-    # Self-clearing RETURN trap: fires once when THIS function returns (any
-    # path), then unsets itself so it cannot fire on later functions. This
-    # replaces six per-path rm calls and cannot be forgotten on a new path.
+    # Self-clearing RETURN trap: fires once on any return path, then unsets
+    # itself. Cannot be forgotten when a new path is added.
     # shellcheck disable=SC2064  # expand now: cosign_tmp is a local
     trap "rm -rf '$cosign_tmp'; trap - RETURN" RETURN
 
@@ -219,14 +187,9 @@ check_requirements() {
     fi
 }
 
-# Resolve "latest" to a concrete tag via the GitHub API. This is the
-# latest *published* release (matches what shows on the Releases page),
-# not the highest git tag.
-# Reject a release tag that is not a clean vX.Y.Z[.-suffix] string before it
-# flows into download URLs and local filenames. The tarball is still
-# cosign-verified before extraction, so this is defense-in-depth: it stops a
-# malicious GitHub API response or an attacker-chosen VPSSEC_VERSION from
-# steering a root-owned curl -o into an unexpected path.
+# Reject any tag that is not a clean vX.Y.Z[.-suffix] before it reaches a
+# download URL or local filename. Defence in depth: the tarball is still
+# cosign-verified, but this stops a root-owned curl -o being steered.
 _validate_version_tag() {
     local tag="$1"
     if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
@@ -250,11 +213,8 @@ resolve_version() {
     _validate_version_tag "$VPSSEC_VERSION"
 }
 
-# Download tarball + signature bundle from the release, verify against
-# the pinned cosign identity, then extract. Anything other than a
-# fully-passing verify aborts (unless VPSSEC_NO_VERIFY=1, in which
-# case verification is skipped entirely and the signature isn't even
-# downloaded).
+# Download tarball and signature bundle, verify against the pinned cosign
+# identity, then extract. Anything but a fully passing verify aborts.
 download_and_verify() {
     local ver_tag="$VPSSEC_VERSION"
     local ver="${ver_tag#v}"
@@ -313,10 +273,8 @@ main() {
         esac
     done
 
-    # Install the cleanup trap BEFORE anything creates the temp dir, so a
-    # failure in check_requirements/resolve_version/download_and_verify
-    # (offline host, signature mismatch, GitHub outage) can't leak a
-    # /tmp/vpssec-* directory holding a downloaded, unverified tarball.
+    # Installed BEFORE anything creates the temp dir, so an early failure
+    # cannot leak a directory holding an unverified tarball.
     trap cleanup EXIT
 
     check_requirements

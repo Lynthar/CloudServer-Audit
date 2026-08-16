@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
-# vpssec — Per-module help dispatcher.
-#
-# Provides:
-#   vpssec_help_dispatch [<topic>]
-#     - no topic: print a category-grouped module summary
-#     - topic == module name: print that module's audit/fix detail
-#     - topic == anything else: print error + module list
-#
-# Help is read-only and has no system dependencies beyond what's
-# already sourced (i18n, VPSSEC_MODULE_ORDER, FIX_* maps in
-# security_levels.sh). The entry script invokes this BEFORE
-# vpssec_init runs, so no run-lock, no root, no mkdir, no audit.
+# Per-module help dispatcher: vpssec_help_dispatch [<topic>].
+# Read-only, and invoked BEFORE vpssec_init — no run-lock, no root, no mkdir.
+# Depends only on i18n, VPSSEC_MODULE_ORDER and the FIX_* maps.
 
 # ----------------------------------------------------------------------
 # Colour helpers (degrade gracefully if VPSSEC_COLOR=0)
@@ -27,11 +18,9 @@ _help_safety_badge() {
     esac
 }
 
-# Bucket every fix_id known to the four FIX_* maps into per-module
-# arrays segregated by safety. Sets the following globals (cleared
-# on each call):
-#   _help_fixes_<safety>_<module> — newline-separated fix_ids
-#   _help_fixes_total_<module>    — count
+# Bucket every fix_id from the four FIX_* maps by module and safety.
+# Sets _help_fixes_<safety>_<module> (newline-separated) and
+# _help_fixes_total_<module>, cleared on each call.
 _help_collect_fixes() {
     local module="$1"
     local id
@@ -55,20 +44,14 @@ _help_collect_fixes() {
         [[ "$id" == "$module".* ]] && _help_fix_table[alert_only]+="$id"$'\n'
     done
 
-    # Explicit success return: the last for-loop's final iteration is
-    # `[[ X ]] && y` and short-circuits to exit code 1 whenever that
-    # last id doesn't match the requested module. Inside a function,
-    # bash propagates that to the call site, where set -e then aborts
-    # the caller silently. Pinning the return value here keeps the
-    # function safe to call regardless of how the loop terminated.
+    # Explicit: the loop's last `[[ X ]] && y` short-circuits to 1, which
+    # bash propagates to the caller and set -e turns into a silent abort.
     return 0
 }
 
-# Concise per-class count (e.g. "5 safe, 1 confirm, 2 risky, 3 alert")
-# for the top-level summary. Uses count_lines (common.sh) instead of
-# `printf | grep -c .`: the latter exits 1 on empty input, which
-# under pipefail collapses the whole pipeline and aborts the script
-# silently mid-render. count_lines always returns 0 + an integer.
+# Per-class count for the summary line. Uses count_lines, not
+# `printf | grep -c .`, which exits 1 on empty input and under pipefail
+# aborts the script mid-render.
 _help_fix_summary() {
     local module="$1"
     _help_collect_fixes "$module"
@@ -143,13 +126,8 @@ _help_print_class_section() {
     while IFS= read -r id; do
         [[ -z "$id" ]] && continue
         printf "    %s\n" "$id"
-        # FIX_SAFE values are just the placeholder "true"; the other
-        # three maps carry the human reason. Fetch it via
-        # get_fix_warning rather than indexing the map directly, so
-        # this renders the TRANSLATED warning — reading the map gave
-        # the English source string even in zh_CN, which is precisely
-        # the text a user consults before deciding what the wizard is
-        # allowed to touch.
+        # Fetched via get_fix_warning, not by indexing the map, so the
+        # warning renders TRANSLATED. FIX_SAFE values are placeholders.
         if [[ "$map_name" != "FIX_SAFE" ]]; then
             local reason
             reason=$(get_fix_warning "$id")
@@ -157,11 +135,8 @@ _help_print_class_section() {
                 printf "      ${DIM}⚠ %s${NC}\n" "$reason"
             fi
         fi
-        # Orthogonal to the safety class — a template-only fix can be SAFE
-        # (the four generators) or CONFIRM (webapp's SSL pair) — so it is a
-        # note on the line rather than a sixth section. Without it `vpssec
-        # help` lists these as fixes that clear the finding, which they never
-        # do however well they run.
+        # Orthogonal to the safety class, so it is a note on the line rather
+        # than a sixth section: these never clear the finding.
         if fix_is_template_only "$id"; then
             printf "      ${DIM}→ %s${NC}\n" "$(get_fix_manual_step "$id")"
         fi

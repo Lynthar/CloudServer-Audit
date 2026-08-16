@@ -3,9 +3,7 @@
 # Filesystem security module - SUID/SGID, permissions, world-writable
 # Copyright (c) 2024
 
-# ==============================================================================
-# Filesystem Security Configuration
-# ==============================================================================
+# --- Filesystem Security Configuration ---
 
 # Known legitimate SUID binaries (whitelist)
 # These are standard system binaries that normally have SUID bit set
@@ -56,12 +54,9 @@ declare -ga FS_SUID_WHITELIST=(
     "/usr/bin/ntfs-3g"
 )
 
-# Sensitive files and their expected permissions
-# Note: sshd_config is 644 on Debian/Ubuntu by default (no secrets stored)
-# SSH private keys should be 600, public keys 644
-# Backup-shadow files (/etc/shadow-, /etc/gshadow-, etc.) are checked
-# alongside the originals — they hold the same secrets and are a
-# classic blind spot (also missed by Lynis's default profile).
+# Sensitive files and their expected modes. The backup-shadow files
+# (/etc/shadow-, /etc/gshadow-) are here on purpose: they hold the same
+# hashes as the originals and are a classic blind spot.
 declare -gA FS_SENSITIVE_FILES=(
     # Account databases + their backup copies
     ["/etc/passwd"]="644"
@@ -87,15 +82,9 @@ declare -gA FS_SENSITIVE_FILES=(
     # TCP wrappers (public, read-only)
     ["/etc/hosts.allow"]="644"
     ["/etc/hosts.deny"]="644"
-    # Boot loader config — the real risk is WRITE access (it changes the
-    # kernel cmdline), not read: grub.cfg's contents are non-secret and are
-    # already exposed world-readable via /proc/cmdline. Debian/Ubuntu ship
-    # grub.cfg mode 444, so demanding 600 produced a false positive on every
-    # stock host (and a FIX_SAFE auto-chmod that silently rewrote the distro
-    # default). Expect 644: accept 444/600/644, flag only world/group-WRITABLE.
-    # (Limitation: a grub.cfg carrying a `password_pbkdf2` hash is better at
-    # 600 since the hash is crackable offline; that rare case is not tightened
-    # here to avoid the common-case FP.)
+    # The risk here is WRITE access (it sets the kernel cmdline), not read:
+    # grub.cfg is already world-readable via /proc/cmdline, and Debian ships
+    # it 444. Expect 644 and flag only world/group-WRITABLE.
     ["/boot/grub/grub.cfg"]="644"
     ["/boot/grub2/grub.cfg"]="644"
     # Legacy r-* trust files: if present, lax perms are a remote-trust leak
@@ -106,12 +95,9 @@ declare -gA FS_SENSITIVE_FILES=(
 # Maximum number of items to report (to prevent huge output)
 FS_MAX_REPORT_ITEMS=20
 
-# System paths the umask and permissions checks read and write. Module
-# variables rather than literals for two reasons: the audit predicate and the
-# fix must not be able to point at different files, and a fix that hardcodes
-# an /etc literal cannot be exercised against a scratch tree — which is why
-# _fs_fix_umask went untested for as long as it did, and why the
-# "usergroups: missing login.defs" test could only ever skip on Linux.
+# Variables, not literals, for two reasons: the audit predicate and the fix
+# must not be able to point at different files, and a fix with a hardcoded
+# /etc path cannot be exercised against a scratch tree.
 FS_LOGIN_DEFS="/etc/login.defs"
 FS_PROFILE="/etc/profile"
 # Files whose pam_umask line decides whether login.defs UMASK applies at
@@ -126,14 +112,10 @@ declare -ga FS_PAM_SESSION_FILES=(
 FS_SUDOERS_D="/etc/sudoers.d"
 FS_SSHD_CONFIG_D="/etc/ssh/sshd_config.d"
 
-# Filesystem-walk infrastructure (_FS_PRUNE_PATHS, _FS_FIND_TIMEOUT,
-# _fs_build_prune_args, _fs_run_find) lives in core/common.sh so any
-# module — webapp's web-root scans, malware's path probes — can use it
-# without depending on filesystem.sh being in the include set.
+# The filesystem-walk helpers live in core/common.sh so webapp and malware
+# can use them without filesystem.sh being in the include set.
 
-# ==============================================================================
-# Filesystem Helper Functions
-# ==============================================================================
+# --- Filesystem Helper Functions ---
 
 # Sanitize count value to ensure it's a single integer
 # Handles cases where grep -c returns multiline output
@@ -144,33 +126,17 @@ _fs_sanitize_count() {
     echo "${val:-0}"
 }
 
-# True when the package manager reports that PATH's on-disk MODE differs
-# from what its owning package shipped — i.e. the permission bits (including
-# a freshly chmod-added SUID/SGID) were changed after install. This is what
-# lets the SUID/SGID audit stop trusting package ownership blindly: an
-# attacker who SUID-roots a distro binary (e.g. `chmod u+s /usr/bin/find`)
-# leaves the content untouched but the mode changed, and is now caught.
-#
-# rpm and pacman record per-file modes and can verify them. dpkg does NOT
-# track pathname metadata (`dpkg --verify` only checks md5sums, never mode),
-# so on Debian/Ubuntu this can only return "not tampered" and the explicit
-# whitelists remain the guard there. Returns non-zero (not tampered / can't
-# tell) on any error so a failed query never turns into a finding.
+# True when the package manager says PATH's on-disk MODE differs from what
+# its package shipped. dpkg cannot verify modes, so on Debian this always
+# returns "not tampered" and the explicit whitelists stay the guard.
 _fs_pkg_mode_tampered() {
     local path="$1" out
     case "${VPSSEC_PKG_MGR:-}" in
         dnf|yum)
             command -v rpm >/dev/null 2>&1 || return 1
-            # `rpm -Vf` prints one line per failed check; field 1 is the
-            # 9-char status string whose 2nd character is 'M' on a mode
-            # mismatch. $NF is the path (a 'c'/'d' type tag may sit between).
-            #
-            # rpm -V EXITS NON-ZERO whenever it finds any discrepancy (which
-            # is exactly the case we care about), so it must NOT be the last
-            # command in a pipe under `set -o pipefail` — its expected
-            # non-zero exit would mask awk's verdict and the function would
-            # always report "not tampered". Capture the output first, then
-            # let awk's exit status be the function's result.
+            # Field 1's 2nd char is 'M' on a mode mismatch. Captured FIRST:
+            # rpm -V exits non-zero on any discrepancy, which under pipefail
+            # would mask awk's verdict and always report "not tampered".
             out=$(rpm -Vf "$path" 2>/dev/null)
             awk -v p="$path" '
                 $NF == p && substr($1,2,1) == "M" { t=1 }
@@ -181,15 +147,9 @@ _fs_pkg_mode_tampered() {
             local pkg
             pkg=$(pacman -Qoq -- "$path" 2>/dev/null) || return 1
             [[ -n "$pkg" ]] || return 1
-            # `pacman -Qkk` reports a permission/mode mismatch line naming the
-            # path; it also exits non-zero on any mismatch, so capture first
-            # (same pipefail reasoning as rpm above). Capture 2>&1, NOT
-            # 2>/dev/null: pacman emits the per-file mismatch as a WARNING on
-            # stderr (e.g. "warning: <pkg>: /path (Permissions mismatch)"), so
-            # discarding stderr made this detection inert on Arch — the
-            # tolerant `permission` grep already handles the "warning:" prefix.
-            # Match tolerantly otherwise: a format change yields "not tampered"
-            # (fail-safe).
+            # Captured first for the same pipefail reason as rpm, and with
+            # 2>&1: pacman emits the mismatch as a WARNING on stderr, so
+            # discarding stderr makes this detection inert.
             out=$(pacman -Qkk -- "$pkg" 2>&1)
             grep -F -- "$path" <<<"$out" | grep -qi "permission"
             ;;
@@ -217,19 +177,9 @@ _fs_is_whitelisted() {
             [[ -n "$pattern" && "$path" == $pattern ]] && return 0
         done < <(distro_suid_whitelist)
     fi
-    # Package-ownership fallback: a SUID binary owned by an installed
-    # package is distro-shipped and maintainer-vetted, not an anomaly —
-    # this is what lets us stop hand-maintaining per-release path
-    # whitelists. Orphaned (unowned) SUID files still fall through to a
-    # finding. No-op when the pkg manager can't answer (non-zero rc).
-    #
-    # BUT ownership alone is not enough: an attacker can `chmod u+s` a
-    # package-owned binary that is NOT normally SUID (find/vim/python/...),
-    # and the content — hence package ownership — is unchanged. Where the
-    # package manager can verify modes (rpm/pacman), refuse the exemption
-    # when the mode was tampered so the added SUID bit surfaces as a finding.
-    # On Debian dpkg cannot verify modes, so the explicit whitelists above
-    # remain the only guard there (documented limitation).
+    # A package-owned SUID binary is distro-shipped — this replaced the
+    # per-release whitelists. Ownership alone is NOT enough: the exemption is
+    # refused wherever the manager can prove the mode was tampered.
     if declare -f file_owned_by_package >/dev/null 2>&1; then
         if file_owned_by_package "$path" && ! _fs_pkg_mode_tampered "$path"; then
             return 0
@@ -238,13 +188,9 @@ _fs_is_whitelisted() {
     return 1
 }
 
-# Find SUID files (excluding whitelisted).
-#
-# `find / -xdev` already skips anything not on the root filesystem
-# (NFS, separate /home, snap squashfs, tmpfs etc.). The prune list
-# below additionally skips container-image storage that lives *on*
-# the root filesystem — Docker overlay diffs ship legitimate SUID
-# binaries that would get flagged as host-level anomalies otherwise.
+# Find non-whitelisted SUID files. -xdev handles other filesystems; the
+# prune list handles container-image storage on the root fs, whose overlay
+# diffs ship legitimate SUID binaries.
 _fs_find_suid_files() {
     local count=0
     local results=()
@@ -305,11 +251,9 @@ _fs_find_sgid_files() {
             done < <(distro_sgid_whitelist)
         fi
 
-        # Package-ownership fallback (same rationale and caveat as SUID):
-        # exempt a package-owned SGID binary UNLESS the package manager can
-        # prove its mode was tampered (a chmod-added SGID bit), in which case
-        # let it surface. dpkg can't verify modes, so this only tightens
-        # RHEL/Arch; the explicit SGID whitelist guards Debian.
+        # Same rule as SUID: exempt a package-owned SGID binary UNLESS the
+        # manager can prove the mode was tampered. dpkg cannot, so the
+        # explicit whitelist guards Debian.
         if (( skip == 0 )) && declare -f file_owned_by_package >/dev/null 2>&1; then
             if file_owned_by_package "$file" && ! _fs_pkg_mode_tampered "$file"; then
                 skip=1
@@ -330,10 +274,9 @@ _fs_find_sgid_files() {
     printf '%s\n' "${results[@]}"
 }
 
-# Find world-writable files. Excludes ephemeral/volatile mounts AND
-# container storage — the latter were missing from the original
-# implementation, so a busy Docker host saw image-internal files
-# flagged as host-level world-writable issues.
+# Find world-writable files, excluding volatile mounts AND container
+# storage — without the latter, image-internal files are flagged as host
+# findings on any Docker host.
 _fs_find_world_writable() {
     local count=0
     local results=()
@@ -418,10 +361,9 @@ _fs_find_no_owner() {
     printf '%s\n' "${results[@]}"
 }
 
-# Check a sensitive file's permissions AND ownership. Mode alone was not
-# enough: /etc/shadow at 640 but chowned to nobody:nogroup (a botched
-# restore/copy does this) is exactly as readable to the wrong party as a
-# world-readable one, and the mode-only check called it fine.
+# Check a sensitive file's permissions AND ownership. Mode alone is not
+# enough: /etc/shadow at 640 owned by nobody is as readable to the wrong
+# party as a world-readable one.
 _fs_check_sensitive_file() {
     local file="$1"
     local expected="$2"
@@ -441,17 +383,9 @@ _fs_check_sensitive_file() {
 
     local problems=()
 
-    # Mode: too permissive (bitmask comparison).
-    #
-    # The previous arithmetic test `((actual_num > expected_num))` was
-    # WRONG: 0604 < 0640 numerically, but 0604 grants world-read where
-    # 0640 does not, so /etc/shadow at mode 604 silently passed this
-    # audit. Likewise 0046 (38) < 0640 (416) but 0046 grants world-
-    # write. The correct test is: does `actual` set any bit that
-    # `expected` does not? — `actual & ~expected`. Mask to the low 12
-    # bits so setuid/setgid/sticky in `actual` still flag (they are
-    # legitimately surprising on these files), without false-flagging
-    # ad-hoc high bits if stat ever printed them.
+    # Bitmask, NEVER an arithmetic comparison: 0604 is numerically below
+    # 0640 but grants world-read, so `>` silently passes mode 604 on
+    # /etc/shadow. The test is `actual & ~expected`, masked to 12 bits.
     local actual_num=$((8#$actual))
     local expected_num=$((8#$expected))
     local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
@@ -459,10 +393,8 @@ _fs_check_sensitive_file() {
         problems+=("mode $actual (expected $expected)")
     fi
 
-    # Ownership checks only under the production condition (euid 0): the
-    # audit always runs as root, and a non-root invocation (bats fixtures
-    # in a scratch dir) owns its own test files — flagging those would make
-    # every mode assertion fail for a reason the test isn't about.
+    # Ownership is only checked as root, the production condition: bats
+    # fixtures own their own scratch files.
     if [[ "$(id -u)" == "0" ]]; then
         # Owner: every file in FS_SENSITIVE_FILES is root-owned on every
         # supported distro; anything else is drift worth surfacing.
@@ -470,11 +402,9 @@ _fs_check_sensitive_file() {
             problems+=("owner $owner (expected root)")
         fi
 
-        # Group: only a problem when the group actually gets access bits AND
-        # is outside the small set of system groups these files legitimately
-        # use (root everywhere; shadow for Debian's shadow/gshadow; ssh_keys
-        # for RHEL host keys). A random group with zero group-bits is odd but
-        # grants nothing — stay quiet there.
+        # Group only matters when it actually gets access bits AND is
+        # outside the system groups these files legitimately use: root,
+        # shadow on Debian, ssh_keys for RHEL host keys.
         if [[ -n "$group" ]] && (( actual_num & 070 )) ; then
             case "$group" in
                 root|shadow|ssh_keys) : ;;
@@ -528,15 +458,9 @@ _fs_check_tmp_mount() {
 _fs_check_umask() {
     local umask_value
 
-    # Check login.defs — FIRST occurrence only. shadow's getdef keeps the
-    # first entry for a duplicated name: verified on Debian 12 with
-    # pam_umask enabled, two UMASK lines, both orders — the session gets the
-    # first one. An unbounded grep concatenated both values into "077 022",
-    # which normalises to a nonsense mask and made the audit report a weak
-    # umask on a host that had a strict one.
-    #
-    # awk rather than `grep | head -1`: head closes the pipe early, and under
-    # pipefail that SIGPIPE becomes the assignment's exit status.
+    # FIRST occurrence only: shadow's getdef keeps the first entry for a
+    # duplicated name, and an unbounded grep concatenates both into "077 022".
+    # awk, not `grep | head -1` — head's SIGPIPE becomes the exit status.
     if [[ -f "$FS_LOGIN_DEFS" ]]; then
         umask_value=$(awk '/^UMASK/ { print $2; exit }' "$FS_LOGIN_DEFS" 2>/dev/null)
     fi
@@ -551,11 +475,9 @@ _fs_check_umask() {
     echo "${umask_value:-022}"
 }
 
-# The audit's own definition of an acceptable umask: world bits denied.
-# Shared with _fs_fix_umask so the fix's postcondition cannot drift from the
-# check that produced the finding — the same reason the paths above are
-# variables. Matches 027, 077, 007 (the USERGROUPS-rewritten form) and any
-# other variant whose last digit is 7.
+# The audit's definition of an acceptable umask: world bits denied. Shared
+# with _fs_fix_umask so the fix's postcondition cannot drift from the check
+# that produced the finding.
 _fs_umask_is_strict() {
     [[ "$1" =~ ^0[0-7][0-7]7$ ]]
 }
@@ -571,16 +493,9 @@ _fs_get_usergroups_enab() {
     echo "${val:-yes}"
 }
 
-# Apply the USERGROUPS_ENAB transformation to a configured umask. When
-# USERGROUPS_ENAB=yes (Debian/Ubuntu default) and the user's uid equals
-# their primary gid (the standard private-group convention), pam_umask
-# rewrites the group mask bits to match the owner bits. So configured
-# 027 becomes effective 007, and the audit lying about "027 is set"
-# was the actual M15 user-facing bug.
-#
-# $1 = configured umask string (e.g. "027" or "0027")
-# $2 = "yes"|"no" (USERGROUPS_ENAB)
-# Echoes a 4-digit normalized effective umask.
+# Apply the USERGROUPS_ENAB transformation to a configured umask, so the
+# audit reports what actually applies at session start rather than the
+# literal in login.defs. Args: <umask> <yes|no>. Echoes 4 digits.
 _fs_compute_effective_umask() {
     local raw="$1"
     local usergroups="${2:-no}"
@@ -599,10 +514,9 @@ _fs_compute_effective_umask() {
     fi
 }
 
-# Returns 0 if pam_umask is enabled in /etc/pam.d/common-session*.
-# pam_umask reading login.defs UMASK is what makes the configured
-# value actually take effect at session start; without it, only shell
-# rc files (/etc/profile, /etc/bash.bashrc) influence umask.
+# Is pam_umask enabled in /etc/pam.d/common-session*? It is what makes the
+# login.defs UMASK take effect at session start; without it only shell rc
+# files influence umask.
 _fs_check_pam_umask_enabled() {
     local f
     for f in "${FS_PAM_SESSION_FILES[@]}"; do
@@ -613,13 +527,9 @@ _fs_check_pam_umask_enabled() {
     return 1
 }
 
-# Known legitimate binaries with capabilities. The cap field is the COMPLETE
-# set the binary is allowed to hold (comma-separated when more than one):
-# matching is subset-based, so a whitelisted file whose on-disk caps include
-# anything beyond its entry is NOT exempted. The previous regex-contains
-# match let `setcap cap_net_raw,cap_sys_admin=ep /usr/bin/ping` sail through
-# because "cap_net_raw" appeared somewhere in the string — the whitelist
-# quietly covered any escalation stacked onto a whitelisted binary.
+# Legitimate cap-bearing binaries. The cap field is the COMPLETE allowed set
+# and matching is subset-based, never substring: a contains-match exempts any
+# capability stacked onto a whitelisted binary.
 declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/ping:cap_net_raw"
     "/usr/bin/traceroute:cap_net_raw"
@@ -678,14 +588,9 @@ _fs_find_caps_files() {
         return
     fi
 
-    # Find all files with capabilities.
-    # getcap output format varies by libcap version:
-    #   modern (libcap >= 2.43):  "/usr/bin/ping cap_net_raw=ep"
-    #   legacy:                   "/usr/bin/ping = cap_net_raw+ep"
-    # Previously parsed only the legacy form, so on every modern Debian/
-    # Ubuntu the whitelist match silently failed and every cap-bearing
-    # binary got flagged. Split on the first space, then strip a leading
-    # "= " to handle the legacy form too.
+    # getcap output differs by libcap version: "path cap=ep" on 2.43+ and
+    # "path = cap+ep" before it. Split on the first space, then strip a
+    # leading "= " so both forms parse.
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
 
@@ -693,10 +598,8 @@ _fs_find_caps_files() {
         local caps="${line#* }"
         caps="${caps#= }"
 
-        # getcap has no -xdev/-prune, so explicitly skip container-image and
-        # snap storage that lives on the root fs (mirrors the SUID/SGID/
-        # world-writable walks). Otherwise cap-bearing binaries inside
-        # Docker/containerd/snap images are reported as host-level findings.
+        # getcap has no -xdev or -prune, so container and snap storage on the
+        # root fs must be skipped explicitly, as the other walks do.
         local pruned=false pp
         for pp in "${_FS_PRUNE_PATHS[@]}"; do
             if [[ "$file" == "$pp" || "$file" == "$pp"/* ]]; then
@@ -835,9 +738,7 @@ _fs_count_user_crontabs() {
     echo "$count"
 }
 
-# ==============================================================================
-# Filesystem Audit
-# ==============================================================================
+# --- Filesystem Audit ---
 
 filesystem_audit() {
     local module="filesystem"
@@ -1018,27 +919,16 @@ _fs_audit_no_owner() {
 }
 
 _fs_audit_sensitive_perms() {
-    # Severity model: not every "wrong perms" finding is equal.
-    #   * /etc/shadow, /etc/gshadow, /etc/sudoers, /etc/sudoers.d/*,
-    #     SSH host private keys (ssh_host_*_key) → mistaken perms
-    #     here are direct local-priv-esc / credential-leak
-    #     primitives. Stay HIGH.
-    #   * /etc/passwd, /etc/group, sshd_config, /etc/crontab, public
-    #     hosts.allow/deny, sshd_config.d drop-ins → wrong perms are
-    #     real but typically read-only exposure, not direct
-    #     compromise. MEDIUM.
-    # Emit one finding per bucket so the score reflects actual
-    # exposure rather than counting a wrong-perm /etc/group as
-    # equivalent to a 666 sudoers drop-in.
+    # Two buckets, one finding each, so the score reflects real exposure:
+    # HIGH for direct priv-esc / credential-leak primitives (shadow, sudoers,
+    # SSH host keys), MEDIUM for read-only exposure (passwd, group, configs).
     local high_issues=()
     local med_issues=()
 
     _fs_is_critical_perm_path() {
         case "$1" in
-            # /etc/shadow- and /etc/gshadow- are the rotated backups
-            # written by passwd/usermod/etc. — they hold the *same*
-            # password hashes as the live files, so weak perms there
-            # are an equivalent credential-leak primitive.
+            # The rotated backups hold the SAME hashes as the live files,
+            # so weak perms there are an equivalent leak primitive.
             /etc/shadow|/etc/shadow-|/etc/gshadow|/etc/gshadow-|/etc/sudoers) return 0 ;;
             /etc/sudoers.d/*) return 0 ;;
             /etc/ssh/ssh_host_*_key) return 0 ;;
@@ -1048,12 +938,9 @@ _fs_audit_sensitive_perms() {
 
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
         local expected="${FS_SENSITIVE_FILES[$file]}"
-        # RHEL/Fedora package SSH host private keys as 640 root:ssh_keys
-        # (the ssh-keysign helper and host-based auth need group read);
-        # that is the shipped default, not a permission slip. Accept 640
-        # for host keys only when the group really is ssh_keys — 640 still
-        # forbids world/other bits, so a world-readable key is still
-        # caught. Debian/Ubuntu/Arch keep the 600 expectation.
+        # RHEL ships host private keys as 640 root:ssh_keys, which is the
+        # default rather than a slip. Accepted ONLY when the group really is
+        # ssh_keys; 640 still forbids world bits. Debian and Arch keep 600.
         if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
             expected="640"
         fi
@@ -1068,13 +955,9 @@ _fs_audit_sensitive_perms() {
         fi
     done
 
-    # Drop-in directories. The static FS_SENSITIVE_FILES list cannot
-    # use globs, so files dropped into /etc/sudoers.d/ or
-    # /etc/ssh/sshd_config.d/ at install time (cloud-init, Ansible,
-    # kubeadm, etc.) were not audited. A 666 file in /etc/sudoers.d/
-    # is a direct privilege-escalation primitive yet was passing
-    # cleanly. Same drop-in blindness pattern as the sshd_config.d
-    # bug this whole audit pass was seeded by.
+    # Drop-in directories, expanded here because the static list cannot use
+    # globs. Without this a 666 file in /etc/sudoers.d/ — a direct
+    # privilege-escalation primitive — passes cleanly.
     local _drop
     for _drop in "$FS_SUDOERS_D"/*; do
         [[ -f "$_drop" ]] || continue
@@ -1188,36 +1071,9 @@ _fs_audit_umask() {
     local pam_umask_on=0
     _fs_check_pam_umask_enabled && pam_umask_on=1
 
-    # Severity is decided on the EFFECTIVE umask (what actually applies
-    # at session start), not the literal value in login.defs. Otherwise
-    # configured=027 + USERGROUPS_ENAB=yes (Debian default) reports "OK"
-    # while real users get effective 007.
-    #
-    # What follows only decides what the report SAYS — the branch below still
-    # keys on $effective exactly as before, so no host's score moves. Two
-    # claims that used to be stated as fact are now qualified:
-    #
-    #   * The USERGROUPS_ENAB rewrite. Measured on Debian 12 with pam_umask
-    #     enabled, USERGROUPS_ENAB=yes and a textbook private-group user
-    #     (uid == gid, group name == user name): a configured UMASK of 077
-    #     produced a session umask of 0077, not the 0007 this model predicts.
-    #     The likely reason is that pam_umask performs that rewrite for its own
-    #     `usergroups` module option while USERGROUPS_ENAB in login.defs is
-    #     what useradd reads — unverified, and `su -` is not a full getty/sshd
-    #     login, so the model itself stays. But the report must not assert a
-    #     rewrite the operator disproves by typing `umask`. That is the mirror
-    #     image of the M15 bug this model was written to fix.
-    #   * That login.defs UMASK applies at all. Without pam_umask in the
-    #     session stack it does not: shadow's own `login` honours it on the
-    #     console, sshd does not. Stock Debian 12 ships no pam_umask line, so
-    #     this is the common case, not a corner one.
-    # Compare the NORMALISED configured value, not the raw one. `configured` is
-    # what the file says ("027"); `effective` is always 4 digits ("0027"), so a
-    # raw string comparison differs for every 3-digit value and the qualifier
-    # was emitted even when nothing had been rewritten — including on
-    # USERGROUPS_ENAB=no hosts, where the sentence read "effective=0027
-    # (USERGROUPS_ENAB=no rewrites group bits)". Same for an already-mirrored
-    # value like 007, where the rewrite is a no-op.
+    # Severity keys on the EFFECTIVE umask, not the login.defs literal.
+    # The wording qualifies two claims the operator could disprove by typing
+    # `umask` (see the design notes), and compares NORMALISED values.
     local normalized
     normalized=$(_fs_compute_effective_umask "$configured" "no")
 
@@ -1268,10 +1124,8 @@ _fs_audit_umask() {
         print_severity "low" "Weak umask: $desc"
     fi
 
-    # pam_umask presence is informational — if absent, the UMASK setting
-    # in login.defs may not be applied at session start (only via shell
-    # rc files), so tell the user. No fix offered: PAM stack edits are
-    # too sensitive to auto-modify.
+    # Informational: without pam_umask the login.defs UMASK may never apply
+    # at session start. No fix offered — PAM stack edits are not auto-safe.
     if (( pam_umask_on == 0 )); then
         local pam_check
         pam_check=$(create_check_json \
@@ -1408,9 +1262,7 @@ _fs_audit_cron() {
     fi
 }
 
-# ==============================================================================
-# Filesystem Fix Functions
-# ==============================================================================
+# --- Filesystem Fix Functions ---
 
 filesystem_fix() {
     local fix_id="$1"
@@ -1450,18 +1302,18 @@ _fs_fix_sensitive_perms() {
         local actual_num=$((8#$actual))
         local expected_num=$((8#$expected))
 
-        # Same bitmask test as _fs_check_sensitive_file — chmod whenever
-        # the file has any bit not in the expected mask. The original
-        # arithmetic `((actual > expected))` failed to fix files like
-        # /etc/shadow at 0604 (world-readable but numerically smaller
-        # than the 0640 expected mask) — the audit reported the issue
-        # via the bitmask check above, but the fix never ran.
+        # Same bitmask test as the audit side, so the fix cannot skip a file
+        # the audit flagged: an arithmetic comparison misses 0604.
         local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
         if (( extra_bits != 0 )); then
             print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$expected")"
             # Back up before chmod so the prior mode can be restored on rollback
-            # (backup_file uses cp -p, preserving the original mode bits).
-            backup_file "$file" >/dev/null 2>&1 || true
+            # (cp -p preserves the mode). Counted, not just returned: the loops
+            # below ignore this helper's status, so a bare return would be silent.
+            if ! backup_file "$file" >/dev/null; then
+                ((failed++)) || true
+                return 1
+            fi
             if chmod "$expected" "$file" 2>/dev/null; then
                 ((fixed++)) || true
                 print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"
@@ -1476,10 +1328,9 @@ _fs_fix_sensitive_perms() {
         _fs_fix_one "$file" "${FS_SENSITIVE_FILES[$file]}"
     done
 
-    # Mirror the audit-side drop-in expansion. /etc/sudoers.d/* should
-    # be 0440 (matching the sudoers main file); /etc/ssh/sshd_config.d/*
-    # should be 0644 (matching sshd_config). Without this, the fix
-    # path is silently a no-op for files the audit just flagged.
+    # Mirrors the audit-side drop-in expansion — without it the fix is a
+    # silent no-op for files the audit just flagged. sudoers.d is 0440,
+    # sshd_config.d is 0644.
     local _drop
     for _drop in "$FS_SUDOERS_D"/*; do
         [[ -f "$_drop" ]] || continue
@@ -1512,13 +1363,11 @@ _fs_fix_umask() {
         return 1
     fi
 
-    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true
+    backup_file "$FS_LOGIN_DEFS" >/dev/null || return 1
 
-    # Stage, validate, then replace atomically. This used to be `sed -i` on
-    # the live file, with `echo >> ` when no UMASK line existed — and PAM
-    # reads login.defs at every login, so an interrupted in-place rewrite or
-    # a partial append is a login-time failure on a fix nobody was asked to
-    # confirm (filesystem.fix_umask is FIX_SAFE).
+    # Stage, validate, replace atomically. PAM reads login.defs at every
+    # login, so a partial in-place rewrite is a login-time failure — and this
+    # fix is FIX_SAFE, applied without asking.
     local staged
     if grep -qE '^UMASK' "$FS_LOGIN_DEFS"; then
         staged=$(sed 's/^UMASK.*/UMASK\t\t027/' "$FS_LOGIN_DEFS") || staged=""
@@ -1536,11 +1385,9 @@ _fs_fix_umask() {
         return 1
     fi
 
-    # Postcondition: ask the audit's own question again rather than trusting
-    # that the write did what it looked like. `sed` exits 0 having matched
-    # nothing, and a UMASK line the audit reads differently (a second one
-    # later in the file, a value the pattern does not accept) would otherwise
-    # be reported as a fixed host that the next audit re-flags.
+    # Postcondition: ask the audit's own question again. sed exits 0 having
+    # matched nothing, so trusting the write reports a fixed host that the
+    # next audit re-flags.
     local usergroups effective
     usergroups=$(_fs_get_usergroups_enab)
     effective=$(_fs_compute_effective_umask "$(_fs_check_umask)" "$usergroups")
@@ -1551,21 +1398,16 @@ _fs_fix_umask() {
 
     print_ok "$(i18n 'filesystem.umask_fixed')"
 
-    # Surface the USERGROUPS_ENAB interaction so the operator isn't
-    # surprised. With the Debian default (USERGROUPS_ENAB=yes +
-    # private user groups), pam_umask rewrites 027 to effective 007
-    # at session start. World access is still denied; the change
-    # is just that group bits mirror owner bits — harmless on a
-    # standard VPS where each user has their own private group.
+    # Surface the USERGROUPS_ENAB interaction: with the Debian default the
+    # group bits mirror the owner bits, so 027 becomes an effective 007.
+    # World access is still denied.
     if [[ "$usergroups" == "yes" ]]; then
         print_info "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
     fi
 
-    # pam_umask is what makes login.defs UMASK apply at session start. Without
-    # it the value this fix just wrote only reaches shell login sessions, so
-    # saying so here is the difference between "hardened" and "hardened for
-    # interactive bash users only". The audit reports the same thing as info;
-    # no fix is offered because editing the PAM stack is not auto-safe.
+    # Without pam_umask the value just written only reaches shell login
+    # sessions — the difference between "hardened" and "hardened for
+    # interactive bash users". No fix: PAM stack edits are not auto-safe.
     if ! _fs_check_pam_umask_enabled; then
         print_warn "$(i18n 'filesystem.umask_pam_missing')"
     fi

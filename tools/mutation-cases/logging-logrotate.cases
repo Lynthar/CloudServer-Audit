@@ -61,7 +61,7 @@ run_case "conf/existing-overwritten" 1 \
     '    if true; then'
 
 run_case "conf/backup-skipped" 1 \
-    '        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true' \
+    '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
     '        :'
 
 # The recurring defect this project has hit seven times in seven places:
@@ -70,8 +70,8 @@ run_case "conf/backup-skipped" 1 \
 # precisely when the file does not exist, so "nothing there, nothing to back
 # up" defeats it every time.
 run_case "conf/backup-guarded-again" 1 \
-    '        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true' \
-    '        [[ -f "$LOGROTATE_CONF" ]] && backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true'
+    '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
+    '        [[ -f "$LOGROTATE_CONF" ]] && { backup_file "$LOGROTATE_CONF" >/dev/null || return 1; }'
 
 # Re-hardcoding the path silently removes the fix from coverage while the suite
 # stays green. Pinned at backup_file, a READ-only call site: pinning it at the
@@ -79,8 +79,8 @@ run_case "conf/backup-guarded-again" 1 \
 # own /etc/logrotate.conf, and every later case would run against a changed
 # host.
 run_case "conf/path-hardcoded" 1 \
-    '        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true' \
-    '        backup_file "/etc/logrotate.conf" >/dev/null 2>&1 || true'
+    '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
+    '        backup_file "/etc/logrotate.conf" >/dev/null || return 1'
 
 # A failed write reported as success. The condition spans the whole heredoc-ish
 # content argument, so it has to be broken at the CLOSING line; `|| true` there
@@ -88,3 +88,8 @@ run_case "conf/path-hardcoded" 1 \
 run_case "conf/write-failure-unchecked" 1 \
     "include /etc/logrotate.d'; then" \
     "include /etc/logrotate.d' || true; then"
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
+    '        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true'

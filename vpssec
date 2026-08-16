@@ -1,32 +1,15 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# vpssec - VPS Security Check & Hardening Tool
-#
-# A security audit and hardening tool for VPS environments
-# Supports Debian 12/13 and Ubuntu 22.04/24.04
-#
-# Usage:
-#   vpssec audit [options]    - Read-only security check
-#   vpssec guide [options]    - Interactive hardening wizard
-#   vpssec rollback [backup]  - Rollback previous changes
-#   vpssec status             - Show current status
-#
-# Copyright (c) 2024
-# ==============================================================================
+# vpssec - VPS security audit and hardening.
+# Sub-commands: audit (read-only), guide (hardening wizard), rollback, status.
+# Audit runs on Debian/Ubuntu/RHEL/Arch; guide and rollback are Debian only.
 
 set -euo pipefail
 
-# VPSSEC_ROOT is computed in core/common.sh (relative to common.sh's
-# own path) immediately after the first source below. We previously
-# also computed it here in the entrypoint; both paths produced the
-# same value for the standard layout, but that was a silent
-# coincidence — any future relocation of either file would have made
-# the two definitions drift. The entrypoint-side computation has been
-# removed; we bootstrap the first source via BASH_SOURCE directly.
+# VPSSEC_ROOT is computed ONLY in core/common.sh, relative to its own path.
+# Do not recompute it here — two definitions would drift. The first source
+# below bootstraps via BASH_SOURCE directly.
 
-# ==============================================================================
-# Source Core Modules
-# ==============================================================================
+# --- Source Core Modules ---
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core/common.sh"
 source "${VPSSEC_ROOT}/core/distro.sh"
@@ -37,9 +20,7 @@ source "${VPSSEC_ROOT}/core/ui_text.sh"
 source "${VPSSEC_ROOT}/core/engine.sh"
 source "${VPSSEC_ROOT}/core/help.sh"
 
-# ==============================================================================
-# CLI Argument Parsing
-# ==============================================================================
+# --- CLI Argument Parsing ---
 
 show_help() {
     cat <<EOF
@@ -78,34 +59,9 @@ show_version() {
     echo "vpssec version ${VPSSEC_VERSION}"
 }
 
-# Parse the command line ONCE, in the current shell.
-#
-# This used to be two passes. parse_args() was invoked as
-# `command=$(parse_args "$@")` — a command substitution, i.e. a
-# subshell — so every variable it assigned (VPSSEC_JSON_ONLY,
-# VPSSEC_YES, VPSSEC_DEBUG, VPSSEC_EXCLUDE, VPSSEC_SECURITY_LEVEL,
-# the colour reset) evaporated on return; only the echoed command
-# survived. The workaround was a second, hand-maintained loop in
-# main() that re-handled every one of those flags in the parent shell,
-# which meant adding a flag required editing two places and forgetting
-# one produced a silent no-op. Three separate comments in the old code
-# documented having been bitten by exactly that.
-#
-# Returning the command through a global instead of stdout removes the
-# subshell, and with it the duplicate loop.
-#
-# Outputs (globals):
-#   VPSSEC_MODE / VPSSEC_MODE_SET       chosen sub-command
-#   VPSSEC_ROLLBACK_TIMESTAMP           optional positional after `rollback`
-#   VPSSEC_LANG / _LANG_SET, VPSSEC_COLOR, VPSSEC_JSON_ONLY, VPSSEC_YES,
-#   VPSSEC_DEBUG, VPSSEC_INCLUDE, VPSSEC_EXCLUDE, VPSSEC_SECURITY_LEVEL
-#   VPSSEC_HELP_REQUESTED / VPSSEC_HELP_TOPIC / VPSSEC_HELP_SUBCOMMAND
-#   VPSSEC_VERSION_REQUESTED
-#
-# Terminal sub-commands (--help / --version / help) are only FLAGGED
-# here, never dispatched: a forward pass that exited on `--help` before
-# reading a later `--lang=` printed the wrong language. main() decides
-# after the whole line has been read, so flag order does not matter.
+# Parse the command line ONCE, in the current shell, returning the command
+# through a global — a command substitution discards every VPSSEC_* set here.
+# --help / --version / help are FLAGGED here, dispatched by main().
 parse_args() {
     VPSSEC_HELP_REQUESTED=0
     VPSSEC_HELP_TOPIC=""
@@ -203,9 +159,7 @@ parse_args() {
     done
 }
 
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
+# --- Main Entry Point ---
 
 main() {
     # One pass over the command line; everything lands in globals.
@@ -224,10 +178,8 @@ main() {
             vpssec_help_dispatch "$VPSSEC_HELP_TOPIC"
             exit $?
         fi
-        # `vpssec help` (no module) and `vpssec --help` deliberately
-        # render different things: --help is the CLI option summary
-        # users expect from any UNIX tool, while `help` is the
-        # module/fix overview. Disambiguate by which arg arrived.
+        # --help is the CLI option summary; `help` is the module/fix
+        # overview. Disambiguated by which arg arrived.
         if (( VPSSEC_HELP_SUBCOMMAND )); then
             vpssec_help_dispatch ""
         else
@@ -236,12 +188,9 @@ main() {
         exit 0
     fi
 
-    # If the user passed a non-status command on the CLI, fail fast on
-    # missing root before we walk any menus. Previously the check
-    # happened after language/mode/module selection, so a non-root
-    # user went through the entire interactive flow and only then saw
-    # "root required". The second check below handles the fully
-    # interactive path where the command is only known after select_mode.
+    # Fail fast on missing root before any menu. The second check below
+    # covers the interactive path, where the command is known only after
+    # select_mode.
     if [[ -n "${VPSSEC_MODE:-}" && "$VPSSEC_MODE" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_error "$(i18n 'error.root_required' 2>/dev/null || echo 'This operation requires root privileges')"
@@ -265,10 +214,8 @@ main() {
         exit 1
     fi
 
-    # Guide/fix is apt/dpkg-based and only supported on Debian/Ubuntu.
-    # Reject here — before the module menu — so a RHEL/Arch user isn't
-    # walked through module selection only to be turned away. The audit
-    # path is distro-aware and still works; guide_mode keeps its own
+    # Rejected before the module menu, so a RHEL/Arch user is not walked
+    # through selection and then turned away. guide_mode keeps its own
     # is_debian_based gate as defence in depth.
     if [[ "${VPSSEC_MODE:-}" == "guide" ]] && ! is_debian_based; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true

@@ -3,42 +3,25 @@
 # Docker security module (Enhanced v0.2)
 # Copyright (c) 2024
 
-# ==============================================================================
-# Docker Configuration
-# ==============================================================================
+# --- Docker Configuration ---
 
 DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
 DOCKER_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/docker"
 
-# ==============================================================================
-# Docker Helper Functions
-# ==============================================================================
+# --- Docker Helper Functions ---
 
 _docker_installed() {
     check_command docker && docker info &>/dev/null
 }
 
-# A container runtime is present but this module cannot audit it.
-#
-# `_docker_installed` answers "can I talk to a daemon", and the audit used to
-# treat a No as "Docker is not installed" — a passed check that skips every
-# container finding. Two common hosts answer No while running containers:
-# rootless Docker, whose socket lives in the invoking user's runtime dir and is
-# therefore invisible to a sudo'd audit, and Podman, which vpssec never probes
-# at all. Echoes what was found, space-separated; empty when nothing was.
+# A container runtime is present that this module cannot audit. Needed because
+# _docker_installed only answers "can I reach a daemon", and both rootless
+# Docker and Podman answer No while running containers.
 _docker_unaudited_runtime() {
     local found=() uid home
-    # check_command, not a bare `command -v`: the project's own wrapper is what
-    # _vpssec_absent_command can steer, and a test that cannot make a binary
-    # absent ends up asserting what the CI runner happens to have installed —
-    # ubuntu-latest ships podman, the verification container does not.
-    #
-    # `if`, not `&&`: as a bare `a && b` this line returns non-zero on every
-    # host without podman, which under errexit would abort the function before
-    # the rootless scan below. The audit path happens to run with errexit off
-    # (the engine dispatches audits inside an `if`), so it worked by accident
-    # of the call context — and bats `run` disables errexit too, so no test
-    # could see it either.
+    # check_command, not `command -v`, so a test can make the binary absent.
+    # `if`, not `&&`: a bare `a && b` returns non-zero wherever podman is
+    # missing and would abort this function under errexit.
     if check_command podman; then found+=("podman"); fi
 
     while IFS=: read -r _ _ uid _ _ home _; do
@@ -55,12 +38,9 @@ _docker_unaudited_runtime() {
 }
 
 _docker_get_exposed_ports() {
-    # Publicly-published host ports: the number immediately before "->" for any
-    # binding that is NOT loopback. The old `0\.0\.0\.0:` regex caught ONLY the
-    # IPv4-wildcard form and missed IPv6 wildcard (":::PORT"), bracketed IPv6
-    # ("[2001:db8::1]:PORT") and specific-public-IP binds ("203.0.113.5:PORT") —
-    # all of which are reachable from off-host. Loopback binds (127.0.0.0/8,
-    # ::1) are intentionally excluded: they are not exposed.
+    # Publicly published ports: the number before "->" on any NON-loopback
+    # binding. Must cover IPv6 wildcard, bracketed IPv6 and specific public
+    # IPs — all reachable off-host. Loopback binds are deliberately excluded.
     docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | awk '
         /->/ {
             hp = $0; sub(/->.*/, "", hp); gsub(/[[:space:]]/, "", hp)
@@ -108,11 +88,9 @@ _docker_get_containers_with_caps() {
 }
 
 _docker_check_userns() {
-    # Only consider userns-remap actually active — docker info prints
-    # warnings containing "userns" when the feature is NOT configured,
-    # so a bare `grep -q userns` was misleading. The authoritative
-    # signal is the SecurityOptions list which includes `name=userns`
-    # only when the daemon is running with userns-remap.
+    # SecurityOptions is the authoritative signal: docker info also prints
+    # warnings containing "userns" when the feature is NOT configured, so a
+    # bare grep reads the opposite of the truth.
     docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
 }
 
@@ -144,21 +122,9 @@ _docker_seccomp_unconfined_containers() {
 }
 
 _docker_check_live_restore() {
-    # Prefer `docker info` — it reports the daemon's *effective*
-    # state, which honours both daemon.json and any systemd drop-in
-    # under /etc/systemd/system/docker.service.d/*.conf or
-    # /etc/default/docker. Reading daemon.json alone missed the
-    # common "I set X in daemon.json but a systemd ExecStart override
-    # re-specified it" failure mode (the Docker analogue of the
-    # sshd_config.d drop-in bug).
-    # When the daemon ANSWERS, its answer is final — including "false".
-    # The previous form piped straight into `grep -qi '^true$'` and fell
-    # through to the daemon.json fallback on any non-true result, so a
-    # running daemon reporting false was overruled by a daemon.json that
-    # merely said true. That is the exact failure mode the paragraph above
-    # says this check exists to catch, and it also made the fix's own
-    # postcondition inert: writing daemon.json flipped the check green
-    # without the daemon ever picking the setting up.
+    # `docker info` reports the daemon's EFFECTIVE state, honouring both
+    # daemon.json and any systemd override. When the daemon answers, its
+    # answer is FINAL — including "false"; never fall through to the file.
     local live=""
     if live=$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null); then
         [[ "${live,,}" == "true" ]]
@@ -173,13 +139,9 @@ _docker_check_live_restore() {
     fi
 }
 
-# `no-new-privileges` daemon-level default has no dedicated `docker
-# info` field, so cross-check three sources: daemon.json, any
-# `--no-new-privileges` flag in the systemd ExecStart drop-ins, and
-# the legacy /etc/default/docker DOCKER_OPTS. Any of them enabling
-# counts. systemctl cat returns the merged unit (main file + every
-# drop-in), giving us full coverage without re-implementing the
-# systemd merge order.
+# No dedicated `docker info` field, so cross-check three sources: daemon.json,
+# the systemd ExecStart drop-ins, and the legacy DOCKER_OPTS. `systemctl cat`
+# returns the merged unit, so the systemd merge order need not be reproduced.
 _docker_check_no_new_privileges() {
     if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
         jq -e '.["no-new-privileges"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null; then
@@ -200,10 +162,8 @@ _docker_check_no_new_privileges() {
 
 # ----- Network isolation / secrets / resources (CIS additions) -----------------
 
-# Containers running with --network=host. Sharing the host's network
-# namespace bypasses Docker's isolation entirely: the container sees
-# all host interfaces, can bind to any port, and any process inside
-# it can sniff host traffic. CIS Docker 5.9 / NIST 800-190.
+# Containers with --network=host, which share the host's network namespace:
+# all interfaces visible, any port bindable, host traffic sniffable.
 _docker_get_host_network_containers() {
     local hn=()
     local c name mode
@@ -232,12 +192,9 @@ _docker_get_unlimited_memory_containers() {
     printf '%s\n' "${um[@]}"
 }
 
-# Containers whose .Config.Env contains known-format credentials.
-# Uses _vpssec_scan_secrets_in_content (same scanner as IMDS user-data).
-# We scan `docker ps -aq` (all containers including stopped) because
-# `docker inspect` exposes the env spec regardless of run state, and
-# a stopped container is one `docker start` from re-activating the
-# leak. Output format: "container_name: kind(xN) kind(xN)".
+# Containers whose .Config.Env holds known-format credentials. Scans ALL
+# containers including stopped ones: inspect exposes the env spec regardless
+# of state, and a stopped container is one `docker start` from the leak.
 _docker_get_containers_with_env_secrets() {
     local hits=()
     local c name env_str finding
@@ -253,13 +210,9 @@ _docker_get_containers_with_env_secrets() {
     printf '%s\n' "${hits[@]}"
 }
 
-# Is ICC (inter-container communication on the default bridge)
-# explicitly disabled? CIS Docker 2.2 — default state is ENABLED,
-# which is the laterall-movement-friendly state we want to flag.
+# Is inter-container communication on the default bridge explicitly disabled?
 # Same three-source pattern as _docker_check_no_new_privileges.
-#
-# Returns 0 (true) when ICC is DISABLED somewhere, 1 when defaults
-# apply (= ICC enabled = the finding state).
+# 0 = disabled somewhere, 1 = defaults apply, which is the finding state.
 _docker_check_icc_disabled() {
     if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
         jq -e '.icc == false' "$DOCKER_DAEMON_JSON" &>/dev/null; then
@@ -278,9 +231,7 @@ _docker_check_icc_disabled() {
     return 1
 }
 
-# ==============================================================================
-# Docker Audit
-# ==============================================================================
+# --- Docker Audit ---
 
 docker_audit() {
     local module="docker"
@@ -559,12 +510,9 @@ _docker_audit_daemon_settings() {
     fi
 }
 
-# /var/run/docker.sock exposes the Docker API over UNIX domain socket.
-# Any process that can write to it can spawn privileged containers and
-# thereby escalate to host root. Default distro packaging ships it 660
-# root:docker. Mode 666 (world-writable) is a common misconfiguration
-# when tutorials tell users to `chmod a+rw /var/run/docker.sock` to
-# "fix permission denied" — we flag this as high severity.
+# Any process that can write docker.sock can spawn privileged containers and
+# reach host root, so a world-writable socket is high severity. Distro
+# packaging ships it 660 root:docker.
 _docker_audit_sock_perms() {
     local mode
     mode=$(_docker_sock_mode)
@@ -578,10 +526,8 @@ _docker_audit_sock_perms() {
     # Extract the "others" octal digit (last char of mode).
     local others="${mode: -1}"
 
-    # Any non-zero bits in the others octet mean non-owner/non-group
-    # processes can interact with the socket. 2 (write) and 6 (read+write)
-    # are the clearly dangerous cases; 4 (read-only) leaks daemon state
-    # but isn't immediate RCE.
+    # Any non-zero others bit lets outside processes reach the socket.
+    # 2 and 6 are the dangerous cases; 4 leaks state without immediate RCE.
     if [[ "$others" =~ ^[2367]$ ]]; then
         local check=$(create_check_json \
             "docker.sock_perms_loose" \
@@ -609,11 +555,8 @@ _docker_audit_sock_perms() {
     fi
 }
 
-# seccomp is the kernel-level syscall filter Docker applies by default
-# to reduce the attack surface from inside containers. Running a
-# container with `--security-opt seccomp=unconfined` disables that
-# filter entirely, which is almost always a sign of either a debugging
-# workaround that was never reverted or a poorly understood workload.
+# seccomp=unconfined disables the default syscall filter entirely — almost
+# always a debugging workaround that was never reverted.
 _docker_audit_seccomp_unconfined() {
     local containers
     containers=$(_docker_seccomp_unconfined_containers)
@@ -653,11 +596,9 @@ _docker_audit_seccomp_unconfined() {
     fi
 }
 
-# userns-remap maps container UID 0 to a non-root host UID, so a
-# container-root compromise does NOT give host-root. The feature is
-# compiled into every modern Docker build, but is only effective when
-# the daemon is actually started with it (dockerd-level setting, not
-# per-container). This check distinguishes "available" from "active".
+# userns-remap maps container UID 0 to a non-root host UID. It is a
+# daemon-level setting, not per-container, so this check must distinguish
+# "compiled in and available" from "actually active".
 _docker_audit_userns_remap() {
     if _docker_check_userns; then
         local check=$(create_check_json \
@@ -686,11 +627,9 @@ _docker_audit_userns_remap() {
     fi
 }
 
-# CIS Docker 5.9 — running with --network=host bypasses Docker's
-# network isolation entirely. medium severity (not high): legitimate
-# use cases exist (VPN daemons like Tailscale/Wireguard, network
-# monitoring agents, custom DNS containers) so this is "review each
-# one", not "broken-by-default".
+# --network=host bypasses network isolation entirely. Medium, not high:
+# VPN daemons and monitoring agents have legitimate reasons, so this is
+# "review each one", not "broken by default".
 _docker_audit_host_network() {
     local hn; hn=$(_docker_get_host_network_containers)
     local count; count=$(count_lines "$hn")
@@ -721,12 +660,8 @@ _docker_audit_host_network() {
     fi
 }
 
-# CIS Docker 2.2 — default bridge with ICC=true (Docker's out-of-box
-# default) lets every container on docker0 talk freely to every
-# other. low severity: this IS the default; flagging at medium would
-# be noisy on essentially every Docker install. Surface as a
-# defense-in-depth signal that operators can address with one daemon
-# setting.
+# ICC=true lets every container on docker0 talk to every other. Low, because
+# this IS the out-of-box default and medium would be noisy on every install.
 _docker_audit_default_bridge_icc() {
     if _docker_check_icc_disabled; then
         local check=$(create_check_json \
@@ -753,13 +688,9 @@ _docker_audit_default_bridge_icc() {
     fi
 }
 
-# Container env scan. MEDIUM (not high like cloud.user_data_leaked_
-# secrets): cloud user-data is readable by EVERY process on the host,
-# whereas container env vars are scoped to the container's own
-# processes plus docker-socket / `docker inspect` (root-equivalent)
-# access — so realising the exposure needs the container, or docker
-# access, to be compromised first. NEVER log raw values — finding desc
-# records only "kind + count" output from the shared scanner.
+# Medium, not high like the cloud user-data scan: those are readable by every
+# process on the host, while container env needs the container or docker
+# access first. NEVER log raw values — desc records only kind and count.
 _docker_audit_secrets_in_env() {
     local hits; hits=$(_docker_get_containers_with_env_secrets)
     local count; count=$(count_lines "$hits")
@@ -793,10 +724,8 @@ _docker_audit_secrets_in_env() {
     fi
 }
 
-# CIS Docker 5.10 — containers without a memory cap can OOM the host.
-# low severity: single-app servers commonly run one container without
-# memory limit (the container IS the workload, no reason to subdivide
-# the host's RAM). Multi-tenant / co-located workloads care more.
+# Containers without a memory cap can OOM the host. Low: a single-app server
+# legitimately runs one uncapped container, since it IS the workload.
 _docker_audit_unlimited_memory() {
     local um; um=$(_docker_get_unlimited_memory_containers)
     local count; count=$(count_lines "$um")
@@ -827,9 +756,7 @@ _docker_audit_unlimited_memory() {
     fi
 }
 
-# ==============================================================================
-# Docker Fix Functions
-# ==============================================================================
+# --- Docker Fix Functions ---
 
 docker_fix() {
     local fix_id="$1"
@@ -976,25 +903,18 @@ _docker_fix_enable_daemon_setting() {
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
-    # Refuse to edit an existing file that is not valid JSON. Without this
-    # guard, a failed jq on malformed input used to write an empty tmp file
-    # that then clobbered the user's daemon.json. Checked before the backup
-    # so a file we refuse to touch leaves no trace in the session.
+    # Refuse to edit an existing file that is not valid JSON: a failed jq
+    # would write an empty temp file over it. Checked BEFORE the backup, so a
+    # file we refuse to touch leaves no trace in the session.
     if [[ -f "$DOCKER_DAEMON_JSON" ]] && ! jq empty "$DOCKER_DAEMON_JSON" 2>/dev/null; then
         print_error "$(i18n 'docker.daemon_invalid_json' "path=$DOCKER_DAEMON_JSON")"
         return 1
     fi
 
-    # Unconditional, covering BOTH branches below. backup_file snapshots an
-    # existing file and, for a path that does not exist yet, records it in
-    # .vpssec_created so a rollback can delete what this fix is about to
-    # create. Docker ships no daemon.json, so the create branch is the common
-    # case — and it used to be the only writer in this file with no backup
-    # call at all, which left `vpssec rollback` unable to remove the file.
-    # Same defect class as logging's journald drop-in, webapp's three conf.d
-    # writers and update's 20auto-upgrades; this is its ninth instance and the
-    # first where the guard was a full if/else rather than a one-line `&&`.
-    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true
+    # UNCONDITIONAL, covering BOTH branches below: for an absent path
+    # backup_file records it in .vpssec_created, which is what lets a rollback
+    # delete it. Docker ships no daemon.json, so create is the common case.
+    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1
 
     # Create or update daemon.json
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
@@ -1015,10 +935,8 @@ _docker_fix_enable_daemon_setting() {
 
         mv "$tmp_file" "$DOCKER_DAEMON_JSON"
     else
-        # Derive the directory from the path variable rather than hardcoding
-        # /etc/docker: every other reference in this function goes through
-        # $DOCKER_DAEMON_JSON, and the literal made the function write outside
-        # whatever tree a caller pointed it at.
+        # Derived from the path variable, never hardcoded: a literal makes
+        # this write outside whatever tree a caller pointed it at.
         mkdir -p "$(dirname "$DOCKER_DAEMON_JSON")"
         if ! jq -n --arg key "$setting" --argjson val "$value" \
                '{($key): $val}' > "$tmp_file" 2>/dev/null; then
@@ -1031,10 +949,8 @@ _docker_fix_enable_daemon_setting() {
 
     print_ok "$(i18n 'docker.daemon_updated')"
 
-    # Docker does not auto-reload daemon.json; the change only takes
-    # effect on daemon restart. Ask before restarting since it briefly
-    # pauses every running container. confirm_critical intentionally
-    # ignores --yes so automated runs cannot restart silently.
+    # daemon.json is not auto-reloaded, and a restart briefly pauses every
+    # container. confirm_critical ignores --yes, so no silent restart.
     if confirm_critical "$(i18n 'docker.confirm_restart')"; then
         if systemctl restart docker 2>/dev/null; then
             print_ok "$(i18n 'docker.restarted')"
@@ -1046,13 +962,9 @@ _docker_fix_enable_daemon_setting() {
         print_warn "$(i18n 'docker.restart_skipped')"
     fi
 
-    # Postcondition: assert the setting is actually in effect, using the same
-    # predicate the audit uses. This matters because the two settings differ in
-    # where they become visible: _docker_check_live_restore asks `docker info`
-    # (the RUNNING daemon), so declining the restart above leaves it inactive,
-    # while _docker_check_no_new_privileges also accepts daemon.json alone.
-    # Returning 0 in both cases made state_mark_fix_complete record a
-    # live-restore fix that the very next audit re-flags as failed.
+    # Postcondition via the audit's own predicate. The two settings differ:
+    # live-restore needs the RUNNING daemon, so declining the restart leaves
+    # it inactive, while no-new-privileges is satisfied by the file alone.
     if [[ -n "$verify_fn" ]] && declare -f "$verify_fn" >/dev/null 2>&1; then
         if ! "$verify_fn"; then
             print_warn "$(i18n 'docker.not_effective')"
@@ -1063,9 +975,7 @@ _docker_fix_enable_daemon_setting() {
     return 0
 }
 
-# ==============================================================================
-# Docker Utility Functions
-# ==============================================================================
+# --- Docker Utility Functions ---
 
 # Generate secure docker-compose snippet for a service
 docker_generate_secure_service() {

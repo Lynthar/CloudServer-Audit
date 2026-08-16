@@ -194,12 +194,15 @@ SH
 }
 
 @test "enable: a write the atomic writer refuses is reported, not ignored" {
-    # validate_path rejects '..', which makes the real guard chain refuse
-    # without mocking write_file_atomic. The status was unchecked before, and
-    # the postcondition reads the merged config — which this stubbed apt-config
-    # reports as effective — so the fix would have claimed success.
+    # A regular file where the parent directory belongs defeats both the
+    # mkdir -p and the mktemp inside write_file_atomic. Not a '..' path any
+    # more: backup_file validates the same path and would now abort the fix
+    # before the write. The status was unchecked before, and the postcondition
+    # reads the merged config — which this stubbed apt-config reports as
+    # effective — so the fix would have claimed success.
     VPSSEC_QUIET_SCAN=0
-    UPDATE_AUTO_UPGRADES_CONF="$etc/apt/../apt/apt.conf.d/20auto-upgrades"
+    : > "$etc/apt/notadir"
+    UPDATE_AUTO_UPGRADES_CONF="$etc/apt/notadir/20auto-upgrades"
 
     run _update_fix_enable_unattended
     [ "$status" -eq 1 ]
@@ -209,7 +212,8 @@ SH
 
 @test "enable: a drop-in write that fails is reported too" {
     VPSSEC_QUIET_SCAN=0
-    UPDATE_UU_DROPIN="$etc/apt/../apt/apt.conf.d/52vpssec-unattended-security"
+    : > "$etc/apt/notadir"
+    UPDATE_UU_DROPIN="$etc/apt/notadir/52vpssec-unattended-security"
 
     run _update_fix_enable_unattended
     [ "$status" -eq 1 ]
@@ -390,4 +394,16 @@ SH
     run update_fix "update.install_unattended"
     [ "$status" -eq 0 ]
     _vpssec_stub_called apt-get 'install'
+}
+
+# ---- the backup contract ---------------------------------------------
+
+@test "unattended-upgrades: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    printf 'original\n' > "$UPDATE_AUTO_UPGRADES_CONF"
+    _vpssec_stub cp 1
+
+    run _update_fix_enable_unattended
+    [ "$status" -ne 0 ]
+    [ "$(cat "$UPDATE_AUTO_UPGRADES_CONF")" = "original" ]
 }

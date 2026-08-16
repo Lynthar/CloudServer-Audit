@@ -3,17 +3,13 @@
 # Cloudflared / Zero Trust module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Cloudflared Configuration
-# ==============================================================================
+# --- Cloudflared Configuration ---
 
 CLOUDFLARED_CONFIG="/etc/cloudflared/config.yml"
 CLOUDFLARED_SERVICE="cloudflared"
 CLOUDFLARED_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/cloudflared"
 
-# ==============================================================================
-# Cloudflared Helper Functions
-# ==============================================================================
+# --- Cloudflared Helper Functions ---
 
 _cloudflared_installed() {
     check_command cloudflared
@@ -91,21 +87,9 @@ _cloudflared_tunnel_running() {
     pgrep -f "cloudflared.*tunnel" &>/dev/null
 }
 
-# True when PATTERN occurs on a line that is not commented out.
-#
-# YAML comments start with '#', and every check below was matching inside
-# them. The damage ran both ways. False positive: this module's own
-# generated config.yml.example carries
-#     #     noTLSVerify: true  # Only for internal services
-# inside a commented "private network access" example, and its header tells
-# the user to copy the file to /etc/cloudflared/config.yml — so anyone who
-# followed the tool's own template got flagged for a setting they never
-# enabled. False negative: the two `! grep -q` checks were satisfied by a
-# commented-out catch-all rule or originRequest block, silently passing a
-# config that has neither.
-#
-# `^[^#]*` still allows a trailing comment on a live line
-# (`noTLSVerify: true  # why`), which is the common YAML idiom.
+# True when PATTERN occurs on a line that is not commented out. Every check
+# here MUST use it: matching inside YAML comments has produced both false
+# positives and false negatives. A trailing comment on a live line matches.
 _cloudflared_yaml_has_active() {
     local config="$1" pattern="$2"
     grep -qE "^[^#]*${pattern}" "$config" 2>/dev/null
@@ -137,9 +121,7 @@ _cloudflared_check_ingress_security() {
     echo "${issues[*]}"
 }
 
-# ==============================================================================
-# Cloudflared Audit
-# ==============================================================================
+# --- Cloudflared Audit ---
 
 cloudflared_audit() {
     local module="cloudflared"
@@ -314,9 +296,7 @@ _cloudflared_audit_tunnels() {
     fi
 }
 
-# ==============================================================================
-# Cloudflared Fix Functions
-# ==============================================================================
+# --- Cloudflared Fix Functions ---
 
 cloudflared_fix() {
     local fix_id="$1"

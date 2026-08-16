@@ -228,3 +228,17 @@ SH
     [ "$status" -ne 0 ]
     [ ! -e "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}" ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "daemon.json: a backup that cannot be recorded aborts the fix" {
+    # The lever is the created-file manifest, not cp: a stock host ships no
+    # daemon.json, so backup_file takes the register-as-created branch. A
+    # directory where the manifest file belongs makes that append fail.
+    _vpssec_begin_backup_session
+    mkdir -p "$VPSSEC_BACKUP_SESSION/$VPSSEC_CREATED_MANIFEST"
+
+    run _docker_fix_enable_daemon_setting "live-restore" true
+    [ "$status" -ne 0 ]
+    [ ! -f "$DOCKER_DAEMON_JSON" ]
+}

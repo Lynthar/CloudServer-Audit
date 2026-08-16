@@ -1,35 +1,12 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# Cloud environment and monitoring agent detection module
-# Copyright (c) 2024
-#
-# This module detects:
-# - Cloud provider (if identifiable)
-# - Known cloud vendor monitoring agents
-# - Generic monitoring/agent processes
-# - Suspicious background agents
-#
-# All checks are informational - no automatic modifications
+# Cloud environment and monitoring-agent detection.
+# Every check here is informational; nothing is modified.
 
-# ==============================================================================
-# Known Cloud Vendor Agents Database
-# ==============================================================================
+# --- Known Cloud Vendor Agents Database ---
 
 # Format: process_name|service_name|vendor_key|desc_key|can_disable
-#
-# Columns 3 and 4 are i18n key suffixes, not display text: the vendor renders
-# through `cloud.vendor_<vendor_key>` and the description through
-# `cloud.agent_<desc_key>`. They used to hold literals, half of them Chinese
-# ("阿里云", "安骑士/云安全中心"), which reached check titles verbatim — so
-# `--lang=en_US` printed Chinese on an English report.
-#
-# The vendor column is the vendor's machine-side identity, deliberately drawn
-# from the same id space as the provider ids _detect_cloud_provider returns
-# ("alibaba", "aws", ...), plus "generic" for third-party agents. cloud_audit
-# used to compare it against the detected provider using per-provider display
-# names — six of the eleven vendors, three of them Chinese literals — which is
-# what a translatable column would have silently broken. That comparison is
-# gone (it was inert), but the id space is the useful half and it stays.
+# Columns 3 and 4 are i18n KEY SUFFIXES, never display text: they render at
+# the point of display. The vendor column shares the provider id space.
 declare -ga KNOWN_CLOUD_AGENTS=(
     # Alibaba Cloud
     "AliYunDun|aegis|alibaba|aliyundun|yes"
@@ -131,10 +108,8 @@ declare -ga SAFE_SYSTEM_PROCESSES=(
     "mongod"
     "docker"
     "containerd"
-    # Virtualization guest tools — most VPS providers ship one of these
-    # by default and several superficially match SUSPICIOUS_AGENT_PATTERNS
-    # (notably spice-vdagent → `.*[Aa]gent.*`). qemu-ga is included as
-    # belt-and-suspenders even though its comm doesn't currently match.
+    # Virtualization guest tools: shipped by default on most VPS providers,
+    # and several superficially match the suspicious-agent patterns.
     "qemu-ga"
     "spice-vdagent"
     "spice-vdagentd"
@@ -147,54 +122,11 @@ declare -ga SAFE_SYSTEM_PROCESSES=(
     "hv_fcopy_daemon"
 )
 
-# ==============================================================================
-# Detection Functions
-# ==============================================================================
+# --- Detection Functions ---
 
-# Detect cloud provider from system info.
-#
-# Detection order — earlier signals are stronger and cheaper than
-# later ones, and we deliberately exhaust every offline signal before
-# touching the network:
-#
-#   1. DMI vendor / board_vendor / bios_vendor            (offline,
-#                                                          authoritative
-#                                                          when the
-#                                                          hypervisor
-#                                                          stamps it)
-#   2. DMI product_name                                   (offline)
-#   3. DMI product_uuid prefix                            (offline; AWS
-#                                                          EC2 UUIDs
-#                                                          start "ec2"
-#                                                          on Xen)
-#   4. cloud-init datasource (ds-identify.log,
-#      /var/lib/cloud/data/datasource, /run/cloud-init/cloud-id,
-#      /etc/cloud/cloud.cfg.d/*)                          (offline)
-#   5. Provider-specific files (/etc/digitalocean,
-#      /sys/firmware/qemu_fw_cfg/by_name/opt/io.systemd.credentials/...)
-#                                                          (offline)
-#   6. Provider-specific NETWORK metadata endpoints       (the only
-#                                                          probes that
-#                                                          go on the
-#                                                          wire — and
-#                                                          we order
-#                                                          them so
-#                                                          provider-
-#                                                          unique IPs
-#                                                          are tried
-#                                                          BEFORE
-#                                                          shared
-#                                                          169.254.169.254)
-#   7. Shared 169.254.169.254 IMDSv2/v1 — disambiguated by parsing the
-#      placement/region or instance-id payload (Tencent and several
-#      other providers offer EC2-compatible IMDS at the same IP, so a
-#      bare 200 here is NOT enough to call it AWS).
 # Map an EC2-compatible IMDS payload — a placement/region string or an
-# instance-id — onto a provider name. Kept as a separate, pure function
-# (no network, no globals) so step 7's disambiguation rules can be
-# regression-tested directly; see tests/test_cloud_imds_region.bats.
-# Every branch below encodes a real overlap between providers, and the
-# ORDER is the whole point:
+# instance-id — onto a provider name. Pure: no network, no globals, so the
+# disambiguation rules below are directly regression-testable.
 _cloud_provider_from_imds() {
     # Strip whitespace; lower-case for region match.
     local _b
@@ -211,29 +143,19 @@ _cloud_provider_from_imds() {
         # to be matched before the Huawei cn-* shapes below, which would
         # otherwise claim it.
         cn-northwest-*)       echo "aws" ;;
-        # Huawei-EXCLUSIVE region shapes, tested BEFORE the generic
-        # `*-[0-9])` AWS rule below. Every Huawei region also ends in a digit
-        # (cn-north-4, cn-east-3, cn-south-1, ...), so that rule used to match
-        # first and this branch was unreachable for every real Huawei host —
-        # the whole fleet reported as AWS and got AWS-specific remediation
-        # advice. AWS has no cn-east / cn-south / cn-southwest / la-* / ru-* /
-        # na-mexico region at all, so these are unambiguous.
+        # Huawei-EXCLUSIVE shapes, and they MUST precede the generic
+        # `*-[0-9])` AWS rule: every Huawei region also ends in a digit, so
+        # that rule matches first and this branch becomes unreachable.
         cn-east-*|cn-south*|la-north-*|la-south-*|ru-northwest-*|na-mexico-*)
                               echo "huawei" ;;
-        # cn-north-1 is a TRUE collision — it is both AWS Beijing and Huawei's
-        # cn-north-1, and the region string cannot separate them. Keep the
-        # historical AWS answer rather than trading one misdetection for
-        # another; every other cn-north-* (4, 9, 11) is Huawei-only. A future
-        # disambiguation could probe
-        # http://169.254.169.254/openstack/latest/meta_data.json, which
-        # Huawei's IMDS serves and AWS's does not.
+        # A TRUE collision: both AWS Beijing and Huawei use cn-north-1 and
+        # the region string cannot separate them. Keeping AWS trades no
+        # misdetection for another; every other cn-north-* is Huawei-only.
         cn-north-1)           echo "aws" ;;
         cn-north-*)           echo "huawei" ;;
-        # AWS region tokens look like us-east-1 / eu-west-2; they always have
-        # a single trailing digit. Tencent's eu-frankfurt has no trailing
-        # digit, ap-guangzhou ditto. ap-southeast-* / af-south-* / me-east-*
-        # are shared with Huawei and stay AWS here for the same reason as
-        # cn-north-1.
+        # AWS region tokens always carry a single trailing digit, which
+        # Tencent's eu-frankfurt and ap-guangzhou do not. The shapes shared
+        # with Huawei stay AWS for the same reason as cn-north-1.
         *-[0-9])              echo "aws" ;;
         ap-guangzhou|ap-shanghai|ap-beijing|ap-chengdu|ap-chongqing|ap-nanjing|ap-hongkong|ap-singapore|ap-bangkok|ap-jakarta|ap-mumbai|ap-seoul|ap-tokyo|na-siliconvalley|na-ashburn|na-toronto|sa-saopaulo|eu-frankfurt|eu-moscow)
                               echo "tencent" ;;
@@ -300,10 +222,8 @@ _detect_cloud_provider() {
         done
     fi
 
-    # ---------- 3. product_uuid prefix ----------
-    # AWS EC2 (Xen) instances have product_uuid starting with "EC2";
-    # Nitro instances are random. Useful as a tiebreaker when DMI
-    # vendor is generic (e.g., bare "Xen").
+    # --- 3. product_uuid prefix: EC2 on Xen, random on Nitro. A tiebreaker
+    # for when the DMI vendor is generic. ---
     if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_uuid ]]; then
         # Read may fail with EACCES for non-root; ignore quietly.
         local uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -379,15 +299,12 @@ _detect_cloud_provider() {
         fi
     fi
 
-    # ---------- 6. Provider-specific NETWORK endpoints ----------
-    # These IPs are unique to one provider, so a 200 here is conclusive.
-    # Do these BEFORE the shared 169.254.169.254 fallback so we don't
-    # misclassify Tencent/OCI/etc. as AWS.
+    # --- 6. Provider-specific NETWORK endpoints. Unique per provider, so a
+    # 200 is conclusive — and they MUST precede the shared 169.254.169.254
+    # fallback, or an EC2-compatible mirror reads as AWS. ---
     if [[ "$provider" == "unknown" ]]; then
-        # Tencent Cloud has its own metadata service at metadata.tencentyun.com
-        # (the canonical name used in Tencent's documentation), AND mirrors
-        # an EC2-compatible service at 169.254.169.254. Hitting the
-        # tencent-specific name first avoids the EC2-compat misclassification.
+        # Tencent serves its own metadata name AND mirrors an EC2-compatible
+        # service at the shared IP, so the specific name is tried first.
         if curl -fs --connect-timeout 1 -m 2 \
             http://metadata.tencentyun.com/latest/meta-data/ >/dev/null 2>&1; then
             provider="tencent"
@@ -415,11 +332,9 @@ _detect_cloud_provider() {
         fi
     fi
 
-    # ---------- 7. Shared 169.254.169.254 IMDS (ambiguous IP) ----------
-    # AWS, Tencent, Huawei and several others all serve EC2-compatible
-    # endpoints at this IP. A bare 200 is not enough; we have to read
-    # the placement/region or instance-id and compare against known
-    # provider patterns.
+    # --- 7. Shared 169.254.169.254, which several providers all answer.
+    # A bare 200 is NOT enough: the region or instance-id payload has to be
+    # read and matched. ---
     if [[ "$provider" == "unknown" ]]; then
         local _imds_body=""
 
@@ -471,12 +386,8 @@ _detect_cloud_provider() {
     echo "$provider"
 }
 
-# Get provider display name.
-#
-# The names used to be literals here, so a zh_CN gloss like "阿里云 (Alibaba
-# Cloud)" was printed into the cloud.provider_detected title even under
-# --lang=en_US. They live in i18n now; the provider ids below stay the
-# machine-side identity and never move.
+# Provider display name. The names live in i18n, never as literals here —
+# the provider ids below are the machine-side identity and never move.
 _get_provider_name() {
     local provider="$1"
     case "$provider" in
@@ -513,10 +424,9 @@ _is_safe_process() {
 _find_known_agents() {
     local found=()
 
-    # The vendor/desc keys travel through this pipe unresolved; callers render
-    # them at the point of display. Resolving here would bake the active
-    # language into the data, so anything downstream that wants to match on
-    # the vendor would be matching on a translated string.
+    # The vendor/desc keys travel unresolved: resolving here bakes the active
+    # language into the data, and anything matching on vendor downstream would
+    # then be matching a translated string.
     for entry in "${KNOWN_CLOUD_AGENTS[@]}"; do
         IFS='|' read -r proc_name service_name vendor_key desc_key can_disable <<< "$entry"
 
@@ -573,26 +483,9 @@ _find_suspicious_agents() {
     printf '%s\n' "${suspicious[@]}"
 }
 
-# ==============================================================================
-# IMDS (Instance Metadata Service) helpers
-# ==============================================================================
-#
-# Background: the Instance Metadata Service is a link-local endpoint
-# (typically 169.254.169.254) that cloud VMs query for their own
-# metadata — instance ID, network config, user-data, and on tier1
-# providers (AWS/Azure/GCP/Alibaba/Tencent/Huawei/Oracle) IAM/RAM
-# credentials. SSRF in apps and container escapes routinely turn
-# into credential theft via this endpoint; Capital One (2019, ~$150M
-# total cost) is the canonical case, and Wiz's 2024 APT41 report
-# documents active multi-cloud campaigns walking every vendor's IMDS.
-#
-# Strict engineering rules in this section:
-#   1. NEVER log or echo the response body. Bodies contain
-#      credentials, tokens, customer data.
-#   2. Use --max-time 1 / --connect-timeout 1 so non-cloud hosts
-#      fail fast (IMDS would respond in <50ms when present).
-#   3. Run only when vpssec_cloud_tier returns tier1 or tier2 —
-#      independent VPS / baremetal have no auditable IMDS surface.
+# --- IMDS helpers. Three rules hold throughout this section: NEVER log or
+# echo a response body (they carry credentials), keep the timeouts at 1-2s so
+# non-cloud hosts fail fast, and run only for tier1/tier2 providers. ---
 
 # Capture only HTTP status (3-digit, or "000" on connection failure).
 _cloud_imds_curl_status() {
@@ -673,10 +566,8 @@ _cloud_imds_get_user_data() {
             [[ -n "$enc" ]] && body=$(printf '%s' "$enc" | base64 -d 2>/dev/null)
             ;;
         scaleway)
-            # Scaleway's IMDS is at 169.254.42.42 and only serves user_data to
-            # requests from a privileged source port (<1024); vpssec runs as
-            # root, so bind one. --local-port fails closed (empty body) on a
-            # curl without the flag or when the port is unavailable.
+            # Scaleway serves user_data only to a privileged source port, so
+            # one is bound. --local-port fails closed on a curl without it.
             body=$(curl -sS --max-time 2 --connect-timeout 1 --local-port 1-1023 \
                 "http://169.254.42.42/user_data" 2>/dev/null)
             ;;
@@ -691,10 +582,9 @@ _cloud_imds_scan_secrets() {
     _vpssec_scan_secrets_in_content "$1"
 }
 
-# True if any host-firewall rule mentions an IMDS IP. Weak signal:
-# distinguishing a rule that fully blocks from one that only logs
-# requires parsing iptables/nftables syntax in detail; for defense-
-# in-depth purposes, presence of *any* rule vs none is what matters.
+# True if any host-firewall rule MENTIONS an IMDS IP — a weak signal, since
+# telling a blocking rule from a logging one needs full ruleset parsing.
+# The finding must be worded as "mentions", never "restricted".
 _cloud_imds_firewall_restricted() {
     local imds_ips=("169.254.169.254" "100.100.100.200")
     local ip re
@@ -863,18 +753,13 @@ _cloud_audit_imds() {
     fi
 }
 
-# ==============================================================================
-# Audit Functions
-# ==============================================================================
+# --- Audit Functions ---
 
 cloud_audit() {
     log_info "Running cloud environment audit"
 
-    # 1. Detect cloud provider. Use the public getter so the detection
-    # result is cached in VPSSEC_CLOUD_PROVIDER / VPSSEC_CLOUD_TIER and
-    # any later-running module (users, networking, future IMDS checks)
-    # can read it via `vpssec_cloud_provider` / `vpssec_cloud_tier`
-    # without rerunning the DMI inspection.
+    # The public getter, so the result caches into VPSSEC_CLOUD_PROVIDER and
+    # every later module reads it without rerunning DMI inspection.
     local provider=$(vpssec_cloud_provider)
     local provider_name=$(_get_provider_name "$provider")
 
@@ -916,20 +801,9 @@ cloud_audit() {
         done <<< "$known_agents"
         agent_list="${agent_list%, }"
 
-        # Vendor monitoring agents are inventory, not an exposure, so this is
-        # low on every host.
-        #
-        # A provider-match block used to sit here, computing whether every
-        # agent belonged to the detected provider and then setting the
-        # severity to "low" either way — inert since the day the base severity
-        # became low, and documented as "kept for when a foreign-vendor agent
-        # warrants escalation". It is gone rather than ported: its only
-        # remaining effect was to read the vendor column, it compared against
-        # per-provider display names (six of the eleven vendors, and Chinese
-        # literals for three of them), and no mutation of it could ever fail a
-        # test. If foreign-vendor escalation is wanted later, the vendor key
-        # is right there in the loop above and it should arrive with a test
-        # that can observe the severity actually moving.
+        # Vendor agents are inventory, not exposure, so low on every host.
+        # There is deliberately no foreign-vendor escalation: it must arrive
+        # with a test that can observe the severity actually moving.
         local severity="low"
 
         check_json=$(create_check_json \
@@ -984,9 +858,7 @@ cloud_audit() {
     return 0
 }
 
-# ==============================================================================
-# Fix Functions (Alert Only - No Auto Fix)
-# ==============================================================================
+# --- Fix Functions (Alert Only - No Auto Fix) ---
 
 cloud_fix() {
     local fix_id="$1"

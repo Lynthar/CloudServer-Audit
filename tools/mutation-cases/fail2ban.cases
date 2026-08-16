@@ -31,15 +31,15 @@
 # ---------------------------------------------------------------------------
 
 run_case "backup/guard-reintroduced" 1 \
-    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
-    '    [[ -f "$F2B_DROPIN" ]] && { f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""; }'
+    '    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1' \
+    '    [[ -f "$F2B_DROPIN" ]] && { f2b_bak=$(backup_file "$F2B_DROPIN") || return 1; }'
 
 run_case "backup/registers-wrong-path" 1 \
-    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
-    '    f2b_bak=$(backup_file "$F2B_JAIL_LOCAL" 2>/dev/null) || f2b_bak=""'
+    '    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1' \
+    '    f2b_bak=$(backup_file "$F2B_JAIL_LOCAL") || return 1'
 
 run_case "backup/not-taken-at-all" 1 \
-    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""' \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1' \
     '    f2b_bak=""'
 
 # ---------------------------------------------------------------------------
@@ -238,3 +238,8 @@ run_case "install/gate-removed" 1 \
 run_case "install/gate-asks-about-jail-local-only" 1 \
     '        if _f2b_has_custom_config; then' \
     '        if [[ -e "$F2B_JAIL_LOCAL" ]]; then'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1' \
+    '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""'

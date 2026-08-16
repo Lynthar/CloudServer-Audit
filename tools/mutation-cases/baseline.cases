@@ -51,7 +51,7 @@ run_case "selinux/missing-config-reports-success" 3 \
     '        return 0'
 
 run_case "selinux/backup-skipped" 1 \
-    '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true' \
+    '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null || return 1' \
     '    :'
 
 run_case "selinux/sed-anchor-dropped" 1 \
@@ -169,3 +169,8 @@ run_case "predicate/enabled-runtime-dropped" 1 \
 run_case "predicate/sysv-notice-not-skipped" 1 \
     '        state=$(systemctl is-enabled "$service" 2>/dev/null | tail -n1) || state=""' \
     '        state=$(systemctl is-enabled "$service" 2>/dev/null | head -n1) || state=""'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null || return 1' \
+    '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true'

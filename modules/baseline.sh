@@ -3,29 +3,21 @@
 # Baseline hardening module (Enhanced with SELinux support)
 # Copyright (c) 2024
 
-# ==============================================================================
-# Baseline Configuration
-# ==============================================================================
+# --- Baseline Configuration ---
 
-# System paths this module reads and writes. Module variables rather than
-# literals so the audit predicate and the fix cannot be pointed at different
-# places, and so the fixes are reachable from a test (a fix that hardcodes an
-# /etc literal cannot be exercised against a scratch tree).
+# Variables, not literals, so the audit predicate and the fix cannot point at
+# different places and the fixes stay reachable from a test.
 BASELINE_SELINUX_CONFIG="/etc/selinux/config"
 # The kernel-level "SELinux is real on this host" signal; see
 # _baseline_selinux_installed for why userspace tooling is not enough.
 BASELINE_SELINUX_FS_ENFORCE="/sys/fs/selinux/enforce"
 BASELINE_AUDIT_LOG="/var/log/audit/audit.log"
-# Profiles the operator has explicitly switched off. A symlink here removes the
-# profile from AppArmor's view entirely, so it appears in NEITHER the enforce
-# nor the complain count — the two numbers this module reports. Without reading
-# this directory a host that disabled usr.sbin.sshd looks identical to one that
-# never had the profile.
+# Profiles the operator switched off. A symlink here removes the profile from
+# AppArmor's view entirely, so it counts as neither enforced nor complaining —
+# without reading it, a disabled profile is indistinguishable from an absent one.
 BASELINE_APPARMOR_DISABLE_DIR="/etc/apparmor.d/disable"
 
-# ==============================================================================
-# Baseline Helper Functions
-# ==============================================================================
+# --- Baseline Helper Functions ---
 
 # ------------------------------------------------------------------------------
 # AppArmor Functions
@@ -43,10 +35,9 @@ _baseline_apparmor_installed() {
     check_command aa-status || check_command apparmor_status
 }
 
-# Echoes "<enforced>:<complain>" — empty fields default to 0 in caller.
-# Tries machine-readable `aa-status --json` first (available on Debian 12+),
-# then falls back to the human-readable form under LC_ALL=C so the regex
-# doesn't fail on hosts running zh_CN.UTF-8 / de_DE.UTF-8 / etc.
+# Echoes "<enforced>:<complain>". Prefers `aa-status --json`, falling back to
+# the human-readable form under LC_ALL=C so the regex survives a translated
+# locale.
 _baseline_apparmor_count_profiles() {
     local enforced complain json
 
@@ -71,11 +62,9 @@ _baseline_apparmor_count_profiles() {
 # state on every distro that ships AppArmor.
 _baseline_apparmor_disabled_profiles() {
     [[ -d "$BASELINE_APPARMOR_DISABLE_DIR" ]] || return 0
-    # Entries are symlinks back into /etc/apparmor.d. `-maxdepth 1` because
-    # AppArmor does not recurse here, and `! -name '.*'` so an editor's
-    # leftovers are not reported as disabled profiles. `sed` rather than
-    # `-printf '%f'` because the latter is a GNU extension and part of this
-    # suite still runs on a macOS checkout.
+    # -maxdepth 1 because AppArmor does not recurse here, and `! -name '.*'`
+    # so editor leftovers are not reported. sed rather than -printf '%f',
+    # which is a GNU extension this suite cannot assume.
     find "$BASELINE_APPARMOR_DISABLE_DIR" -maxdepth 1 -mindepth 1 \
          ! -name '.*' 2>/dev/null | sed 's|.*/||' | sort
 }
@@ -98,19 +87,9 @@ _baseline_apparmor_get_status() {
 # ------------------------------------------------------------------------------
 
 _baseline_selinux_installed() {
-    # Gate on the kernel-level LSM, not just userspace tooling.
-    #
-    # On Debian/Ubuntu, installing the `selinux-utils` package (which
-    # an unrelated user or another module's dependency can pull in)
-    # puts `getenforce` and `sestatus` on PATH while the running
-    # kernel has no SELinux support. The original `command -v` check
-    # then reported "SELinux installed but disabled" and offered a
-    # fix that told the user to edit /etc/selinux/config — a file
-    # that doesn't exist on Debian. Active misdirection.
-    #
-    # /sys/fs/selinux/enforce only exists when the kernel was built
-    # with CONFIG_SECURITY_SELINUX=y AND the LSM is loaded; that is
-    # the canonical "SELinux is real on this host" signal.
+    # Gate on the KERNEL LSM, never userspace tooling: selinux-utils puts
+    # getenforce on PATH while the kernel has no SELinux at all. This path
+    # exists only when the LSM is really loaded.
     [[ -e "$BASELINE_SELINUX_FS_ENFORCE" ]] || return 1
     check_command getenforce || check_command sestatus
 }
@@ -154,11 +133,9 @@ _baseline_selinux_get_policy() {
 }
 
 _baseline_selinux_denials_count() {
-    # Count recent SELinux denials (last 24h). awk replaces the legacy
-    # `grep -c PAT FILE 2>/dev/null || echo "0"` idiom: when grep finds
-    # zero matches it prints "0" and exits 1, so the `|| echo "0"`
-    # fallback ran too and emitted a literal "0\n0" — caller arithmetic
-    # then died under set -e. awk's `c+0` always yields one integer.
+    # awk, never `grep -c ... || echo 0`: grep already prints 0 on no matches
+    # and exits 1, so the fallback appends a second one and the caller's
+    # arithmetic dies. awk's `c+0` always yields one integer.
     if check_command ausearch; then
         ausearch -m avc -ts today 2>/dev/null | awk '/type=AVC/ {c++} END {print c+0}'
     elif [[ -f "$BASELINE_AUDIT_LOG" ]]; then
@@ -218,24 +195,9 @@ _baseline_get_unused_services() {
 
     local service state
     for service in "${check_services[@]}"; do
-        # Match the state WORD, not is-enabled's exit status. `is-enabled`
-        # also exits 0 for `static`, `indirect` and `alias` units, and
-        # `systemctl disable` cannot act on any of those — it exits 0 and
-        # changes nothing. Keying on the exit status therefore produces a
-        # finding whose fix reports success on every run while the next
-        # audit re-reports it, forever. `enabled-runtime` is included
-        # because `disable` does clear it.
-        #
-        # tail -n1: for a SysV init script systemctl prints a
-        # "redirecting to systemd-sysv-install" notice before the state.
-        #
-        # `|| state=""`: is-enabled exits non-zero for a unit that is not
-        # installed, which is the common case for most of this list, and under
-        # `pipefail` that status is the assignment's. Without the `||` the
-        # statement depends on the caller having disabled errexit — which the
-        # engine does today (it calls audits inside an `if`) and `run` does in
-        # every test, so a regression here would abort the loop silently at the
-        # first absent unit and no assertion could see it.
+        # Match the state WORD, never the exit status: is-enabled also exits
+        # 0 for static and alias units, which `disable` cannot act on. tail -n1
+        # drops the sysv notice; `|| state=""` survives an absent unit.
         state=$(systemctl is-enabled "$service" 2>/dev/null | tail -n1) || state=""
         case "$state" in
             enabled|enabled-runtime) unused+=("$service") ;;
@@ -245,9 +207,7 @@ _baseline_get_unused_services() {
     echo "${unused[*]}"
 }
 
-# ==============================================================================
-# Baseline Audit
-# ==============================================================================
+# --- Baseline Audit ---
 
 baseline_audit() {
     local module="baseline"
@@ -269,22 +229,16 @@ baseline_audit() {
     _baseline_audit_insecure_services
 }
 
-# Scan for telnet/rsh/finger/inetd/xinetd/NIS/tftp etc. — protocols
-# that should never be on a modern cloud VPS. Lynis dedicates a whole
-# tests_insecure_services file (INSE-* IDs); we condense to one check
-# because the action is the same regardless of which one is found:
-# stop the service and remove the package.
+# Scan for legacy plaintext protocols that should not be on a cloud VPS.
+# One check rather than many, because the action is the same whichever is
+# found: stop the service and remove the package.
 _baseline_audit_insecure_services() {
     local found=()
     local svc
 
-    # Active services / sockets. Includes both service units and the
-    # .socket form of activated daemons (telnet.socket etc).
-    # NB: the generic super-servers (inetd/openbsd-inetd/xinetd) are NOT
-    # listed — a running supervisor is not itself insecure (CIS flags the
-    # specific protocols it might serve, which ARE listed below), so flagging
-    # its mere presence was a high/required false positive on hosts that use
-    # xinetd for legitimate services.
+    # Both service units and the .socket form of activated daemons. The
+    # generic super-servers are deliberately absent: a supervisor is not
+    # itself insecure, only the protocols it serves, which are listed here.
     for svc in \
         telnet telnet.socket telnetd telnetd.socket \
         rsh rsh.socket rlogin rlogin.socket rexec rexec.socket \
@@ -301,14 +255,9 @@ _baseline_audit_insecure_services() {
         fi
     done
 
-    # Packages installed but maybe not active — still a finding because
-    # a package may be enabled later, and shipped configs may include
-    # weak defaults.
-    # Installed-but-maybe-inactive insecure packages. Both the package names and
-    # the query tool are distro-specific (distro.sh): Debian dpkg / RHEL rpm /
-    # Arch pacman. The debian list is the same names as before, so Debian/Ubuntu
-    # is unchanged; if distro.sh isn't loaded this scan is skipped (the active-
-    # service scan above still ran).
+    # Installed but possibly inactive packages are still a finding: one can be
+    # enabled later, and shipped configs carry weak defaults. Names and query
+    # tool both come from distro.sh; the scan is skipped when it is absent.
     if declare -f distro_insecure_packages >/dev/null 2>&1; then
         local pkg
         for pkg in $(distro_insecure_packages); do
@@ -546,13 +495,9 @@ _baseline_audit_apparmor() {
     fi
 }
 
-# Profiles the operator switched off explicitly.
-#
-# Deliberately NOT part of _baseline_audit_apparmor: that one runs only on the
-# `apparmor` branch of the MAC dispatch, and a disabled profile is worth
-# reporting on a host where AppArmor as a whole is off, or where SELinux won
-# the dispatch because both are installed. Called from _baseline_audit_mac
-# after the case, so it is reached on every branch.
+# Explicitly disabled profiles. Deliberately NOT part of the apparmor audit,
+# which runs on only one branch of the MAC dispatch: this is worth reporting
+# whether AppArmor is off entirely or SELinux won the dispatch.
 _baseline_audit_apparmor_disabled_profiles() {
     _baseline_apparmor_installed || return 0
 
@@ -636,9 +581,7 @@ _baseline_audit_unused_services() {
     fi
 }
 
-# ==============================================================================
-# Baseline Fix Functions
-# ==============================================================================
+# --- Baseline Fix Functions ---
 
 baseline_fix() {
     local fix_id="$1"
@@ -683,24 +626,19 @@ _baseline_fix_selinux_enforcing() {
     fi
     print_ok "$(i18n 'baseline.selinux_enforcing_set')"
 
-    # `setenforce` does not survive a reboot — only SELINUX= in the config
-    # file does. Both branches below therefore return 1: the runtime change
-    # happened, but the finding this fix answers is "SELinux is not
-    # enforcing", and returning 0 would record it as resolved on a host that
-    # comes back permissive at the next boot. Same contract as the webapp
-    # snippet fixes: a manual step is still outstanding.
+    # setenforce does not survive a reboot — only SELINUX= in the config does.
+    # Both branches return 1: the runtime change happened, but returning 0
+    # records a host as fixed that comes back permissive at the next boot.
     if [[ ! -f "$BASELINE_SELINUX_CONFIG" ]]; then
         print_warn "$(i18n 'baseline.selinux_runtime_only' "file=$BASELINE_SELINUX_CONFIG")"
         return 1
     fi
 
-    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true
+    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null || return 1
 
-    # Validate the staged content BEFORE it goes anywhere near the file that
-    # decides how SELinux initialises at boot. An unexpected layout (no
-    # SELINUX= line at all) used to be discovered only after sed -i had
-    # already rewritten the live file, leaving a restore-from-backup dance;
-    # staging means the live file is never in an intermediate state.
+    # Validate the staged content BEFORE it nears the file that decides how
+    # SELinux initialises at boot: an unexpected layout must be discovered
+    # before the live file is rewritten, not after.
     local staged
     staged=$(sed 's/^SELINUX=.*/SELINUX=enforcing/' "$BASELINE_SELINUX_CONFIG") || staged=""
     if ! grep -qE '^SELINUX=enforcing[[:space:]]*$' <<<"$staged"; then
@@ -734,10 +672,8 @@ _baseline_fix_selinux_enable() {
 _baseline_fix_enable_apparmor() {
     print_info "$(i18n 'baseline.enabling_apparmor')"
 
-    # Install if needed. A failed install used to be swallowed, and the
-    # operator then read "Failed to enable AppArmor" — which points at the
-    # service rather than at the apt transaction that actually failed (no
-    # network, held packages, a distro without the apparmor-utils package).
+    # A swallowed install failure makes the operator read "Failed to enable
+    # AppArmor", pointing at the service rather than the apt transaction.
     if ! check_command aa-status; then
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then
             print_error "$(i18n 'baseline.apparmor_install_failed')"
@@ -745,10 +681,8 @@ _baseline_fix_enable_apparmor() {
         fi
     fi
 
-    # Enable and start. Neither status is decisive on its own — a unit can be
-    # enabled and still refuse to start on a kernel without AppArmor support —
-    # so the postcondition below is what the return value rests on. Log the
-    # individual failures so the reason is in logs/vpssec.log.
+    # Neither status is decisive alone: a unit can be enabled and still refuse
+    # to start. The postcondition below is what the return value rests on.
     systemctl enable apparmor || log_warn "systemctl enable apparmor failed"
     systemctl start apparmor || log_warn "systemctl start apparmor failed"
 
@@ -771,12 +705,8 @@ _baseline_fix_disable_unused() {
     for service in $unused; do
         print_info "$(i18n 'baseline.disabling_service' "service=$service")"
 
-        # disable and stop are run independently, not chained with &&. A
-        # failed disable used to skip the stop, leaving the service both
-        # running and enabled while the operator was told only that the
-        # disable failed; and a failed stop used to hide a disable that did
-        # land, so the same service was re-reported after the reboot that
-        # would have stopped it anyway.
+        # Run independently, never chained with &&: a failed disable would
+        # skip the stop, and a failed stop would hide a disable that landed.
         local ok=1
         if ! systemctl disable "$service" 2>/dev/null; then
             log_warn "systemctl disable $service failed"
@@ -796,10 +726,9 @@ _baseline_fix_disable_unused() {
         fi
     done
 
-    # `vpssec rollback` restores FILES. A disabled unit is invisible to it, so
-    # this is the only place the operator is given the way back — print it and
-    # log it, because a printed line scrolls away and this one may be needed
-    # days later when a printer or a Bluetooth headset stops working.
+    # rollback restores FILES, so a disabled unit is invisible to it. Print
+    # AND log the undo command: a printed line scrolls away, and this one may
+    # be needed days later.
     if (( ${#disabled[@]} > 0 )); then
         local revert="systemctl enable --now ${disabled[*]}"
         print_info "$(i18n 'baseline.services_revert_hint' "cmd=$revert")"

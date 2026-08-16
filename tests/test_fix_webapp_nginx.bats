@@ -370,3 +370,17 @@ _active_server_tokens() {
     run webapp_fix "webapp.not_a_real_fix"
     [ "$status" -eq 1 ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "server_tokens: a backup that cannot be taken aborts the fix" {
+    # This fix is FIX_SAFE and auto-applied, so a rewrite with no restorable
+    # snapshot is the worst case of the whole batch.
+    _vpssec_begin_backup_session
+    printf 'http {\n    server_tokens on;\n}\n' > "$NGINX_CONF"
+    _vpssec_stub cp 1
+
+    run _webapp_fix_nginx_server_tokens
+    [ "$status" -ne 0 ]
+    grep -q 'server_tokens on;' "$NGINX_CONF"
+}

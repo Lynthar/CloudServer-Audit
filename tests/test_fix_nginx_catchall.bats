@@ -247,11 +247,13 @@ SH
 # ==============================================================================
 
 @test "catchall: a config write the atomic writer refuses is reported" {
-    # validate_path rejects '..', which makes the real guard chain refuse
-    # without mocking write_file_atomic. The bare `cat >` this replaced had no
-    # status to check at all.
+    # A regular file where the parent directory belongs defeats both the
+    # mkdir -p and the mktemp inside write_file_atomic, so the real guard chain
+    # refuses without mocking it. Not a '..' path any more: backup_file
+    # validates the same path and would now abort the fix before the write.
     VPSSEC_QUIET_SCAN=0
-    NGINX_CATCHALL_CONF="$NGINX_SITES_AVAILABLE/../sites-available/99-catchall.conf"
+    : > "$NGINX_SITES_AVAILABLE/notadir"
+    NGINX_CATCHALL_CONF="$NGINX_SITES_AVAILABLE/notadir/99-catchall.conf"
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
@@ -477,4 +479,16 @@ SH
     run _nginx_catchall_config
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q '\\$' <<<"$output"
+}
+
+# ---- the backup contract ---------------------------------------------
+
+@test "catchall: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    printf 'original\n' > "$NGINX_CATCHALL_CONF"
+    _vpssec_stub cp 1
+
+    run _nginx_fix_add_catchall
+    [ "$status" -ne 0 ]
+    [ "$(cat "$NGINX_CATCHALL_CONF")" = "original" ]
 }

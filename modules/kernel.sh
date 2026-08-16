@@ -3,18 +3,14 @@
 # Kernel and network security parameters module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Kernel Security Configuration
-# ==============================================================================
+# --- Kernel Security Configuration ---
 
 SYSCTL_CONF="/etc/sysctl.conf"
 SYSCTL_D="/etc/sysctl.d"
 VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 
-# Core-dump configuration paths. Module variables rather than literals so
-# that the audit predicate and the fix read the SAME locations — they had
-# already drifted once, the fix writing a drop-in the audit never looked
-# at — and so the fix is reachable from a test.
+# Variables, not literals, so the audit predicate and the fix read the SAME
+# locations, and so the fix is reachable from a test.
 KERNEL_LIMITS_CONF="/etc/security/limits.conf"
 KERNEL_COREDUMP_CONF="/etc/systemd/coredump.conf"
 KERNEL_COREDUMP_D="/etc/systemd/coredump.conf.d"
@@ -66,10 +62,8 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv6.conf.all.autoconf:0:low:IPv6 stateless autoconfiguration"
     "net.ipv6.conf.all.dad_transmits:0:low:Duplicate address detection transmits"
 
-    # Kernel security
-    # NB: ASLR (kernel.randomize_va_space) is intentionally NOT listed here.
-    # It has a dedicated check (_kernel_audit_aslr / kernel.aslr_disabled);
-    # listing it again double-counted ASLR-off in the score.
+    # ASLR is deliberately absent: it has its own check, and listing it here
+    # too double-counts ASLR-off in the score.
     "kernel.dmesg_restrict:1:medium:Restrict dmesg access"
     "kernel.kptr_restrict:2:medium:Restrict kernel pointer exposure"
     "kernel.yama.ptrace_scope:1:medium:Restrict ptrace"
@@ -78,14 +72,9 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "fs.protected_symlinks:1:medium:Symlink protection"
     "kernel.core_uses_pid:1:low:Core dump filename includes PID"
 
-    # Additional kernel hardening (may not be available on all systems)
-    # Disabling unprivileged user namespaces breaks Docker rootless,
-    # podman, snap, the Chrome/Electron sandbox, bwrap-based tooling,
-    # and a stack of CI runners. Debian/Ubuntu ship with =1 by default
-    # for that reason. Treating the *default* as critical kernel
-    # hardening drives users to disable it and then their containers
-    # stop working — bad guidance loop. Keep it as a finding (a real
-    # container-escape mitigation) but at medium severity.
+    # unprivileged_userns_clone stays MEDIUM: disabling it breaks rootless
+    # containers, snap and browser sandboxes, and Debian ships =1 by default.
+    # A real mitigation, but not one worth driving users into that loop.
     "kernel.unprivileged_userns_clone:0:medium:Disable unprivileged user namespaces (defence-in-depth; breaks Docker rootless / podman / snap / Chrome sandbox if enabled)"
     # Worth doing on hardened hosts but not a default-broken
     # kernel — keep at medium.
@@ -104,9 +93,7 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "dev.tty.ldisc_autoload:0:low:TTY line discipline autoload restricted"
 )
 
-# ==============================================================================
-# Kernel Helper Functions
-# ==============================================================================
+# --- Kernel Helper Functions ---
 
 # Detect if running in a container (OpenVZ, LXC, Docker)
 # Many kernel parameters cannot be modified in containers
@@ -187,11 +174,9 @@ _kernel_check_param() {
         return 2  # Parameter not available
     fi
 
-    # `expected` may be a |-separated set of acceptable values (e.g.
-    # sysrq "0|176": both the fully-disabled value and the safe-subset
-    # value are acceptable — flagging Ubuntu's hardened default 176 as
-    # "weak" was a false positive). A plain single value (no '|') splits
-    # into one token, so all other params behave exactly as before.
+    # `expected` may be a |-separated set of acceptable values, e.g. sysrq
+    # "0|176" where both the disabled and the safe-subset value are fine.
+    # A single value splits into one token, so other params are unaffected.
     local exp
     local IFS='|'
     for exp in $expected; do
@@ -215,12 +200,9 @@ _kernel_check_aslr() {
     esac
 }
 
-# True when something on this host legitimately needs IP forwarding /
-# acts as a router. Covers container runtimes, VM hosts, mesh-VPN
-# subnet routers, and Kubernetes nodes. The original list only had
-# Docker/LXC/libvirt, which produced a medium-severity FP on every
-# Tailscale or Wireguard server (the two most common ip_forward=1
-# sources on cloud VPS) — Lynis cross-check surfaced the gap.
+# True when something here legitimately needs IP forwarding: container
+# runtimes, VM hosts, mesh-VPN subnet routers, Kubernetes nodes. Mesh VPNs
+# matter — they are the most common ip_forward=1 source on a cloud VPS.
 _kernel_ip_forward_needed() {
     # Container / VM runtimes
     systemctl is-active --quiet docker 2>/dev/null && return 0
@@ -254,9 +236,7 @@ _kernel_ip_forward_needed() {
     return 1
 }
 
-# ==============================================================================
-# IPv6 Detection Functions
-# ==============================================================================
+# --- IPv6 Detection Functions ---
 
 # Check if IPv6 is enabled system-wide
 _kernel_ipv6_enabled() {
@@ -280,11 +260,8 @@ _kernel_ipv6_in_use() {
 _kernel_ipv6_get_stats() {
     local stats=""
 
-    # `grep -c` always prints "0" even when it exits 1 (no matches);
-    # the historical `|| echo "0"` then appended a SECOND "0",
-    # giving the literal "0\n0" and tripping `[[ -gt ]]` arithmetic
-    # downstream. `|| true` swallows the exit code without polluting
-    # stdout; the `${var:-0}` guard covers a fully-failed pipe.
+    # `|| true`, never `|| echo 0`: grep -c already prints 0 on no matches,
+    # so the fallback appends a second one and breaks the arithmetic.
 
     # Count interfaces with IPv6
     local iface_count
@@ -350,14 +327,8 @@ _kernel_ipv6_check_security() {
 _kernel_ipv6_firewall_check() {
     local result="unknown"
 
-    # Check if UFW is managing IPv6 — but only when ufw is actually ACTIVE.
-    # An installed-but-inactive ufw (the stock Ubuntu Server state) has
-    # IPV6=yes in /etc/default/ufw by default, yet filters nothing; treating
-    # that as "IPv6 firewall ok" was a false pass that also contradicted the
-    # ufw module's own "firewall inactive" finding. When ufw is inactive we
-    # fall through to the raw ip6tables / nft probes below, which correctly
-    # report an empty ruleset as "missing". LC_ALL=C pins the parsed output
-    # against translated locales (zh_CN renders "Status:" as "状态：").
+    # Only when ufw is ACTIVE: a stock inactive ufw already has IPV6=yes and
+    # filters nothing. Inactive falls through to the raw probes below.
     if check_command ufw && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
         if grep -q "IPV6=yes" /etc/default/ufw 2>/dev/null; then
             result="ufw_ipv6_enabled"
@@ -408,12 +379,9 @@ _kernel_check_core_dump() {
         fi
     fi
 
-    # Check systemd coredump. Storage=none may live in the main coredump.conf
-    # OR in a drop-in under coredump.conf.d/ — which is exactly where
-    # _kernel_fix_core_dump writes it, and how systemd merges the setting. The
-    # old check read only the main file, so after the (auto-applied) fix the
-    # audit kept flagging it forever. Look in both; only check when some config
-    # is present (preserves the prior "don't flag a host without the file").
+    # Storage=none may live in the main coredump.conf OR a drop-in, which is
+    # where the fix writes it and how systemd merges. Read BOTH, or the audit
+    # keeps flagging a host the fix already handled.
     if [[ -f "$KERNEL_COREDUMP_CONF" || -d "$KERNEL_COREDUMP_D" ]]; then
         if ! grep -rqsE "^[[:space:]]*Storage=none" \
                 "$KERNEL_COREDUMP_CONF" "$KERNEL_COREDUMP_D/" 2>/dev/null; then
@@ -424,9 +392,7 @@ _kernel_check_core_dump() {
     echo "${issues[*]}"
 }
 
-# ==============================================================================
-# Kernel Audit
-# ==============================================================================
+# --- Kernel Audit ---
 
 kernel_audit() {
     local module="kernel"
@@ -475,10 +441,8 @@ kernel_audit() {
     _kernel_audit_unused_protocols
 }
 
-# Check that rarely-used network protocol kernel modules are blacklisted.
-# dccp/sctp/rds/tipc are almost never needed on a server but ship enabled
-# in stock Debian/Ubuntu kernels; blacklisting them in /etc/modprobe.d/
-# reduces kernel attack surface. Mirrors Lynis NETW-3200.
+# Are the rarely-used protocol modules blacklisted? dccp/sctp/rds/tipc ship
+# enabled but are almost never needed on a server.
 _kernel_audit_unused_protocols() {
     local protocols=("dccp" "sctp" "rds" "tipc")
     local unblocked=()
@@ -529,9 +493,7 @@ _kernel_audit_unused_protocols() {
     fi
 }
 
-# ==============================================================================
-# IPv6 Audit Function
-# ==============================================================================
+# --- IPv6 Audit Function ---
 
 _kernel_audit_ipv6() {
     # Check if IPv6 is enabled
@@ -716,11 +678,8 @@ _kernel_audit_network_params() {
     local issues_low=()
     local passed=0
 
-    # Compute once: does this host obtain its IPv6 default route / global
-    # address via Router Advertisements (SLAAC)? If so, accept_ra=1 /
-    # autoconf=1 are the CORRECT values, not weaknesses — skip them below
-    # (and harden_network skips them too) instead of flagging a finding
-    # the fix must not act on.
+    # On a SLAAC host accept_ra=1 / autoconf=1 are the CORRECT values, so
+    # skip them rather than raise a finding the fix must never act on.
     local host_uses_ra=false
     _kernel_ipv6_uses_ra && host_uses_ra=true
 
@@ -743,13 +702,9 @@ _kernel_audit_network_params() {
             continue
         fi
 
-        # Special handling for rp_filter on forwarding hosts.
-        # When the kernel acts as a router (subnet router, container
-        # bridge, k8s node), rp_filter=2 ("loose mode") is the standard
-        # value — strict mode (1) drops the asymmetric-return packets
-        # those workloads produce. rp_filter=0 (off entirely) still
-        # gets flagged: it allows spoofed source addresses and has no
-        # legitimate use case on a single-host server.
+        # On a forwarding host rp_filter=2 (loose) is correct — strict mode
+        # drops the asymmetric-return packets those workloads produce.
+        # rp_filter=0 is still flagged: it permits spoofed source addresses.
         if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
            && _kernel_ip_forward_needed; then
             local rp_val
@@ -780,20 +735,9 @@ _kernel_audit_network_params() {
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
-    # Severity cap (deliberate, per the project's mitigation rubric): kernel
-    # sysctl hardening is defence-in-depth, so a missing one is never "host
-    # already exploitable now". The finding is therefore recorded ONE tier
-    # below the parameter's intrinsic weight — the high-weight group emits a
-    # MEDIUM check, the medium-weight group a LOW check. The *_high / *_medium
-    # check_ids name the source parameter group, not the emitted severity.
-    # `desc` lists EVERY offending parameter. It used to be cut to the
-    # first 3 (network high) / 5 (the weak tiers) with no marker, while
-    # the title kept reporting the true total — so a report reading
-    # "23 network parameters are weak" showed 5 of them and an operator
-    # who fixed the listed ones believed they were done. desc is a data
-    # field: it is never printed in the terminal (which shows the title
-    # only), it goes to summary.md / summary.json / summary.sarif, and
-    # its length is bounded by KERNEL_SECURITY_PARAMS, a fixed table.
+    # Severity is capped ONE tier below the parameter's weight, so the
+    # *_high / *_medium check_ids name the source group, not the severity.
+    # `desc` MUST list EVERY offending parameter, never a truncated head.
     if [[ ${#issues_high[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
         local check=$(create_check_json \
@@ -809,14 +753,9 @@ _kernel_audit_network_params() {
         print_severity "medium" "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")"
     fi
 
-    # Report medium AND low tiers together as the "weak" finding. Both are
-    # defence-in-depth sysctls (the severity cap keeps this at LOW), and
-    # _kernel_fix_network_params applies every net.* param regardless of tier,
-    # so one finding + one fix covers them. This also closes a real gap: the low
-    # tier previously had NO emit branch at all, yet counted toward total_issues
-    # — so a host with ONLY low-tier deviations produced zero output (no finding
-    # AND the OK branch suppressed), and ~13 params (log_martians,
-    # secure_redirects, tcp_timestamps, ...) were never surfaced or offered.
+    # Medium and low report together, because the fix applies every net.*
+    # param regardless of tier. A tier with no emit branch still counts
+    # toward total_issues and suppresses the OK branch.
     local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
     if [[ ${#issues_weak[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_weak[@]}" | tr '\n' '; ')
@@ -834,12 +773,9 @@ _kernel_audit_network_params() {
     fi
 
     if [[ $total_issues -eq 0 ]]; then
-        # Zero issues found by READING ZERO parameters is not a pass — it is
-        # a /proc/sys we could not ask (restricted container, mount gone).
-        # Emitting the green check with "0 parameters checked" buried in the
-        # desc told the operator their network sysctls were hardened when
-        # none were ever looked at. failed + info-category (unscored), same
-        # pattern as update.check_failed.
+        # Zero issues from reading ZERO parameters is not a pass — it is a
+        # /proc/sys we could not ask. failed + info, unscored, same pattern
+        # as update.check_failed.
         if (( passed == 0 )); then
             local check=$(create_check_json \
                 "kernel.network_params_unreadable" \
@@ -889,12 +825,9 @@ _kernel_audit_kernel_params() {
         local severity="${rest%%:*}"
         local desc="${rest#*:}"
 
-        # Only check kernel.* / fs.* / dev.* params here. dev.* was
-        # silently dropped before — KERNEL_SECURITY_PARAMS had no
-        # dev.* entries so it never showed, but adding e.g.
-        # dev.tty.ldisc_autoload (Lynis KRNL-6000) requires routing
-        # the dev.* prefix through this function rather than the
-        # net.* one.
+        # kernel.* / fs.* / dev.* only. dev.* must stay in this list: the
+        # fix side routes on the same prefixes, and a mismatch means the
+        # param is audited but never fixed.
         if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
             continue
         fi
@@ -1008,9 +941,7 @@ _kernel_audit_core_dump() {
     fi
 }
 
-# ==============================================================================
-# Kernel Fix Functions
-# ==============================================================================
+# --- Kernel Fix Functions ---
 
 kernel_fix() {
     local fix_id="$1"
@@ -1041,43 +972,26 @@ kernel_fix() {
     esac
 }
 
-# ==============================================================================
-# IPv6 Fix Function
-# ==============================================================================
+# --- IPv6 Fix Function ---
 
-# Returns success (0) when the host's IPv6 default route is installed by
-# Router Advertisements (SLAAC) — OR when we cannot determine it (`ip`
-# missing). Disabling accept_ra on such a host drops the SLAAC default
-# route + global address, cutting IPv6 (on an IPv6-only VPS that severs the
-# live session before rollback can run). The kernel tags RA-installed
-# routes with `proto ra`. Fail-safe: if we cannot probe, assume RA so the
-# caller SKIPS accept_ra rather than risking connectivity. A positively
-# determined non-RA host (static / no IPv6 default route) returns non-zero,
-# and only then does the caller apply accept_ra=0.
+# True when the IPv6 default route comes from Router Advertisements, OR when
+# that cannot be determined. Fail-safe: an unprobeable host is assumed to be
+# on RA, so the caller SKIPS accept_ra rather than cutting IPv6.
 _kernel_ipv6_uses_ra() {
     command -v ip >/dev/null 2>&1 || return 0
 
-    # Separate "the probe failed" from "the probe says no RA route". Piping
-    # straight into grep collapsed the two: an `ip` that exists but cannot
-    # answer (netlink refused, no IPv6 support in the kernel) produced no
-    # output, grep found no 'proto ra', and the caller concluded the host was
-    # statically configured — then applied accept_ra=0 to a host that might
-    # well be on SLAAC. `ip` exiting non-zero is the same "cannot determine"
-    # case as `ip` being missing, and takes the same fail-safe answer.
+    # "The probe failed" and "the probe says no RA route" MUST stay apart:
+    # piping straight into grep collapses them, and an `ip` that cannot answer
+    # then reads as a statically configured host.
     local routes
     routes=$(ip -6 route show default 2>/dev/null) || return 0
 
     grep -q 'proto ra' <<<"$routes"
 }
 
-# True for the IPv6 params that, on a host configured via Router
-# Advertisements (SLAAC), would tear down the default route / global
-# address if disabled. Both the network-params audit and harden_network
-# skip these on RA hosts, so a generic "harden network" can no longer
-# drop IPv6 connectivity. Previously the RA guard lived ONLY in the
-# dedicated _kernel_fix_ipv6; the same accept_ra=0 reached the wire via
-# _kernel_fix_network_params (fix_id kernel.harden_network) unguarded —
-# re-introducing the SLAAC lockout this guard exists to prevent.
+# The IPv6 params that would tear down a SLAAC default route if disabled.
+# EVERY path that writes accept_ra must consult this — one unguarded path is
+# enough to re-introduce the lockout.
 _kernel_param_is_ra_dependent() {
     case "$1" in
         net.ipv6.conf.*.accept_ra|\
@@ -1107,10 +1021,8 @@ _kernel_fix_ipv6() {
         "net.ipv6.conf.default.use_tempaddr=2"
     )
 
-    # RA-disabling params remove the SLAAC default route + global address.
-    # Apply them ONLY when the host does not rely on RA for its default
-    # route; otherwise skip them (and never pair accept_ra=0 with the
-    # tempaddr change) so IPv6 connectivity is preserved.
+    # RA-disabling params remove the SLAAC default route and global address,
+    # so apply them ONLY on a host that does not rely on RA.
     if _kernel_ipv6_uses_ra; then
         print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
         log_warn "kernel.harden_ipv6: host uses RA/SLAAC for its IPv6 default route; skipping accept_ra=0 to preserve connectivity"
@@ -1131,10 +1043,8 @@ _kernel_fix_ipv6() {
         local param="${setting%%=*}"
         local value="${setting#*=}"
 
-        # Apply immediately, persist, and count a parameter as fixed only
-        # when BOTH landed. A runtime-only success used to count: the
-        # setting evaporated on reboot while the fix reported done and
-        # ok.json recorded a completion the next boot contradicted.
+        # A parameter counts as fixed only when runtime AND persistence
+        # both landed — a runtime-only success evaporates on reboot.
         if sysctl -w "$param=$value" 2>/dev/null; then
             if _kernel_write_sysctl "$param" "$value"; then
                 ((fixed++)) || true
@@ -1168,10 +1078,8 @@ _kernel_fix_aslr() {
     # the runtime value, so the write itself may be fire-and-forget).
     sysctl -w kernel.randomize_va_space=2 2>/dev/null || true
 
-    # Make persistent — and treat a failed persist as a failed fix: the
-    # runtime postcondition alone passed when only `sysctl -w` landed, so a
-    # host whose drop-in write failed reverted to weak ASLR on reboot with
-    # a "completed" entry in ok.json.
+    # A failed persist is a failed fix: a runtime-only success reverts to
+    # weak ASLR on reboot with a "completed" entry in ok.json.
     if ! _kernel_write_sysctl "kernel.randomize_va_space" "2"; then
         print_error "$(i18n 'kernel.persist_failed' "count=1")"
         return 1
@@ -1192,10 +1100,8 @@ _kernel_fix_network_params() {
 
     local params_to_set=()
 
-    # Same RA guard as _kernel_fix_ipv6: on a host that gets its IPv6
-    # route/address from Router Advertisements (SLAAC), disabling accept_ra
-    # / autoconf here would drop IPv6 connectivity — exactly the lockout
-    # the dedicated harden_ipv6 fix avoids. Skip those params on RA hosts.
+    # Same RA guard as _kernel_fix_ipv6: disabling accept_ra or autoconf on
+    # a SLAAC host drops IPv6 connectivity.
     local host_uses_ra=false
     _kernel_ipv6_uses_ra && host_uses_ra=true
     local ra_skipped=false
@@ -1215,12 +1121,9 @@ _kernel_fix_network_params() {
             continue
         fi
 
-        # Mirror the audit's rp_filter exception: on a forwarding host (router /
-        # container bridge / k8s node) rp_filter=2 (loose mode) is correct —
-        # strict mode (1) drops asymmetric-return packets — so don't "fix" it
-        # back to 1 there. Without this, harden_network triggered for some other
-        # parameter would break exactly the config the audit deliberately
-        # accepted.
+        # Mirrors the audit's rp_filter exception. Without it, harden_network
+        # triggered for some other parameter breaks exactly the config the
+        # audit deliberately accepted.
         if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
            && _kernel_ip_forward_needed; then
             local rp_val
@@ -1250,11 +1153,9 @@ _kernel_fix_network_params() {
         return 0
     fi
 
-    # Apply and persist, counting what actually landed. Both halves were
-    # fire-and-forget before (fix functions run with errexit off, so the
-    # bare failing commands just fell through), and the unconditional
-    # print_ok below reported "hardened N" even when every write bounced
-    # off a read-only /proc/sys or a failed drop-in write.
+    # Count what actually landed. Fix bodies run with errexit off, so bare
+    # failing writes fall through and the summary below would report
+    # "hardened N" for writes that all bounced.
     local applied=0 apply_failed=0
     for setting in "${params_to_set[@]}"; do
         local param="${setting%%=*}"
@@ -1288,10 +1189,8 @@ _kernel_fix_kernel_params() {
         local rest="${entry#*:}"
         local expected="${rest%%:*}"
 
-        # Only kernel.* / fs.* / dev.* params — must match the audit scope in
-        # _kernel_audit_kernel_params (which includes dev.*, e.g.
-        # dev.tty.ldisc_autoload); otherwise that param is audited but the fix
-        # silently skips it and the finding persists after "harden".
+        # Must match the audit scope in _kernel_audit_kernel_params exactly,
+        # or a param is audited but silently skipped by the fix.
         if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
             continue
         fi
@@ -1337,18 +1236,18 @@ _kernel_fix_kernel_params() {
 _kernel_fix_core_dump() {
     print_info "$(i18n 'kernel.disabling_core_dump')"
 
-    # Disable via sysctl
+    # Disable via sysctl. The persist status is checked because the
+    # postcondition below reads the RUNTIME value, which `sysctl -w` just set:
+    # a drop-in that never got written would pass it and revert at reboot.
     sysctl -w fs.suid_dumpable=0 2>/dev/null
-    _kernel_write_sysctl "fs.suid_dumpable" "0"
+    _kernel_write_sysctl "fs.suid_dumpable" "0" || return 1
     _kernel_reload_sysctl_dropin
 
-    # Add limits.conf entry. PAM reads this file on every login, so append
-    # through the atomic writer rather than `>>`: a partial line left by an
-    # interrupted append is a config error on every subsequent login, and a
-    # direct `>>` to /etc also leaves no rollback trail.
+    # PAM reads limits.conf on every login, so append through the atomic
+    # writer: a partial line is a config error on every later login.
     if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
         if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then
-            backup_file "$KERNEL_LIMITS_CONF" >/dev/null 2>&1 || true
+            backup_file "$KERNEL_LIMITS_CONF" >/dev/null || return 1
             local limits_content
             limits_content=$(cat "$KERNEL_LIMITS_CONF")
             write_file_atomic "$KERNEL_LIMITS_CONF" \
@@ -1356,28 +1255,19 @@ _kernel_fix_core_dump() {
         fi
     fi
 
-    # Configure systemd-coredump if this host has it. The condition must
-    # mirror the audit's exactly. It previously required the drop-in
-    # DIRECTORY to exist while the audit flagged the finding when either the
-    # main coredump.conf or the directory existed — and Debian/Ubuntu ship
-    # coredump.conf with no coredump.conf.d, so on precisely those hosts the
-    # fix wrote nothing, claimed success, and the audit kept reporting it.
-    #
-    # Back up before writing so a rollback removes the drop-in when it is
-    # newly created (backup_file records it as fix-created when absent).
+    # The condition MUST mirror the audit's exactly: requiring the drop-in
+    # directory while the audit accepts either path means the fix writes
+    # nothing on a stock Debian host and claims success anyway.
     if [[ -f "$KERNEL_COREDUMP_CONF" || -d "$KERNEL_COREDUMP_D" ]]; then
         mkdir -p "$KERNEL_COREDUMP_D"
-        backup_file "$KERNEL_COREDUMP_DROPIN" >/dev/null 2>&1 || true
+        backup_file "$KERNEL_COREDUMP_DROPIN" >/dev/null || return 1
         write_file_atomic "$KERNEL_COREDUMP_DROPIN" '[Coredump]
 Storage=none
 ProcessSizeMax=0'
     fi
 
-    # Report what was achieved, not what was attempted. The postcondition is
-    # the audit's own predicate, so this fix can no longer print a green
-    # "core dumps restricted" over a host where the next audit still flags
-    # them — which is what happened whenever `sysctl -w` failed (container,
-    # read-only /proc/sys) or the drop-in above was skipped.
+    # Postcondition is the audit's own predicate, so this reports what was
+    # achieved rather than what was attempted.
     local remaining
     remaining=$(_kernel_check_core_dump)
     if [[ -z "$remaining" ]]; then
@@ -1390,12 +1280,9 @@ ProcessSizeMax=0'
     return 1
 }
 
-# Run every kernel hardening step, and report failure if ANY of them failed.
-# Returning only the last step's status (the previous shape) meant a failed
-# ASLR or network pass was recorded as complete by execute_plan as long as
-# the core-dump step happened to succeed. Each step still runs even when an
-# earlier one fails — they are independent, and stopping early would leave
-# the host half-hardened with no indication of which half.
+# Run every hardening step and fail if ANY failed — returning only the last
+# step's status records a failed pass as complete. Each step still runs after
+# an earlier failure; they are independent.
 _kernel_fix_all() {
     local rc=0
 
@@ -1407,20 +1294,9 @@ _kernel_fix_all() {
     return "$rc"
 }
 
-# Helper: Write sysctl setting to persistent config.
-#
-# Called once per parameter. Each call rewrites the full drop-in file
-# so that:
-#   - the header appears exactly once (previous versions re-appended
-#     the header into `existing` on every call, producing N copies of
-#     the header after N parameters);
-#   - the existing entry for $param is replaced, not duplicated; the
-#     param name is regex-escaped so dots match literally.
-#
-# Does NOT reload the drop-in. Callers that write N parameters in a
-# loop should call _kernel_reload_sysctl_dropin once after the loop
-# instead of paying for N reloads; single-parameter callers just call
-# the reload immediately after.
+# Persist one sysctl. Each call rewrites the whole drop-in so the header
+# appears once and an existing entry is replaced rather than duplicated.
+# Does NOT reload — loop callers reload once after the loop.
 _kernel_write_sysctl() {
     local param="$1"
     local value="$2"
@@ -1435,14 +1311,9 @@ _kernel_write_sysctl() {
         existing=$(grep -vE '^[[:space:]]*(#|$)' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \
                    | grep -vE "^${param_re}[[:space:]]*=" || true)
     fi
-    # Back up the drop-in BEFORE writing. Call this unconditionally (not only
-    # when the file exists): backup_file snapshots a pre-existing file so a wrong
-    # value can be rolled back, and — when the file does NOT exist yet — records
-    # it as fix-created so a rollback DELETES it. Without the latter, the very
-    # first hardening run left this drop-in with no backup, and choosing
-    # "rollback" after harden_network broke container networking left the file
-    # in place to re-apply the bad values on reboot.
-    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
+    # UNCONDITIONAL: backup_file also records an absent path as fix-created,
+    # which is the only thing that lets a rollback DELETE this drop-in.
+    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null || return 1
 
     # Build the full drop-in and write it atomically — never a partial file:
     # this is persisted hardening replayed on every boot. write_file_atomic
@@ -1459,10 +1330,8 @@ _kernel_write_sysctl() {
     write_file_atomic "$VPSSEC_SYSCTL_CONF" "$content"
 }
 
-# Reload the vpssec sysctl drop-in so the persisted values are effective
-# now, at the same priority they will have after reboot. Fails silently
-# in containers where /proc/sys is read-only; runtime was already set by
-# the caller's `sysctl -w` in that case.
+# Reload the drop-in so persisted values take effect now, at the priority
+# they will have after reboot. Silently a no-op where /proc/sys is read-only.
 _kernel_reload_sysctl_dropin() {
     sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
 }

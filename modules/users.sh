@@ -1,31 +1,11 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# User security audit module
-# Copyright (c) 2024
-#
-# IMPORTANT: This module is AUDIT ONLY
-# - NO automatic modifications to users
-# - NO automatic deletions
-# - NO automatic password changes
-# - All findings are ALERT ONLY
-#
-# This module detects:
-# - UID 0 accounts (besides root)
-# - Empty password accounts
-# - Users with interactive shells
-# - Sudoers and privileged users
-# - Recently created users
-# - SSH authorized_keys analysis
-# - Suspicious user configurations
+# User security audit. AUDIT ONLY: this module never modifies, deletes or
+# resets an account — every finding is alert-only.
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
+# --- Configuration ---
 
-# The shadow database. A named variable rather than a literal for the same
-# reason logging.sh has LOGROTATE_CONF and timezone.sh has TZ_CONF: it is the
-# seam that lets a test point these readers at a fixture instead of the host's
-# real /etc/shadow. Every reader in this module goes through it.
+# Named, not inlined: this is the seam that lets a test point every reader
+# in this module at a fixture instead of the host's real /etc/shadow.
 USERS_SHADOW_FILE="/etc/shadow"
 
 # System users that should have shells (whitelist)
@@ -46,12 +26,9 @@ declare -ga SYSTEM_ACCOUNTS=(
     "colord" "geoclue" "pulse" "rtkit" "saned" "avahi" "cups"
 )
 
-# Suspicious username patterns. Names like firstname.lastname are
-# the *standard* convention in LDAP/AD environments — the previous
-# `.*\..*` pattern flagged every one of them as suspicious, so the
-# dot pattern has been dropped. Real malicious accounts rarely use
-# dotted names anyway. Spaces remain flagged because shell-metacharacter
-# usernames are operationally unusual on a server.
+# Suspicious username patterns. Dotted names are deliberately absent:
+# firstname.lastname is the standard LDAP/AD convention. Spaces stay,
+# since shell-metacharacter usernames are genuinely unusual.
 declare -ga SUSPICIOUS_USERNAMES=(
     "^admin[0-9]*$"
     "^test[0-9]*$"
@@ -91,17 +68,11 @@ declare -gA PWQUALITY_POLICY=(
     ["minclass"]="3"
 )
 
-# ==============================================================================
-# Detection Functions
-# ==============================================================================
+# --- Detection Functions ---
 
-# Check if user has a login shell
-# Check if user has a login shell.
-# NOTE: an EMPTY 7th passwd field is NOT "no login" — login(1)/sshd fall back
-# to /bin/sh, so an account like `evil::1001:1001::/home/evil:` (empty password
-# AND empty shell) is fully login-capable. Treating "" as no-login (as before)
-# let exactly that backdoor shape slip past the empty-password / shell checks,
-# so empty now falls through to the login-shell branch.
+# Does this user have a login shell? An EMPTY 7th passwd field is NOT
+# "no login": login(1) and sshd fall back to /bin/sh, so an empty-password,
+# empty-shell account is fully login-capable.
 _has_login_shell() {
     local shell="$1"
     case "$shell" in
@@ -114,11 +85,9 @@ _has_login_shell() {
     esac
 }
 
-# True if a /etc/sudoers.d drop-in is one sudo IGNORES: sudoers(5) @includedir
-# skips any file whose name contains a '.' or ends in '~'. Auditing those
-# yields false findings — a broken *.dpkg-old fails `visudo -c` (false
-# syntax-invalid), a NOPASSWD line in foo.disabled is never loaded — so every
-# sudoers.d scanner skips them.
+# True for a sudoers.d drop-in that sudo IGNORES: @includedir skips any name
+# containing '.' or ending in '~'. Auditing those yields false findings, so
+# every sudoers.d scanner here must skip them.
 _sudoers_dropin_ignored() {
     local base="${1##*/}"
     [[ "$base" == *.* || "$base" == *'~' ]]
@@ -144,13 +113,9 @@ _is_suspicious_username() {
     return 1
 }
 
-# Get all users with UID 0 (except root).
-# Uses `getent passwd` rather than reading /etc/passwd directly: on
-# hosts joined to LDAP/AD/SSSD, a UID-0 entry coming from a directory
-# backend never appears in /etc/passwd, so the original /etc/passwd
-# scan missed exactly the kind of UID-0 backdoor that prompted this
-# check in the first place. getent walks the full NSS chain and emits
-# the same colon-delimited format.
+# All non-root UID 0 accounts. Uses getent, never /etc/passwd directly: a
+# UID-0 entry from an LDAP/AD backend never appears in that file, which is
+# exactly the backdoor this check exists for.
 _find_uid0_users() {
     getent passwd 2>/dev/null | awk -F: '$3 == 0 && $1 != "root" { print $1 }'
 }
@@ -162,11 +127,8 @@ _find_empty_password_users() {
     # Check /etc/shadow for empty password field
     if [[ -r "$USERS_SHADOW_FILE" ]]; then
         while IFS=: read -r user pass rest; do
-            # Only flag truly empty password hashes. `!` / `!!` / `*`
-            # indicate a locked account (cannot log in), which is safe;
-            # any real hash is obviously non-empty. The previous
-            # `[[ -z "$pass" || "$pass" == "" ]]` was redundant (both
-            # clauses match the same strings).
+            # Only truly empty hashes. `!` / `!!` / `*` mean a locked
+            # account, which cannot log in and is safe.
             if [[ -z "$pass" ]]; then
                 local shell=$(getent passwd "$user" 2>/dev/null | cut -d: -f7)
                 if _has_login_shell "$shell"; then
@@ -176,11 +138,9 @@ _find_empty_password_users() {
         done < "$USERS_SHADOW_FILE"
     fi
 
-    # Also catch INLINE empty passwords in passwd/NSS. A truly empty second
-    # field in a passwd entry (`evil::1001:...`, not the usual `x`/`*`/`!`) means
-    # the account needs no password to log in, and such an entry never appears
-    # in /etc/shadow — so the shadow-only scan above misses this backdoor form
-    # entirely. getent walks the full NSS chain (also covers LDAP/SSSD).
+    # Inline empty passwords too: an empty second passwd field means the
+    # account needs no password, and such an entry NEVER appears in
+    # /etc/shadow, so the scan above misses this backdoor form entirely.
     while IFS=: read -r user pass _ _ _ _ shell; do
         [[ -z "$pass" ]] || continue
         if _has_login_shell "$shell"; then
@@ -218,21 +178,9 @@ _find_system_users_with_shells() {
     printf '%s\n' "${suspicious[@]}"
 }
 
-# Get all users with sudo / privileged access.
-#
-# Covers:
-#   - Members of the `sudo` group (Debian/Ubuntu default)
-#   - Members of the `wheel` group (RHEL/CentOS default)
-#   - User entries in /etc/sudoers and /etc/sudoers.d/*
-#   - Group entries (`%group ALL=...`) in those files, expanded to members
-#
-# The previous version only handled direct user entries in sudoers.d
-# and missed the common Ansible/Terraform pattern of granting sudo via
-# a `%admins` group — guide mode would then insist the user create a
-# new admin account even though one existed via the group rule.
-# Pure-data variant of _group_all_members for testability.
-# $1: a getent-group line (`name:x:gid:m1,m2`)
-# $2: getent-passwd content (multi-line)
+# Pure-data variant of _group_all_members, for tests.
+# $1: a getent-group line (`name:x:gid:m1,m2`); $2: getent-passwd content.
+# Privileged access has four sources: sudo, wheel, user entries, %group.
 _group_all_members_from_streams() {
     local group_line="$1"
     local passwd_text="$2"
@@ -248,10 +196,8 @@ _group_all_members_from_streams() {
     fi
 }
 
-# Returns all users in the named group: secondary members from /etc/group's
-# 4th field PLUS users with primary GID matching the group's GID. Plain
-# `getent group <g> | cut -d: -f4` misses the latter, so `useradd -g sudo bob`
-# was silently absent from the audit list.
+# All users in a group: the 4th-field secondary members PLUS everyone whose
+# primary GID matches. Omitting the latter loses `useradd -g sudo bob`.
 _group_all_members() {
     local group="$1"
     local group_line passwd
@@ -291,15 +237,9 @@ _find_sudo_users() {
             [[ "$line" =~ ^[[:space:]]*$ ]] && continue
             [[ "$line" =~ ^[[:space:]]*(Defaults|Cmnd_Alias|Host_Alias|User_Alias|Runas_Alias) ]] && continue
 
-            # Match the leading token of a rule line. Token can start
-            # with `%` (group) or an alphanumeric identifier (user).
-            # Require whitespace + another token + `=` somewhere so we
-            # don't misread #include / @include directives.
-            # The token class includes `.` (and `\` for AD-style `DOMAIN\user`):
-            # LDAP/AD/Ansible commonly grant sudo to `john.doe` or `dom\alice`,
-            # and omitting the dot truncated the match so those admins were not
-            # counted — which could wrongly clear the "no non-root admin" gate
-            # that guards disabling root login.
+            # Leading token of a rule line. The class MUST include `.` and
+            # `\` for LDAP/AD names, or those admins go uncounted and the
+            # "no non-root admin" gate clears wrongly.
             if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9._\\-]*)[[:space:]]+[^=]+= ]]; then
                 local token="${BASH_REMATCH[1]}"
                 if [[ "$token" == %* ]]; then
@@ -362,12 +302,9 @@ _find_nopasswd_sudo() {
     printf '%s\n' "${findings[@]}"
 }
 
-# Return a regex matching cloud-init default usernames *for the
-# detected provider*. Each provider has its own conventional default
-# account set (AWS = ec2-user/ubuntu/debian/admin; Oracle = opc;
-# Alibaba/Tencent/Hetzner/DO/Vultr = root; etc.). Falling back to the
-# union when provider is unknown preserves pre-refactor behavior on
-# small/independent VPS where DMI detection comes back empty.
+# Regex of cloud-init default usernames FOR THE DETECTED PROVIDER; the union
+# when the provider is unknown. This is why an --include that reaches this
+# module must also load cloud.sh.
 _cloudinit_default_users_for_provider() {
     case "$(vpssec_cloud_provider)" in
         aws)
@@ -396,18 +333,9 @@ _cloudinit_default_users_for_provider() {
     esac
 }
 
-# Decide whether all NOPASSWD entries in `findings` are scoped to a
-# single cloud-init default user (one of the well-known cloud image
-# default accounts). Returns 0 (true) only when:
-#   * every line has exactly one principal token (no comma list,
-#     no group `%`, no Runas_Spec games),
-#   * that principal is in the cloud-init default-user list, and
-#   * the same principal is used across every line (we don't want
-#     "debian NOPASSWD" + "ubuntu NOPASSWD" classified as "single
-#     cloud-init user" — that pattern is unusual and worth a high).
-#
-# Anything with `%group`, `ALL=`, `Cmnd_Alias`, wildcards, or more
-# than one user falls through to high.
+# True only when every NOPASSWD line has exactly one principal, that
+# principal is a cloud-init default user, and it is the SAME one throughout.
+# Anything else — groups, aliases, wildcards, two default users — is high.
 _nopasswd_is_cloudinit_only() {
     local findings="$1"
     local cloudinit_users
@@ -433,10 +361,8 @@ _nopasswd_is_cloudinit_only() {
         # Comma in principal means multiple users on one line.
         [[ "$principal" == *,* ]] && return 1
 
-        # Cmnd_Alias / User_Alias / Defaults / Host_Alias lines aren't
-        # access grants per se, but if NOPASSWD shows up in them treat
-        # the whole batch as high — they affect everyone they're later
-        # referenced from.
+        # Alias and Defaults lines are not grants themselves, but NOPASSWD
+        # in one affects everyone that later references it.
         case "$principal" in
             Cmnd_Alias|User_Alias|Host_Alias|Runas_Alias|Defaults*) return 1 ;;
         esac
@@ -457,28 +383,9 @@ _nopasswd_is_cloudinit_only() {
     [[ -n "$seen_user" ]]
 }
 
-# Get recently created users
-# Emits "user|uid|date|home|evidence" for accounts that look recently made.
-#
-# POSIX stores no account creation timestamp, so every signal is a proxy.
-# They are tried in order of accuracy, and the one that fired is reported so
-# the operator can weigh it:
-#
-#   home-created   home directory BIRTH time (stat %W). The real answer when
-#                  the filesystem records it (ext4 with 256-byte inodes, xfs,
-#                  btrfs); %W reports 0 where it does not.
-#   home-modified  home directory mtime. This used to be the ONLY signal, and
-#                  on its own it is wrong in both directions: a first login
-#                  writes ~/.cache and bumps mtime, so a years-old account
-#                  reads as brand new.
-#   password-set   /etc/shadow field 3 (sp_lstchg, days since epoch), used
-#                  ONLY for accounts with no home directory at all. That is
-#                  exactly the `useradd -M` shape — the backdoor account this
-#                  check exists to surface — which the home-directory signals
-#                  cannot see, so it was silently missed. It is deliberately
-#                  NOT consulted when a home directory exists: sp_lstchg also
-#                  moves on every password change, and an old account whose
-#                  password was rotated last week is not a new account.
+# Emits "user|uid|date|home|evidence" for recently created accounts. POSIX
+# records no creation time, so every signal is a proxy and the one that fired
+# is reported. password-set is for homeless accounts only (design notes).
 _find_recent_users() {
     local recent=()
     local cutoff_date
@@ -500,12 +407,9 @@ _find_recent_users() {
         [[ "$uid" =~ ^[0-9]+$ ]] || continue
         # Skip system users
         [[ "$uid" -lt 1000 ]] && continue
-        # "UID >= 1000" alone is not enough once the shadow fallback exists.
-        # `nobody` is 65534, has no home directory, and carries a shadow entry
-        # stamped when the image was built — so it looked like a freshly
-        # created account on every container and cloud image. RHEL's
-        # nfsnobody is the same id under a different name, hence the numeric
-        # guard alongside the module's own system-account list.
+        # "UID >= 1000" alone is not enough once the shadow fallback exists:
+        # `nobody` is 65534, has no home, and carries a shadow entry stamped
+        # at image build, so it reads as a new account on every cloud image.
         (( uid >= 65534 )) && continue
         _is_system_account "$user" && continue
 
@@ -553,10 +457,8 @@ _analyze_ssh_keys() {
         local authkeys="$home/.ssh/authorized_keys"
         [[ -f "$authkeys" ]] || continue
 
-        # Count keys via the shared helper, which skips comment/blank lines and
-        # recognises ssh-/ecdsa-/sk- keys (including options-prefixed). The old
-        # `^ssh-`-only awk here missed ECDSA/FIDO/options keys and could
-        # under-count, skipping users that actually had keys.
+        # Counted via the shared helper, which recognises ECDSA and FIDO keys
+        # and options-prefixed lines that a `^ssh-` match would miss.
         local key_count
         key_count=$(count_authorized_keys "$authkeys")
         [[ "$key_count" -eq 0 ]] && continue
@@ -672,11 +574,9 @@ _check_password_policy() {
     printf '%s\n' "${issues[@]}"
 }
 
-# Read the effective value of a pwquality.conf directive across the supplied files.
-# libpwquality reads /etc/security/pwquality.conf.d/*.conf in ASCII order with
-# last-write-wins semantics; this awk mirrors that. Strips inline `#` comments
-# and accepts the `key = value` form with arbitrary whitespace around the `=`.
-# Pure-data variant for unit tests; production wrapper enumerates real paths.
+# Effective value of a pwquality directive across the supplied files, with
+# libpwquality's ASCII-order last-write-wins semantics. Pure-data variant;
+# the production wrapper enumerates the real paths.
 _pwquality_get_directive_from_files() {
     local key="$1"
     shift
@@ -725,16 +625,12 @@ _check_pwquality() {
         fi
     fi
 
-    # Check pwquality directives if any config source exists. Reads main
-    # pwquality.conf plus pwquality.conf.d/*.conf with last-write-wins
-    # semantics so drop-in policies (the recommended layout on Debian 11+
-    # and Ubuntu 22.04+) are honored.
+    # Reads pwquality.conf plus pwquality.conf.d/*.conf, last-write-wins, so
+    # drop-in policies are honoured.
     if [[ -f /etc/security/pwquality.conf || -d /etc/security/pwquality.conf.d ]]; then
-        # All three comparisons guard the arithmetic with a numeric-regex
-        # test first: a non-numeric pwquality.conf value would otherwise be
-        # evaluated as a variable name in [[ x -lt/-ge N ]] and abort the
-        # whole audit under set -u. dcredit/ucredit are legitimately NEGATIVE
-        # (e.g. -1 = "require one"), so their guard allows a leading '-'.
+        # Every comparison guards with a numeric regex first: a non-numeric
+        # value would be read as a variable name and abort under set -u.
+        # dcredit/ucredit are legitimately negative, so they allow a '-'.
         local minlen
         minlen=$(_pwquality_get_directive minlen)
         if [[ -z "$minlen" ]] || { [[ "$minlen" =~ ^[0-9]+$ ]] && (( minlen < 8 )); }; then
@@ -804,11 +700,8 @@ _check_history_security() {
     printf '%s\n' "${issues[@]}"
 }
 
-# Find non-root accounts that share a UID. Lynis AUTH-9208 — duplicate
-# UIDs are either misconfiguration (rare, accidental aliasing) or an
-# intentional backdoor (a second account that maps to root's, or
-# another privileged user's, UID). Either way the audit should
-# surface it. Output format: "UID:user1,user2".
+# Non-root accounts sharing a UID: either accidental aliasing or a
+# deliberate backdoor. Output: "UID:user1,user2".
 _find_duplicate_uids() {
     # Read via getent, not /etc/passwd directly, so a duplicate UID injected
     # through an NSS backend (LDAP/SSSD) — the same backdoor vector
@@ -823,13 +716,9 @@ _find_duplicate_uids() {
     }'
 }
 
-# Lynis AUTH-9229 — weak password hash methods. Two-source check:
-#   1. live hashes in /etc/shadow (already-set credentials). MD5 ($1$)
-#      or traditional 13-char DES here is an attacker-actionable
-#      weakness once /etc/shadow leaks.
-#   2. configured method for *new* passwords (pam_unix in common-
-#      password / system-auth / password-auth, falling back to
-#      ENCRYPT_METHOD in /etc/login.defs).
+# Weak password hash methods, from two sources: the live hashes in
+# /etc/shadow, and the configured method for NEW passwords (pam_unix,
+# falling back to ENCRYPT_METHOD in login.defs).
 _check_hash_method() {
     local issues=()
 
@@ -880,14 +769,9 @@ _check_hash_method() {
     printf '%s\n' "${issues[@]}"
 }
 
-# Lynis AUTH-9230 — hash rounds (cost factor). glibc defaults to 5000
-# (the minimum) when SHA_CRYPT_*_ROUNDS is unset. Setting an explicit
-# >= 10000 raises offline-cracking cost against captured /etc/shadow.
-#
-# ONLY relevant when the configured method is SHA-256 / SHA-512.
-# yescrypt (Debian 12+ default), bcrypt, md5, and des do not consult
-# SHA_CRYPT_*_ROUNDS — flagging them was a false positive that fired
-# on every stock Debian 13 / Ubuntu 22.04+ install.
+# Hash rounds. ONLY relevant for SHA-256/SHA-512: yescrypt, bcrypt, md5 and
+# des never consult SHA_CRYPT_*_ROUNDS, so flagging them fires on every
+# stock Debian 12+ host. glibc defaults to the 5000 minimum when unset.
 _check_hash_rounds() {
     local pam_method="" f
     for f in /etc/pam.d/common-password /etc/pam.d/system-auth /etc/pam.d/password-auth; do
@@ -920,10 +804,8 @@ _check_hash_rounds() {
     fi
 }
 
-# Lynis AUTH-9408 — failed-login event logging in /etc/login.defs.
-# Both FAILLOG_ENAB (record failures) and LOG_UNKFAIL_ENAB (log
-# attempts against unknown usernames — surfaces brute-force scans
-# against fake account names) should be yes.
+# Failed-login logging in login.defs. Both FAILLOG_ENAB and LOG_UNKFAIL_ENAB
+# should be yes; the latter surfaces brute-force against fake usernames.
 _check_faillog_logging() {
     local issues=() enab unk
     enab=$(grep -E '^FAILLOG_ENAB'     /etc/login.defs 2>/dev/null | awk '{print $2}')
@@ -933,11 +815,8 @@ _check_faillog_logging() {
     printf '%s\n' "${issues[@]}"
 }
 
-# Lynis AUTH-9250 — sudoers integrity via visudo -c. A syntax error in
-# /etc/sudoers or any /etc/sudoers.d/ drop-in either locks operators
-# out (sudo refuses every command) or — in rarer parser-corner cases
-# — silently widens privileges if the rule list falls through past a
-# malformed line.
+# sudoers integrity via visudo -c. A syntax error either locks operators out
+# entirely or, in parser corner cases, widens privileges.
 _check_sudoers_syntax() {
     command -v visudo >/dev/null 2>&1 || return 0
     local issues=() drop
@@ -955,9 +834,7 @@ _check_sudoers_syntax() {
     printf '%s\n' "${issues[@]}"
 }
 
-# ==============================================================================
-# Audit Functions
-# ==============================================================================
+# --- Audit Functions ---
 
 users_audit() {
     log_info "Running user security audit"
@@ -1042,15 +919,9 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 4. List sudo/privileged users - INFO
-    #
-    # `sudo_count` includes root (every distro ships `root ALL=(ALL:ALL) ALL`
-    # in /etc/sudoers, so the count is never zero). A bare "Privileged
-    # Users: 1" with a green check reads as "I have an admin, safe to
-    # disable root login" — but that 1 is often just root itself, which
-    # is precisely the case ssh.no_admin_user is trying to flag. Surface
-    # the non-root count in the title so the two checks tell a consistent
-    # story without the operator having to cross-reference modules.
+    # sudo_count includes root, so it is never zero. The title must carry the
+    # NON-ROOT count: "Privileged Users: 1" reads as "safe to disable root
+    # login" when that 1 is root itself.
     local sudo_users=$(_find_sudo_users)
     local sudo_count=$(count_lines "$sudo_users")
     local non_root_count=$(echo "$sudo_users" | grep -vx 'root' | grep -c .)
@@ -1078,25 +949,9 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 4.5 Check for NOPASSWD sudo
-    #
-    # Severity model: cloud images (AWS, DO, Tencent, Alibaba, Azure,
-    # GCP, Hetzner) ship NOPASSWD sudo for their cloud-init default
-    # user out of the box. Calling literally every fresh cloud VM
-    # "high risk" undermines the signal — operators never read past
-    # the third "but this one is normal" finding.
-    #
-    # Heuristic:
-    #   * any wildcard / Cmnd_Alias / multi-user line  → high (real
-    #     blast radius beyond a single account)
-    #   * one or more entries, all scoped to a single account that
-    #     looks like a cloud-init default user            → medium
-    #   * everything else                                  → high
-    #
-    # The cloud-init default-user list is a known, finite set; we
-    # don't try to detect "user added by operator" because that's
-    # exactly the case where the user *did* opt in to NOPASSWD and
-    # already knows.
+    # Cloud images ship NOPASSWD for their cloud-init user, so calling every
+    # fresh VM high risk destroys the signal. Entries scoped to a single
+    # cloud-init default user are medium; everything else is high.
     local nopasswd=$(_find_nopasswd_sudo)
     local nopasswd_count=$(count_lines "$nopasswd")
 
@@ -1324,12 +1179,9 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 12. Duplicate UIDs in /etc/passwd (Lynis AUTH-9208) - MEDIUM.
-    # The comment used to say HIGH while the emit below said medium;
-    # the mutation case pinned HIGH and had been failing ever since.
-    # Medium is the right call: a duplicate UID 0 — the actual backdoor
-    # pattern — is reported separately, and at high, by users.uid0_found.
-    # A collision among regular UIDs is ambiguous file ownership.
+    # Medium, not high: a duplicate UID 0 — the actual backdoor pattern — is
+    # reported separately and at high by users.uid0_found. A collision among
+    # regular UIDs is ambiguous file ownership.
     local dup_uids
     dup_uids=$(_find_duplicate_uids)
     if [[ -n "$dup_uids" ]]; then
@@ -1411,10 +1263,8 @@ users_audit() {
         state_add_check "$check_json"
     fi
 
-    # 16. Sudoers syntax integrity (Lynis AUTH-9250) - MEDIUM.
-    # Same comment-vs-code drift as #12. sudo logs and skips a malformed
-    # drop-in rather than failing open, so this is a configuration-
-    # integrity finding, not an exploitable one.
+    # Medium: sudo logs and skips a malformed drop-in rather than failing
+    # open, so this is configuration integrity, not an exploitable hole.
     local sudoers_issues
     sudoers_issues=$(_check_sudoers_syntax)
     if [[ -n "$sudoers_issues" ]]; then
@@ -1439,9 +1289,7 @@ users_audit() {
     return 0
 }
 
-# ==============================================================================
-# Fix Functions (ALL ALERT ONLY - NO AUTO MODIFICATIONS)
-# ==============================================================================
+# --- Fix Functions (ALL ALERT ONLY - NO AUTO MODIFICATIONS) ---
 
 users_fix() {
     local fix_id="$1"
@@ -1587,10 +1435,8 @@ users_fix() {
             echo ""
             echo "$(i18n 'users.login_defs_location' 2>/dev/null || echo 'Configuration file'): /etc/login.defs"
             echo ""
-            # Values come from PASSWORD_POLICY, not from literals repeated
-            # here. The table is the single place these numbers are declared;
-            # printing them from anywhere else is how the advice and the
-            # policy drift apart.
+            # Values come from PASSWORD_POLICY, never from literals repeated
+            # here — that is how the advice and the policy drift apart.
             echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
             printf '  PASS_MAX_DAYS   %-5s # Password expires after %s days\n' \
                 "${PASSWORD_POLICY[PASS_MAX_DAYS]}" "${PASSWORD_POLICY[PASS_MAX_DAYS]}"

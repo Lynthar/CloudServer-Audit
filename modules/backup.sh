@@ -3,15 +3,11 @@
 # Backup template module - generates backup configurations
 # Copyright (c) 2024
 
-# ==============================================================================
-# Backup Configuration
-# ==============================================================================
+# --- Backup Configuration ---
 
 BACKUP_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/backup"
 
-# ==============================================================================
-# Backup Helper Functions
-# ==============================================================================
+# --- Backup Helper Functions ---
 
 _backup_restic_installed() {
     check_command restic
@@ -39,11 +35,9 @@ _backup_check_systemd_timer() {
     systemctl list-timers 2>/dev/null | grep -qiE "(restic|borg|backup)"
 }
 
-# Single source of truth for "is a backup tool installed?". Both the
-# tools audit and the audit-flow gate consult this so the three backup
-# checks can't disagree (previously: no_tools failed while scheduled
-# and critical_paths both passed, because the latter two only looked
-# for cron entries / on-disk paths without cross-referencing tools).
+# Single source of truth for "is a backup tool installed?". Both the tools
+# audit and the flow gate consult it, so the three backup checks cannot
+# contradict each other.
 _backup_count_tools() {
     local count=0
     _backup_restic_installed && ((count++)) || true
@@ -52,9 +46,7 @@ _backup_count_tools() {
     echo "$count"
 }
 
-# ==============================================================================
-# Backup Audit
-# ==============================================================================
+# --- Backup Audit ---
 
 backup_audit() {
     local module="backup"
@@ -65,11 +57,8 @@ backup_audit() {
     print_item "$(i18n 'backup.check_tools')"
     _backup_audit_tools
 
-    # Schedule and critical-paths checks are meaningful only when at
-    # least one backup tool is installed — otherwise a stray cron line
-    # whose name contains "backup", or the mere existence of /etc on
-    # disk, would emit a passing check next to "no backup tools",
-    # giving the operator a false sense that backups are in place.
+    # Only meaningful once a tool is installed: otherwise a stray cron line
+    # containing "backup" emits a pass next to "no backup tools".
     if (( tools_found > 0 )); then
         print_item "$(i18n 'backup.check_scheduled')"
         _backup_audit_scheduled
@@ -192,9 +181,7 @@ _backup_audit_critical_paths() {
     print_ok "$(i18n 'backup.critical_paths' "paths=$paths_list")"
 }
 
-# ==============================================================================
-# Backup Fix Functions
-# ==============================================================================
+# --- Backup Fix Functions ---
 
 backup_fix() {
     local fix_id="$1"
@@ -229,11 +216,9 @@ _backup_fix_generate_templates() {
     return 0
 }
 
-# Write one generated template from stdin, and say so when it could not be
-# written. See _alerts_write_template for the same shape and the same reason.
-#
-# MODE is passed to chmod verbatim. The backup scripts use an absolute 700
-# rather than `+x` on purpose — see the restic generator below.
+# Write one generated template from stdin, reporting when it could not be
+# written. MODE goes to chmod verbatim: the backup scripts use an absolute
+# 700 rather than `+x`, which would leave group/other read bits intact.
 _backup_write_template() {
     local name="$1" mode="${2:-}"
     local path="${BACKUP_TEMPLATES_DIR}/${name}"

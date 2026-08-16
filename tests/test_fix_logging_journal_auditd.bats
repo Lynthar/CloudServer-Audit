@@ -304,3 +304,16 @@ _block_path_under() {
     run logging_fix "logging.not_a_real_fix"
     [ "$status" -eq 1 ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "persistent journal: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    mkdir -p "$JOURNALD_CONF_D"
+    printf '# existing\n' > "$JOURNALD_DROPIN"
+    _vpssec_stub cp 1
+
+    run _logging_fix_enable_persistent_journal
+    [ "$status" -ne 0 ]
+    [ "$(cat "$JOURNALD_DROPIN")" = "# existing" ]
+}

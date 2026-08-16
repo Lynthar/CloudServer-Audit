@@ -3,9 +3,7 @@
 # Text-based fallback interface
 # Copyright (c) 2024
 
-# ==============================================================================
-# Text UI Functions (fallback when TUI not available)
-# ==============================================================================
+# --- Text UI Functions (fallback when TUI not available) ---
 
 # Yes/No prompt
 text_yesno() {
@@ -91,9 +89,7 @@ text_textbox() {
     read -rp "$(i18n 'common.ok') > " _ </dev/tty
 }
 
-# ==============================================================================
-# High-level Text UI Functions for vpssec
-# ==============================================================================
+# --- High-level Text UI Functions for vpssec ---
 
 # Same tag contract as tui_select_fixes: emit FIX ids (what generate_plan
 # resolves), never check ids; dedupe because two checks can share a fix.
@@ -134,9 +130,7 @@ text_confirm_execute() {
     text_yesno "$(i18n 'common.confirm')" "$(i18n 'guide.confirm_execute')" "no"
 }
 
-# ==============================================================================
-# Unified UI Interface
-# ==============================================================================
+# --- Unified UI Interface ---
 
 # These functions auto-detect and use TUI or text fallback
 

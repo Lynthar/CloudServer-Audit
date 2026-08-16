@@ -3,34 +3,23 @@
 # UFW firewall module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Firewall Helper Functions
-# ==============================================================================
+# --- Firewall Helper Functions ---
 
 # Check if UFW is installed
 _ufw_installed() {
     check_command ufw
 }
 
-# Check if UFW is enabled.
-# LC_ALL=C pins the output against a translated system locale: ufw
-# gettext-translates "Status: active" (zh_CN renders it "状态： 激活"),
-# and this tool defaults to zh_CN and targets Chinese-locale servers.
-# Without it an active UFW reads as inactive, then _detect_firewall
-# falls through to "nftables" (ufw's own chains make `nft list tables`
-# non-empty) and every UFW-specific check is silently skipped.
+# LC_ALL=C is load-bearing on every ufw parse here: ufw gettext-translates
+# "Status: active", and a translated locale makes an active UFW read as
+# inactive, after which every UFW-specific check is silently skipped.
 _ufw_enabled() {
     LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"
 }
 
-# Check if iptables has rules (beyond default)
-#
-# `grep -c` and `wc -l` always print an integer to stdout (0 on no
-# matches / empty input); use `|| true` to swallow the exit-1-on-zero
-# behavior of grep -c without ALSO appending a second "0" — the old
-# `|| echo 0` produced the literal "0\n0" and tripped `[[ -gt ]]`
-# with "syntax error in expression" on hosts where iptables existed
-# but had no ACCEPT/DROP/REJECT lines.
+# Does iptables have rules beyond the defaults?
+# `|| true`, never `|| echo 0`: grep -c already prints 0 on no matches, so
+# the fallback would append a second one and break the arithmetic below.
 _iptables_has_rules() {
     local rule_count
     rule_count=$(iptables -L -n 2>/dev/null | grep -cE "^(ACCEPT|DROP|REJECT)" || true)
@@ -69,16 +58,9 @@ _detect_firewall() {
     fi
 }
 
-# Get UFW default incoming/outgoing policy.
-#
-# The verbose line is: "Default: deny (incoming), allow (outgoing), disabled (routed)"
-# — the policy WORD PRECEDES "(incoming)". The previous pattern
-# `incoming\s+\K\w+` looked for a word AFTER "incoming" and so matched
-# nothing on every real host: _ufw_audit_default_policy then emitted no
-# check at all, silently passing the worst UFW misconfig (default allow
-# incoming) and leaving the set_default_deny fix unreachable from guide.
-# Parse the word before the "(incoming)" paren instead. LC_ALL=C: see
-# _ufw_enabled (ufw translates "Default:").
+# UFW default incoming/outgoing policy. The verbose line reads
+# "Default: deny (incoming), ...", so the policy word PRECEDES the paren —
+# parse backwards from "(incoming)". LC_ALL=C: ufw translates "Default:".
 _ufw_get_default_incoming() {
     LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(incoming\))'
 }
@@ -88,20 +70,9 @@ _ufw_get_default_outgoing() {
     LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(outgoing\))'
 }
 
-# Check if SSH port is allowed.
-# UFW emits a separate "22/tcp (v6) ALLOW ..." line for the IPv6 rule;
-# the pattern has to accept an optional " (v6)" segment between the
-# port spec and ALLOW or the v6-only case reports a false negative.
-# Accept LIMIT as well as ALLOW: `ufw limit ssh` is the rate-limited
-# variant (recommended for SSH against brute force) and used to be
-# misreported as "no SSH rule", which then routed users to fix_allow_ssh
-# — silently downgrading their LIMIT to a plain ALLOW.
-# An OUTBOUND rule (`ufw allow out 22/tcp` → "22/tcp ALLOW OUT Anywhere")
-# must NOT count as "SSH allowed inbound": the old pattern stopped at
-# (ALLOW|LIMIT) and so accepted "ALLOW OUT", which could make
-# _ufw_fix_default_deny skip adding the inbound rule and then flip
-# default-deny — a lockout. Require what follows the action to be the
-# optional "IN" plus a source (Anywhere / an IP), never "OUT".
+# Is the SSH port allowed INBOUND? The pattern must allow an optional
+# " (v6)", accept LIMIT as well as ALLOW, and never match "ALLOW OUT" —
+# reading an outbound rule as inbound coverage is a lockout.
 _ufw_ssh_allowed() {
     local ssh_port=$(get_ssh_port)
     LC_ALL=C ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+(ALLOW|LIMIT)([[:space:]]+IN)?[[:space:]]+(Anywhere|[0-9A-Fa-f:.])"
@@ -199,16 +170,9 @@ _ufw_find_permissive_rules() {
     # Check for overly broad rules (allow all from specific IP with no port)
     # This is less critical but worth noting
     while read -r line; do
-        # Plain `ufw status` prints inbound rules as "ALLOW Anywhere" (no
-        # literal "IN") and v6 lines end "Anywhere (v6)", so the previous
-        # "ALLOW\s+IN\s+Anywhere\s*$" matched nothing — every non-sensitive
-        # port open to the world was silently uncovered. Make IN optional,
-        # drop the end-anchor, and exclude outbound (OUT) rules.
-        # The exclusion must be ANCHORED to the whole port token: the old
-        # `^(22|80|443)` (no trailing boundary) also swallowed 2222, 8080, 4430
-        # etc. as "starts with 22/80/443", so those world-open ports were never
-        # flagged. Require the match to end at a `/`, whitespace, or EOL. The
-        # exact-match `case` below is the authoritative web-port skip.
+        # "ALLOW Anywhere" has no literal IN and v6 lines end "(v6)", so IN
+        # is optional and there is no end anchor. The port exclusion is
+        # anchored to the WHOLE token, or 2222 matches as "starts with 22".
         if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then
             # Non-standard port open to anywhere
             local rule_port=$(echo "$line" | awk '{print $1}')
@@ -227,9 +191,7 @@ _ufw_find_permissive_rules() {
     printf '%s\n' "${issues[@]}"
 }
 
-# ==============================================================================
-# UFW Audit
-# ==============================================================================
+# --- UFW Audit ---
 
 ufw_audit() {
     local module="ufw"
@@ -307,27 +269,14 @@ ufw_audit() {
             return
             ;;
         none)
-            # No firewall active. Report it ONCE.
-            #
-            # Every other branch above returns, so control only reaches
-            # _ufw_audit_enabled (and therefore ufw.disabled) when the
-            # active firewall is "none". That made ufw.no_firewall and
-            # ufw.disabled two medium findings for the same single fact
-            # on every host that has UFW installed but off — and
-            # ufw.no_firewall's fix_id (ufw.install) is simply wrong in
-            # that state, since UFW is already installed.
-            #
-            # So: when UFW is present, let the more specific
-            # ufw.disabled carry the finding (its fix_id, ufw.enable, is
-            # the action that actually resolves it). Emit
-            # ufw.no_firewall only when nothing is there to enable.
+            # Report it ONCE: when UFW is installed but off, ufw.disabled
+            # carries the finding because its fix_id is what resolves it.
+            # ufw.no_firewall is for when there is nothing to enable.
             if _ufw_installed && [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
                 log_debug "No active firewall, but UFW is installed — reported as ufw.disabled"
             else
-                # The remediation hint is distro-aware: UFW is only the
-                # right front-end on Debian/Ubuntu. RHEL ships firewalld
-                # and Arch typically uses nftables, so steer those users
-                # away from "install UFW".
+                # Distro-aware: UFW is only the right front-end on
+                # Debian/Ubuntu, so do not send RHEL or Arch users to it.
                 local nf_suggestion
                 if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
                     nf_suggestion=$(i18n 'ufw.fix_install')
@@ -353,12 +302,9 @@ ufw_audit() {
     # Check if UFW is installed
     print_item "$(i18n 'ufw.check_installed')"
     if ! _ufw_installed; then
-        # "UFW not installed" is only actionable on Debian/Ubuntu, where
-        # UFW is the standard front-end. On RHEL/Arch the active firewall
-        # was already probed above; a "none" result has emitted the
-        # ufw.no_firewall check (medium — see the severity note there), so
-        # recommending UFW here would be both redundant and wrong for
-        # those distros.
+        # "UFW not installed" is only actionable on Debian/Ubuntu. Elsewhere
+        # the probe above already emitted ufw.no_firewall if nothing is
+        # active, so recommending UFW here would be redundant and wrong.
         if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
             local check=$(create_check_json \
                 "ufw.not_installed" \
@@ -401,23 +347,9 @@ ufw_audit() {
     fi
 }
 
-# Decide whether the active (non-ufw/non-firewalld) backend actually
-# enforces HOST INGRESS filtering. The previous version counted every
-# rule in every chain, which reported a host as "firewalled" whenever a
-# container runtime was present: Docker/podman populate FORWARD/NAT and
-# custom chains (DOCKER, DOCKER-USER, ...) that filter container traffic
-# but do NOT protect host-level services. On a modern iptables-nft host
-# those rules even land in nftables, so fw_backend returns "nftables"
-# and the ruleset looks busy while the host's INPUT path is wide open.
-#
-# Correct signal = the input hook: a host is protected if its input
-# chain has at least one rule OR a default drop/reject policy (a
-# default-drop input with no explicit rules is still enforcement — the
-# old all-chains count flagged that secure case as "empty", a separate
-# false positive this also fixes).
-#
-# Fail-safe: on any parse/query failure we return WITHOUT flagging, so
-# we never raise a false "empty" alarm on a host we could not read.
+# Does the backend enforce HOST INGRESS filtering? Signal is the INPUT HOOK
+# only: a count across all chains calls any container host firewalled.
+# Fail-safe — any parse or query failure returns WITHOUT flagging.
 _ufw_audit_ruleset_empty() {
     local backend="$1"
     local ingress_rules=0
@@ -429,11 +361,9 @@ _ufw_audit_ruleset_empty() {
             local nft_out
             nft_out=$(nft --stateless list ruleset 2>/dev/null) || return 0
             [[ -z "$nft_out" ]] && return 0
-            # Walk base chains; count rules only inside chains hooked to
-            # `input`, and note a drop/reject policy on that hook. The
-            # close-brace test requires a lone `}` so an inline anonymous
-            # set (`tcp dport { 22, 80 } accept`) does not close the chain.
-            # [ \t] (not [[:space:]]) keeps this portable to mawk.
+            # Count rules only inside chains hooked to `input`. The close
+            # test needs a LONE `}` so an inline anonymous set does not end
+            # the chain. [ \t] rather than [[:space:]] keeps this mawk-safe.
             read -r ingress_rules default_drop <<<"$(awk '
                 /^[ \t]*chain[ \t]/ { inchain=1; isinput=0; next }
                 inchain && /^[ \t]*[}][ \t]*$/ { inchain=0; isinput=0; next }
@@ -657,9 +587,7 @@ _ufw_audit_permissive_rules() {
     fi
 }
 
-# ==============================================================================
-# UFW Fix Functions
-# ==============================================================================
+# --- UFW Fix Functions ---
 
 ufw_fix() {
     local fix_id="$1"
@@ -702,11 +630,9 @@ _ufw_fix_install() {
 _ufw_fix_enable() {
     local current_ip=$(get_current_ssh_ip)
 
-    # Allow EVERY sshd port before enabling. Enabling ufw with a default-deny
-    # policy and a missing SSH rule locks the operator out; get_ssh_port returns
-    # only the first port, so a sshd listening on several ports (e.g. 22 + a
-    # custom port the operator is actually on) needs all of them opened first.
-    # Any failure here MUST abort before the firewall comes up.
+    # EVERY sshd port, not just the first: enabling with default-deny and a
+    # missing rule locks the operator out. Any failure MUST abort before the
+    # firewall comes up.
     local _p
     while read -r _p; do
         [[ -n "$_p" ]] || continue
@@ -741,12 +667,9 @@ _ufw_fix_enable() {
     if echo "y" | ufw enable; then
         print_ok "$(i18n 'ufw.ufw_enabled')"
 
-        # Do NOT auto-delete the current-session rescue rule. If the SSH
-        # port rule does not actually cover the live connection (wrong
-        # detected port, NAT, a non-default sshd port), deleting the rescue
-        # rule is exactly what locks the operator out. Leave it in place and
-        # tell the user to remove it once a fresh SSH login on the
-        # firewalled port is confirmed working.
+        # NEVER auto-delete the rescue rule: if the port rule does not cover
+        # the live connection, removing it is the lockout. Tell the operator
+        # to remove it after a fresh login is confirmed.
         if [[ -n "$current_ip" ]]; then
             print_warn "$(i18n 'ufw.rescue_rule_kept' "ip=$current_ip")"
         fi
@@ -759,10 +682,8 @@ _ufw_fix_enable() {
 }
 
 _ufw_fix_default_deny() {
-    # Ensure EVERY sshd port is allowed before flipping to deny-all incoming —
-    # otherwise the deny policy cuts the live SSH session on any port that lacks
-    # a rule. Add a rule per port (idempotent); abort on any failure BEFORE
-    # changing the default policy.
+    # EVERY sshd port must be allowed before flipping to deny-all, or the
+    # policy cuts the live session. Abort on any failure BEFORE the flip.
     local _p
     while read -r _p; do
         [[ -n "$_p" ]] || continue
@@ -843,7 +764,5 @@ _ufw_fix_review_rules() {
     return 1  # Return 1 since this is informational only
 }
 
-# ==============================================================================
-# UFW Utility Functions for Other Modules
-# ==============================================================================
+# --- UFW Utility Functions for Other Modules ---
 

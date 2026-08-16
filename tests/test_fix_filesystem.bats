@@ -145,9 +145,9 @@ _pam_umask_enabled() {
 }
 
 @test "umask fix: a write the atomic writer refuses is reported as failure" {
-    # validate_path rejects a path containing '..', which makes the real guard
-    # chain refuse without mocking write_file_atomic. The live file must
-    # survive unchanged.
+    # The lever is the final rename, not a '..' path: backup_file validates the
+    # same path and now aborts the fix before the write, so a rejected path
+    # tests the backup guard rather than this one. The live file must survive.
     #
     # The assertion is on the MESSAGE, not just the status: the postcondition
     # further down also returns 1 here (it re-reads the unchanged file and sees
@@ -157,7 +157,7 @@ _pam_umask_enabled() {
     VPSSEC_QUIET_SCAN=0
     _login_defs "$(printf 'UMASK\t\t022')"
     _pam_umask_enabled
-    FS_LOGIN_DEFS="$etc/../etc/login.defs"
+    _vpssec_stub mv 1
 
     run _fs_fix_umask
     [ "$status" -eq 1 ]
@@ -434,4 +434,30 @@ _make() {
     run filesystem_fix "filesystem.fix_sensitive_perms"
     [ "$status" -eq 0 ]
     [ "$(_mode_of "$etc/passwd")" = "644" ]
+}
+
+# ---- the backup contract ---------------------------------------------
+
+@test "perms fix: a backup that cannot be taken is counted, not skipped" {
+    # The loops that drive _fs_fix_one ignore its status, so the failure has
+    # to reach the counter or the fix reports success for a file it never
+    # backed up and then chmod'ed anyway.
+    _vpssec_begin_backup_session
+    _make passwd 666
+    _sensitive "passwd:644"
+    _vpssec_stub cp 1
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -ne 0 ]
+    [ "$(_mode_of "$etc/passwd")" = "666" ]
+}
+
+@test "umask fix: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    printf 'UMASK\t\t022\n' > "$FS_LOGIN_DEFS"
+    _vpssec_stub cp 1
+
+    run _fs_fix_umask
+    [ "$status" -ne 0 ]
+    grep -q '022' "$FS_LOGIN_DEFS"
 }

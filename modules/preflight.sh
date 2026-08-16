@@ -3,9 +3,7 @@
 # Preflight module - environment detection and prerequisite checks
 # Copyright (c) 2024
 
-# ==============================================================================
-# Preflight Audit
-# ==============================================================================
+# --- Preflight Audit ---
 
 preflight_audit() {
     local module="preflight"
@@ -132,10 +130,8 @@ _preflight_check_deps() {
     done
 
     if [[ ${#missing_required[@]} -gt 0 ]]; then
-        # The suggestion used to be `apt install <commands>`, wrong twice
-        # over: apt is not the package manager on two of the four families
-        # this audit supports, and a command name is not a package name on
-        # any of them.
+        # Never `apt install <command>`: apt is wrong on two of the four
+        # families, and a command name is not a package name on any.
         local dep_pkgs dep_hint
         dep_pkgs=$(distro_packages_for_commands "${missing_required[@]}")
         # shellcheck disable=SC2086  # deliberate split: one package per word
@@ -167,14 +163,9 @@ _preflight_check_deps() {
         print_ok "$(i18n 'common.required_deps')"
     fi
 
-    # Optional dependencies.
-    #
-    # lsof is here rather than in required_deps above because the thing that
-    # needed it — pkg_manager_locked's apt branch — now answers from
-    # /proc/locks first and only falls back to lsof. Before that it was used
-    # and declared nowhere, and its absence silently turned "is the package
-    # manager busy?" into a scored pass. Declaring it optional is the other
-    # half of that fix: the audit now says out loud that this host lacks it.
+    # lsof is optional because pkg_manager_locked answers from /proc/locks
+    # first. It is declared here so the audit says out loud when the host
+    # lacks it, rather than turning that into a silent scored pass.
     local optional_deps=(whiptail dialog curl wget lsof)
     local missing_optional=()
 
@@ -195,10 +186,8 @@ _preflight_check_ports() {
     local ports=$(get_listening_ports)
     local port_count=$(echo "$ports" | wc -w)
 
-    # Dangerous-port exposure is audited authoritatively by the networking
-    # module (networking.exposed_dangerous_ports), which is wildcard-aware
-    # (public vs loopback) rather than a crude port-number match. Preflight
-    # only reports the listening-port count for context.
+    # Context only. Dangerous-port exposure is audited authoritatively by
+    # networking.exposed_dangerous_ports, which is wildcard-aware.
     local check=$(create_check_json \
         "preflight.ports_ok" \
         "preflight" \
@@ -215,9 +204,7 @@ _preflight_check_ports() {
     log_info "Listening ports: $ports"
 }
 
-# ==============================================================================
-# Preflight Fix (N/A - preflight is audit only)
-# ==============================================================================
+# --- Preflight Fix (N/A - preflight is audit only) ---
 
 preflight_fix() {
     local fix_id="$1"

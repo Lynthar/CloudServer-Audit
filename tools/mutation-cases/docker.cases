@@ -107,5 +107,10 @@ run_case "writer/tmp-left-behind-on-merge-failure" 1 \
 # The pre-edit backup is what a rollback restores; without it the operator's
 # original daemon.json is gone.
 run_case "writer/existing-file-not-backed-up" 1 \
-    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true' \
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
     '    :'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
+    '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null 2>&1 || true'

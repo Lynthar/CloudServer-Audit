@@ -3,26 +3,15 @@
 # Fail2ban / intrusion prevention module
 # Copyright (c) 2024
 
-# ==============================================================================
-# Fail2ban Configuration
-# ==============================================================================
+# --- Fail2ban Configuration ---
 
 F2B_CONFIG="/etc/fail2ban/fail2ban.conf"
 F2B_JAIL_LOCAL="/etc/fail2ban/jail.local"
 F2B_JAIL_D="/etc/fail2ban/jail.d"
 
-# Where this tool writes its own jail configuration. A drop-in rather than a
-# rewrite of jail.local: jail.local is the operator's file, and replacing it
-# wholesale destroyed hand-written multi-jail and ignoreip settings.
-#
-# Precedence, measured against a real fail2ban-client rather than assumed:
-#   - jail.d beats jail.local, whatever the drop-in is called;
-#   - within jail.d the *.local tier beats the *.conf tier, which is what wins
-#     us over the distro's own defaults-debian.conf — NOT the `99-` prefix,
-#     which in byte order actually sorts before `defaults-`;
-#   - within the *.local tier it is byte order, so an operator file sorting
-#     after ours (zz-*.local) still wins. That is deliberate: `99-` means "last
-#     by convention", not "unconditional override".
+# This tool's own jail config as a drop-in; jail.local is the operator's.
+# Precedence: jail.d beats jail.local, and the *.local tier beats *.conf —
+# that, not the 99- prefix, is what outranks the distro's defaults.
 F2B_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.local"
 
 # Seconds to wait for fail2ban to load the new jail before asking whether the
@@ -30,9 +19,7 @@ F2B_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.local"
 # per invocation makes a suite unusable.
 F2B_RELOAD_SETTLE="${F2B_RELOAD_SETTLE:-2}"
 
-# ==============================================================================
-# Fail2ban Helper Functions
-# ==============================================================================
+# --- Fail2ban Helper Functions ---
 
 _f2b_installed() {
     check_command fail2ban-client
@@ -85,15 +72,9 @@ _f2b_detect_ssh_logpath() {
 
 # Detect the correct fail2ban backend
 _f2b_detect_backend() {
-    # `backend = systemd` needs fail2ban to be able to READ the journal, which
-    # is a python module (python3-systemd) that Debian only Recommends — a
-    # running journald and a working journalctl say nothing about it. Asking
-    # the wrong question here is not cosmetic: on a host where the module is
-    # absent, fail2ban answers a systemd backend with "Failed to initialize any
-    # backend for Jail 'sshd'" and drops the jail entirely, so the fix that
-    # exists to harden SSH leaves the box with LESS protection than it found —
-    # the distro's own sshd jail goes with it. Measured on Debian 12 with
-    # fail2ban installed and python3-systemd absent; `auto` works there.
+    # `backend = systemd` needs python3-systemd, which Debian only Recommends
+    # and a running journald says NOTHING about. Get it wrong and fail2ban
+    # drops the jail entirely, taking the distro's own sshd jail with it.
     if systemctl is-active --quiet systemd-journald 2>/dev/null; then
         if journalctl -n 1 &>/dev/null && \
            python3 -c "import systemd.journal" 2>/dev/null; then
@@ -112,20 +93,13 @@ _f2b_detect_backend() {
     echo "auto"
 }
 
-# Detect the banaction that matches the host's active firewall.
-# The previous hard-coded `iptables-multiport` value silently no-ops on
-# nftables-based systems (Debian 12, Ubuntu 24.04 default): fail2ban
-# loads the jail and reports it active, but every ban attempt fails
-# because the iptables-multiport action shells out to iptables which
-# isn't the packet filter in use.
+# The banaction must match the host's ACTIVE firewall. A hardcoded
+# iptables-multiport silently no-ops on nftables: the jail loads and reports
+# active while every ban fails against a filter that is not in use.
 _f2b_detect_banaction() {
-    # Prefer ufw when it's the active manager — its action handles
-    # both IPv4 and IPv6 and respects the user's ruleset. LC_ALL=C: ufw
-    # localizes "Status: active" (e.g. under zh_CN, the project's default
-    # audience), so without the locale lock the match silently fails on a
-    # translated host and fail2ban picks the wrong banaction (nftables), writing
-    # bans into a table that bypasses the live ufw ruleset. Same guard already
-    # exists in ufw.sh / distro.sh.
+    # Prefer ufw when it manages the firewall. LC_ALL=C is load-bearing: a
+    # translated "Status: active" makes this pick nftables and write bans
+    # into a table that bypasses the live ufw rules.
     if command -v ufw &>/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
         echo "ufw"
         return
@@ -152,10 +126,8 @@ _f2b_ssh_jail_enabled() {
     fail2ban-client status ssh &>/dev/null
 }
 
-# Return whitespace-separated list of currently-active jails as reported
-# by `fail2ban-client status`. Empty output means the service is up but
-# no jails are loaded — the silent-no-op failure mode Lynis TOOL-5104
-# warns about ("Fail2ban installed but completely disabled").
+# Currently-active jails, whitespace-separated. Empty means the service is up
+# with no jails loaded — installed but effectively disabled.
 _f2b_list_active_jails() {
     fail2ban-client status 2>/dev/null \
         | awk -F: '/Jail list/{print $2}' \
@@ -217,23 +189,9 @@ _f2b_get_total_banned() {
         awk '{print $NF}'
 }
 
-# Detect operator-supplied tuning beyond the package default.
-#
-# The Debian/Ubuntu fail2ban package SHIPS `/etc/fail2ban/jail.d/
-# defaults-debian.conf` (only `[sshd] enabled = true`, no real
-# tuning). The original test "any file in jail.d/ counts as custom"
-# therefore reported every fresh install as having a custom config —
-# users got a passing check while still running the stock 5-retry,
-# 10-minute-ban defaults that fail2ban tunings exist to override.
-#
-# Now: jail.local must exist with at least one non-comment, non-empty
-# line, OR jail.d/ must contain a file other than defaults-debian.conf.
-#
-# The glob covers *.local as well as *.conf because fail2ban reads both from
-# jail.d/ (verified against fail2ban-client) and this tool's own drop-in is a
-# .local. Globbing only *.conf here meant the audit could not see the file the
-# fix had just written: configure_ssh_jail would succeed and the very next
-# audit would report "using default configuration only".
+# Operator tuning beyond the package default: jail.local with a real line, OR
+# a jail.d file other than the shipped defaults-debian.conf. The glob MUST
+# cover *.local too, or the audit cannot see this tool's own drop-in.
 _f2b_has_custom_config() {
     if [[ -f "$F2B_JAIL_LOCAL" ]]; then
         # Skip files that are entirely whitespace/comments.
@@ -256,13 +214,9 @@ _f2b_has_custom_config() {
     return 1
 }
 
-# Get maxretry setting for SSH jail.
-# The previous `tail -1` across the whole file ignored INI section
-# semantics: a [DEFAULT] value appearing after [sshd] would be reported
-# as the effective value even though fail2ban applies the [sshd]-local
-# setting. Prefer fail2ban-client which returns the actual runtime
-# value; fall back to tail -1 only when the service is down or the
-# client is unavailable.
+# maxretry for the SSH jail. Prefer fail2ban-client, which returns the actual
+# runtime value: a tail across the file ignores INI section semantics, so a
+# [DEFAULT] after [sshd] reads as effective when it is not.
 _f2b_get_maxretry() {
     local maxretry=""
 
@@ -304,9 +258,7 @@ _f2b_get_bantime() {
     echo "${bantime:-10m}"
 }
 
-# ==============================================================================
-# Fail2ban Audit
-# ==============================================================================
+# --- Fail2ban Audit ---
 
 fail2ban_audit() {
     local module="fail2ban"
@@ -333,10 +285,8 @@ fail2ban_audit() {
     print_item "$(i18n 'fail2ban.check_service')"
     _f2b_audit_service
 
-    # Check at least one jail is active (Lynis TOOL-5104). Distinct
-    # from the SSH-specific check below — fail2ban can be "running"
-    # with every jail disabled, which the service_active check alone
-    # would report as healthy.
+    # Distinct from service_active: fail2ban can be running with every jail
+    # disabled, which that check alone reports as healthy.
     print_item "$(i18n 'fail2ban.check_any_jail')"
     _f2b_audit_any_jail
 
@@ -452,10 +402,8 @@ _f2b_audit_ssh_jail() {
         state_add_check "$check"
         print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
 
-        # Check if maxretry is too high. Guard numerically first: a
-        # non-numeric token (e.g. a mis-parsed inline comment) in `[[ -gt ]]`
-        # is evaluated as an arithmetic variable name and, under `set -u`,
-        # aborts the whole audit with "unbound variable".
+        # Guarded numerically first: a non-numeric token in `[[ -gt ]]` is
+        # read as a variable name and aborts the audit under set -u.
         if [[ "$maxretry" =~ ^[0-9]+$ ]] && [[ "$maxretry" -gt 5 ]]; then
             local check=$(create_check_json \
                 "fail2ban.maxretry_high" \
@@ -516,9 +464,7 @@ _f2b_audit_config() {
     fi
 }
 
-# ==============================================================================
-# Fail2ban Fix Functions
-# ==============================================================================
+# --- Fail2ban Fix Functions ---
 
 fail2ban_fix() {
     local fix_id="$1"
@@ -551,23 +497,13 @@ _f2b_fix_install() {
     if apt-get update -qq && apt-get install -y fail2ban; then
         print_ok "$(i18n 'fail2ban.install_success')"
 
-        # Enable and configure. Propagate failures: a successful `apt install`
-        # must not be reported as overall success if the service then fails to
-        # start or the generated drop-in fails validation (errexit is
-        # suppressed in the if-dispatch tree, so capture explicitly).
+        # Failures must propagate: a successful apt install is not success if
+        # the service then fails to start. errexit is off here, so capture.
         local rc=0
         _f2b_fix_enable_service || rc=1
-        # Auto-configure the ssh jail ONLY on a host with no operator tuning of
-        # its own. `install` is FIX_SAFE (auto-applied, no engine confirm),
-        # whereas `configure_ssh_jail` is CONFIRM-class because its `99-`
-        # drop-in overrides whatever the operator set in jail.local or their own
-        # jail.d files — running it transitively from install would bypass that
-        # gate. Since the move to a drop-in nothing is destroyed, so the question
-        # is no longer "does jail.local exist" but "has the operator configured
-        # anything", which is _f2b_has_custom_config — the module's one
-        # implementation of it, and the same predicate the audit asks. It
-        # deliberately ignores the distro's shipped defaults-debian.conf, so a
-        # fresh install still gets configured.
+        # Only where the operator has tuned nothing: `install` is FIX_SAFE
+        # while configure_ssh_jail is CONFIRM-class, so calling it
+        # transitively would bypass that gate.
         if _f2b_has_custom_config; then
             print_warn "$(i18n 'fail2ban.custom_config_preserved')"
         else
@@ -599,11 +535,9 @@ _f2b_fix_enable_ssh_jail() {
     _f2b_fix_configure_ssh_jail
 }
 
-# Undo a drop-in write that failed to validate. Two distinct cases, and
-# collapsing them costs the operator a file: with a backup, put it back; with
-# no backup AND no pre-existing drop-in, the file is one we just created, so
-# remove it. If it pre-existed but the backup did not happen, leave it — a
-# failed write is not a reason to delete something we cannot restore.
+# Undo a drop-in write that failed to validate. Two cases, and collapsing
+# them costs a file: restore from the backup, or remove a file we created.
+# A pre-existing file with no backup is LEFT ALONE.
 _f2b_restore_dropin() {
     local bak="$1" had_dropin="$2"
 
@@ -617,23 +551,16 @@ _f2b_restore_dropin() {
 _f2b_fix_configure_ssh_jail() {
     print_info "$(i18n 'fail2ban.configuring_ssh_jail')"
 
-    # Whether OUR drop-in already existed, recorded before the backup so the
-    # validation-failure path below knows whether removing it is safe. This is
-    # not a guard around backup_file — that call is unconditional on purpose,
-    # see below — it only remembers a fact.
+    # Recorded before the backup, so the validation-failure path knows whether
+    # removing the file is safe. NOT a guard around backup_file.
     local f2b_had_dropin="false"
     [[ -f "$F2B_DROPIN" ]] && f2b_had_dropin="true"
 
-    # Back up unconditionally. backup_file's second job is recording an ABSENT
-    # path in .vpssec_created, and that record is the only thing that lets a
-    # plan-level rollback delete a file the fix created. The drop-in does not
-    # exist on any host that needs this fix, so under the old `[[ -f ]]` guard
-    # nothing was ever recorded and `vpssec rollback` left this tool's jail
-    # configuration live on a host whose operator had just asked to undo it.
-    # It echoes a path only when there was something to copy, which doubles as
-    # the "was there a previous file" answer the restore path needs.
+    # UNCONDITIONAL: backup_file also records an ABSENT path, the only thing
+    # that lets a rollback delete what this fix creates — and the drop-in is
+    # absent on every host that needs it.
     local f2b_bak=""
-    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""
+    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1
 
     # Get SSH port and detect log path/backend/banaction
     local ssh_port=$(get_ssh_port)
@@ -649,11 +576,9 @@ _f2b_fix_configure_ssh_jail() {
         *) f2b_banaction_allports="iptables-allports" ;;
     esac
 
-    # Never ban the operator's own address. Always whitelist loopback; add the
-    # current SSH source IP when we can determine it (get_current_ssh_ip now
-    # falls back to `who am i` when sudo has stripped SSH_CONNECTION). Without
-    # this, maxretry=3/findtime=10m means three fat-fingered passwords lock the
-    # admin out of their own box for an hour via the tool's own jail.
+    # NEVER ban the operator's own address: loopback always, plus the current
+    # SSH source when it can be determined. Without it, three fat-fingered
+    # passwords lock the admin out for an hour via this tool's own jail.
     local f2b_ignoreip="127.0.0.1/8 ::1"
     local f2b_current_ip
     f2b_current_ip=$(get_current_ssh_ip)
@@ -663,10 +588,8 @@ _f2b_fix_configure_ssh_jail() {
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
     print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
 
-    # Build the drop-in content first, then write atomically (write_file_atomic
-    # = tempfile + rename): an interrupted `cat >` could leave a truncated file
-    # that breaks fail2ban on the next reload/boot, and the bare redirect's
-    # failure went unchecked.
+    # Built first, then written atomically: a truncated drop-in breaks
+    # fail2ban on the next reload.
     local jail_content
     jail_content=$(cat <<EOF
 # vpssec fail2ban configuration
@@ -720,23 +643,17 @@ findtime = 10m
 EOF
 )
 
-    # No _f2b_restore_dropin here, deliberately. write_file_atomic stages into
-    # a temp file and finishes with `mv -f`, so every one of its failure paths
-    # leaves the target exactly as it was — there is nothing to restore and
-    # nothing we created to remove. A cleanup call here would run, do nothing,
-    # and make this branch look like it handles a case it never sees. Mutation
-    # testing is what surfaced it: deleting the call killed no test, because no
-    # test could construct a state where it mattered.
+    # No restore call here, deliberately: write_file_atomic stages into a temp
+    # file, so all of its failure paths leave the target untouched. A cleanup
+    # here would make this branch look like it handles a case it never sees.
     if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then
         print_error "$(i18n 'fail2ban.dropin_write_failed')"
         return 1
     fi
 
-    # A jail.local this tool wrote before it moved to a drop-in is now shadowed
-    # by the `99-` file and can be removed — but it is not ours to delete
-    # without asking, and an operator who has since edited it would lose that.
-    # Say so instead; the alternative is a host carrying two vpssec configs
-    # where only one is in effect and nothing on screen says which.
+    # A legacy jail.local is now shadowed and can be removed, but it is not
+    # ours to delete unasked — an operator may have edited it since. Say so,
+    # rather than leaving two configs where only one is in effect.
     if [[ -f "$F2B_JAIL_LOCAL" ]] && \
        grep -q '^# vpssec fail2ban configuration' "$F2B_JAIL_LOCAL" 2>/dev/null; then
         print_warn "$(i18n 'fail2ban.legacy_jail_local' "path=$F2B_JAIL_LOCAL")"
@@ -768,17 +685,9 @@ EOF
         return 0
     fi
 
-    # The jail did not come up. Returning 1 is honest about the outcome but is
-    # not enough on its own: a drop-in fail2ban accepts (`-t` passes) can still
-    # make it fail to initialize the jail at runtime, and then the host has NO
-    # sshd jail — the distro's own went with ours. A hardening fix that leaves
-    # the box less protected than it found it has to put it back.
-    #
-    # Only when the service is actually up, though. A jail that is missing
-    # because fail2ban is not running tells us nothing about our drop-in, and
-    # deleting a file that already passed validation would throw away correct
-    # work — `install` on a host whose service is slow to start is exactly that
-    # case.
+    # The jail did not come up, so the drop-in is withdrawn: a file that
+    # passes `-t` can still fail at runtime, leaving NO sshd jail. Only when
+    # the service is up — a stopped fail2ban says nothing about our file.
     if _f2b_service_active; then
         print_warn "$(i18n 'fail2ban.dropin_rolled_back')"
         _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"
@@ -788,9 +697,7 @@ EOF
     return 1
 }
 
-# ==============================================================================
-# Fail2ban Utility Functions
-# ==============================================================================
+# --- Fail2ban Utility Functions ---
 
 # Unban an IP address (utility for other scripts)
 f2b_unban_ip() {

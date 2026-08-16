@@ -5,9 +5,7 @@
 
 set -euo pipefail
 
-# ==============================================================================
-# Global Variables
-# ==============================================================================
+# --- Global Variables ---
 
 VPSSEC_VERSION="1.2.0"
 VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,10 +14,8 @@ VPSSEC_MODULES="${VPSSEC_ROOT}/modules"
 VPSSEC_STATE="${VPSSEC_ROOT}/state"
 VPSSEC_REPORTS="${VPSSEC_ROOT}/reports"
 VPSSEC_BACKUPS="${VPSSEC_ROOT}/backups"
-# Active backup session directory. When non-empty (set by backup_create_session
-# at the start of execute_plan), backup_file writes every backup of that plan
-# into this one directory so a rollback can restore the whole plan. Empty means
-# standalone per-call timestamped backups.
+# Set by backup_create_session for the duration of a plan, so every backup_file
+# call lands in one directory. Empty = standalone per-call timestamped backups.
 VPSSEC_BACKUP_SESSION=""
 VPSSEC_LOGS="${VPSSEC_ROOT}/logs"
 VPSSEC_TEMPLATES="${VPSSEC_ROOT}/templates"
@@ -32,28 +28,20 @@ VPSSEC_YES="${VPSSEC_YES:-0}"
 VPSSEC_DEBUG="${VPSSEC_DEBUG:-0}"
 VPSSEC_QUIET_SCAN="${VPSSEC_QUIET_SCAN:-0}"  # Suppress detailed output during scanning
 
-# Runtime state. Use `declare -g` so these arrays stay global even when
-# common.sh is sourced from inside a function (e.g. from a bats test
-# helper); without -g, bash's default "declare-inside-function = local"
-# rule would hide them from any caller. In the production load path
-# (vpssec entry script sources common.sh at top level) -g is a no-op.
+# -g keeps these global when common.sh is sourced from inside a function
+# (bats helpers); a no-op on the top-level production load path.
 declare -gA VPSSEC_I18N=()
 declare -ga VPSSEC_CHECKS=()
 declare -ga VPSSEC_FIXES=()
 
-# Cloud-detection cache. Populated lazily on first call to
-# vpssec_cloud_provider() and vpssec_cloud_tier(). The detection itself
-# lives in modules/cloud.sh (`_detect_cloud_provider`) — these getters
-# delegate to it when available and fall back to "unknown" when cloud.sh
-# isn't loaded (e.g. running `vpssec audit --include=users` alone), so
-# any module can call them without depending on module load order.
+# Lazily filled by the getters below, which delegate to cloud.sh's
+# _detect_cloud_provider when loaded and return "unknown" when it is not.
+# Any module may call them regardless of module load order.
 declare -g VPSSEC_CLOUD_PROVIDER=""
 declare -g VPSSEC_CLOUD_TIER=""
 
-# Returns one of:
-#   aws | azure | gcp | alibaba | tencent | huawei | oracle
-#   | digitalocean | vultr | linode | hetzner | ovh | scaleway
-#   | unknown
+# One of: aws azure gcp alibaba tencent huawei oracle digitalocean
+# vultr linode hetzner ovh scaleway unknown
 vpssec_cloud_provider() {
     if [[ -n "$VPSSEC_CLOUD_PROVIDER" ]]; then
         echo "$VPSSEC_CLOUD_PROVIDER"
@@ -67,20 +55,9 @@ vpssec_cloud_provider() {
     echo "$VPSSEC_CLOUD_PROVIDER"
 }
 
-# Coarse provider tier — used by modules that need to vary behavior
-# based on "what kind of cloud" rather than which exact vendor:
-#   tier1 — full-stack public cloud, IAM/RAM credentials live in IMDS
-#           (AWS, Azure, GCP, Alibaba, Tencent, Huawei, Oracle).
-#           IMDSv1-vs-v2 distinction is meaningful; SSRF -> credential
-#           theft is the headline threat.
-#   tier2 — managed VPS with a link-local IMDS but no IAM credentials.
-#           user-data (bootstrap script) is the primary exposed asset.
-#           (DigitalOcean, Vultr, Linode/Akamai, Hetzner Cloud, OVH
-#           Public Cloud, Scaleway.)
-#   unknown — independent / smaller VPS providers (RackNerd, HostHatch,
-#             GreenCloud, netcup classic, Spartan, ...) or local
-#             KVM/VirtualBox/bare-metal. Typically no network IMDS;
-#             cloud-init via NoCloud / ConfigDrive (filesystem seed).
+# Coarse tier for modules that vary on "what kind of cloud", not which vendor:
+# tier1 = IAM credentials in IMDS, tier2 = link-local IMDS without them,
+# unknown = no network IMDS. Membership and rationale: see the design notes.
 vpssec_cloud_tier() {
     if [[ -n "$VPSSEC_CLOUD_TIER" ]]; then
         echo "$VPSSEC_CLOUD_TIER"
@@ -97,17 +74,9 @@ vpssec_cloud_tier() {
     echo "$VPSSEC_CLOUD_TIER"
 }
 
-# Scan a content string for KNOWN-FORMAT credentials. Used by both
-# cloud.sh (IMDS user-data scan) and docker.sh (container env var
-# scan); kept here to avoid maintaining two copies of the same
-# pattern set.
-#
-# Output: "<kind>(<n>) <kind>(<n>) ..." — kinds + counts only, NEVER
-# the matched values. Patterns are deliberately specific (vendor-
-# mandated prefixes, PEM headers, JWT structure) so FP rate stays
-# near zero. Generic markers like PASSWORD= / SECRET= are NOT
-# matched: they're legitimate in many bootstrap scripts and
-# container environment variables (MYSQL_ROOT_PASSWORD, etc.).
+# Scan for known-format credentials. Shared by cloud.sh and docker.sh.
+# Emits "<kind>(<n>) ..." — kinds and counts only, NEVER matched values.
+# Generic PASSWORD=/SECRET= markers are deliberately not matched.
 _vpssec_scan_secrets_in_content() {
     local content="$1"
     [[ -z "$content" ]] && return 0
@@ -156,14 +125,10 @@ _vpssec_scan_secrets_in_content() {
     printf '%s ' "${found[@]}"
 }
 
-# ==============================================================================
-# Color and Formatting
-# ==============================================================================
+# --- Color and Formatting ---
 
-# Color codes.
-# NO_COLOR (https://no-color.org: any non-empty value disables color) and
-# TERM=dumb (a terminal that renders escapes as garbage) both force the
-# plain palette — same effect as --no-color, no flag needed.
+# NO_COLOR (no-color.org) and TERM=dumb both force the plain palette,
+# with the same effect as --no-color.
 if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
     VPSSEC_COLOR=0
 fi
@@ -205,9 +170,7 @@ SEV_MEDIUM="${YELLOW}●${NC}"
 SEV_LOW="${BLUE}●${NC}"
 SEV_SAFE="${GREEN}●${NC}"
 
-# ==============================================================================
-# Logging Functions
-# ==============================================================================
+# --- Logging Functions ---
 
 _log_file="${VPSSEC_LOGS}/vpssec.log"
 
@@ -216,11 +179,8 @@ log_init() {
     echo "=== vpssec session started at $(date -Iseconds) ===" >> "${_log_file}"
 }
 
-# The 2>/dev/null comes FIRST in each redirect list on purpose: bash
-# processes redirections left to right, so with `>> file 2>/dev/null` a
-# failing append (log dir missing) prints its "No such file or directory"
-# BEFORE stderr is redirected — every log call then leaks a line onto the
-# caller's stderr, which run/bats and --json-only consumers see as output.
+# 2>/dev/null comes FIRST in every redirect list below: bash applies them
+# left to right, so the other order leaks the append error to the caller.
 log_debug() {
     if [[ "${VPSSEC_DEBUG:-0}" == "1" ]]; then
         echo "[DEBUG] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
@@ -239,9 +199,7 @@ log_error() {
     echo "[ERROR] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
 }
 
-# ==============================================================================
-# Output Functions
-# ==============================================================================
+# --- Output Functions ---
 
 print_msg() {
     [[ "${VPSSEC_JSON_ONLY}" == "1" ]] && return
@@ -273,11 +231,8 @@ print_error() {
 print_header() {
     local title="$1"
     local width="${2:-60}"
-    # Use printf's repeat trick rather than `tr ' ' '─'`. `tr` is
-    # byte-oriented and on some GNU coreutils versions (Debian 13's
-    # included) replacing a single-byte space with a multi-byte UTF-8
-    # char produces mojibake (users saw strings of `㣢`). The format
-    # `─%.0s` prints `─` once per positional argument.
+    # printf, not `tr ' ' '─'`: tr is byte-oriented and mangles the
+    # multi-byte char on some coreutils builds. `─%.0s` prints once per arg.
     local line
     line=$(printf '─%.0s' $(seq 1 "$width"))
     print_msg ""
@@ -324,12 +279,7 @@ print_progress() {
     # print_msg's --json-only guard or it corrupts the JSON document.
     [[ "${VPSSEC_JSON_ONLY:-0}" == "1" ]] && return 0
 
-    # Defensive: every real caller passes a positive total (audit_all
-    # always includes the preflight/cloud/timezone context modules, so
-    # total >= 3), but a future caller or a pathological --include=
-    # value could land here with total=0. Without this guard the
-    # `current * 100 / total` arithmetic aborts under `set -e` and
-    # kills the whole run.
+    # total=0 would abort the percentage arithmetic under set -e.
     if (( total <= 0 )); then
         return 0
     fi
@@ -347,23 +297,11 @@ print_progress() {
     printf "\r  [%s] %3d%% " "$bar" "$percent"
 }
 
-# ==============================================================================
-# Text Width Helpers (terminal cells, CJK-aware)
-# ==============================================================================
+# --- Text Width Helpers (terminal cells, CJK-aware) ---
 
-# Strip ANSI escape codes before measuring visible width.
-#
-# Pure bash — no `echo -e | sed` pipeline. Two reasons: this runs
-# several times per rendered line (report_print_details calls it ~3×
-# per check via _display_width, so an 89-check audit forked sed
-# hundreds of times), and `echo -e` also expanded backslash escapes
-# that happened to sit inside a check title, corrupting it.
-#
-# Two forms are stripped because the colour variables above are LITERAL
-# strings (RED='\033[0;31m', single-quoted) that only become real
-# escapes when the final `echo -e` prints them:
-#   1. the literal "\033[...m" text
-#   2. a real ESC byte, in case a caller pre-expanded it
+# Strip ANSI codes before measuring width. Pure bash, no sed fork.
+# Two forms are stripped: the literal "\033[...m" text (the colour vars are
+# single-quoted) and a real ESC byte, in case a caller pre-expanded it.
 _strip_ansi() {
     local s="$1"
     s="${s//\\033\[[0-9;]*m/}"
@@ -371,28 +309,9 @@ _strip_ansi() {
     printf '%s\n' "$s"
 }
 
-# DISPLAY width (terminal cells) of a string after stripping ANSI codes.
-#
-# CJK Han / kana / fullwidth forms render as 2 cells each, but bash
-# `${#str}` counts code points: "✓ 操作系统支持" is 8 code points and
-# 14 cells. Padding with the wrong number made the report's `│`
-# separator zigzag on CJK-heavy rows, and made the module-selection
-# menu's right border walk off the box entirely.
-#
-# Implementation: decode the UTF-8 byte stream in pure bash and apply
-# the East_Asian_Width W/F ranges (Markus Kuhn's wcwidth table). No
-# subprocess at all.
-#
-# This replaced a python3 fork per call. The fork was the single
-# largest cost in report_print_details, which calls this ~3× per check
-# (title measure, truncation loop, column padding) — an 89-check audit
-# paid ~250 interpreter startups purely to count columns. It also made
-# alignment silently depend on whether python3 happened to be present.
-#
-# Decoding the bytes ourselves (rather than indexing characters) keeps
-# the answer correct regardless of the ambient locale: under LC_ALL=C
-# bash would hand back single bytes and every CJK glyph would measure
-# 3 instead of 2.
+# DISPLAY width in terminal cells: CJK forms are 2 cells but one code point,
+# so ${#str} is wrong for padding. Decodes UTF-8 in pure bash and applies the
+# East_Asian_Width W/F ranges, so the answer holds under any locale.
 _display_width() {
     local s="$1"
     s="${s//\\033\[[0-9;]*m/}"
@@ -419,10 +338,8 @@ _display_width() {
         done
         i=$(( i + extra + 1 ))
 
-        # East_Asian_Width == W or F -> 2 cells, everything else 1.
-        # U+2500-U+27BF (box drawing ─, dingbats ✓, geometric ●)
-        # deliberately fall through to 1: they are Ambiguous/Narrow and
-        # render single-width in the terminals vpssec targets.
+        # W/F -> 2 cells, everything else 1. U+2500-U+27BF (─ ✓ ●) is
+        # Ambiguous/Narrow and deliberately falls through to 1.
         if (( cp >= 0x1100 && (
                 cp <= 0x115F
              || cp == 0x2329 || cp == 0x232A
@@ -474,17 +391,8 @@ truncate_to_width() {
     printf '%s…' "$text"
 }
 
-# ==============================================================================
-# Menu Box Drawing
-# ==============================================================================
-#
-# The language / mode / module menus used to be hand-padded string
-# literals ("│  [2] 简体中文                           │"). Every CJK
-# label made the trailing space count wrong, so the right border of all
-# three boxes was ragged, and the module menu's longest row
-# ("运维合规 (logging,backup,alerts,scheduling,timezone)") overflowed
-# it outright. Rendering from a single interior width fixes all of them
-# and makes adding a row a one-liner.
+# --- Menu Box Drawing: every box renders from one interior width, measured
+# in display cells, so CJK labels cannot make a border ragged. ---
 
 _MENU_BOX_WIDTH=70   # interior cells, between the two vertical borders
 
@@ -498,9 +406,7 @@ _menu_box_row() {
     printf '│%s│\n' "$(pad_to_width "  $1" "$_MENU_BOX_WIDTH")"
 }
 
-# ==============================================================================
-# i18n Functions
-# ==============================================================================
+# --- i18n Functions ---
 
 i18n_load() {
     local lang="${1:-$VPSSEC_LANG}"
@@ -541,9 +447,7 @@ i18n() {
     echo "$text"
 }
 
-# ==============================================================================
-# System Detection Functions
-# ==============================================================================
+# --- System Detection Functions ---
 
 detect_os() {
     if [[ -f /etc/os-release ]]; then
@@ -605,12 +509,8 @@ is_supported_os() {
             [[ "$version" == "22.04" || "$version" == "24.04" || "$version" == "26.04" ]]
             ;;
         *)
-            # RHEL family (Rocky/Alma/CentOS Stream) and Arch: the
-            # read-only audit is distro-aware via core/distro.sh and has
-            # been validated on real hosts. Match the detected family so
-            # ID_LIKE downstreams resolve without enumerating every ID.
-            # Automated fixes are NOT ported — guide_mode gates on
-            # is_debian_based() separately.
+            # Audit is distro-aware here; fixes are NOT ported.
+            # guide_mode gates on is_debian_based() separately.
             case "${VPSSEC_DISTRO_FAMILY:-unknown}" in
                 rhel)
                     local major="${version%%.*}"
@@ -620,20 +520,9 @@ is_supported_os() {
                     return 0
                     ;;
                 debian)
-                    # A Debian/Ubuntu derivative whose own ID is not in the
-                    # list above: Mint, Pop!_OS, Kali, Armbian, Raspbian. The
-                    # RHEL and Arch derivatives were already handled by family
-                    # while their own main platform's were not, so a Mint host
-                    # got the "unsupported OS" prompt (default no) at the entry
-                    # point and a failed preflight check — for a distro whose
-                    # every distro.sh primitive resolves correctly.
-                    #
-                    # No version test: derivatives number their own releases
-                    # (Mint 21 is Ubuntu 22.04 underneath), so matching against
-                    # the upstream numbers would reject every one of them.
-                    #
-                    # This does NOT widen fix mode. guide_mode gates on
-                    # is_debian_based(), which stays an ID allowlist.
+                    # Derivatives (Mint, Pop!_OS, Kali, Armbian, Raspbian).
+                    # No version test: they number their own releases.
+                    # Does NOT widen fix mode — is_debian_based() stays an allowlist.
                     return 0
                     ;;
                 *)
@@ -644,9 +533,7 @@ is_supported_os() {
     esac
 }
 
-# ==============================================================================
-# Dependency Check Functions
-# ==============================================================================
+# --- Dependency Check Functions ---
 
 check_root() {
     [[ "$(id -u)" == "0" ]]
@@ -673,9 +560,7 @@ check_required_deps() {
     return 0
 }
 
-# ==============================================================================
-# Input Validation Functions
-# ==============================================================================
+# --- Input Validation Functions ---
 
 # Validate that a path is safe (no path traversal)
 validate_path() {
@@ -698,10 +583,8 @@ validate_path() {
         local resolved_base
         resolved_base=$(realpath -m "$base_dir" 2>/dev/null) || return 1
 
-        # Require the path to BE the base or sit under "base/". A bare
-        # "$resolved_base"* prefix match would accept a sibling whose name
-        # merely starts with the base (e.g. base=/a/backups would accept
-        # /a/backups-evil/x) — a prefix-escape in a security primitive.
+        # Must BE the base or sit under "base/". A bare prefix match would
+        # accept a sibling like /a/backups-evil for base /a/backups.
         if [[ "$resolved_path" != "$resolved_base" && "$resolved_path" != "$resolved_base"/* ]]; then
             log_warn "Path $path is not under base directory $base_dir"
             return 1
@@ -736,10 +619,8 @@ validate_port() {
     [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 ]] && [[ "$port" -le 65535 ]]
 }
 
-# Validate IP address. This feeds security-relevant sinks (ufw source
-# scoping for the SSH rescue rule), so it must reject junk, not just match
-# a shape: the old checks accepted 999.999.999.999 (no octet bounds) and
-# "::::" (any hex-and-colon soup counted as IPv6).
+# Feeds security-relevant sinks (ufw source scoping for the SSH rescue rule),
+# so it validates structure, not just shape.
 validate_ip() {
     local ip="$1"
 
@@ -753,12 +634,9 @@ validate_ip() {
         return 0
     fi
 
-    # IPv6, structurally: hex groups of 1-4 digits separated by ':', at most
-    # one '::' (and no ':::'), and the group count consistent with 128 bits —
-    # exactly 8 groups without '::', at most 7 with it. Zone IDs, embedded
-    # IPv4 tails and other exotica are deliberately not accepted: every
-    # caller feeds the value to a firewall rule where plain form is what
-    # works.
+    # Hex groups of 1-4 digits, at most one '::', group count consistent with
+    # 128 bits. Zone IDs and embedded IPv4 tails are deliberately rejected —
+    # every caller feeds this to a firewall rule that wants the plain form.
     if [[ "$ip" == *:* && "$ip" =~ ^[0-9a-fA-F:]+$ ]]; then
         [[ "$ip" == *":::"* ]] && return 1
         local compressed="${ip//::/}"
@@ -787,48 +665,27 @@ validate_ip() {
     return 1
 }
 
-# ==============================================================================
-# File Operations (Safe)
-# ==============================================================================
+# --- File Operations (Safe) ---
 
-# Create a timestamped backup of a file
-# Name of the per-session manifest listing files that fixes CREATED (had no
-# prior version). Lives at the top of the backup session dir. backup_restore
-# deletes the listed paths on rollback, and excludes this file from the
-# restore walk.
+# Per-session manifest of files a fix CREATED. backup_restore deletes the
+# listed paths on rollback and excludes this file from the restore walk.
 VPSSEC_CREATED_MANIFEST=".vpssec_created"
 
-# Name of the per-backup-directory manifest recording each backed-up file's
-# ORIGINAL mode, one "<mode> <path>" line per file.
-#
-# It exists because two correct decisions combine into a wrong result:
-# backup_file chmods its own copy to 600 so a snapshot of /etc/shadow is not
-# left readable, and backup_restore restores with `cp -p`, which takes the
-# mode from that copy. So a rollback used to reset every restored file to
-# 600 while reporting full success. Harmless on root-read config
-# (sshd_config, nginx.conf), but filesystem.fix_sensitive_perms backs up
-# /etc/passwd and /etc/group — at 600 those break name lookups for every
-# non-root process, leaving the host worse off than before the fix OR after
-# it. Verified against the real primitives: 666 -> fix -> rollback gave 600.
+# Per-directory manifest of each backed-up file's ORIGINAL mode, one
+# "<mode> <path>" per line. Needed because backup_file chmods its copy to 600
+# and cp -p would otherwise restore that mode (see the design notes).
 VPSSEC_MODES_MANIFEST=".vpssec_modes"
 
-# True if $1 already has a mode recorded in the manifest $2.
-#
-# The path is compared with `grep -qxF` on the path column rather than a
-# regex over the whole line: an /etc path can contain regex metacharacters,
-# and `cut -d' ' -f2-` keeps paths containing spaces intact because the mode
-# is the only field that can never hold one.
+# True if $1 already has a mode recorded in manifest $2. Compared with
+# grep -qxF on the path column: /etc paths can contain regex metacharacters.
 _backup_mode_recorded() {
     local path="$1" manifest="$2"
     [[ -f "$manifest" ]] || return 1
     cut -d' ' -f2- "$manifest" 2>/dev/null | grep -qxF "$path"
 }
 
-# Record $1's current mode into $2 (a backup directory), once.
-#
-# First write wins, for the same reason backup_file's snapshot does: both
-# must describe the pre-plan state. A fix that backs the same file up once
-# per parameter would otherwise record the mode of its own intermediate.
+# Record $1's current mode into backup directory $2, once. First write wins:
+# it must describe the pre-plan state, not a fix's own intermediate.
 backup_track_mode() {
     local path="$1" backup_dir="$2"
     [[ -n "$backup_dir" ]] || return 0
@@ -851,20 +708,20 @@ backup_is_tracked_created() {
     [[ -f "$manifest" ]] && grep -qxF "$path" "$manifest" 2>/dev/null
 }
 
-# Record that a fix is about to CREATE $path (it does not exist yet), so a
-# rollback DELETES it. No-op outside a plan backup session. This closes the
-# rollback gap where backup_file — which only snapshots files that already
-# exist — left a first-run drop-in (e.g. the kernel sysctl hardening file) with
-# no backup entry, so "rollback" restored nothing and the file survived to
-# re-apply its (possibly network-breaking) values on the next boot.
+# Record that a fix is about to CREATE $path, so rollback DELETES it.
+# No-op outside a plan backup session. Without this a first-run drop-in has
+# no backup entry at all and survives the rollback.
 backup_track_created() {
     local path="$1"
     [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]] || return 0
-    validate_path "$path" || return 0
+    validate_path "$path" || return 1
     mkdir -p "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
     chmod 700 "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
     if ! backup_is_tracked_created "$path"; then
-        echo "$path" >> "${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}"
+        # Checked: this manifest is the only thing that lets a rollback delete
+        # the file the caller is about to create, so a failed append must not
+        # be reported as a successful registration.
+        echo "$path" >> "${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}" 2>/dev/null || return 1
         chmod 600 "${VPSSEC_BACKUP_SESSION}/${VPSSEC_CREATED_MANIFEST}" 2>/dev/null || true
     fi
 }
@@ -872,17 +729,17 @@ backup_track_created() {
 backup_file() {
     local file="$1"
 
-    # Validate input path
+    # Every failure below reports on STDERR: stdout carries the backup path,
+    # so a message written there would be captured by `bak=$(backup_file ...)`
+    # instead of reaching the operator.
     if ! validate_path "$file"; then
         log_error "Invalid path for backup: $file"
+        print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
         return 1
     fi
 
-    # When a backup session is active (set by backup_create_session at the
-    # start of execute_plan), every fix in the plan backs up into that ONE
-    # directory, so a rollback restores the whole plan rather than only the
-    # files touched in the last wall-clock second. Standalone callers get a
-    # per-call timestamped directory, as before.
+    # Inside a plan session every fix backs up into one directory, so rollback
+    # restores the whole plan. Standalone callers get a timestamped one.
     local backup_dir
     if [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]]; then
         backup_dir="$VPSSEC_BACKUP_SESSION"
@@ -893,7 +750,11 @@ backup_file() {
     fi
 
     # Create backup directory with secure permissions
-    mkdir -p "$backup_dir"
+    if ! mkdir -p "$backup_dir"; then
+        log_error "Backup failed (mkdir): $backup_dir"
+        print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
+        return 1
+    fi
     chmod 700 "$backup_dir"
 
     if [[ -f "$file" ]]; then
@@ -903,55 +764,42 @@ backup_file() {
         # Validate the constructed backup path
         if ! validate_path "$backup_path" "$VPSSEC_BACKUPS"; then
             log_error "Unsafe backup path: $backup_path"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
             return 1
         fi
 
-        # First-write-wins WITHIN a backup session: if this file was already
-        # backed up earlier in the same plan, keep that copy (the pre-plan
-        # original) rather than overwriting it. A fix that re-backs-up the
-        # same file once per item — e.g. kernel.sh writing the sysctl drop-in
-        # per parameter — would otherwise leave only the N-1th intermediate as
-        # the "backup", so a rollback would restore a still-mostly-hardened
-        # file instead of the original (breaking the whole-plan rollback
-        # contract). Standalone (no session) keeps its prior overwrite
-        # behavior: each call already gets its own timestamped directory.
+        # First write wins within a session: keep the pre-plan original rather
+        # than a fix's own intermediate. Standalone callers still overwrite,
+        # since each already gets its own timestamped directory.
         if [[ -n "${VPSSEC_BACKUP_SESSION:-}" && -e "$backup_path" ]]; then
             log_info "Backup already present this session, keeping original: $backup_path"
             echo "$backup_path"
             return 0
         fi
 
-        # If we already recorded this path as CREATED this session, it is ours —
-        # do not snapshot an intermediate copy. A fix that writes the same file
-        # once per parameter (kernel.sh's sysctl drop-in) would otherwise, on the
-        # 2nd+ call, back up its own half-written output as the "original", so a
-        # rollback would restore that instead of deleting the file. Rollback
-        # deletes tracked-created files; leave it untouched here.
+        # Already tracked as created this session, so the file is ours: do not
+        # snapshot a fix's own half-written output as the "original".
+        # Rollback deletes tracked-created files; leave it untouched here.
         if backup_is_tracked_created "$file"; then
             return 0
         fi
 
-        # Record the mode BEFORE the copy is taken and re-permissioned, so
-        # what lands in the manifest is the file's own mode rather than the
-        # 600 the snapshot gets. See VPSSEC_MODES_MANIFEST for why the
-        # rollback cannot recover it from the copy.
+        # Before the copy is taken and re-permissioned, so the manifest holds
+        # the file's own mode rather than the snapshot's 600.
         backup_track_mode "$file" "$backup_dir"
 
-        # Every step checked. This function runs inside fix bodies where
-        # errexit is off (execute_fix calls fixes in an `if`), so an
-        # unchecked failing cp used to fall through to the success log and
-        # `echo` below — the caller got rc 0 and a "backup path" for a
-        # backup that does not exist, and the fix proceeded with no way
-        # back. A backup that could not be taken must be a loud failure.
+        # Every step is checked: this runs inside fix bodies where errexit is
+        # off, so an unchecked failure would return rc 0 and a path to a
+        # snapshot that does not exist.
         if ! mkdir -p "$(dirname "$backup_path")"; then
             log_error "Backup failed (mkdir): $file -> $backup_path"
-            print_error "$(i18n 'backup.snapshot_failed' "file=$file")"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
             return 1
         fi
         if ! cp -p "$file" "$backup_path"; then
             rm -f "$backup_path" 2>/dev/null || true
             log_error "Backup failed (cp): $file -> $backup_path"
-            print_error "$(i18n 'backup.snapshot_failed' "file=$file")"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
             return 1
         fi
         chmod 600 "$backup_path" 2>/dev/null || \
@@ -962,7 +810,11 @@ backup_file() {
         # File does not exist yet: the caller is about to CREATE it. Record it so
         # a rollback can delete it (session only; standalone callers have nothing
         # to roll back to). Echo nothing — there is no backup path.
-        backup_track_created "$file"
+        if ! backup_track_created "$file"; then
+            log_error "Backup failed (created manifest): $file"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
+            return 1
+        fi
         return 0
     fi
 }
@@ -1013,10 +865,8 @@ write_file_atomic() {
     # Set appropriate permissions (copy from target or default to 644)
     if [[ -f "$target" ]]; then
         chmod --reference="$target" "$temp_file" 2>/dev/null || chmod 644 "$temp_file"
-        # Preserve ownership too: mktemp created the temp as the invoking
-        # user (root), so without this the rename silently re-owned any
-        # non-root-owned target to root:root. Best effort — as non-root
-        # (test runs) chown fails and the warning is the honest record.
+        # mktemp created the temp as root, so without this the rename would
+        # silently re-own a non-root target. Best effort; failure is logged.
         chown --reference="$target" "$temp_file" 2>/dev/null || \
             log_warn "write_file_atomic: could not preserve ownership of $target"
     else
@@ -1033,13 +883,9 @@ write_file_atomic() {
     fi
 }
 
-# ==============================================================================
-# Service Operations
-# ==============================================================================
+# --- Service Operations ---
 
-# ==============================================================================
-# Network Utilities
-# ==============================================================================
+# --- Network Utilities ---
 
 get_current_ssh_ip() {
     # Get the IP from SSH_CONNECTION or SSH_CLIENT
@@ -1051,14 +897,9 @@ get_current_ssh_ip() {
         return
     fi
 
-    # Fallback: sudo's default env_reset STRIPS SSH_CONNECTION/SSH_CLIENT, which
-    # is exactly how the documented `sudo ./vpssec guide` runs — so above we get
-    # nothing and every caller that scopes a firewall rule to "the operator's
-    # IP" would otherwise fall back to a world-open rule or no rescue rule at
-    # all. Recover the source address from utmp via `who am i` (sudo does not
-    # rewrite utmp): its last field is "(host)". Accept it only when it is an IP
-    # literal — a reverse-resolved hostname or a blank/local login is not usable
-    # as a `ufw allow from` source, and guessing wrong is worse than empty.
+    # sudo's env_reset strips SSH_CONNECTION/SSH_CLIENT, so recover the source
+    # from utmp via `who am i` (sudo does not rewrite utmp). Accepted only as an
+    # IP literal — a hostname is unusable as a `ufw allow from` source.
     local from
     from=$(LC_ALL=C who am i 2>/dev/null | sed -n 's/.*(\(.*\)).*/\1/p')
     if [[ -n "$from" ]] && validate_ip "$from" >/dev/null 2>&1; then
@@ -1070,23 +911,16 @@ get_current_ssh_ip() {
 }
 
 get_ssh_port() {
-    # Effective SSH port. Prefer `sshd -T` because it resolves both
-    # Include directives and the /etc/ssh/sshd_config.d/ drop-in
-    # directory the way sshd actually loads them; on Debian 12+ a
-    # cloud-init drop-in commonly overrides Port=, and grepping only
-    # the main sshd_config produces a stale answer (downstream callers
-    # in fail2ban / ufw then whitelist the wrong port).
+    # `sshd -T` first: it resolves Include and the sshd_config.d drop-ins the
+    # way sshd loads them, and a cloud-init drop-in commonly overrides Port=.
     local port=""
     if command -v sshd &>/dev/null; then
         # sshd -T outputs lowercase directives, one per line.
         port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
     fi
     if [[ -z "$port" ]]; then
-        # Fallback when sshd -T is unavailable (no openssh-server, or
-        # config syntax error): scan main file plus drop-ins, taking
-        # the last occurrence (sshd uses first-wins across the merged
-        # file, but for the fallback we accept the simpler last-wins
-        # since the common case is a single Port= line anywhere).
+        # Fallback: scan main file plus drop-ins, last occurrence wins.
+        # sshd itself is first-wins; the common case is a single Port= line.
         port=$(grep -hE "^[[:space:]]*Port[[:space:]]+" \
             /etc/ssh/sshd_config \
             /etc/ssh/sshd_config.d/*.conf 2>/dev/null | \
@@ -1095,11 +929,9 @@ get_ssh_port() {
     echo "${port:-22}"
 }
 
-# ALL SSH ports sshd is configured to listen on (deduped, ascending). sshd can
-# bind several `Port` lines; get_ssh_port returns only the first, so a firewall
-# fix that allows just that one and then flips to default-deny cuts the operator
-# off if they are on a different sshd port. Firewall fixes should open every
-# port this returns, not just the first.
+# ALL configured SSH ports, deduped and ascending. Firewall fixes MUST open
+# every port this returns — get_ssh_port gives only the first, and a
+# default-deny flip would cut off an operator on any other one.
 get_ssh_ports() {
     local ports=""
     if command -v sshd &>/dev/null; then
@@ -1120,19 +952,11 @@ get_listening_ports() {
     ss -tlnp 2>/dev/null | tail -n +2 | awk '{print $4}' | grep -oE '[0-9]+$' | sort -nu
 }
 
-# ==============================================================================
-# Counting helpers
-# ==============================================================================
+# --- Counting helpers ---
 
-# Count lines in $1, or lines matching pattern $2 if given.
-#
-# Replaces the repeated idiom
-#     n=$(echo "$x" | grep -c . 2>/dev/null || echo 0)
-# which was broken for empty input: `grep -c .` prints "0" and exits 1
-# when there are zero matches, so the `|| echo 0` fallback ran too and
-# appended a SECOND "0", yielding the literal two-line string "0\n0".
-# Bash arithmetic (`(( n > 0 ))`) then aborted with "syntax error in
-# expression" and, under `set -e`, killed the audit mid-scan.
+# Count lines in $1, or lines matching pattern $2. Use this instead of
+# `grep -c . || echo 0`, which yields the two-line string "0\n0" on empty
+# input and then aborts bash arithmetic under set -e.
 count_lines() {
     local input="$1"
     local pattern="${2:-.}"
@@ -1145,17 +969,9 @@ count_lines() {
     echo "$n"
 }
 
-# Count the public keys in an authorized_keys file.
-#
-# A "key" is a non-comment, non-blank line whose key-type token (ssh-*,
-# ecdsa-*, sk-* for FIDO) appears at the start of the line or after the
-# optional options prefix (e.g. `from="..." ssh-ed25519 AAAA...`). Comment
-# lines (leading `#`, INCLUDING a rotated-out `# ssh-ed25519 ...`) are skipped
-# so a commented-out key is never counted as usable — the inline grep that
-# ssh.sh and users.sh used previously matched `# ssh-...` (the `#`-then-space
-# let `[[:space:]]ssh-` hit) and could report a key when only a comment
-# remained, risking a password-auth lockout / a false audit. awk (not
-# `grep -c ... || echo 0`) avoids the "0\n0" zero-match pitfall noted above.
+# Count usable public keys: a non-comment, non-blank line whose key-type token
+# starts the line or follows an options prefix. Commented-out keys must never
+# count — reporting one that is not usable risks a password-auth lockout.
 count_authorized_keys() {
     local file="$1"
     [[ -f "$file" ]] || { echo 0; return 0; }
@@ -1167,18 +983,10 @@ count_authorized_keys() {
     ' "$file" 2>/dev/null || echo 0
 }
 
-# ==============================================================================
-# JSON Utilities
-# ==============================================================================
+# --- JSON Utilities ---
 
-# Create a check result JSON.
-#
-# Uses jq (already a hard dependency) to serialise, so every JSON control
-# character including \r, \b, \f and the full U+0000..U+001F range is
-# escaped correctly. A hand-rolled `json_escape` helper used to live here
-# too, but after JSON-R1 migrated every producer to this function and
-# `jq -n --arg`, it had zero callers — removed to avoid re-introducing a
-# weaker escape path by accident.
+# Create a check result JSON. Serialised by jq so the full U+0000..U+001F
+# range is escaped correctly; do not hand-roll an escape path here.
 create_check_json() {
     local id="$1"
     local module="$2"
@@ -1189,16 +997,9 @@ create_check_json() {
     local suggestion="${7:-}"
     local fix_id="${8:-}"
 
-    # `module` became a reserved word in jq 1.7.0 (the modules feature),
-    # and a stock Linux 1.7.0 build (Debian trixie, Ubuntu 24.04+)
-    # rejects BOTH:
-    #   - unquoted shorthand keys      `{module: ...}`
-    #   - variables named `$module`    via `--arg module ...`
-    # The macOS/Apple jq build is more permissive and accepts both, so
-    # this only blew up in production. Fix is twofold: quote every JSON
-    # key as a string (defense in depth against future jq keywords),
-    # AND rename the bash-side `--arg module` to `--arg mod` so the
-    # injected jq variable is `$mod`, not `$module`.
+    # `module` is a reserved word in jq 1.7.0+, so every JSON key is quoted
+    # and the bash-side arg is named `mod`. Keep both: stock Linux jq rejects
+    # `{module: ...}` and `--arg module` while the macOS build accepts them.
     jq -n \
         --arg id        "$id" \
         --arg mod       "$module" \
@@ -1212,9 +1013,7 @@ create_check_json() {
           "title": $title, "desc": $desc, "suggestion": $suggestion, "fix_id": $fix_id}'
 }
 
-# ==============================================================================
-# User Interaction
-# ==============================================================================
+# --- User Interaction ---
 
 confirm() {
     local prompt="$1"
@@ -1266,32 +1065,11 @@ confirm_critical() {
     [[ "${yn,,}" == "yes" ]]
 }
 
-# ==============================================================================
-# Filesystem-walk Helpers (shared across modules)
-# ==============================================================================
+# --- Filesystem-walk Helpers (shared across modules) ---
 
-# Paths to prune from filesystem-walk scans.
-#
-# `find -xdev` already skips anything not on the root filesystem, so
-# kernel/proc/sys/run/snap-squashfs mounts are handled automatically.
-# This list is for trees that DO live on the root filesystem but would
-# either swamp the audit with container-image content or take so long
-# to traverse that the run hangs:
-#   - /var/lib/docker        : overlay2/<sha>/diff/* contains thousands
-#                              of files inherited from Docker images,
-#                              including legitimate-inside-the-image
-#                              SUID binaries that would be flagged as
-#                              host-level anomalies
-#   - /var/lib/containerd    : same as above, for containerd
-#   - /var/lib/containers    : podman / buildah image storage
-#   - /var/lib/lxd           : LXD container rootfs cache
-#   - /var/lib/lxcfs         : LXC fuse layer
-#   - /var/lib/snapd         : snap state + image cache (huge)
-#   - /snap                  : snap mount point (squashfs is on its
-#                              own fs and -xdev skips, but if root is
-#                              a single fs the directory entries
-#                              themselves can confuse find on some
-#                              kernels — prune defensively)
+# Container and snap trees to prune from filesystem walks. They live on the
+# root filesystem, so -xdev does not skip them, and their image content would
+# be reported as host-level findings. Per-path notes: see the design notes.
 declare -ga _FS_PRUNE_PATHS=(
     /var/lib/docker
     /var/lib/containerd
@@ -1302,26 +1080,13 @@ declare -ga _FS_PRUNE_PATHS=(
     /snap
 )
 
-# Hard timeout for any single filesystem walk. Defaults to 60 seconds;
-# operators with very large filesystems can override at audit time:
-#     VPSSEC_FS_TIMEOUT=300 sudo ./vpssec audit
-# A scan that hits the timeout returns whatever output it has gathered
-# so far; the audit continues and a warning is logged. Better to
-# report partial findings than to hang an audit indefinitely.
+# Hard timeout per filesystem walk; override with VPSSEC_FS_TIMEOUT=<seconds>.
+# A timed-out scan returns its partial output and logs a warning.
 _FS_FIND_TIMEOUT="${VPSSEC_FS_TIMEOUT:-60}"
 
-# Build the prune-args portion of a find expression from
-# _FS_PRUNE_PATHS. Each path becomes `-path P -prune -o`. Caller
-# concatenates the result before its `-type ... -print0` portion:
-#
-#     local prune_args=()
-#     _fs_build_prune_args prune_args
-#     find / -xdev "${prune_args[@]}" -type f -perm -4000 -print0 ...
-#
-# The single source of truth (the array above) keeps every walking
-# helper from drifting out of sync — three filesystem.sh scans used to
-# omit container prunes entirely, so world-writable / no-owner walks
-# flagged Docker image content as host findings.
+# Build `-path P -prune -o` args from _FS_PRUNE_PATHS into the named array.
+# Every filesystem walk MUST go through this, or it will report container
+# image content as host findings.
 _fs_build_prune_args() {
     local -n _out=$1
     _out=()
@@ -1331,27 +1096,16 @@ _fs_build_prune_args() {
     done
 }
 
-# Run a find invocation under a hard timeout. Output is forwarded to
-# stdout (so callers can wire it into a process substitution feeding
-# `while read`). On timeout (exit 124) we log a warning but return 0
-# so the audit doesn't bail; partial output already reached the
-# consumer. Caller is responsible for the rest of the find arguments.
-#
-# `timeout` is part of GNU coreutils, present by default on every
-# supported distro (Debian/Ubuntu/RHEL/Rocky/Alma). The graceful
-# fallback below is for niche environments — minimal containers,
-# macOS dev shells running tests — where coreutils may be absent;
-# the audit still runs, just without the safety net.
+# Run find under a hard timeout, forwarding output to stdout. Timeout (124)
+# logs a warning and returns 0 so the audit continues on partial output.
+# The no-timeout fallback is for environments without GNU coreutils.
 _fs_run_find() {
     local label="$1"
     shift
     if command -v timeout >/dev/null 2>&1; then
-        # Capture the status via `|| rc=$?` rather than a bare call + `$?`.
-        # This function runs inside a process-substitution subshell where
-        # errexit is active; a bare failing `timeout` (exit 124 on timeout,
-        # or the tool's own non-zero) would abort the subshell before the
-        # warning could log — silently presenting truncated scan results as
-        # complete. The `|| rc=$?` makes the failure a tested expression.
+        # `|| rc=$?` makes this a tested expression: errexit is active in the
+        # process-substitution subshell, so a bare failing timeout would abort
+        # before the warning could log.
         local rc=0
         timeout "$_FS_FIND_TIMEOUT" "$@" || rc=$?
         if (( rc == 124 )); then
@@ -1364,33 +1118,19 @@ _fs_run_find() {
     return 0
 }
 
-# ==============================================================================
-# Initialization
-# ==============================================================================
+# --- Initialization ---
 
-# True when this process can actually read an interactive answer.
-#
-# The old guard was `[[ ! -t 0 ]] && [[ ! -e /dev/tty ]]`, which asks
-# whether the DEVICE NODE EXISTS. Under cron, a systemd unit or a
-# daemonised CI runner /dev/tty exists but open(2) fails with ENXIO
-# (no controlling terminal), so the guard passed, the menu printed,
-# and the read below failed — leaking bash's own "No such device or
-# address" to stderr on the way. Probing an actual open answers the
-# question that matters.
+# True when this process can actually read an interactive answer. Probes a
+# real open: under cron or a systemd unit /dev/tty exists but open(2) fails
+# with ENXIO, so testing for the device node answers the wrong question.
 _tty_readable() {
     [[ -t 0 ]] && return 0
     (exec 3</dev/tty) 2>/dev/null
 }
 
-# True when the caller asked for a non-interactive run.
-#
-# `--yes` documents itself as "auto-confirm non-critical prompts" and
-# `--json-only` is for CI, yet neither suppressed the language / mode /
-# module menus: `vpssec audit --yes` on a real TTY parked on the module
-# selector forever, because the guard above only looked at whether a
-# terminal existed, never at whether the user wanted to be asked. Both
-# flags now select the documented defaults (Chinese-or-$VPSSEC_LANG,
-# audit, all modules) and move on.
+# True when the caller asked for a non-interactive run. --yes and --json-only
+# both count: on a real TTY they must still skip the menus and take the
+# documented defaults, not just when no terminal exists.
 _noninteractive() {
     [[ "${VPSSEC_YES:-0}" == "1" || "${VPSSEC_JSON_ONLY:-0}" == "1" ]]
 }
@@ -1528,13 +1268,9 @@ select_modules() {
         return 0
     fi
 
-    # Module categories with descriptions
     # Format: category_id:en_name:zh_name:modules
-    # Every selectable module must appear in exactly one category, or it becomes
-    # unreachable from this menu (only "all modules" / --include= could pick it).
-    # networking, cloud, scheduling and timezone were previously omitted.
-    # preflight is intentionally excluded: it is a foundational pre-check that
-    # always runs, not an opt-in module.
+    # Every selectable module must appear in exactly ONE category or it is
+    # unreachable from this menu. preflight is excluded: it always runs.
     local -a categories=(
         "access:Access Control:访问控制:users,ssh"
         "network:Network Security:网络安全:ufw,fail2ban,networking"
@@ -1547,12 +1283,8 @@ select_modules() {
     local is_en=0
     [[ "${VPSSEC_LANG:-zh_CN}" == "en_US" ]] && is_en=1
 
-    # Column layout inside the box: "[N] " (4 cells) + name column +
-    # module column, all measured in DISPLAY cells. The old code padded
-    # with `printf "%-18s"`, which counts BYTES — every CJK glyph (3
-    # bytes, 2 cells) over-counted by one, so the right border walked
-    # left on every Chinese row, and "运维合规 (logging,backup,alerts,
-    # scheduling,timezone)" burst through it entirely.
+    # "[N] " + name + module columns, all measured in DISPLAY cells.
+    # printf "%-18s" counts bytes and mispads every CJK row.
     local name_w=18
     [[ $is_en -eq 1 ]] && name_w=20
     local mods_w=$(( _MENU_BOX_WIDTH - 2 - 4 - name_w ))
@@ -1608,10 +1340,7 @@ select_modules() {
         return 0
     fi
 
-    # Parse selected categories and build module list. Warn on any
-    # token outside the valid 1-6 range so users who typed a typo
-    # (e.g. "1 9 2") know their input was partially discarded rather
-    # than silently dropped.
+    # Out-of-range tokens warn rather than being silently dropped.
     local selected_modules=""
     for num in $choice; do
         if [[ "$num" =~ ^[1-6]$ ]]; then
@@ -1641,11 +1370,9 @@ select_modules() {
 }
 
 vpssec_init() {
-    # `status` is documented as not needing root, and it only READS. The
-    # mkdir/chmod/log-append below all fail for a non-root user on a
-    # root-owned install (and abort under set -e before status_mode ever
-    # runs), so the read-only command gets a read-only init: i18n and
-    # nothing else.
+    # status is read-only and documented as not needing root, so it gets a
+    # read-only init: i18n only. The mkdir/chmod below would abort under set -e
+    # for a non-root user on a root-owned install.
     if [[ "${VPSSEC_MODE:-}" == "status" ]]; then
         i18n_load "${VPSSEC_LANG}"
         log_info "vpssec initialized read-only for status (version: ${VPSSEC_VERSION})"
@@ -1666,17 +1393,9 @@ vpssec_init() {
     # Load i18n
     i18n_load "${VPSSEC_LANG}"
 
-    # Acquire a single-instance lock for any mutating command. Two
-    # concurrent `vpssec audit` runs would race on state/checks.json
-    # (state_init truncates it at the start of each run), and
-    # `vpssec guide` running alongside could apply fixes from a stale
-    # plan. `status` is read-only and is allowed to coexist.
-    #
-    # The lock is held by fd 200 for the lifetime of the shell; the
-    # OS releases it automatically when this process exits, so there
-    # is no stale-lock cleanup to worry about. The lock file's
-    # contents (the holder PID) are advisory — used only to make the
-    # collision message actionable.
+    # Single-instance lock for any mutating command; status may coexist.
+    # Held by fd 200 for the life of the shell and released by the OS on exit,
+    # so there is no stale-lock cleanup. The stored PID is advisory.
     if [[ "${VPSSEC_MODE:-}" != "status" ]]; then
         local _run_lock="${VPSSEC_STATE}/.run.lock"
         # shellcheck disable=SC2093
@@ -1689,13 +1408,8 @@ vpssec_init() {
             else
                 print_error "Another vpssec instance is already running."
             fi
-            # No "remove the lock file" advice here, on purpose. flock is
-            # released by the kernel the instant the holder exits — a killed
-            # run never blocks this branch. The only way to get here is a
-            # LIVE process holding the lock, and deleting the file then
-            # lets a new run recreate it on a fresh inode and take a "lock"
-            # the first process isn't holding: two mutating runs at once,
-            # exactly what the lock exists to prevent.
+            # Never advise removing the lock file: reaching here means a LIVE
+            # holder, and a fresh inode would let two mutating runs coexist.
             print_msg "Wait for it to finish, or stop it: kill ${_other_pid:-<pid>}"
             exit 1
         fi

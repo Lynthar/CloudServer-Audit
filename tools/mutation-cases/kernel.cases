@@ -49,9 +49,14 @@ run_case "network/rp_filter-exception-gone" 2 \
     '            :'
 
 run_case "dropin/backup-skipped" 1 \
-    '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true' \
+    '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null || return 1' \
     '    :'
 
 run_case "network/ip_forward-exception-gone" 2 \
     '        if [[ "$param" == "net.ipv4.ip_forward" ]] && _kernel_ip_forward_needed; then' \
     '        if false; then'
+
+# A swallowed backup failure lets the fix rewrite /etc with no way back.
+run_case "rollback/backup-failure-swallowed" 1 \
+    '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null || return 1' \
+    '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true'

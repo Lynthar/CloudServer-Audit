@@ -546,3 +546,31 @@ SH
     run _f2b_has_custom_config
     [ "$status" -eq 1 ]
 }
+
+# ---- the backup contract ---------------------------------------------
+
+@test "ssh jail: a backup that cannot be taken aborts the fix" {
+    _vpssec_begin_backup_session
+    printf '# existing\n' > "$F2B_DROPIN"
+    _vpssec_stub cp 1
+
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -ne 0 ]
+    [ "$(cat "$F2B_DROPIN")" = "# existing" ]
+}
+
+@test "configure: a drop-in this plan created is not removed when there is nothing to restore" {
+    # backup_file returns 0 with NO path for a file already registered as
+    # fix-created this session, so the restore has no snapshot to put back —
+    # and must leave the file for the plan-level rollback to delete rather
+    # than removing it here. Until 2026-08-17 this state was reached by a
+    # FAILED backup instead, which now aborts the fix outright.
+    _vpssec_begin_backup_session
+    printf '%s\n' '# created earlier in this plan' > "$F2B_DROPIN"
+    printf '%s\n' "$F2B_DROPIN" > "$VPSSEC_BACKUP_SESSION/$VPSSEC_CREATED_MANIFEST"
+    _f2b_jail_stays_down
+
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 1 ]
+    [ -f "$F2B_DROPIN" ]
+}
