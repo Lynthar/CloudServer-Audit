@@ -13,7 +13,7 @@ jobs:
     name: bats unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install bats-core
         run: |
@@ -75,7 +75,7 @@ jobs:
               *)     echo "unknown distro: $DISTRO" >&2; exit 1 ;;
           esac
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install bats-core
         run: |
@@ -94,7 +94,7 @@ jobs:
     name: i18n key parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Compare i18n key sets
         # Both language files MUST contain exactly the same set of
@@ -119,7 +119,7 @@ jobs:
     name: module function contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Verify each registered module exports _audit and _fix
         # Pins the contract documented in CLAUDE.md so a half-done
@@ -163,7 +163,7 @@ jobs:
     name: integrity manifest up-to-date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Regenerate and diff manifest.sha256
         # The manifest is consumed by install.sh's verify_integrity
