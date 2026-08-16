@@ -1048,8 +1048,9 @@ score   = clamp(0, 100, base − penalty)
 - 若子集里被计分的检查恰好**全部失败**，`base` 就是 0，无论问题多轻，
   最终分数都会落到 0。
 
-例如某台机器全量跑是 40 分，`--include=preflight,cloud,timezone,ufw`
-单跑却是 0 分——两个数字各自都没算错，但**不能拿来互相比较**。
+例如某台机器全量跑是 40 分，`--include=ufw` 单跑却是 0 分（上下文模块
+preflight/cloud/timezone 会自动随任何 `--include` 一起运行，无需手动列出）
+——两个数字各自都没算错，但**不能拿来互相比较**。
 
 因此凡是带了 `--include`/`--exclude` 的运行，终端与 Markdown 报告都会
 在分数旁标注"部分评分：仅基于 N 项计分检查"，`summary.json` 里也会带
@@ -1323,8 +1324,9 @@ jobs:
 
       - name: Run Security Audit
         # 用 --yes 让审计非交互地保存全部报告格式（md/json/sarif）——
-        # 审计是只读的，没有破坏性操作需要确认。--json-only 只会写 summary.json，
-        # 不会生成下一步要上传的 summary.sarif。
+        # 审计是只读的，没有破坏性操作需要确认。（--json-only 也会重新生成
+        # 全部三个报告文件、只把 JSON 打到 stdout；这里用 --yes 是为了保留
+        # 终端可读输出。）
         run: sudo ./vpssec audit --yes
 
       - name: Upload SARIF

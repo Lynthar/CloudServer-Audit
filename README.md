@@ -74,7 +74,7 @@ cosign verify-blob \
 |---|---|
 | `audit` | Read-only security checks → Markdown + JSON + SARIF reports |
 | `guide` | Interactive hardening wizard with safety gates |
-| `rollback` | Restore any change from per-run backups |
+| `rollback` | Restore the files a run backed up (service state / symlinks print their undo commands instead) |
 | `status` | Last run summary + latest backup |
 
 Every detection emits a stable `check_id`; fixes carry a `fix_id` you can
@@ -134,7 +134,7 @@ Legend: `✓` pass · `✗` high · `●` medium · `○` low
 vpssec touches `/etc/*` files. To make that defensible:
 
 - **Atomic writes** — tempfile + validate + rename. No half-edited config.
-- **Per-run backups** — `backups/<timestamp>/` mirrors every file before change. `rollback` restores any single run.
+- **Per-run backups** — `backups/<timestamp>/` mirrors every file before change. `rollback` restores the files of any single run; side effects that are not files (a disabled service, a created symlink) are undone via the exact commands vpssec prints and logs when it makes them.
 - **Validate before commit** — `sshd -t`, `nginx -t`, `visudo -c` all run on the staged file before it moves into place.
 - **SSH rescue port** — port 2222 is auto-opened before any `sshd_config` change so a bad config can't lock you out.
 - **Critical confirmation** — destructive ops (firewall enable, password-auth disable) require explicit confirmation that `--yes` cannot bypass.
@@ -198,8 +198,8 @@ carries `meta.partial_scope` plus `stats.scored_total` for the same reason.
 PRs welcome.
 
 - Architecture and module-extension patterns: the `<module>_audit` / `<module>_fix` contracts and the comments under `core/`
-- Unit tests: `bats tests/` (~240 cases)
-- Mutation harness (plant-defect verification): `tests/mutation/` — only run on a disposable VM
+- Unit tests: `bats tests/` (800+ cases; see CI for the current count)
+- Mutation testing, two tools for two questions: `bash tools/mutate-all.sh` plants defects in module source and asks whether the paired bats suite notices (safe anywhere); `tests/mutation/` plants misconfigurations in a REAL `/etc` and asks whether the audit notices — only run that one on a disposable VM
 - Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`
 - Releasing: push a `vX.Y.Z` tag — `release.yml` builds and signs the tarball with cosign keyless, then publishes the GitHub release
 
