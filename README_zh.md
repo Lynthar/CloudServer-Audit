@@ -3,7 +3,7 @@
 > 面向 Linux VPS 的纯 Bash 安全审计与加固工具。
 > 审计(只读):Debian/Ubuntu/RHEL/Arch · 引导式加固 + 回滚:Debian/Ubuntu。
 
-[English](README.md) | 简体中文 | [用户指南](docs/USER_GUIDE.md)
+[English](README.md) | 简体中文 | [用户指南](docs/user-guide.md)
 
 ---
 
@@ -97,7 +97,7 @@ sudo ./vpssec audit --include=ssh,ufw,networking
 
 > `preflight`、`cloud`、`timezone` 始终作为上下文模块自动运行。
 
-每个模块的检测项详解和修复方法，见[**用户指南**](docs/USER_GUIDE.md)。
+每个模块的检测项详解和修复方法，见[**用户指南**](docs/user-guide.md)。
 
 ---
 
@@ -157,7 +157,7 @@ sudo ./vpssec rollback                 # 恢复上次配置
 ./vpssec help ssh                      # 某个模块的详情
 ```
 
-完整 CLI 参考：[用户指南 → 命令参考](docs/USER_GUIDE.md#附录-a-vpssec-命令参考)。
+完整 CLI 参考：[用户指南 → 命令参考](docs/user-guide.md#附录-a-vpssec-命令参考)。
 
 ---
 
@@ -174,7 +174,7 @@ score   = clamp(0, 100, base − penalty)
 档位：`90+ 优秀 · 75–89 良好 · 50–74 一般 · <50 较差`。
 
 `info` 类检查项（如云厂商识别）不计入评分。完整模型见
-[用户指南 → 安全评分](docs/USER_GUIDE.md#附录-b-安全评分计算)。
+[用户指南 → 安全评分](docs/user-guide.md#附录-b-安全评分计算)。
 
 **只有模块范围相同的两次运行，分数才可比。** `base` 随计分检查数缩放，
 `penalty` 不随之缩放——因此 `--include=` 选的范围越窄，惩罚占比越重；

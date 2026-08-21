@@ -3,7 +3,7 @@
 > Pure-bash security auditing & hardening for Linux VPS.
 > Audit (read-only): Debian/Ubuntu/RHEL/Arch · Guided hardening + rollback: Debian/Ubuntu.
 
-English | [简体中文](README_zh.md) | [User Guide](docs/USER_GUIDE.md)
+English | [简体中文](README_zh.md) | [User Guide](docs/user-guide.md)
 
 ---
 
@@ -103,7 +103,7 @@ sudo ./vpssec audit --include=ssh,ufw,networking
 > `preflight`, `cloud`, `timezone` always run as context for other modules.
 
 Per-module check details, fix instructions, and the full module reference
-live in the [**User Guide**](docs/USER_GUIDE.md).
+live in the [**User Guide**](docs/user-guide.md).
 
 ---
 
@@ -163,7 +163,7 @@ sudo ./vpssec rollback                 # restore previous config
 ./vpssec help ssh                      # detail for one module
 ```
 
-Full CLI reference: [User Guide → 命令参考](docs/USER_GUIDE.md#附录-a-vpssec-命令参考).
+Full CLI reference: [User Guide → 命令参考](docs/user-guide.md#附录-a-vpssec-命令参考).
 
 ---
 
@@ -180,7 +180,7 @@ score   = clamp(0, 100, base − penalty)
 Categories: `90+ Excellent · 75–89 Good · 50–74 Fair · <50 Poor`.
 
 `info`-category checks (e.g. cloud-provider detection) don't move the
-score. See [User Guide → 安全评分](docs/USER_GUIDE.md#附录-b-安全评分计算)
+score. See [User Guide → 安全评分](docs/user-guide.md#附录-b-安全评分计算)
 for the full model.
 
 **Only compare scores from runs over the same module set.** `base` scales
