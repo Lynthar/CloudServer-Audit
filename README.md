@@ -3,7 +3,7 @@
 > Pure-bash security auditing & hardening for Linux VPS.
 > Audit (read-only): Debian/Ubuntu/RHEL/Arch · Guided hardening + rollback: Debian/Ubuntu.
 
-English | [简体中文](README_zh.md) | [User Guide](docs/user-guide.md)
+English | [简体中文](README.zh-CN.md) | [User Guide](docs/user-guide.md)
 
 ---
 

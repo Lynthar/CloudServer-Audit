@@ -129,7 +129,7 @@ _write_checks() {
 
 @test "calculate_score: README example reproduces" {
     # 2 high + 1 medium failures on a 15-scored-check host with 12
-    # safe; matches the example shown in README.md / README_zh.md.
+    # safe; matches the example shown in README.md / README.zh-CN.md.
     # base = 100 * 12 / 15 = 80; penalty = 5*2 + 1.5*1 = 11.5,
     # integer-divided in 4× space → 11. score = 69.
     local fails=(
