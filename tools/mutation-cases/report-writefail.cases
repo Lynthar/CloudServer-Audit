@@ -1,0 +1,33 @@
+# Mutation cases: tests/test_report_contract.bats against core/report.sh.
+# mutate-suite: core/report.sh tests/test_report_contract.bats
+#
+# The write contract: generation functions fail when their write fails,
+# --json-only never replays a stale summary.json, and meta.modules reports
+# the scope that actually ran.
+
+# Swallow the JSON write status — the pre-2026-08-23 behavior: an audit on a
+# full disk exits 0 and prints a path to a stale or missing file.
+run_case "report/json-write-unchecked" 1 \
+    '    write_file_atomic "$output_file" "$json" || return 1' \
+    '    write_file_atomic "$output_file" "$json" || true'
+
+# Same for the Markdown commit line.
+run_case "report/md-write-unchecked" 1 \
+    '    write_file_atomic "$output_file" "$content"$'\''\n'\'' || return 1' \
+    '    write_file_atomic "$output_file" "$content"$'\''\n'\'' || true'
+
+# Skip the refuse-on-failure branch: --json-only falls through to cat the
+# previous run's summary.json.
+run_case "report/stale-replayed" 1 \
+    '        if ! _report_write_files; then' \
+    '        if false; then'
+
+# Scope pinned to "all" regardless of --include/--exclude.
+run_case "report/scope-always-all" 1 \
+    '    if [[ -z "${VPSSEC_INCLUDE:-}" && -z "${VPSSEC_EXCLUDE:-}" ]]; then' \
+    '    if true; then'
+
+# Drop the suggestion from the SARIF result property bag.
+run_case "sarif/suggestion-dropped" 1 \
+    '                  "properties": { "suggestion": (.suggestion // "") }' \
+    '                  "properties": {}'

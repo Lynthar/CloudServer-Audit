@@ -1,14 +1,11 @@
-# Plant: write a jail.local that disables the sshd jail. On a stock
-# Debian fail2ban install, sshd is the only enabled jail by default,
-# so disabling it leaves the service running with zero active jails —
-# the exact silent-no-op state Lynis TOOL-5104 (and now vpssec's
-# fail2ban.no_jails_active) is meant to catch.
-# Severity: low, deliberately, and consistent with
-# fail2ban.service_inactive. fail2ban is a rate-limiting convenience on
-# top of SSH auth, not the control that keeps an attacker out — the
-# high-severity findings for that (password auth enabled, root login
-# permitted) live in the ssh module. This expectation said "medium" and
-# drifted red for months.
+# Plant: a jail.local disabling the sshd jail (TOOL-5104). On a stock Debian
+# fail2ban install sshd is the only enabled jail, so this leaves the service
+# running with zero active jails — the silent no-op state fail2ban.no_jails_active
+# exists to catch.
+# Severity: low, deliberately, and consistent with fail2ban.service_inactive.
+# fail2ban is a rate-limiting convenience on top of SSH auth, not the control that
+# keeps an attacker out; the high-severity findings for that (password auth
+# enabled, root login permitted) live in the ssh module.
 TEST_DESC="jail.local disabling sshd triggers fail2ban.no_jails_active"
 EXPECT_ID="fail2ban.no_jails_active"
 EXPECT_STATUS="failed"

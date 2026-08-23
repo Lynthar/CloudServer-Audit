@@ -1,9 +1,7 @@
 # Plant: dev.tty.ldisc_autoload=1 (re-opens the CVE-2019-13272 surface).
-# Doubles as a regression test for the dev.* filter fix in
-# _kernel_audit_kernel_params — pre-fix the audit loop's regex was
-# ^(kernel\.|fs\.), so any dev.* entry was silently dropped before
-# even being checked. This case will FAIL (id not surfaced at all)
-# if the filter ever regresses.
+# Also pins the dev.* filter in _kernel_audit_kernel_params: a loop regex of
+# ^(kernel\.|fs\.) drops every dev.* entry before it is ever checked, and this
+# case FAILS with the id not surfaced at all if that regresses.
 TEST_DESC="dev.tty.ldisc_autoload=1 surfaces in kernel.kernel_params_weak"
 EXPECT_ID="kernel.kernel_params_weak"
 EXPECT_STATUS="failed"

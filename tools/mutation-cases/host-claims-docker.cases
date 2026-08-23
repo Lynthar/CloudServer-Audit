@@ -1,12 +1,9 @@
-# Mutation cases for tests/test_audit_host_claims.bats against modules/docker.sh.
+# Mutation cases: tests/test_audit_host_claims.bats against modules/docker.sh.
 # mutate-suite: modules/docker.sh tests/test_audit_host_claims.bats
 #
-#   bash tools/mutate-suite.sh modules/docker.sh \
-#        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-docker.cases
-#
-# The defect being pinned: "cannot reach a daemon" was spelled the same as
-# "Docker is not installed", and the latter is a PASSED check that skips every
-# container finding. Rootless Docker answers that way to every sudo'd audit.
+# The defect: "cannot reach a daemon" was spelled the same as "Docker is not
+# installed", and the latter is a PASSED check that skips every container finding.
+# Rootless Docker answers that way to every sudo'd audit.
 
 # Without the three-way, an unreachable daemon goes back to a green tick.
 run_case "claims/unreachable-collapses-to-not-installed" 1 \

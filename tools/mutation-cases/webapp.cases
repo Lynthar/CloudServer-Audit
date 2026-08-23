@@ -1,12 +1,8 @@
-# Mutation cases for tests/test_fix_webapp*.bats against modules/webapp.sh.
+# Mutation cases: tests/test_fix_webapp_nginx.bats against modules/webapp.sh.
 # mutate-suite: modules/webapp.sh tests/test_fix_webapp_nginx.bats
 #
-# Run with:  bash tools/mutate-suite.sh modules/webapp.sh tests/test_fix_webapp_nginx.bats tools/mutation-cases/webapp.cases
-# Each entry reintroduces a defect this code actually had, or a plausible
-# regression of a guard it relies on. All of them must stay killed.
-#
-# The occurrence index (2nd argument) matters where the audit and the fix
-# share a line verbatim; see the header of tools/mutate-suite.sh.
+# The occurrence index matters where the audit and the fix share a line verbatim;
+# the rule and the rest of the runner's contract are in tools/mutate-suite.sh's header.
 
 run_case "tokens/comment-counts-as-configured" 1 \
     "    if grep -qE '^[^#]*server_tokens[[:space:]]+off' \"\$NGINX_CONF\" 2>/dev/null; then" \
@@ -52,11 +48,9 @@ run_case "hsts/backup-skipped" 1 \
     '    backup_file "$hsts_conf" >/dev/null || return 1' \
     '    :'
 
-# This case used to replace the print_warn with `return 0`, modelling "the fix
-# reports success" back when the success path returned 1. Since that convention
-# was replaced by FIX_TEMPLATE_ONLY the success path returns 0 legitimately, so
-# the old mutation was a no-op on the status and it SURVIVED. The two defects
-# worth pinning now are the two halves that used to be conflated.
+# The two defects worth pinning are the two halves that used to be conflated: a case
+# replacing the print_warn with `return 0` is a no-op on the status now that
+# FIX_TEMPLATE_ONLY lets the success path return 0 legitimately.
 run_case "hsts/instruction-not-printed" 1 \
     "    print_warn \"\$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')\"" \
     '    :'

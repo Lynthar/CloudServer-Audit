@@ -1,14 +1,13 @@
-# Plant: run a transient container with --network=host. Verifies
-# the inspect-and-classify pipeline correctly flags it at medium
-# severity. Mutation case covers only this check (not ICC / env-
-# secrets / memory-limit) because:
-#  * ICC: requires daemon.json edit + dockerd restart — too heavy/
-#    risky for an automated harness.
-#  * secrets_in_env: testable by passing -e AKIA... but the test
-#    container would need to actually launch; we keep this case
-#    focused on the one most-likely-to-regress code path.
-#  * unlimited_memory: same-shape inspect pipeline as host_network;
-#    if host_network case passes the parser works.
+# Plant: a transient container with --network=host.
+# Expect: the inspect-and-classify pipeline flags it at medium severity.
+#
+# STATED GAP — this case covers only host_network, not the module's other three
+# container checks:
+#  * ICC needs a daemon.json edit plus a dockerd restart, too heavy for an
+#    automated harness.
+#  * secrets_in_env would need the test container to actually launch.
+#  * unlimited_memory runs the same inspect pipeline, so host_network passing
+#    means the parser works.
 TEST_DESC="Container with --network=host triggers docker.host_network_used"
 EXPECT_ID="docker.host_network_used"
 EXPECT_STATUS="failed"

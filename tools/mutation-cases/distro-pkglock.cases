@@ -1,29 +1,21 @@
-# Mutation cases for tests/test_distro_pkg_lock.bats against core/distro.sh.
+# Mutation cases: tests/test_distro_pkg_lock.bats against core/distro.sh.
 # mutate-suite: core/distro.sh tests/test_distro_pkg_lock.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh core/distro.sh \
-#        tests/test_distro_pkg_lock.bats tools/mutation-cases/distro-pkglock.cases
+# SECOND cases file for this source: distro.cases pairs with
+# tests/test_update_unattended.bats and targets the auto-update parsers. A case
+# aimed at the lock predicate would read as a coverage gap there, and vice versa.
 #
-# SECOND cases file for this source, and that is the point of the per-suite
-# rule: distro.cases pairs with tests/test_update_unattended.bats and targets
-# the auto-update parsers. A case aimed at the lock predicate would read as a
-# coverage gap there that is not one, and vice versa. Same split as
-# filesystem / filesystem-umask.
-#
-# `*) return 2 ;;` occurs THREE times in this file (the lock case, and two
-# later ones) — the occurrence index below is 1 on purpose. Read the runner's
-# "at line N" against `grep -nxF` before trusting any result here.
-#
-# Every mutation is on a read path; nothing here can write to the container's
-# real /etc or /proc.
+# `*) return 2 ;;` occurs THREE times in this file (the lock case and two later
+# ones) and the occurrence index below is 1 on purpose — the rule is in
+# tools/mutate-suite.sh's header. Read the runner's "at
+# line N" against `grep -nxF` before trusting any result here. Every mutation is
+# on a read path; nothing here can write to the container's real /etc or /proc.
 
 # ---- _pkg_lock_held: the answer must be real ------------------------------
 
-# THE regression, at its narrowest: "I could not tell" spelled the same as
-# "no". Before this batch the apt branch was three bare `lsof` calls, so a
-# host without lsof produced "not locked" and the caller published it as
-# update.apt_available — status passed, category required, i.e. SCORED.
+# "I could not tell" spelled the same as "no": the apt branch was three bare
+# `lsof` calls, so a host without lsof produced "not locked" and the caller
+# published it as update.apt_available — status passed, category required, SCORED.
 run_case "held/unknown-collapsed-to-free" 1 \
     "    printf 'unknown\\n'" \
     "    printf 'free\\n'"

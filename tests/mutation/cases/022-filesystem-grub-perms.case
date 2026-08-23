@@ -1,8 +1,7 @@
 # Plant: weaken /boot/grub/grub.cfg perms to world-readable.
-# Verifies the new FS_SENSITIVE_FILES entry from the Lynis cross-check
-# is wired up and routes correctly into the medium (non-critical)
-# bucket — grub.cfg isn't in _fs_is_critical_perm_path, so it should
-# surface in sensitive_perms_wrong_minor (medium), not _wrong (high).
+# Expect: the FS_SENSITIVE_FILES entry routes into the medium (non-critical)
+# bucket — grub.cfg is not in _fs_is_critical_perm_path, so it must surface as
+# sensitive_perms_wrong_minor, not _wrong.
 TEST_DESC="/boot/grub/grub.cfg with 644 perms surfaces in sensitive_perms_wrong_minor"
 EXPECT_ID="filesystem.sensitive_perms_wrong_minor"
 EXPECT_STATUS="failed"

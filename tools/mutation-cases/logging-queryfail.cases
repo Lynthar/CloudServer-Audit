@@ -1,5 +1,4 @@
-# Mutation cases for tests/test_query_failure_honesty.bats against
-# modules/logging.sh.
+# Mutation cases: tests/test_query_failure_honesty.bats against modules/logging.sh.
 # mutate-suite: modules/logging.sh tests/test_query_failure_honesty.bats
 #
 # journalctl failing must not read as "0 failed logins".

@@ -1,7 +1,6 @@
-# Plant: create a non-whitelisted SUID binary outside the standard
-# system locations. Verifies (a) detection still works after the
-# ping/ping6 whitelist additions, (b) the whitelist isn't accidentally
-# matching everything.
+# Plant: a non-whitelisted SUID binary outside the standard system locations.
+# Verifies detection survives the ping/ping6 whitelist entries, and that the
+# whitelist is not accidentally matching everything.
 TEST_DESC="Non-whitelisted SUID binary triggers filesystem.suspicious_suid"
 EXPECT_ID="filesystem.suspicious_suid"
 EXPECT_STATUS="failed"

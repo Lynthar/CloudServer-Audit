@@ -1,16 +1,11 @@
-# Mutation cases for tests/test_distro_pkg_hints.bats against core/distro.sh.
+# Mutation cases: tests/test_distro_pkg_hints.bats against core/distro.sh.
 # mutate-suite: core/distro.sh tests/test_distro_pkg_hints.bats
 #
-# The defect these guard against is a suggestion the operator cannot run. It
-# has three shapes, and only the first is obvious:
-#
-#   * the wrong package manager for the host
-#   * a command name where a package name belongs
-#   * a package the distribution does not actually ship
-#
-# The third is why a plain "translate apt to dnf" would not have been enough:
-# AIDE is in Debian's and RHEL's repositories but in Arch's AUR, so the
-# mechanical fix would have swapped one unrunnable command for another.
+# The defect these guard against is a suggestion the operator cannot run, in three
+# shapes: the wrong package manager for the host, a command name where a package
+# name belongs, and a package the distribution does not actually ship. The third
+# is why a plain "translate apt to dnf" would not have been enough — AIDE is in
+# Debian's and RHEL's repositories but in Arch's AUR.
 #
 # Nothing here touches the host: the primitives read VPSSEC_DISTRO_FAMILY and
 # VPSSEC_PKG_MGR, which the suite assigns directly.
@@ -27,13 +22,9 @@ run_case "install/pacman-uses-apt-syntax" 1 \
     '        pacman) echo "pacman -S $*" ;;' \
     '        pacman) echo "pacman install $*" ;;'
 
-# Guessing instead of refusing. A host whose package manager is unrecognised
-# gets a confident apt command — the same defect, reached by a different road,
-# and the one a fallback branch introduces by accident.
-#
-# Occurrence 2, not 1: auto_update_installed ends with the same line verbatim,
-# and anchored at #1 this lands there instead — a function this suite does not
-# cover, reported as a coverage gap that is not one.
+# Guessing instead of refusing: a host whose package manager is unrecognised gets
+# a confident apt command. Occurrence 2, not 1 — auto_update_installed ends with
+# the same line verbatim.
 run_case "install/unknown-manager-falls-back-to-apt" 2 \
     '        *)      return 1 ;;' \
     '        *)      echo "apt install $*" ;;'
@@ -60,14 +51,10 @@ run_case "install/empty-list-still-emits-a-command" 1 \
 
 # ---- command name where a package name belongs ----------------------------
 
-# The bug that predates multi-distro support entirely: `apt install ss` fails
-# on Debian, because ss ships in iproute2. Matching on a literal sends every
-# command to the catch-all, which is the mapping not happening at all.
-#
-# The first attempt appended a duplicate `ss)` arm AFTER the catch-all, which
-# bash can never reach — an equivalent mutant that survived and looked like a
-# coverage gap. Kept as a note because the mistake is easy to repeat: a case
-# arm added below `*)` is dead code, not a defect.
+# `apt install ss` fails on Debian, because ss ships in iproute2. Matching on a
+# literal sends every command to the catch-all, which is the mapping not happening
+# at all. Note a `ss)` arm added BELOW `*)` is dead code, not a defect — bash never
+# reaches it, so that mutant survives and looks like a coverage gap.
 run_case "packages/mapping-skipped-entirely" 1 \
     '        case "$cmd" in' \
     '        case "_no_match_" in'

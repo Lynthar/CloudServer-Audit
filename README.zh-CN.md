@@ -33,7 +33,11 @@ sudo ./vpssec audit
 
 一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
 Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
-workflow，攻击者无法在不攻破 sigstore Fulcio CA 的情况下替换 tarball。
+workflow 在**所装 tag** 上的那次签名，被调包或换标签的 release 资产过不了
+验证。但保证的边界要说清：它验证的是"资产出自本仓库的发布流水线"，防不住
+仓库本身被攻破——拿到仓库写权限的人可以走正规流水线签出新版本，也可以直接
+改 `main` 上的这个引导脚本。想要更强的锚点，请从你已经审计过的 release
+里下载 `run.sh`，而不是从 `main` 取。
 Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；其它系统从 sigstore GitHub
 release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 `.deb`
 （`dpkg`），RHEL/Arch 等无 dpkg 的系统装静态 `cosign` 二进制到
@@ -42,11 +46,12 @@ release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 
 跳过验证用 `VPSSEC_NO_VERIFY=1`（不推荐）。
 
 ```bash
-# 固定版本
-VPSSEC_VERSION=v1.2.0 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+# 固定版本。变量必须设在管道右侧的 bash 上——写成 `VPSSEC_VERSION=… curl … | sudo bash`
+# 只会把变量传给 curl，固定版本根本不会生效。
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.2.0 bash
 
 # 跳过验证（不推荐）
-VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_NO_VERIFY=1 bash
 ```
 
 手动验证某个 release：
@@ -57,7 +62,7 @@ curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vps
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \
   --bundle vpssec-${TAG#v}.tar.gz.sig.json \
-  --certificate-identity-regexp '^https://github\.com/Lynthar/CloudServer-Audit/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-identity "https://github.com/Lynthar/CloudServer-Audit/.github/workflows/release.yml@refs/tags/$TAG" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   vpssec-${TAG#v}.tar.gz
 ```
@@ -70,7 +75,7 @@ cosign verify-blob \
 |---|---|
 | `audit` | 只读安全检测 → Markdown + JSON + SARIF 报告 |
 | `guide` | 交互式加固向导，带安全闸门 |
-| `rollback` | 从每次运行的备份中恢复任意变更 |
+| `rollback` | 恢复某次运行备份下的文件（服务状态/软链不在其内——vpssec 改动它们时会打印并记录撤销命令） |
 | `status` | 上次运行摘要 + 最新备份信息 |
 
 每条检测都有稳定的 `check_id`；可修复项还有 `fix_id`，你可以从报告里
@@ -128,9 +133,9 @@ sudo ./vpssec audit --include=ssh,ufw,networking
 vpssec 会改 `/etc/*` 配置文件。为此设了几道防线：
 
 - **原子写入** —— 写临时文件、校验、再 rename。不会留下半个写完的配置。
-- **每次运行都备份** —— `backups/<时间戳>/` 镜像所有被改文件，`rollback` 可任意恢复某次运行。
+- **每次运行都备份** —— `backups/<时间戳>/` 镜像所有被改文件，`rollback` 恢复其中任意一次；不是文件的副作用（禁用的服务、创建的软链）按 vpssec 当时打印并记录的撤销命令还原。
 - **改动前先校验** —— `sshd -t`、`nginx -t`、`visudo -c` 都在 staged 文件上跑过才上线。
-- **SSH 救援端口** —— 改 `sshd_config` 前自动开放 2222 端口，配置错也不会把你锁出去。
+- **SSH 救援端口** —— 在两个可能锁死连接的变更（禁用密码登录/禁用 root 登录）动手之前，先在空闲端口（默认 2222）拉起第二个 sshd，并要求你确认能连上，才碰线上配置。
 - **关键操作强制确认** —— 防火墙启用、密码登录禁用等高危操作必须显式确认，`--yes` 无法跳过。
 - **修复分级** —— 每个 fix 标记为 `safe` / `confirm` / `risky` / `alert_only`，risky 项执行前显式告警。
 
@@ -190,8 +195,8 @@ score   = clamp(0, 100, base − penalty)
 欢迎 PR。
 
 - 架构和模块扩展规范：见 `<module>_audit` / `<module>_fix` 契约和 `core/` 下的注释
-- 单元测试：`bats tests/`（约 240 个用例）
-- 变异测试 harness（注入缺陷验证检测）：`tests/mutation/` —— 仅在可丢弃的 VM 上跑
+- 单元测试：`bats tests/`（800+ 用例，具体数以 CI 为准）
+- 变异测试有两套工具、问两个问题：`bash tools/mutate-all.sh` 往模块源码里植入缺陷，问配对的 bats 套件能不能发现（哪里都能跑）；`tests/mutation/` 往**真实 `/etc`** 里植入错误配置，问审计能不能发现——后者仅在可丢弃的 VM 上跑
 - commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`
 - 发布版本：在 main 打 `vX.Y.Z` tag 并 push —— `release.yml` 会用 cosign keyless 构建+签名 tarball 并创建 GitHub release
 

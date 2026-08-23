@@ -1,20 +1,15 @@
-# Mutation cases for tests/test_fix_update.bats against modules/update.sh.
+# Mutation cases: tests/test_fix_update.bats against modules/update.sh.
 # mutate-suite: modules/update.sh tests/test_fix_update.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/update.sh \
-#        tests/test_fix_update.bats tools/mutation-cases/update.cases
-#
-# The predicate cases at the end are the point of this file: the module used to
-# carry its own copy of "are automatic updates effective", reachable only from
-# the fix's postcondition, while the audit asked core/distro.sh. Reintroducing
-# either copy must go red.
+# The predicate cases at the end are the point of this file: the module used to carry
+# its own copy of "are automatic updates effective", reachable only from the fix's
+# postcondition, while the audit asked core/distro.sh. Reintroducing either copy must
+# go red.
 
 # ---- the path variables that make the fix reachable ------------------
-#
-# Pinned through backup_file (read-only) rather than write_file_atomic: an
-# inlined literal on the WRITE would rewrite the container's own
-# /etc/apt/apt.conf.d and leave every later case running against a changed host.
+# Pinned through backup_file (read-only) rather than write_file_atomic: an inlined
+# literal on the WRITE would rewrite the container's own /etc/apt/apt.conf.d and
+# leave every later case running against a changed host.
 
 run_case "paths/auto-upgrades-inlined" 1 \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
@@ -44,10 +39,9 @@ run_case "rollback/dropin-backup-guarded-again" 1 \
 
 # ---- write failures --------------------------------------------------
 
-# Both writes span several lines (the content is inline), so the status check is
-# broken at the CLOSING line with `&& false`: the write still runs and only its
-# result is ignored, which is the defect being modelled. Replacing the opening
-# line would delete the write itself — a different and much louder bug.
+# Both writes span several lines, so the status check is broken at the CLOSING line
+# with `&& false`: the write still runs and only its result is ignored, which is the
+# defect. Replacing the opening line would delete the write itself.
 
 run_case "write/auto-upgrades-status-unchecked" 1 \
     "APT::Periodic::AutocleanInterval \"7\";'; then" \
@@ -63,11 +57,10 @@ run_case "config/periodic-flag-off" 1 \
     'APT::Periodic::Unattended-Upgrade "1";' \
     'APT::Periodic::Unattended-Upgrade "0";'
 
-# The "50unattended-upgrades is left alone" test only asserts that a file at
-# that path survives — which it would even if the fix wrote to the real /etc
-# copy, since the test's tree is elsewhere. This case is what makes that test
-# mean something: point the writer at the 50 conffile within the SAME tree and
-# the assertion must fail.
+# The "50unattended-upgrades is left alone" test only asserts that a file at that
+# path survives — which it would even if the fix wrote to the real /etc copy, since
+# the test's tree is elsewhere. This case is what makes that test mean something:
+# point the writer at the 50 conffile within the SAME tree and the assertion must fail.
 run_case "config/writes-the-50-conffile" 1 \
     '    local uu_dropin="$UPDATE_UU_DROPIN"' \
     '    local uu_dropin="${UPDATE_UU_DROPIN%/*}/50unattended-upgrades"'

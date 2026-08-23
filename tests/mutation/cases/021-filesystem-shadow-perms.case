@@ -1,7 +1,6 @@
-# Plant: weaken /etc/shadow- (rotated backup) permissions to world-readable.
-# Expect: HIGH-severity sensitive_perms_wrong — verifies the entry we
-# added from the Lynis cross-check is wired up *and* classified into
-# the HIGH bucket (not the medium one).
+# Plant: weaken /etc/shadow- (rotated backup) to world-readable.
+# Expect: HIGH-severity sensitive_perms_wrong — the entry is wired up AND
+# classified into the HIGH bucket, not the medium one.
 TEST_DESC="/etc/shadow- with 644 perms triggers HIGH sensitive_perms_wrong"
 EXPECT_ID="filesystem.sensitive_perms_wrong"
 EXPECT_STATUS="failed"

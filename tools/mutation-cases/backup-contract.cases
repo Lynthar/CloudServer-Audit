@@ -1,48 +1,37 @@
-# Mutation cases for tests/test_backup_created_contract.bats against
+# Mutation cases: tests/test_backup_created_contract.bats against modules/docker.sh.
 # mutate-suite: modules/docker.sh tests/test_backup_created_contract.bats
-# modules/docker.sh.
-#
-# Run with:
-#   bash tools/mutate-suite.sh modules/docker.sh \
-#        tests/test_backup_created_contract.bats tools/mutation-cases/backup-contract.cases
 #
 # STATED GAP, so nobody reads this file as more coverage than it is: the suite
-# names four sources — docker, ssh, nginx and kernel — and this cases file
-# mutates only docker.sh, because that is where this batch changed production
-# code. The other three are exercised by the suite but not mutated here; their
-# own fix suites carry cases files (nginx.cases, kernel.cases,
-# test_fix_ssh_dropin.bats). Per the per-suite rule that is still a hole: a
-# regression in ssh's or nginx's registration would be caught by this suite
-# only if someone ran it, not by any mutation. Recorded rather than papered
-# over — the last time a "covered" claim rested on a name match it was wrong
-# for months.
+# names four sources — docker, ssh, nginx and kernel — and only docker.sh is
+# mutated here. The other three are exercised by the suite but not mutated; a
+# regression in ssh's or nginx's registration would be caught only if someone ran
+# the suite, not by any mutation.
 #
 # Every mutation below is on the daemon.json write path and runs against the
 # per-test fake /etc, never the container's real /etc/docker.
 
 # ---- the ninth instance of the created-file defect ------------------------
 
-# THE regression this batch fixed, at its narrowest. Deleting the
-# unconditional call reproduces the shipped bug exactly: the then-branch used
-# to hold the only backup_file call, so a host with no daemon.json — which is
-# every stock Docker install — got the file created and `vpssec rollback` had
-# no record of it.
+# Deleting the unconditional call reproduces the shipped bug exactly: with the
+# only backup_file call inside the then-branch, a host with no daemon.json —
+# every stock Docker install — got the file created and `vpssec rollback` had no
+# record of it.
 run_case "created/backup-call-removed" 1 \
     '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
     '    :'
 
-# The same defect in the shape it actually shipped in: the call exists, but
-# only on the path where the file already exists. A grep for "does this
-# function call backup_file" answers yes to both this and the correct code,
-# which is why the assertion has to be about the manifest and not the call.
+# The same defect in the shape it shipped in: the call exists, but only on the
+# path where the file already exists. A grep for "does this function call
+# backup_file" answers yes to both, which is why the assertion is about the
+# manifest and not the call.
 run_case "created/backup-guarded-by-f" 1 \
     '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
     '    [[ -f "$DOCKER_DAEMON_JSON" ]] && { backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1; }'
 
 # Registration must happen BEFORE the write. Afterwards the path exists, so
-# backup_file takes the "snapshot an existing file" branch and records the
-# fix's own output as the pre-plan original — a rollback then restores the
-# hardened file instead of deleting it.
+# backup_file takes the "snapshot an existing file" branch and records the fix's
+# own output as the pre-plan original — a rollback then restores the hardened
+# file instead of deleting it.
 run_case "created/backup-after-write" 1 \
     '    backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1' \
     '    trap '"'"'backup_file "$DOCKER_DAEMON_JSON" >/dev/null || true'"'"' RETURN'
@@ -58,20 +47,17 @@ run_case "created/validity-check-disabled" 1 \
 
 # ---- the write branches themselves ----------------------------------------
 
-# The create branch must actually produce the file; a fix that reports success
-# without writing is the other half of this batch's subject. Occurrence 2 on
-# purpose — `mv "$tmp_file" "$DOCKER_DAEMON_JSON"` appears identically in both
-# branches, and the first one is the update path. Aiming at #1 reports a gap in
-# code this suite never claimed to cover, which is precisely the failure mode
-# the runner's occurrence index exists to prevent.
+# The create branch must actually produce the file. Occurrence 2 on purpose —
+# `mv "$tmp_file" "$DOCKER_DAEMON_JSON"` appears identically in both branches and
+# the first one is the update path.
 run_case "created/create-branch-skips-write" 2 \
     '        mv "$tmp_file" "$DOCKER_DAEMON_JSON"' \
     '        rm -f "$tmp_file"'
 
 # Occurrence 1, the update path. Killed ONLY by the restore round-trip test,
 # which skips on a host without GNU `realpath -m` — so on a macOS checkout this
-# case survives for a reason that has nothing to do with coverage. Run this
-# file in the verification container, where it is killed.
+# case survives for a reason unrelated to coverage. Run it in the verification
+# container.
 run_case "created/update-branch-skips-write" 1 \
     '        mv "$tmp_file" "$DOCKER_DAEMON_JSON"' \
     '        rm -f "$tmp_file"'

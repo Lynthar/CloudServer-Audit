@@ -34,8 +34,13 @@ After an interactive audit you're prompted to save the report; if you accept, `r
 The one-liner downloads the latest release tarball and **verifies its
 signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
 extracting. The signing identity is pinned to this repo's `release.yml`
-workflow, so swapping the tarball isn't possible without compromising
-sigstore's Fulcio CA. `cosign` is auto-installed via `apt` on Ubuntu
+workflow at the exact tag being installed, so a swapped or re-labelled
+release asset fails verification. The guarantee is scoped: it authenticates
+the asset against this repository's release pipeline — it cannot protect
+against a compromise of the repository itself, which could mint a new
+validly-signed release or alter this bootstrap script on `main`. For a
+stronger anchor, download `run.sh` from a release you have already audited
+instead of from `main`. `cosign` is auto-installed via `apt` on Ubuntu
 22.04+; otherwise the script installs a pinned asset from sigstore's
 GitHub release with its SHA256 verified locally first — a `.deb` via
 `dpkg` on Debian, or the static `cosign` binary into `/usr/local/bin`
@@ -46,11 +51,12 @@ the existing one-liner. Skip verification entirely with `VPSSEC_NO_VERIFY=1`
 (not recommended).
 
 ```bash
-# Pin to a specific release
-VPSSEC_VERSION=v1.2.0 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+# Pin to a specific release. The variable must be set on the bash side of
+# the pipe — `VPSSEC_VERSION=… curl … | sudo bash` only sets it for curl.
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.2.0 bash
 
 # Skip verification (NOT recommended)
-VPSSEC_NO_VERIFY=1   curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_NO_VERIFY=1 bash
 ```
 
 Verify a release manually:
@@ -61,7 +67,7 @@ curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vps
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \
   --bundle vpssec-${TAG#v}.tar.gz.sig.json \
-  --certificate-identity-regexp '^https://github\.com/Lynthar/CloudServer-Audit/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-identity "https://github.com/Lynthar/CloudServer-Audit/.github/workflows/release.yml@refs/tags/$TAG" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   vpssec-${TAG#v}.tar.gz
 ```
@@ -136,7 +142,7 @@ vpssec touches `/etc/*` files. To make that defensible:
 - **Atomic writes** — tempfile + validate + rename. No half-edited config.
 - **Per-run backups** — `backups/<timestamp>/` mirrors every file before change. `rollback` restores the files of any single run; side effects that are not files (a disabled service, a created symlink) are undone via the exact commands vpssec prints and logs when it makes them.
 - **Validate before commit** — `sshd -t`, `nginx -t`, `visudo -c` all run on the staged file before it moves into place.
-- **SSH rescue port** — port 2222 is auto-opened before any `sshd_config` change so a bad config can't lock you out.
+- **SSH rescue port** — before the two lockout-capable changes (disabling password auth / root login), a second sshd is opened on a spare port (2222 by default) and must be confirmed working before the live config is touched.
 - **Critical confirmation** — destructive ops (firewall enable, password-auth disable) require explicit confirmation that `--yes` cannot bypass.
 - **Fix classification** — every fix is tagged `safe` / `confirm` / `risky` / `alert_only`; risky ones surface their warning before applying.
 

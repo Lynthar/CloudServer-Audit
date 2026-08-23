@@ -1,8 +1,5 @@
-# Mutation cases for tests/test_audit_host_claims.bats against modules/baseline.sh.
+# Mutation cases: tests/test_audit_host_claims.bats against modules/baseline.sh.
 # mutate-suite: modules/baseline.sh tests/test_audit_host_claims.bats
-#
-#   bash tools/mutate-suite.sh modules/baseline.sh \
-#        tests/test_audit_host_claims.bats tools/mutation-cases/host-claims-baseline.cases
 #
 # The defect: a profile symlinked into apparmor.d/disable is counted as neither
 # enforcing nor complaining, so switching one off left no trace in the report.

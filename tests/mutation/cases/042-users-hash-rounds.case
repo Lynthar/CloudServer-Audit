@@ -1,20 +1,15 @@
-# Plant: SHA-512 password hashing with SHA_CRYPT_MIN_ROUNDS below the
-# recommended 10000. Verifies AUTH-9230-style detection.
+# Plant: SHA-512 hashing with SHA_CRYPT_MIN_ROUNDS below the recommended 10000
+# (AUTH-9230).
 #
-# Why the PAM file is touched too: _check_hash_rounds (modules/users.sh)
-# deliberately returns early unless the active hashing method is
-# sha256/sha512, because SHA_CRYPT_MIN_ROUNDS has no meaning under
-# yescrypt — and yescrypt is the default on Debian 12+ / Ubuntu 24.04+.
-# The original version of this case only edited /etc/login.defs, so on
-# every supported distro the check correctly skipped and the case
-# reported a permanent, unfixable FAIL. The code was right; the case
-# could not reach it. Setting the PAM method is what makes the check
-# applicable.
+# The PAM file is touched too because _check_hash_rounds (modules/users.sh) returns
+# early unless the active hashing method is sha256/sha512 — SHA_CRYPT_MIN_ROUNDS
+# has no meaning under yescrypt, which is the default on Debian 12+ / Ubuntu
+# 24.04+. Editing only /etc/login.defs makes the check correctly skip on every
+# supported distro, and the case then reports a permanent FAIL it can never reach
+# the code to fix.
 #
-# Safety: both files are consulted at PASSWORD-CHANGE time, not at
-# authentication time, so existing logins and existing hashes are
-# unaffected for the duration of the test. Both are backed up and
-# restored verbatim.
+# Safety: both files are consulted at PASSWORD-CHANGE time, not at authentication
+# time, so existing logins and hashes are unaffected. Both are restored verbatim.
 TEST_DESC="SHA-512 + SHA_CRYPT_MIN_ROUNDS=5000 triggers users.hash_rounds_low"
 EXPECT_ID="users.hash_rounds_low"
 EXPECT_STATUS="failed"

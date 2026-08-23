@@ -1,8 +1,8 @@
-# Mutation cases for tests/test_validate.bats against core/common.sh.
+# Mutation cases: tests/test_validate.bats against core/common.sh.
 # mutate-suite: core/common.sh tests/test_validate.bats
 #
-# validate_ip feeds ufw source scoping (SSH rescue rule): junk must be
-# rejected, not passed downstream. These pin the strengthened bounds.
+# validate_ip feeds ufw source scoping (the SSH rescue rule): junk must be
+# rejected, not passed downstream.
 
 # Drop the octet bound: 999.999.999.999 validates again.
 run_case "validip/octet-bound-removed" 1 \

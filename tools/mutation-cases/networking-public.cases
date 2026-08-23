@@ -1,5 +1,4 @@
-# Mutation cases for tests/test_query_failure_honesty.bats against
-# modules/networking.sh.
+# Mutation cases: tests/test_query_failure_honesty.bats against modules/networking.sh.
 # mutate-suite: modules/networking.sh tests/test_query_failure_honesty.bats
 #
 # A bind on the host's PUBLIC address is as exposed as a wildcard bind.

@@ -1,14 +1,9 @@
-# Mutation cases for tests/test_backup_mode_restore.bats against core/common.sh
+# Mutation cases: tests/test_backup_mode_restore.bats against core/common.sh —
+# the backup half of the mode-preservation contract.
 # mutate-suite: core/common.sh tests/test_backup_mode_restore.bats
-# — the backup half of the mode-preservation contract.
 #
-# Run with:
-#   bash tools/mutate-suite.sh core/common.sh \
-#        tests/test_backup_mode_restore.bats tools/mutation-cases/common.cases
-#
-# The restore half lives in tools/mutation-cases/state.cases against
-# core/state.sh; the runner mutates one source file per invocation, so the two
-# sides of this contract are two files by necessity, not by choice.
+# The restore half is state.cases against core/state.sh: the runner mutates one
+# source file per invocation, so the two sides are two files by necessity.
 
 run_case "modes/never-recorded" 1 \
     '        backup_track_mode "$file" "$backup_dir"' \
@@ -26,9 +21,9 @@ run_case "modes/recorded-after-the-copy" 1 \
     '    mode=$(stat -c '"'"'%a'"'"' "$path" 2>/dev/null) || return 0' \
     '    mode=600'
 
-# (Re-anchored 2026-08-16: the chmod grew a `2>/dev/null || \` continuation
-# when backup_file's error propagation landed — the mutant keeps the `|| \`
-# so the follow-up log_warn line stays syntactically attached and inert.)
+# The mutant keeps the trailing `|| \` so the follow-up log_warn line stays
+# syntactically attached and inert; dropping it detaches the continuation and
+# breaks the file rather than the behaviour.
 run_case "modes/backup-copy-left-readable" 1 \
     '        chmod 600 "$backup_path" 2>/dev/null || \' \
     '        : || \'

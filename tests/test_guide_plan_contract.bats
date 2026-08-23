@@ -44,6 +44,13 @@ _checklist_tags_only() {
     done
 }
 
+@test "guide_mode: refusing an unsupported distro exits 4, not 0" {
+    # 0 here read as "hardening completed" to anything that checks $?.
+    is_debian_based() { return 1; }
+    run guide_mode
+    [ "$status" -eq 4 ]
+}
+
 @test "tui_select_fixes emits fix ids, not check ids, deduplicated" {
     tui_checklist() { _checklist_tags_only "$@"; }
 

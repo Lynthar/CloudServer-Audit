@@ -1,10 +1,9 @@
-# Mutation cases for tests/test_guide_plan_contract.bats against
-# core/ui_tui.sh.
+# Mutation cases: tests/test_guide_plan_contract.bats against core/ui_tui.sh.
 # mutate-suite: core/ui_tui.sh tests/test_guide_plan_contract.bats
 #
-# THE regression of the 2026-08 round: the TUI checklist tagged rows with
-# the CHECK id while generate_plan resolves by FIX id, so every TUI-mode
-# guide run executed an empty plan and printed success.
+# The regression: the TUI checklist tagged rows with the CHECK id while generate_plan
+# resolves by FIX id, so every TUI-mode guide run executed an empty plan and printed
+# success.
 
 # Re-introduce it: tag with .id again.
 run_case "tuiselect/check-id-tag" 1 \

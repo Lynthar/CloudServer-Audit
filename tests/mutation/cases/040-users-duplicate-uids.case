@@ -1,14 +1,11 @@
-# Plant: append a /etc/passwd line that reuses an existing regular
-# user's UID. Verifies AUTH-9208-style detection.
+# Plant: a /etc/passwd line reusing an existing regular user's UID (AUTH-9208).
 #
-# Safety: the phantom account is created with /usr/sbin/nologin shell
-# and a non-existent home; even if restore fails it cannot log in.
-# Still: this case writes /etc/passwd. Run on a disposable host.
-# Severity: medium, deliberately. A duplicate UID 0 (the actual
-# backdoor pattern) is reported separately and at high by
-# users.uid0_found; a duplicate among regular UIDs is an ambiguous-
-# ownership misconfiguration, which the project's rubric rates medium.
-# This expectation said "high" and drifted red for months.
+# Safety: the phantom account gets /usr/sbin/nologin and a non-existent home, so
+# even a failed restore cannot log in. It still writes /etc/passwd — disposable
+# host only.
+# Severity: medium, deliberately. A duplicate UID 0 is the backdoor pattern and is
+# reported separately at high by users.uid0_found; a duplicate among regular UIDs
+# is ambiguous ownership, which the project's rubric rates medium.
 TEST_DESC="Two /etc/passwd entries with the same UID trigger users.duplicate_uids"
 EXPECT_ID="users.duplicate_uids"
 EXPECT_STATUS="failed"

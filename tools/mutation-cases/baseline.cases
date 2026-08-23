@@ -1,26 +1,14 @@
-# Mutation cases for tests/test_fix_baseline.bats against modules/baseline.sh.
+# Mutation cases: tests/test_fix_baseline.bats against modules/baseline.sh.
 # mutate-suite: modules/baseline.sh tests/test_fix_baseline.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/baseline.sh \
-#        tests/test_fix_baseline.bats tools/mutation-cases/baseline.cases
+# Two shapes recur here and are worth reading for:
 #
-# Each entry reintroduces a defect this code actually had, or a plausible
-# regression of a guard it now relies on. All of them must stay killed.
-#
-# Two shapes recur and are worth reading for:
-#
-#   * `... && false` rather than `if false` where the point is that the command
+#   * `... && false` rather than `if false`, where the point is that the command
 #     still RUNS and only its status is ignored. Replacing the whole condition
-#     with `false` would also delete the action, which is a different (and
-#     easier to catch) defect than the one being modelled.
-#   * Re-hardcoding an /etc literal over a module path variable. Those cases
-#     exist because the variables are the only reason these fixes are testable
-#     at all — a future edit that inlines the path again would silently take
-#     the fix back out of test coverage, and the suite would still be green.
-#
-# The occurrence index (2nd argument) matters where a line appears more than
-# once; see the header of tools/mutate-suite.sh.
+#     also deletes the action — a different and louder defect.
+#   * Re-hardcoding an /etc literal over a module path variable. Those variables
+#     are the only reason these fixes are testable at all, so inlining a path
+#     again takes the fix back out of coverage with the suite still green.
 
 # ---- the path variables that make the fixes reachable ----------------
 
@@ -107,9 +95,7 @@ run_case "apparmor/start-skipped-after-failed-enable" 1 \
     '    systemctl enable apparmor && systemctl start apparmor || log_warn "failed"'
 
 # Occurrence 2, not 1: _baseline_apparmor_get_status opens with the same line
-# verbatim. Anchored at #1 this mutation lands in that audit helper instead and
-# reports a coverage gap in code this suite never claimed to cover — it did
-# exactly that once, and the runner's "SURVIVED at line 69" is what gave it away.
+# verbatim, and anchored at #1 this lands in that audit helper instead.
 run_case "apparmor/postcondition-removed" 2 \
     '    if _baseline_apparmor_enabled; then' \
     '    if true; then'

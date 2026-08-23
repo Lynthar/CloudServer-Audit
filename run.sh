@@ -2,6 +2,8 @@
 # One-line runner with a sigstore-verified release. Args after `-s --` are
 # passed to vpssec. VPSSEC_VERSION pins a release tag (default "latest");
 # VPSSEC_NO_VERIFY=1 skips cosign verification entirely.
+# Everything this wrapper prints goes to stderr: stdout belongs to vpssec,
+# so `... | sudo bash -s -- audit --json-only | jq .` stays valid JSON.
 
 set -euo pipefail
 
@@ -13,10 +15,10 @@ VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
 # arbitrary-file overwrite.
 VPSSEC_TMP=""
 
-# Only signatures issued to THIS repo's release workflow at a v* tag pass.
-# The cosign cert embeds the workflow URL and OIDC issuer; verify-blob
-# enforces the match.
-COSIGN_IDENTITY_REGEX="^https://github\.com/${VPSSEC_REPO}/\.github/workflows/release\.yml@refs/tags/v.+$"
+# Only signatures issued to THIS repo's release workflow at EXACTLY the tag
+# being installed pass (identity built in download_and_verify). A looser
+# any-v*-tag match would also accept a signed asset from a different release
+# re-uploaded under this version's URL — a signed downgrade.
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # Pinned cosign for the apt-fallback path. The hash is verified before dpkg
@@ -47,12 +49,12 @@ print_banner() {
     printf '║%*s%s%*s║\n' $(( (width - ${#url}) / 2 )) "" "$url" $(( width - ${#url} - (width - ${#url}) / 2 )) ""
     printf '╚%s╝\n' "$(printf '═%.0s' $(seq 1 "$width"))"
     echo -e "${NC}"
-}
+} >&2
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-print_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+print_ok() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
+print_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+print_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 # Root, basic tools, and cosign unless verification is opted out.
 # `apt install cosign` is best-effort; install_cosign_pinned() is the
@@ -147,7 +149,7 @@ install_cosign_pinned() {
 check_requirements() {
     if [[ "$(id -u)" != "0" ]]; then
         print_error "This script must be run as root"
-        echo "Usage: curl -fsSL https://raw.githubusercontent.com/${VPSSEC_REPO}/main/run.sh | sudo bash"
+        echo "Usage: curl -fsSL https://raw.githubusercontent.com/${VPSSEC_REPO}/main/run.sh | sudo bash" >&2
         exit 1
     fi
 
@@ -178,9 +180,11 @@ check_requirements() {
             # the pinned sigstore .deb fallback before giving up.
             if ! install_cosign_pinned; then
                 print_error "cosign is required to verify the release signature."
-                echo ""
-                echo "  Manual install :  https://docs.sigstore.dev/cosign/system_config/installation/"
-                echo "  Skip verify    :  re-run with  VPSSEC_NO_VERIFY=1  (not recommended)"
+                {
+                    echo ""
+                    echo "  Manual install :  https://docs.sigstore.dev/cosign/system_config/installation/"
+                    echo "  Skip verify    :  re-run with  VPSSEC_NO_VERIFY=1  (not recommended)"
+                } >&2
                 exit 1
             fi
         fi
@@ -237,9 +241,12 @@ download_and_verify() {
         curl -fsSL "${base}/${archive}.sig.json" -o "${archive}.sig.json" \
             || { print_error "Signature download failed"; exit 1; }
         print_info "Verifying signature (sigstore keyless)..."
+        # Exact-match identity: the signing cert must name this repo's
+        # release workflow at the tag being installed, not just any v* tag.
+        local want_identity="https://github.com/${VPSSEC_REPO}/.github/workflows/release.yml@refs/tags/${ver_tag}"
         if cosign verify-blob \
             --bundle "${archive}.sig.json" \
-            --certificate-identity-regexp "$COSIGN_IDENTITY_REGEX" \
+            --certificate-identity "$want_identity" \
             --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
             "$archive" >/dev/null 2>&1; then
             print_ok "Signature verified (signer = ${VPSSEC_REPO} release workflow @ ${ver_tag})"
@@ -283,7 +290,7 @@ main() {
 
     if [[ -n "$mode" ]]; then
         print_info "Running vpssec $mode..."
-        echo ""
+        echo "" >&2
         if (( ${#args[@]} > 0 )); then
             ./vpssec "$mode" "${args[@]}"
         else
@@ -291,7 +298,7 @@ main() {
         fi
     else
         print_info "Starting vpssec..."
-        echo ""
+        echo "" >&2
         if (( ${#args[@]} > 0 )); then
             ./vpssec "${args[@]}"
         else
@@ -300,10 +307,18 @@ main() {
     fi
 
     if [[ -d "reports" ]] && [[ "$(ls -A reports 2>/dev/null)" ]]; then
-        local report_dest="/tmp/vpssec-report-$(date +%Y%m%d-%H%M%S)"
-        cp -r reports "$report_dest"
-        echo ""
-        print_info "Reports saved to: $report_dest"
+        # mktemp, never a timestamp name: a local user can pre-create (or
+        # pre-symlink) every plausible timestamped path and receive root's
+        # report copy. Same rule as VPSSEC_TMP above.
+        local report_dest
+        if report_dest=$(mktemp -d /tmp/vpssec-report-XXXXXX); then
+            chmod 700 "$report_dest"
+            cp -r reports/. "$report_dest/"
+            echo "" >&2
+            print_info "Reports saved to: $report_dest"
+        else
+            print_warn "mktemp failed — reports were not copied out of the temporary directory"
+        fi
     fi
 }
 

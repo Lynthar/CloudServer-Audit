@@ -1,16 +1,12 @@
-# Mutation cases for tests/test_report_distro_meta.bats against core/report.sh.
+# Mutation cases: tests/test_report_distro_meta.bats against core/report.sh.
 # mutate-suite: core/report.sh tests/test_report_distro_meta.bats
 #
 # Two fields, three formats, and one way for each to be quietly wrong.
-#
-# guide_supported is the field that carries risk. It is false on exactly the
-# hosts where every fix_id in the same document is unreachable, so a mutation
-# that pins it true does not corrupt the report — it makes the report agree
-# with what a reader would have assumed anyway. That is the kind of defect
-# this project keeps finding: not a crash, a confident wrong answer.
-#
-# The --arg / --argjson distinction gets its own case because the string
-# "false" is truthy in every consumer that tests the field.
+# guide_supported is the field that carries risk: it is false on exactly the hosts
+# where every fix_id in the same document is unreachable, so a mutation that pins it
+# true does not corrupt the report — it makes the report agree with what a reader
+# would have assumed anyway. The --arg / --argjson distinction gets its own case
+# because the string "false" is truthy in every consumer that tests the field.
 
 # ---- summary.json ---------------------------------------------------------
 
@@ -41,12 +37,10 @@ run_case "json/family-hardcoded-debian" 1 \
 
 # ---- summary.sarif --------------------------------------------------------
 
-# The SARIF copy drifting from the JSON one. Both are generated from the same
-# host, and a consumer reading either has to get the same answer.
-#
-# Occurrence order for the distro_family line is json, markdown, sarif -- the
-# order the three generators appear in the file, not the order they are
-# discussed here.
+# The SARIF copy drifting from the JSON one. Both are generated from the same host,
+# and a consumer reading either has to get the same answer. Occurrence order for the
+# distro_family line is json, markdown, sarif — the order the three generators appear
+# in the file, not the order they are discussed here.
 run_case "sarif/guide-always-supported" 2 \
     '    is_debian_based && guide_supported="true"' \
     '    guide_supported="true"'

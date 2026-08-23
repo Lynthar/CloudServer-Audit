@@ -1,0 +1,22 @@
+# Mutation cases: tests/test_install_data_preserve.bats against install.sh.
+# mutate-suite: install.sh tests/test_install_data_preserve.bats
+#
+# The upgrade data contract: state/ and backups/ survive a non-git reinstall.
+# `for d in state backups; do` appears THREE times — occurrence 1 is the
+# stash loop, 2 the restore loop, 3 the generated uninstaller's keep loop
+# inside the heredoc (which must never be mutated from here).
+
+# Stash walks no data dirs: the round-trip test finds no stash at all.
+run_case "preserve/stash-skips-all" 1 \
+    '    for d in state backups; do' \
+    '    for d in; do'
+
+# Restore forgets state/: the round-trip loses ok.json and rmdir fails loudly.
+run_case "preserve/restore-drops-state" 2 \
+    '    for d in state backups; do' \
+    '    for d in backups; do'
+
+# The removal primitive stops stashing: the source-order assertion goes red.
+run_case "preserve/remove-without-stash" 1 \
+    '        stash_data_dirs' \
+    '        :'

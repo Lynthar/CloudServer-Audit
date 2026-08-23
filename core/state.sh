@@ -113,10 +113,11 @@ state_mark_fix_complete() {
 
 # --- Plan State Management ---
 
-# Save execution plan
+# Save execution plan. Atomic and checked: execute_plan re-reads this file,
+# so a truncated or silently-failed write would execute a stale plan.
 state_save_plan() {
     local plan_json="$1"
-    echo "$plan_json" > "$STATE_PLAN_FILE"
+    write_file_atomic "$STATE_PLAN_FILE" "$plan_json" || return 1
     log_info "Plan saved to $STATE_PLAN_FILE"
 }
 
@@ -136,20 +137,22 @@ state_clear_plan() {
 
 # --- Progress Tracking (for interrupted operations) ---
 
-# Save progress
+# Save progress. Built via jq (escaped fields) and written atomically: a kill
+# or full disk mid-write must not leave truncated JSON for the resume path.
 state_save_progress() {
     local current_fix="$1"
     local total_fixes="$2"
     local completed_ids="$3"  # JSON array of completed fix IDs
 
-    cat > "$STATE_PROGRESS_FILE" <<EOF
-{
-  "current_fix": "$current_fix",
-  "total_fixes": $total_fixes,
-  "completed": $completed_ids,
-  "timestamp": "$(date -Iseconds)"
-}
-EOF
+    local progress_json
+    progress_json=$(jq -n \
+        --arg     current   "$current_fix" \
+        --argjson total     "$total_fixes" \
+        --argjson completed "$completed_ids" \
+        --arg     ts        "$(date -Iseconds)" \
+        '{current_fix: $current, total_fixes: $total, completed: $completed, timestamp: $ts}') \
+        || { log_error "state_save_progress: could not build progress JSON"; return 1; }
+    write_file_atomic "$STATE_PROGRESS_FILE" "$progress_json" || return 1
     log_debug "Progress saved: $current_fix of $total_fixes"
 }
 

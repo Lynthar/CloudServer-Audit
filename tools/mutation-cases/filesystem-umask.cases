@@ -1,16 +1,12 @@
-# Mutation cases for tests/test_filesystem_umask.bats against
+# Mutation cases: tests/test_filesystem_umask.bats against modules/filesystem.sh —
+# the umask AUDIT helpers, as opposed to the fixes (filesystem.cases, paired with
+# test_fix_filesystem.bats).
 # mutate-suite: modules/filesystem.sh tests/test_filesystem_umask.bats
-# modules/filesystem.sh — the umask AUDIT helpers, as opposed to the fixes
-# (tools/mutation-cases/filesystem.cases, paired with test_fix_filesystem.bats).
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/filesystem.sh \
-#        tests/test_filesystem_umask.bats tools/mutation-cases/filesystem-umask.cases
-#
-# Two of the tests this file pins could not run at all until FS_LOGIN_DEFS and
-# FS_PAM_SESSION_FILES became module variables: one skipped on every host that
-# has /etc/login.defs (i.e. all of CI) and the other asserted only that a
-# function existed. These cases are what shows the replacements assert something.
+# Two of the tests pinned here could not run at all until FS_LOGIN_DEFS and
+# FS_PAM_SESSION_FILES became module variables: one skipped on every host that has
+# /etc/login.defs (i.e. all of CI) and the other asserted only that a function
+# existed.
 
 run_case "usergroups/default-flipped" 1 \
     '    echo "${val:-yes}"' \

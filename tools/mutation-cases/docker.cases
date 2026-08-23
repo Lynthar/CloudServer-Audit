@@ -1,42 +1,23 @@
-# Mutation cases for tests/test_fix_docker_daemon.bats against modules/docker.sh.
+# Mutation cases: tests/test_fix_docker_daemon.bats against modules/docker.sh.
 # mutate-suite: modules/docker.sh tests/test_fix_docker_daemon.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/docker.sh \
-#        tests/test_fix_docker_daemon.bats tools/mutation-cases/docker.cases
-#
-# This suite shipped twelve tests and no cases file, so nothing had ever
-# confirmed the assertions could fail — the same gap the logrotate suite
-# carried until CI happened to expose it, and the reason coverage has to be
-# checked per SUITE rather than per module.
-#
-# The two defects it was written for are the first two groups below. Note the
-# asymmetry it pins: live-restore is observable only through the running
-# daemon, while no-new-privileges is satisfied by daemon.json alone, so
-# "declining the restart" must fail one fix and not the other. Several
-# mutations exist purely to prove the suite still tells those two apart.
+# The two defects this suite was written for are the first two groups below. Note
+# the asymmetry it pins: live-restore is observable only through the running
+# daemon, while no-new-privileges is satisfied by daemon.json alone, so "declining
+# the restart" must fail one fix and not the other. Several mutations exist purely
+# to prove the suite still tells those two apart.
 #
 # Everything runs against the per-test fake /etc; `docker` and `systemctl` are
 # stubs throughout, so no mutation here can reach a real daemon.
 
 # ---- the audit predicate: the daemon's answer is final --------------------
 
-# A "live-restore/false-falls-through" case used to sit here, replacing
-#
-#     [[ "${live,,}" == "true" ]]
-# with
-#     [[ "${live,,}" == "true" ]] || return 1
-#
-# It was removed on 2026-08-10 because it is an EQUIVALENT MUTANT: the line it
-# targets is followed by a bare `return`, which returns the status of the last
-# command, so both forms return exactly the same thing on both paths. No test
-# could ever have failed against it, and it sat in the file as a permanent
-# survivor while the archive recorded this suite as "12/12 killed, no gaps".
-# The regression it was named for is covered by "daemon-not-asked-first" and
-# by the bats test that pins a false-reporting daemon against a true
-# daemon.json. Teaching point kept deliberately: a surviving mutation has
-# three meanings, and "the mutation changes nothing" is one of them — check
-# that before writing a test to chase it.
+# No "live-restore/false-falls-through" case here, deliberately: the line it would
+# target is followed by a bare `return`, which returns the status of the last
+# command, so both forms return exactly the same thing on both paths — an
+# equivalent mutant no test can kill. The regression it was named for is covered
+# by "daemon-not-asked-first" and by the bats test that pins a false-reporting
+# daemon against a true daemon.json.
 
 # Same defect from the other side: taking daemon.json first makes the
 # daemon's answer irrelevant.

@@ -1,13 +1,8 @@
-# Mutation cases for tests/test_guide_plan_contract.bats against core/engine.sh.
+# Mutation cases: tests/test_guide_plan_contract.bats against core/engine.sh.
 # mutate-suite: core/engine.sh tests/test_guide_plan_contract.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh core/engine.sh \
-#        tests/test_guide_plan_contract.bats tools/mutation-cases/engine-plan.cases
-#
-# The UI→plan→executor ID contract (2026-08 review round). Each case
-# re-introduces one half of the regression that let TUI guide mode execute
-# an empty plan and report success.
+# The UI->plan->executor ID contract. Each case re-introduces one half of the
+# regression that let TUI guide mode execute an empty plan and report success.
 
 # ---- generate_plan: dedup + single-check resolution ------------------------
 
@@ -28,6 +23,14 @@ run_case "plan/first-removed" 1 \
 run_case "plan/failures-return-zero" 1 \
     "    (( \${#failed[@]} > 0 )) && return 1" \
     "    :"
+
+# ---- guide_mode: unsupported distro is a refusal, not a success ------------
+
+# Turn the capability-unsupported exit back into 0: automation reads
+# "hardening completed" on a host where nothing can run.
+run_case "guide/unsupported-exits-zero" 1 \
+    "        return 4" \
+    "        return 0"
 
 # ---- audit_module: module failure must be recorded -------------------------
 

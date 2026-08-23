@@ -1,18 +1,10 @@
-# Mutation cases for tests/test_nginx_catchall_state.bats against
+# Mutation cases: tests/test_nginx_catchall_state.bats against modules/nginx.sh.
 # mutate-suite: modules/nginx.sh tests/test_nginx_catchall_state.bats
-# modules/nginx.sh.
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/nginx.sh \
-#        tests/test_nginx_catchall_state.bats tools/mutation-cases/nginx-state.cases
-#
-# One of three files naming this module. This one pairs with the suite that
-# covers _nginx_catchall_state_from_text — the awk parser that reads a
-# `nginx -T` dump — and nothing else. nginx.cases pairs with the fix suite,
-# nginx-fallback.cases with the file-scan suite. Both of these suites had
-# shipped without a cases file, which per the logging lesson means nobody had
-# established they assert anything; writing this one turned up three real gaps
-# in the fallback suite (see that file).
+# One of three files naming this module. This one pairs with the suite covering
+# _nginx_catchall_state_from_text — the awk parser that reads a `nginx -T` dump —
+# and nothing else; nginx.cases pairs with the fix suite, nginx-fallback.cases with
+# the file-scan suite.
 #
 # Every case here mutates the awk program, so every anchor is inside a
 # single-quoted awk body — no host path is touched and nothing is written.
@@ -43,9 +35,8 @@ run_case "parse/return-444-anchored-at-line-start" 1 \
     '                if ($0 ~ /^[[:space:]]*return[[:space:]]+444[[:space:]]*;/) ret = 1'
 
 # ---- port boundaries -------------------------------------------------------
-#
-# The trailing character class is the whole reason 8080 does not read as 80
-# and 4430 does not read as 443.
+# The trailing character class is the whole reason 8080 does not read as 80 and
+# 4430 does not read as 443.
 
 run_case "parse/port-80-substring-match" 1 \
     '                    if ($0 ~ /:80([[:space:]]|;)/    || $0 ~ /[[:space:]]80([[:space:]]|;)/)  d80  = 1' \
@@ -56,10 +47,8 @@ run_case "parse/port-443-substring-match" 1 \
     '                    if ($0 ~ /443/) d443 = 1'
 
 # ---- server-block scope ----------------------------------------------------
-#
-# The M7 defect this parser replaced saw `default_server` anywhere and
-# `return 444` anywhere and called that covered. Everything below is what
-# keeps the two facts inside the same block.
+# The parser this replaced saw `default_server` anywhere and `return 444` anywhere
+# and called that covered. Everything below keeps the two facts inside one block.
 
 run_case "scope/block-never-closes-on-depth" 1 \
     '            if (in_server && depth <= close_depth) {' \
@@ -78,7 +67,6 @@ run_case "scope/return-444-not-required-at-close" 1 \
     '                if (1) {'
 
 # ---- what the four states mean ---------------------------------------------
-#
 # "both" is deliberately strict: partial coverage is a finding, because an
 # HTTPS-only catchall still leaks certificates on port 80 and vice versa.
 

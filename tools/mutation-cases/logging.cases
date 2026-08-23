@@ -1,20 +1,11 @@
-# Mutation cases for tests/test_fix_logging_journal_auditd.bats against
+# Mutation cases: tests/test_fix_logging_journal_auditd.bats against modules/logging.sh.
 # mutate-suite: modules/logging.sh tests/test_fix_logging_journal_auditd.bats
-# modules/logging.sh.
 #
-# Run with:  bash tools/mutate-suite.sh modules/logging.sh \
-#                 tests/test_fix_logging_journal_auditd.bats \
-#                 tools/mutation-cases/logging.cases
+# ONE suite, not `test_fix_logging*.bats`: nothing here mutates
+# _logging_fix_setup_logrotate, whose cases are in logging-logrotate.cases.
 #
-# ONE suite, not `test_fix_logging*.bats` as this header used to say. The glob
-# was wishful: nothing here mutates _logging_fix_setup_logrotate, so the other
-# logging suite went unmutated and three of its tests turned out to assert
-# nothing. Its cases are in logging-logrotate.cases.
-# Each entry reintroduces a defect this code actually had, or a plausible
-# regression of a guard it relies on. All of them must stay killed.
-#
-# The occurrence index (2nd argument) matters where the audit and the fix
-# share a line verbatim; see the header of tools/mutate-suite.sh.
+# The occurrence index matters where the audit and the fix share a line verbatim;
+# the rule and the rest of the runner's contract are in tools/mutate-suite.sh's header.
 
 run_case "journal/backup-skipped" 1 \
     '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \

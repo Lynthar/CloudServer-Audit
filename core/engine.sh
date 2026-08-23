@@ -545,7 +545,9 @@ generate_plan() {
         "fixes": .
     }')
 
-    state_save_plan "$plan_json"
+    # Propagated: execute_plan re-reads the plan from disk, so a swallowed
+    # save failure would execute whatever plan the file held before.
+    state_save_plan "$plan_json" || return 1
     echo "$plan_json"
 }
 
@@ -775,7 +777,12 @@ _guide_resume() {
     local resume_plan
     resume_plan=$(echo "$plan" | jq --argjson fixes "$remaining_fixes" \
         '.fixes = $fixes')
-    state_save_plan "$resume_plan"
+    # Stop rather than resume from a plan the trim failed to write: execute_plan
+    # reads the file, and the untrimmed plan re-runs completed fixes.
+    if ! state_save_plan "$resume_plan"; then
+        print_error "$(i18n 'common.failed')"
+        return 1
+    fi
 
     # Same rc-capture as guide_mode: a failed fix must not abort the
     # completion hint under set -e, but the status must still propagate.
@@ -791,10 +798,12 @@ _guide_resume() {
 # Guide mode main flow
 guide_mode() {
     # Fix paths are apt/dpkg-based; only the audit is distro-aware.
-    # Refuse rather than run apt on a system that lacks it.
+    # Refuse rather than run apt on a system that lacks it. 4 = capability
+    # not supported here, distinct from success (0) and a failed fix (1) —
+    # automation must be able to tell "done" from "refused to start".
     if ! is_debian_based; then
         print_warn "$(i18n 'guide.fix_debian_only')"
-        return 0
+        return 4
     fi
 
     # progress.json exists = the previous plan was killed mid-execution.
@@ -952,8 +961,14 @@ guide_mode() {
         return 0
     fi
 
-    # Generate and show plan
-    local plan=$(generate_plan "$selected_fixes")
+    # Generate and show plan. Status captured: a failed plan save must stop
+    # here, not fall through to execute a stale on-disk plan.
+    local plan
+    if ! plan=$(generate_plan "$selected_fixes"); then
+        print_error "$(i18n 'common.failed')"
+        log_error "generate_plan failed for selection: $selected_fixes"
+        return 1
+    fi
 
     # An empty plan means the UI handed over ids the planner cannot map.
     # Executing nothing while printing success is the worst outcome.

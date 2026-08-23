@@ -1,24 +1,14 @@
-# Mutation cases for tests/test_fix_logging_logrotate.bats against
+# Mutation cases: tests/test_fix_logging_logrotate.bats against modules/logging.sh.
 # mutate-suite: modules/logging.sh tests/test_fix_logging_logrotate.bats
-# modules/logging.sh.
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/logging.sh \
-#        tests/test_fix_logging_logrotate.bats \
-#        tools/mutation-cases/logging-logrotate.cases
+# SECOND cases file for this source: all 15 cases in logging.cases target
+# _logging_fix_setup_journald / _setup_audit_rules / _install_auditd, i.e.
+# test_fix_logging_journal_auditd.bats, and not one touches
+# _logging_fix_setup_logrotate.
 #
-# This file exists because logging.cases does NOT cover this suite. All 15 of
-# its cases target _logging_fix_setup_journald / _setup_audit_rules /
-# _install_auditd, i.e. test_fix_logging_journal_auditd.bats; not one touches
-# _logging_fix_setup_logrotate. So the logrotate suite shipped never having been
-# mutation-tested, and that is how three of its tests came to assert nothing on
-# a host with logrotate preinstalled without anyone noticing. Same split as
-# filesystem.cases / filesystem-umask.cases, and for the same reason: a cases
-# file is paired with exactly ONE suite.
-#
-# Every anchor below is unique in the file (single grep -nxF hit), so the
-# occurrence index is 1 throughout — unlike logging.cases, where the audit and
-# the fix share lines.
+# Every anchor here is unique (single `grep -nxF` hit), so the occurrence index is 1
+# throughout — unlike logging.cases, where the audit and the fix share lines. The
+# rule is in tools/mutate-suite.sh's header.
 
 # ---- the install guard -----------------------------------------------
 
@@ -29,11 +19,10 @@ run_case "guard/reinstall-when-present" 1 \
     '    if ! check_command logrotate; then' \
     '    if true; then'
 
-# The original defect: apt's status was discarded and the fix returned 0
-# unconditionally, so a host that could not install logrotate was told "log
-# rotation configured" while the next audit re-flagged it as missing.
-# Mutate the status check, not the action — the install must still run so the
-# stub log stays intact for the other assertions.
+# apt's status was discarded and the fix returned 0 unconditionally, so a host that
+# could not install logrotate was told "log rotation configured" while the next
+# audit re-flagged it as missing. Mutate the status check, not the action — the
+# install must still run so the stub log stays intact for the other assertions.
 run_case "install/failure-swallowed" 1 \
     '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then' \
     '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null && false; then'
@@ -46,7 +35,7 @@ run_case "install/no-index-refresh" 1 \
 
 # The inverse, and the reason `|| true` is there deliberately: one broken
 # third-party repo makes apt-get update non-zero while logrotate is still
-# installable from the rest of the index. Gating the install on update's status
+# installable from the rest of the index, so gating the install on update's status
 # fails the fix on a host it would have fixed.
 run_case "install/update-status-gates-install" 1 \
     '        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
@@ -64,20 +53,16 @@ run_case "conf/backup-skipped" 1 \
     '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
     '        :'
 
-# The recurring defect this project has hit seven times in seven places:
-# backup_file's second job is recording an ABSENT path in .vpssec_created, the
-# only thing that lets rollback delete a file the fix created — and it happens
-# precisely when the file does not exist, so "nothing there, nothing to back
-# up" defeats it every time.
+# backup_file's second job is recording an ABSENT path in .vpssec_created, the only
+# thing that lets rollback delete a file the fix created — and it happens precisely
+# when the file does not exist, so "nothing there, nothing to back up" defeats it.
 run_case "conf/backup-guarded-again" 1 \
     '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
     '        [[ -f "$LOGROTATE_CONF" ]] && { backup_file "$LOGROTATE_CONF" >/dev/null || return 1; }'
 
 # Re-hardcoding the path silently removes the fix from coverage while the suite
-# stays green. Pinned at backup_file, a READ-only call site: pinning it at the
-# write instead would make the mutated fix rewrite the verification container's
-# own /etc/logrotate.conf, and every later case would run against a changed
-# host.
+# stays green. Pinned at backup_file, a READ-only call site: pinning it at the write
+# would make the mutated fix rewrite the container's own /etc/logrotate.conf.
 run_case "conf/path-hardcoded" 1 \
     '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
     '        backup_file "/etc/logrotate.conf" >/dev/null || return 1'

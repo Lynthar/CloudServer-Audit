@@ -1,15 +1,10 @@
-# Mutation cases for tests/test_update_unattended.bats against core/distro.sh.
+# Mutation cases: tests/test_update_unattended.bats against core/distro.sh.
 # mutate-suite: core/distro.sh tests/test_update_unattended.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh core/distro.sh \
-#        tests/test_update_unattended.bats tools/mutation-cases/distro.cases
-#
-# These two parsers moved here from modules/update.sh so that auto_update_status
-# — which the audit asks for its verdict and the unattended-upgrades fix asks
-# whether it succeeded — is the only implementation of the predicate. The suite
-# came with them; these cases are what shows it still asserts something in the
-# new home.
+# These two parsers live here so that auto_update_status — which both the audit
+# and the unattended-upgrades fix's postcondition ask — is the only implementation
+# of the predicate. These cases are what shows the suite still asserts something
+# in that home.
 
 run_case "periodic/value-not-compared" 1 \
     '    [[ "$val" == "1" ]]' \

@@ -1,12 +1,8 @@
-# Mutation cases for tests/test_fix_kernel*.bats against modules/kernel.sh.
+# Mutation cases: tests/test_fix_kernel.bats against modules/kernel.sh.
 # mutate-suite: modules/kernel.sh tests/test_fix_kernel.bats
 #
-# Run with:  bash tools/mutate-suite.sh modules/kernel.sh tests/test_fix_kernel.bats tools/mutation-cases/kernel.cases
-# Each entry reintroduces a defect this code actually had, or a plausible
-# regression of a guard it relies on. All of them must stay killed.
-#
-# The occurrence index (2nd argument) matters where the audit and the fix
-# share a line verbatim; see the header of tools/mutate-suite.sh.
+# The occurrence index matters where the audit and the fix share a line verbatim;
+# the rule and the rest of the runner's contract are in tools/mutate-suite.sh's header.
 
 run_case "ipv6/ra-guard-inverted" 1 \
     '    if _kernel_ipv6_uses_ra; then' \

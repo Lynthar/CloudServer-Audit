@@ -1,18 +1,14 @@
-# Mutation cases for tests/test_fix_template_only.bats against core/report.sh.
+# Mutation cases: tests/test_fix_template_only.bats against core/report.sh.
 # mutate-suite: core/report.sh tests/test_fix_template_only.bats
 #
-# Run with:  bash tools/mutate-suite.sh core/report.sh \
-#                 tests/test_fix_template_only.bats \
-#                 tools/mutation-cases/template-only-report.cases
-#
-# Three output formats carry the same fact and each derives it independently,
-# so each needs its own case: a marker that quietly stopped appearing in one
-# format would still leave the other two green.
+# Three output formats carry the same fact and each derives it independently, so
+# each needs its own case: a marker that quietly stopped appearing in one format
+# would still leave the other two green.
 #
 # The stamp is set only where it is TRUE. Absence from FIX_TEMPLATE_ONLY is not
-# evidence that a fix resolves its finding — the map is curated, not
-# exhaustive — so the "everything is direct" mutations below must stay killed
-# just as hard as the "nothing is template-only" ones.
+# evidence that a fix resolves its finding — the map is curated, not exhaustive — so
+# the "everything is direct" mutations below must stay killed just as hard as the
+# "nothing is template-only" ones.
 
 # ---------------------------------------------------------------------------
 # summary.json

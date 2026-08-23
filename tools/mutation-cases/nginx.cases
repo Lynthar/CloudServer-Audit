@@ -1,27 +1,19 @@
-# Mutation cases for tests/test_fix_nginx_catchall.bats against modules/nginx.sh.
+# Mutation cases: tests/test_fix_nginx_catchall.bats against modules/nginx.sh.
 # mutate-suite: modules/nginx.sh tests/test_fix_nginx_catchall.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/nginx.sh \
-#        tests/test_fix_nginx_catchall.bats tools/mutation-cases/nginx.cases
+# ONE of three files naming this module — nginx-state.cases and nginx-fallback.cases
+# pair with the two audit-side suites.
 #
-# This is ONE of three files naming this module — nginx-state.cases and
-# nginx-fallback.cases pair with the two audit-side suites. A cases file is
-# paired with exactly one suite: a case aimed at code the suite does not cover
-# reads as a coverage gap that is not one, and the reverse (a suite with no
-# cases file at all) is how three unasserting logrotate tests once shipped.
-#
-# The path cases are pinned through READ-ONLY call sites — backup_file, the
-# -d/-f guards — never through write_file_atomic, `openssl -out`, `mkdir -p` or
-# `ln`. The verification container has a real /etc/nginx, so inlining a literal
-# on a write would rewrite the container's own config and leave every later
-# case running against a changed host.
+# The path cases are pinned through READ-ONLY call sites — backup_file, the -d/-f
+# guards — never through write_file_atomic, `openssl -out`, `mkdir -p` or `ln`. The
+# verification container has a real /etc/nginx, so inlining a literal on a write
+# would rewrite the container's own config and leave every later case running
+# against a changed host.
 
 # ---- the path variables that make the fix testable at all ------------------
-#
 # The certificate paths were /etc/nginx/ssl literals, including two inside the
-# config heredoc. Re-hardcoding any of them silently removes the fix from
-# coverage while the suite stays green, so each gets its own case.
+# config heredoc. Re-hardcoding any of them silently removes the fix from coverage
+# while the suite stays green, so each gets its own case.
 
 run_case "paths/conf-inlined" 1 \
     '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
@@ -52,11 +44,10 @@ run_case "paths/heredoc-key-inlined" 1 \
     '    ssl_certificate_key /etc/nginx/ssl/default.key;'
 
 # ---- the rollback contract -------------------------------------------------
-#
-# The module called backup_file zero times, so the config, the certificate and
-# the key were all invisible to `vpssec rollback`. The guarded variants model
-# the recurring `[[ -f ]] && backup_file` defect: on a first run none of these
-# files exist, which is precisely when .vpssec_created has to record them.
+# The module called backup_file zero times, so the config, the certificate and the
+# key were all invisible to `vpssec rollback`. The guarded variants model the
+# recurring `[[ -f ]] && backup_file` defect: on a first run none of these files
+# exist, which is precisely when .vpssec_created has to record them.
 
 run_case "rollback/conf-backup-skipped" 1 \
     '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
@@ -74,12 +65,10 @@ run_case "rollback/key-backup-skipped" 1 \
     '    backup_file "$NGINX_CATCHALL_KEY" >/dev/null || return 1' \
     '    :'
 
-# Registering the symlink is worse than not registering it: backup_restore
-# skips a created path that is a symlink and counts it as *skipped*, so the
-# link survives the rollback anyway AND the return goes from 0 to 2. The
-# backup_file lands BEFORE the ln so the path is still absent and therefore
-# recorded in .vpssec_created — registering it after the link exists would
-# snapshot content instead and model a different bug.
+# Registering the symlink is worse than not registering it: backup_restore skips a
+# created path that is a symlink and counts it as *skipped*, so the link survives
+# the rollback anyway AND the return goes from 0 to 2. The backup_file lands BEFORE
+# the ln so the path is still absent and therefore recorded in .vpssec_created.
 run_case "rollback/symlink-registered" 1 \
     '    if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then' \
     '    backup_file "$NGINX_CATCHALL_LINK" >/dev/null || return 1; if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then'
@@ -95,11 +84,10 @@ run_case "rollback/symlink-revert-not-logged" 1 \
     '    :'
 
 # ---- the silent skip that reported success ---------------------------------
-#
-# `ln -sf` used to sit under `[[ -d sites-enabled ]]`. With the directory
-# absent the link was skipped, nginx -t passed (nothing new was included), the
-# reload succeeded, two print_ok's fired and the fix returned 0 — while the
-# catchall was not live and the next audit still reported it missing.
+# `ln -sf` used to sit under `[[ -d sites-enabled ]]`. With the directory absent the
+# link was skipped, nginx -t passed (nothing new was included), the reload
+# succeeded, two print_ok's fired and the fix returned 0 — while the catchall was
+# not live and the next audit still reported it missing.
 
 run_case "skip/sites-enabled-check-removed" 1 \
     '    if [[ ! -d "$NGINX_SITES_ENABLED" ]]; then' \
@@ -110,13 +98,11 @@ run_case "skip/include-hint-not-printed" 1 \
     '        :'
 
 # ---- the four discarded statuses -------------------------------------------
-#
-# errexit is OFF inside a fix (execute_fix calls it in a condition context), so
-# none of these aborted anything on their own. Each case breaks only the STATUS
-# CHECK, never the action: `if ! cmd && false` still runs cmd and ignores its
-# result, which is the defect. `if false` would delete the action itself — a
-# different and much louder bug. The openssl command spans four lines, so it is
-# broken at the CLOSING line.
+# errexit is OFF inside a fix (execute_fix calls it in a condition context), so none
+# of these aborted anything on their own. Each case breaks only the STATUS CHECK,
+# never the action: `if ! cmd && false` still runs cmd and ignores its result, which
+# is the defect; `if false` would delete the action itself. The openssl command
+# spans four lines, so it is broken at the CLOSING line.
 
 run_case "status/config-write-unchecked" 1 \
     '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)"; then' \
@@ -142,10 +128,9 @@ run_case "status/nginx-test-unchecked" 1 \
     '    if ! test_output=$(_nginx_test_config); then' \
     '    if ! test_output=$(_nginx_test_config) && false; then'
 
-# Without nginx's own message the operator is told "configuration test failed"
-# and nothing else — no file, no line. On a stock Debian host that is the
-# outcome every time, because the distro's default site already claims
-# default_server on port 80.
+# Without nginx's own message the operator is told "configuration test failed" and
+# nothing else — no file, no line. On a stock Debian host that is the outcome every
+# time, because the distro's default site already claims default_server on port 80.
 run_case "status/nginx-message-swallowed" 1 \
     '        [[ -n "$test_output" ]] && print_info "$(i18n '"'"'nginx.nginx_test_output'"'"' "msg=$test_output")"' \
     '        :'
@@ -159,10 +144,8 @@ run_case "status/reload-unchecked" 1 \
     '    if ! systemctl reload nginx 2>/dev/null && false; then'
 
 # ---- validation-failure cleanup: undo this run, and only this run ----------
-#
-# The old cleanup deleted the config unconditionally, so a validation failure
-# caused by something else entirely took the operator's own 99-catchall.conf
-# with it.
+# The old cleanup deleted the config unconditionally, so a validation failure caused
+# by something else entirely took the operator's own 99-catchall.conf with it.
 
 run_case "cleanup/deletes-operator-file" 1 \
     '        if (( conf_existed )); then' \
@@ -172,11 +155,10 @@ run_case "cleanup/conf-existed-never-set" 1 \
     '    [[ -e "$NGINX_CATCHALL_CONF" ]] && conf_existed=1' \
     '    :'
 
-# -e follows the symlink, so a dangling link at that path reads as absent and
-# the cleanup deletes something this run did not create. The same trap made the
-# suite's own "leaves nothing behind" assertion pass with the removal deleted —
-# it asserted `! -e link` while the cleanup had just removed the link's target,
-# so the link was dangling and the assertion held either way.
+# -e follows the symlink, so a dangling link at that path reads as absent and the
+# cleanup deletes something this run did not create. The same trap made the suite's
+# own "leaves nothing behind" assertion pass with the removal deleted: it asserted
+# `! -e link` while the cleanup had just removed the link's target.
 run_case "cleanup/dangling-link-reads-as-absent" 1 \
     '    [[ -L "$NGINX_CATCHALL_LINK" || -e "$NGINX_CATCHALL_LINK" ]] && link_existed=1' \
     '    [[ -e "$NGINX_CATCHALL_LINK" ]] && link_existed=1'
@@ -186,10 +168,9 @@ run_case "cleanup/link-not-removed" 1 \
     '        :'
 
 # ---- the postcondition -----------------------------------------------------
-#
-# nginx -t passing says the config PARSES and the reload says it was loaded.
-# Neither says this host now has a catchall: a nginx.conf that includes only
-# conf.d/, or a competing default_server, leaves the answer where it was.
+# nginx -t passing says the config PARSES and the reload says it was loaded. Neither
+# says this host now has a catchall: an nginx.conf that includes only conf.d/, or a
+# competing default_server, leaves the answer where it was.
 
 run_case "postcondition/removed" 1 \
     '    if [[ "$state" != "both" ]]; then' \

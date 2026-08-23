@@ -1,10 +1,8 @@
-# Plant: spawn a python listener on 0.0.0.0:6379 (Redis port — in
-# NET_DANGEROUS_PUBLIC_PORTS). Verifies networking.exposed_dangerous_
-# _ports fires at HIGH severity.
+# Plant: a python listener on 0.0.0.0:6379 (Redis, in NET_DANGEROUS_PUBLIC_PORTS).
+# Expect: networking.exposed_dangerous_ports at HIGH severity.
 #
-# Safety: the listener does nothing — accepts connections and times
-# out. Restore kills the python process; if it somehow survives, it
-# self-terminates after 120s.
+# Safety: the listener accepts connections and times out. Restore kills the python
+# process; if it somehow survives it self-terminates after 120s.
 TEST_DESC="Listener on 0.0.0.0:6379 triggers networking.exposed_dangerous_ports"
 EXPECT_ID="networking.exposed_dangerous_ports"
 EXPECT_STATUS="failed"

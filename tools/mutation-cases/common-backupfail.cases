@@ -1,5 +1,4 @@
-# Mutation cases for tests/test_query_failure_honesty.bats against
-# core/common.sh.
+# Mutation cases: tests/test_query_failure_honesty.bats against core/common.sh.
 # mutate-suite: core/common.sh tests/test_query_failure_honesty.bats
 #
 # backup_file: a backup that could not be taken must be a loud failure.

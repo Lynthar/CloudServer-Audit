@@ -1,14 +1,10 @@
-# Mutation cases for tests/test_fix_template_only.bats against core/engine.sh.
+# Mutation cases: tests/test_fix_template_only.bats against core/engine.sh.
 # mutate-suite: core/engine.sh tests/test_fix_template_only.bats
 #
-# Run with:  bash tools/mutate-suite.sh core/engine.sh \
-#                 tests/test_fix_template_only.bats \
-#                 tools/mutation-cases/template-only-engine.cases
-#
-# execute_fix is where the two facts finally separate: the exit status says
-# whether the work succeeded, the map says whether the finding is resolved.
-# Both branches need pinning — a change that suppressed EVERY completion
-# record would satisfy every "not recorded" assertion on its own.
+# execute_fix is where the two facts finally separate: the exit status says whether
+# the work succeeded, the map says whether the finding is resolved. Both branches
+# need pinning — a change that suppressed EVERY completion record would satisfy
+# every "not recorded" assertion on its own.
 
 run_case "engine/records-template-only-anyway" 1 \
     '            if fix_is_template_only "$fix_id"; then' \

@@ -1,22 +1,11 @@
-# Mutation cases for tests/test_nginx_catchall_fallback.bats against
+# Mutation cases: tests/test_nginx_catchall_fallback.bats against modules/nginx.sh.
 # mutate-suite: modules/nginx.sh tests/test_nginx_catchall_fallback.bats
-# modules/nginx.sh.
-#
-# Run with:
-#   bash tools/mutate-suite.sh modules/nginx.sh \
-#        tests/test_nginx_catchall_fallback.bats tools/mutation-cases/nginx-fallback.cases
 #
 # One of three files naming this module: nginx.cases pairs with the fix suite,
-# nginx-state.cases with the `nginx -T` parser, this one with the file-scan
-# fallback used when nginx -T is unavailable. That fallback is a SECOND,
-# independent implementation of the same question — file-level rather than
-# block-level — so the state parser's cases say nothing about it.
-#
-# Writing this file found three gaps in the suite it pairs with, none of which
-# reading it would have shown: no test pinned default_server on the 443 branch,
-# and neither port boundary was pinned at all (the 8080 vhost in the two-file
-# test carries no `return 444`, so it is skipped before the port match is ever
-# reached). The three tests those cases need were added in the same batch.
+# nginx-state.cases with the `nginx -T` parser, this one with the file-scan fallback
+# used when nginx -T is unavailable. That fallback is a SECOND, independent
+# implementation of the same question — file-level rather than block-level — so the
+# state parser's cases say nothing about it.
 #
 # The one path case is pinned through the grep that READS NGINX_CONF_DIR. The
 # verification container has a real /etc/nginx, and this scan only reads it.
@@ -60,9 +49,8 @@ run_case "scan/port-443-default-server-not-required" 1 \
     '        grep -qE "listen[^;]*(:443([[:space:]]|;)|[[:space:]]443([[:space:]]|;))" "$f" 2>/dev/null && found_443=1'
 
 # ---- port boundaries -------------------------------------------------------
-#
-# A separate regex from the parser's, so it needs its own pinning: 8080 must
-# not read as 80 and 4430 must not read as 443.
+# A separate regex from the parser's, so it needs its own pinning: 8080 must not
+# read as 80 and 4430 must not read as 443.
 
 run_case "scan/port-80-substring-match" 1 \
     '        grep -qE "listen[^;]*(:80([[:space:]]|;)|[[:space:]]80([[:space:]]|;))[^;]*default_server" "$f" 2>/dev/null && found_80=1' \

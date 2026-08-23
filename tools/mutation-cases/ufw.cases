@@ -1,12 +1,8 @@
-# Mutation cases for tests/test_fix_ufw*.bats against modules/ufw.sh.
+# Mutation cases: tests/test_fix_ufw.bats against modules/ufw.sh.
 # mutate-suite: modules/ufw.sh tests/test_fix_ufw.bats
 #
-# Run with:  bash tools/mutate-suite.sh modules/ufw.sh tests/test_fix_ufw.bats tools/mutation-cases/ufw.cases
-# Each entry reintroduces a defect this code actually had, or a plausible
-# regression of a guard it relies on. All of them must stay killed.
-#
-# The occurrence index (2nd argument) matters where the audit and the fix
-# share a line verbatim; see the header of tools/mutate-suite.sh.
+# The occurrence index matters where the audit and the fix share a line verbatim;
+# the rule and the rest of the runner's contract are in tools/mutate-suite.sh's header.
 
 run_case "enable/allow-failure-ignored" 1 \
     '        if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then' \

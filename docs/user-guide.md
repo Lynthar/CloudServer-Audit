@@ -1224,7 +1224,7 @@ mymodule_fix() {
 ### 单元测试
 
 ```bash
-bats tests/                 # 跑完整 bats 套件（约 240 用例）
+bats tests/                 # 跑完整 bats 套件（800+ 用例，具体数以 CI 为准）
 bats tests/test_score.bats  # 跑单个测试文件
 ```
 

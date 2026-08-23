@@ -1,25 +1,16 @@
-# Mutation cases for tests/test_cloud_vendor_i18n.bats against modules/cloud.sh.
+# Mutation cases: tests/test_cloud_vendor_i18n.bats against modules/cloud.sh.
 # mutate-suite: modules/cloud.sh tests/test_cloud_vendor_i18n.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/cloud.sh \
-#        tests/test_cloud_vendor_i18n.bats tools/mutation-cases/cloud-vendor-i18n.cases
+# The defect cannot be reached by planting a bug in one branch — it was a data
+# table holding display text — so the mutations come in two families: put display
+# text back in the table, and resolve a key at the wrong moment or not at all.
+# The second family is the one worth having. Rendering inside _find_known_agents
+# rather than at the point of display reads as tidier but puts a translated string
+# where the rest of the module expects an identifier, which is the shape that
+# broke the provider-match block once and the reason the keys travel unresolved.
 #
-# The defect this suite was written for cannot be reached by planting a bug in
-# one branch: it was a data table holding display text. So the mutations below
-# come in two families —
-#
-#   * put display text back in the table (that IS the original defect), and
-#   * resolve a key at the wrong moment, or not at all
-#
-# The second family is the one worth having. Rendering early — inside
-# _find_known_agents rather than at the point of display — looks harmless and
-# even reads as tidier, but it puts a translated string where the rest of the
-# module expects an identifier. That is the shape the provider-match block was
-# already broken by once, and the reason the keys travel unresolved.
-#
-# Everything here runs against stubbed pgrep/systemctl/ps and a pinned
-# provider, so no mutation can reach a real process table or IMDS.
+# Everything runs against stubbed pgrep/systemctl/ps and a pinned provider, so no
+# mutation can reach a real process table or IMDS.
 
 # ---- family 1: display text back in the table -----------------------------
 
@@ -48,9 +39,8 @@ run_case "table/untranslated-key-on-an-unexercised-row" 1 \
     '    "newrelic-infra|newrelic-infra|generic2|newrelic|optional"'
 
 # Delete a row and leave its strings behind. Nothing renders wrong and every
-# forward check still passes — only the reverse guard sees it. This is the
-# drift that accumulates quietly: a vendor the tool no longer detects goes on
-# looking supported in both language files.
+# forward check still passes — only the reverse guard sees it, so a vendor the
+# tool no longer detects goes on looking supported in both language files.
 run_case "table/deleted-row-orphans-its-keys" 1 \
     '    "newrelic-infra|newrelic-infra|generic|newrelic|optional"' \
     '    # newrelic-infra row removed'

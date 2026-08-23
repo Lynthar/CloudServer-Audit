@@ -216,11 +216,12 @@ main() {
 
     # Rejected before the module menu, so a RHEL/Arch user is not walked
     # through selection and then turned away. guide_mode keeps its own
-    # is_debian_based gate as defence in depth.
+    # is_debian_based gate as defence in depth. Exit 4 = capability not
+    # supported on this host — 0 here would read as "hardening completed".
     if [[ "${VPSSEC_MODE:-}" == "guide" ]] && ! is_debian_based; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_warn "$(i18n 'guide.fix_debian_only')"
-        exit 0
+        exit 4
     fi
 
     # Show module selection if not specified via CLI

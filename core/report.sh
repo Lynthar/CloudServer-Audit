@@ -5,6 +5,27 @@
 
 # --- Report Generation ---
 
+# The module scope a report may claim: "all" for an unfiltered run, otherwise
+# the modules that actually ran — the raw --include string alone omits the
+# auto-added context modules and ignores --exclude entirely, so an
+# exclude-only run used to claim "all" while a module was missing.
+_report_modules_scope() {
+    if [[ -z "${VPSSEC_INCLUDE:-}" && -z "${VPSSEC_EXCLUDE:-}" ]]; then
+        echo "all"
+        return 0
+    fi
+    # Guarded: unit tests exercise report.sh without engine.sh.
+    if declare -f module_get_enabled >/dev/null 2>&1; then
+        local list
+        list=$(module_get_enabled | paste -sd, -)
+        if [[ -n "$list" ]]; then
+            echo "$list"
+            return 0
+        fi
+    fi
+    echo "${VPSSEC_INCLUDE:-all}"
+}
+
 # Generate JSON report
 report_generate_json() {
     local output_file="${1:-${VPSSEC_REPORTS}/summary.json}"
@@ -17,7 +38,8 @@ report_generate_json() {
     local hostname=$(hostname 2>/dev/null || uname -n)
     local virt=$(detect_virtualization)
 
-    local modules_checked="${VPSSEC_INCLUDE:-all}"
+    local modules_checked
+    modules_checked=$(_report_modules_scope)
     # Machine-readable form of the terminal's "partial score" warning;
     # stats.scored_total carries the denominator itself.
     local partial="false"
@@ -56,6 +78,7 @@ report_generate_json() {
         --arg virt "$virt" \
         --arg lang "${VPSSEC_LANG:-}" \
         --arg modules "$modules_checked" \
+        --arg modules_excluded "${VPSSEC_EXCLUDE:-}" \
         --arg distro_family "$distro_family" \
         --argjson guide_supported "$guide_supported" \
         --argjson partial "$partial" \
@@ -86,6 +109,7 @@ report_generate_json() {
                 guide_supported: $guide_supported,
                 lang: $lang,
                 modules: $modules,
+                modules_excluded: $modules_excluded,
                 partial_scope: $partial,
                 complete: ($failed_modules | length == 0),
                 modules_failed: $failed_modules
@@ -95,7 +119,7 @@ report_generate_json() {
             checks: $checks_typed
         }') || { log_error "Failed to build JSON report"; return 1; }
 
-    write_file_atomic "$output_file" "$json"
+    write_file_atomic "$output_file" "$json" || return 1
 
     log_info "JSON report generated: $output_file"
     echo "$output_file"
@@ -118,7 +142,8 @@ report_generate_markdown() {
     local os=$(detect_os)
     local os_version=$(detect_os_version)
     local hostname=$(hostname 2>/dev/null || uname -n)
-    local modules_checked="${VPSSEC_INCLUDE:-all}"
+    local modules_checked
+    modules_checked=$(_report_modules_scope)
 
     # Stated on every report, not only where hardening is unavailable: a row
     # that appears only in the bad case makes its absence mean "supported",
@@ -138,7 +163,16 @@ report_generate_markdown() {
         score_basis=$(i18n 'report.score_basis' "count=${scored_total}")
     fi
 
-    cat > "$output_file" <<EOF
+    local label_info=$(i18n "common.info")
+    local label_recommendations=$(i18n "report.recommendations")
+
+    # The whole document is assembled in ONE substitution and committed with
+    # the same checked atomic write as the JSON and SARIF: a dozen bare
+    # appends can each fail (full disk, unwritable target) while the function
+    # still returns 0 and the caller publishes a truncated report.
+    local content
+    content=$(
+    cat <<EOF
 # $(i18n 'report.title')
 
 **$(i18n 'preflight.virtualization' "type=$(detect_virtualization)")**
@@ -177,15 +211,12 @@ $(i18n 'report.info_note' "count=${info}")
 
 EOF
 
-    local label_info=$(i18n "common.info")
-    local label_recommendations=$(i18n "report.recommendations")
-
     # One jq per section, never per (category x module). Heading levels:
     # ## section, ### category, #### finding — a finding at ### would be a
     # sibling of its own category and flatten the document.
-    _md_section "$checks" high   "$label_info" "$label_recommendations" >> "$output_file"
+    _md_section "$checks" high   "$label_info" "$label_recommendations"
 
-    cat >> "$output_file" <<EOF
+    cat <<EOF
 
 ---
 
@@ -193,9 +224,9 @@ EOF
 
 EOF
 
-    _md_section "$checks" medium "$label_info" "$label_recommendations" >> "$output_file"
+    _md_section "$checks" medium "$label_info" "$label_recommendations"
 
-    cat >> "$output_file" <<EOF
+    cat <<EOF
 
 ---
 
@@ -203,9 +234,9 @@ EOF
 
 EOF
 
-    _md_section "$checks" low    "$label_info" "$label_recommendations" >> "$output_file"
+    _md_section "$checks" low    "$label_info" "$label_recommendations"
 
-    cat >> "$output_file" <<EOF
+    cat <<EOF
 
 ---
 
@@ -213,9 +244,9 @@ EOF
 
 EOF
 
-    _md_section "$checks" passed "$label_info" "$label_recommendations" >> "$output_file"
+    _md_section "$checks" passed "$label_info" "$label_recommendations"
 
-    cat >> "$output_file" <<EOF
+    cat <<EOF
 
 ---
 
@@ -236,7 +267,7 @@ EOF
             high_modules=""
         fi
 
-        cat >> "$output_file" <<EOF
+        cat <<EOF
 1. **$(i18n 'common.high')**: $(i18n 'guide.select_fixes')
    \`\`\`bash
    vpssec guide${high_modules:+ --include=$high_modules}
@@ -245,7 +276,7 @@ EOF
 EOF
     fi
 
-    cat >> "$output_file" <<EOF
+    cat <<EOF
 2. $(i18n 'guide.rollback_available')
    \`\`\`bash
    vpssec rollback
@@ -255,6 +286,9 @@ EOF
 
 *Generated by vpssec v${VPSSEC_VERSION} at $(date -Iseconds)*
 EOF
+    ) || { log_error "Failed to build Markdown report"; return 1; }
+
+    write_file_atomic "$output_file" "$content"$'\n' || return 1
 
     log_info "Markdown report generated: $output_file"
     echo "$output_file"
@@ -653,7 +687,7 @@ report_generate_sarif() {
           elif . == "low"    then "2.0"
           else "0.0" end;
         {
-          "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+          "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
           "version": "2.1.0",
           "runs": [{
             "tool": {
@@ -698,7 +732,10 @@ report_generate_sarif() {
                     },
                     "logicalLocations": [{ "name": .module, "kind": "module" }]
                   }],
-                  "fixes": [{ "description": { "text": (.suggestion // "") } }]
+                  # A property bag, NOT a SARIF fix object: §3.55 requires a
+                  # fix to carry non-empty artifactChanges, and a text
+                  # suggestion has no file edit to describe.
+                  "properties": { "suggestion": (.suggestion // "") }
                 }
             ],
             # executionSuccessful is a FACT, not a constant: false whenever a
@@ -713,7 +750,7 @@ report_generate_sarif() {
                 }
               ]
             }],
-            # Run-level property bag: every fix named in "fixes" above is
+            # Run-level property bag: every fix_id suggested above is
             # unreachable when guideSupported is false, and nothing else in
             # the document says so.
             "properties": {

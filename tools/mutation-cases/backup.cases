@@ -1,42 +1,28 @@
-# Mutation cases for tests/test_fix_backup.bats against modules/backup.sh.
+# Mutation cases: tests/test_fix_backup.bats against modules/backup.sh.
 # mutate-suite: modules/backup.sh tests/test_fix_backup.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/backup.sh \
-#        tests/test_fix_backup.bats tools/mutation-cases/backup.cases
+# PAIRING WARNING: `ls tests/*backup*.bats` matches three files and only this one
+# is about the module. test_backup_restore.bats and test_backup_mode_restore.bats
+# cover core's rollback contract (core/common.sh, core/state.sh) and never source
+# modules/backup.sh; their cases are common.cases and state.cases. Check what a
+# matched suite sources, not just that it matched.
 #
-# PAIRING WARNING, and the reason this header is longer than most. `ls
-# tests/*backup*.bats` matches three files, and only ONE of them is about this
-# module: test_backup_restore.bats and test_backup_mode_restore.bats cover
-# core's rollback contract (backup_file / backup_restore in core/common.sh and
-# core/state.sh) and never source modules/backup.sh at all. The per-suite
-# coverage check was built to catch a MISSING cases file; a name collision
-# makes it report suites that do not exist. Check what a matched suite sources,
-# not just that it matched — the core ones are covered by common.cases and
-# state.cases.
-#
-# Every anchor below is unique in the file (grep -cxF == 1), so the occurrence
-# index is 1 throughout.
-#
-# This module writes only into vpssec's own templates tree, so no mutation here
-# can redirect a write at the container's real /etc.
+# Every anchor is unique, so the occurrence index is 1 throughout (the rule is in
+# tools/mutate-suite.sh's header). Writes stay in
+# vpssec's own templates tree, so none can reach the container's real /etc.
 
 # ---- the fix's own status --------------------------------------------------
-#
-# Before this batch _backup_fix_generate_templates called three generators,
-# discarded all three statuses and ended `return 0`. errexit is off inside a
-# fix (execute_fix invokes it in a condition context), so nothing else would
-# have stopped it either — the operator got "Backup templates generated in:
-# ..." and the engine recorded the fix complete, over an empty directory.
+# _backup_fix_generate_templates calls three generators; errexit is off inside a
+# fix (execute_fix invokes it in a condition context), so a discarded status ends
+# as "Backup templates generated in: ..." over an empty directory.
 
 run_case "fix/templates-dir-status-discarded" 1 \
     '    if ! mkdir -p "$BACKUP_TEMPLATES_DIR"; then' \
     '    if ! mkdir -p "$BACKUP_TEMPLATES_DIR" && false; then'
 
 # One case per generator. The first is killed by any write-failure test; the
-# second and third need the tests that let the earlier generators succeed,
-# which is exactly the shape a "check only the first one" implementation
-# passes.
+# second and third need the tests that let the earlier generators succeed —
+# exactly the shape a "check only the first one" implementation passes.
 run_case "fix/restic-status-discarded" 1 \
     '    _backup_generate_restic_template || return 1' \
     '    _backup_generate_restic_template || true'
@@ -60,10 +46,9 @@ run_case "writer/chmod-status-discarded" 1 \
     '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path" && false; then'
 
 # ---- the modes -------------------------------------------------------------
-#
-# 700 rather than +x is deliberate: both scripts carry a repository URL and,
-# once the operator fills them in, cloud credentials. `chmod +x` yields 755
-# under the usual umask, i.e. world-readable.
+# 700 rather than +x is deliberate: both scripts carry a repository URL and, once
+# the operator fills them in, cloud credentials. `chmod +x` yields 755 under the
+# usual umask, i.e. world-readable.
 
 run_case "modes/restic-world-readable" 1 \
     "    _backup_write_template restic-backup.sh 700 <<'EOF' || return 1" \
@@ -80,10 +65,9 @@ run_case "modes/unit-file-executable" 1 \
     "    _backup_write_template backup.service 700 <<'EOF' || return 1"
 
 # ---- the individual writes -------------------------------------------------
-#
-# Each generator writes one to three artifacts, and every one of those needs
-# its own `|| return 1` — the systemd generator's three are the case that
-# motivated the "timer" and "README" tests in the paired suite.
+# Each generator writes one to three artifacts and every one needs its own
+# `|| return 1`; the systemd generator's three motivated the "timer" and "README"
+# tests in the paired suite.
 
 run_case "writes/restic-unchecked" 1 \
     "    _backup_write_template restic-backup.sh 700 <<'EOF' || return 1" \
@@ -115,12 +99,10 @@ run_case "content/restic-inline-password" 1 \
 
 # ---- what the report claims ------------------------------------------------
 
-# The check is hardcoded `passed` and only asks which of five directories
-# exist; it never reads the backup tool's config or excludes. The desc now
-# says so. Pointing it back at a key without the disclaimer restores a green
-# line the operator can disprove — the one defect family with no other
-# automated gate (i18n parity only checks that keys exist, bats only checks
-# which branch ran).
+# The check is hardcoded `passed` and only asks which of five directories exist —
+# never the backup tool's config or excludes — and the desc says so. Dropping the
+# disclaimer restores a green line the operator can disprove, and nothing else
+# gates this family (i18n parity only checks keys exist, bats only which branch ran).
 run_case "report/paths-claim-unqualified" 1 \
     "        \"\$(i18n 'backup.paths_list' \"paths=\$paths_list\")\" \\" \
     "        \"\$(i18n 'backup.critical_paths' \"paths=\$paths_list\")\" \\"

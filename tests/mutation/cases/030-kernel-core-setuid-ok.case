@@ -1,7 +1,6 @@
-# Plant: set kernel.core_setuid_ok=1 (allow SUID core dumps).
-# Expect: kernel.kernel_params_weak fires, with the runtime severity
-# bucket dictated by the (medium) entry in KERNEL_SECURITY_PARAMS.
-# Verifies the Lynis-cross-check addition is reachable.
+# Plant: kernel.core_setuid_ok=1 (allow SUID core dumps).
+# Expect: kernel.kernel_params_weak, at the runtime severity dictated by the
+# (medium) entry in KERNEL_SECURITY_PARAMS.
 TEST_DESC="kernel.core_setuid_ok=1 surfaces in kernel.kernel_params_weak"
 EXPECT_ID="kernel.kernel_params_weak"
 EXPECT_STATUS="failed"

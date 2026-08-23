@@ -1,9 +1,8 @@
-# Plant: schedule a no-op `at` job far in the future. Verifies
-# scheduling.at_jobs_present detection.
+# Plant: a no-op `at` job scheduled a year out.
+# Expect: scheduling.at_jobs_present.
 #
-# Safety: the job runs `true`, scheduled 1 year out. Even if restore
-# fails the worst case is a single no-op job entry the operator can
-# remove manually with `atrm <id>`.
+# Safety: the job runs `true`. Even if restore fails the worst case is one no-op
+# job entry, removable with `atrm <id>`.
 TEST_DESC="An at-job queued triggers scheduling.at_jobs_present"
 EXPECT_ID="scheduling.at_jobs_present"
 EXPECT_STATUS="failed"

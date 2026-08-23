@@ -1,15 +1,9 @@
-# Mutation cases for tests/test_fix_ssh_dropin.bats against modules/ssh.sh.
+# Mutation cases: tests/test_fix_ssh_dropin.bats against modules/ssh.sh.
 # mutate-suite: modules/ssh.sh tests/test_fix_ssh_dropin.bats
 #
-# Run with:
-#   bash tools/mutate-suite.sh modules/ssh.sh \
-#        tests/test_fix_ssh_dropin.bats tools/mutation-cases/ssh.cases
-#
-# First cases file for this module: until 2026-08-16 modules/ssh.sh was never
-# mutated at all, so the suite's coverage of the drop-in writer had never been
-# measured. This file starts at the backup contract, which is the part that
-# just changed; the rest of _ssh_write_hardening_config (the staged sshd -t
-# chain, the reload rollback) is exercised by the suite but not yet mutated.
+# STATED GAP: this file starts at the backup contract; the rest of
+# _ssh_write_hardening_config (the staged sshd -t chain, the reload rollback) is
+# exercised by the suite but not yet mutated.
 #
 # A mutation must not redirect a WRITE to a real /etc path — the verification
 # container runs a real sshd and has its own /etc/ssh.

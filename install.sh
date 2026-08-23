@@ -22,6 +22,60 @@ print_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# state/ holds the completed-fix history and backups/ is what `vpssec
+# rollback` restores from — the uninstaller's default is to KEEP them, and a
+# reinstall over an existing directory must honour the same contract.
+INSTALL_DATA_STASH=""
+
+# Move state/ and backups/ into a fresh sibling directory before the install
+# tree is removed. The stash lives next to INSTALL_DIR (root-only parent,
+# same filesystem), never under /tmp.
+stash_data_dirs() {
+    local d
+    for d in state backups; do
+        [[ -d "$INSTALL_DIR/$d" ]] || continue
+        if [[ -z "$INSTALL_DATA_STASH" ]]; then
+            INSTALL_DATA_STASH=$(mktemp -d "${INSTALL_DIR}.upgrade-XXXXXX") \
+                || { print_error "Cannot create a stash for state/backups — aborting before anything is removed"; exit 1; }
+        fi
+        mv "$INSTALL_DIR/$d" "$INSTALL_DATA_STASH/$d" \
+            || { print_error "Cannot stash $d — aborting before anything is removed"; exit 1; }
+    done
+    # if-form, not `[[ ]] &&`: under set -e a fresh install (no data dirs)
+    # must not turn the empty-stash status into an installer abort.
+    if [[ -n "$INSTALL_DATA_STASH" ]]; then
+        print_info "Preserving existing state/ and backups/ across the reinstall"
+    fi
+}
+
+# Move the stashed data into the freshly-installed tree and drop the stash.
+restore_data_dirs() {
+    [[ -n "$INSTALL_DATA_STASH" ]] || return 0
+    local d
+    for d in state backups; do
+        [[ -d "$INSTALL_DATA_STASH/$d" ]] || continue
+        rm -rf "${INSTALL_DIR:?}/$d"
+        mv "$INSTALL_DATA_STASH/$d" "$INSTALL_DIR/$d" \
+            || print_error "Could not restore $d — it remains at $INSTALL_DATA_STASH/$d"
+    done
+    if rmdir "$INSTALL_DATA_STASH" 2>/dev/null; then
+        INSTALL_DATA_STASH=""
+    else
+        # A restore above failed: keep the stash (the EXIT notice names it)
+        # and fail the install loudly instead of reporting success.
+        return 1
+    fi
+}
+
+# If the installer dies between stash and restore, a silent orphan directory
+# is as bad as deletion — say where the data went.
+_stash_notice() {
+    if [[ -n "$INSTALL_DATA_STASH" && -d "$INSTALL_DATA_STASH" ]]; then
+        print_warn "Install did not finish — your state/backups are preserved at: $INSTALL_DATA_STASH"
+    fi
+}
+trap _stash_notice EXIT
+
 # Safely remove install directory (validate path first)
 safe_remove_install_dir() {
     # Only allow removal if path is non-empty and looks like a vpssec install path
@@ -35,6 +89,9 @@ safe_remove_install_dir() {
         return 1
     fi
     if [[ -d "$INSTALL_DIR" ]]; then
+        # Inside the removal primitive, not at its call sites: every current
+        # and future removal path preserves the data automatically.
+        stash_data_dirs
         rm -rf "$INSTALL_DIR"
     fi
 }
@@ -234,6 +291,13 @@ verify_integrity() {
     else
         print_error "Integrity check FAILED — installation may be corrupted or tampered with"
         print_error "If you trust this source, re-run after deleting $INSTALL_DIR; otherwise inspect the failed files above"
+        # On an UPDATE the pre-existing symlink already points into the
+        # replaced tree (the tarball ships vpssec executable) — leave no
+        # entry point to an install that just failed verification.
+        if [[ "$(readlink -f "$BIN_LINK" 2>/dev/null)" == "$INSTALL_DIR"/* ]]; then
+            rm -f "$BIN_LINK"
+            print_warn "Removed $BIN_LINK — it pointed into the failed install"
+        fi
         exit 1
     fi
 }
@@ -296,6 +360,10 @@ main() {
     check_system
     install_vpssec
     verify_integrity
+    # After verify_integrity: a failed check exits with the data still in the
+    # stash (reported by the EXIT notice), so "delete $INSTALL_DIR and re-run"
+    # cannot take the state/backups with it.
+    restore_data_dirs
     create_uninstaller
     post_install
     print_usage

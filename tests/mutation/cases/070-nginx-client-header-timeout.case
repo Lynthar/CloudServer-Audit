@@ -1,11 +1,10 @@
-# Plant: drop-in conf with client_header_timeout=60s (nginx default,
-# the value CIS 5.2.1 explicitly warns about). Verifies the timeout
-# parser correctly extracts the value, classifies it as > 10s, and
-# emits nginx.client_header_timeout_high at medium severity.
+# Plant: a drop-in with client_header_timeout=60s (the nginx default, and the
+# value CIS 5.2.1 explicitly warns about).
+# Expect: the parser extracts the value, classifies it as > 10s, and emits
+# nginx.client_header_timeout_high at medium severity.
 #
-# Safety: drop-in goes to /etc/nginx/conf.d/, gets nginx -t verified
-# before reloading. On any test failure restore removes the file and
-# reloads back.
+# Safety: the drop-in goes to /etc/nginx/conf.d/ and is nginx -t verified before
+# reloading; restore removes it and reloads back.
 TEST_DESC="client_header_timeout=60s triggers nginx.client_header_timeout_high"
 EXPECT_ID="nginx.client_header_timeout_high"
 EXPECT_STATUS="failed"
