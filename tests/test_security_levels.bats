@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
 # Tests for the fix-classification and score-category lookups in
-# core/security_levels.sh. These maps are the contract between
-# guide-mode UI (which shows safety badges and gates auto-fix) and
-# scoring (which excludes info-only checks). A regression here can
-# either silently auto-apply a fix that should require confirmation
-# or score the host wrongly — both user-visible.
+# core/security_levels.sh. These maps are the contract between guide-mode UI and
+# scoring: a regression auto-applies a fix that needs confirmation, or misscores.
 
 load helpers
 
@@ -111,12 +107,9 @@ setup() {
     [ "$output" = "info" ]
 }
 
-# ---- Coverage invariants --------------------------------------------
-#
-# The malware module documents that everything it detects is alert-only
-# (CLAUDE.md): "The `malware` module deliberately uses this for
-# everything it detects." Pin that contract: any malware.* fix_id
-# referenced as a check fix_id MUST land in FIX_ALERT_ONLY.
+# Coverage invariant: the malware module is alert-only for everything it detects,
+# so any malware.* fix_id referenced as a check's fix_id MUST land in
+# FIX_ALERT_ONLY.
 
 @test "malware.* findings are all alert_only or absent" {
     # Iterate over every fix_id we ship in any of the four maps and
@@ -141,12 +134,9 @@ setup() {
     done
 }
 
-# ---- fix_needs_engine_confirmation ----------------------------------
-#
-# This predicate is the single switch execute_fix branches on to decide
-# whether to prompt for a fix itself. It must be true for every confirm/
-# risky fix EXCEPT the ones that confirm themselves (FIX_SELF_CONFIRMED),
-# and false for safe/alert-only fixes.
+# fix_needs_engine_confirmation is the single switch execute_fix branches on to
+# decide whether to prompt. True for every confirm/risky fix except those that
+# confirm themselves (FIX_SELF_CONFIRMED), false for safe and alert-only.
 
 @test "fix_needs_engine_confirmation: risky non-self-confirming fix is gated by the engine (ufw.set_default_deny)" {
     # ufw.set_default_deny is RISKY (confirm_critical, ignores --yes) and not

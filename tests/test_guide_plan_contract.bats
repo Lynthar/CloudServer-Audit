@@ -1,15 +1,7 @@
 #!/usr/bin/env bats
-#
-# The UI → plan → executor ID contract, pinned end to end.
-#
-# Regression source: tui_select_fixes tagged its checklist with the CHECK id
-# while generate_plan resolves by FIX id — so on any host with whiptail
-# (i.e. every stock Debian), guide mode showed the fixes, accepted the
-# selection, generated an EMPTY plan, ran nothing, and printed success.
-# These tests pin the three properties that make that impossible:
-#   1. both selectors emit fix_ids (deduplicated);
-#   2. generate_plan yields one entry per unique fix id;
-#   3. an empty plan and a failed plan are visible in exit statuses.
+# The UI to plan to executor ID contract: both selectors must emit deduplicated
+# fix_ids, generate_plan must yield one entry per unique fix id, and an empty
+# plan and a failed plan must both be visible in the exit status.
 
 load helpers.bash
 

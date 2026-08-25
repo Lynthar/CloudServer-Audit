@@ -136,7 +136,7 @@ _update_audit_apt_lock() {
             "failed" \
             "$(i18n 'update.apt_locked')" \
             "$(i18n 'update.apt_locked_desc')" \
-            "Wait for other process to finish or remove lock" \
+            "$(i18n 'update.apt_locked_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'update.apt_locked')"
@@ -233,7 +233,7 @@ _update_audit_available() {
             "failed" \
             "$(i18n 'update.updates_available' "count=$update_count")" \
             "$sec_desc" \
-            "Apply pending updates with the system package manager" \
+            "$(i18n 'update.updates_available_suggestion')" \
             "$fix_id")
         state_add_check "$check"
 
@@ -338,7 +338,7 @@ _update_audit_reboot() {
             "failed" \
             "$(i18n 'update.reboot_required')" \
             "$(i18n 'update.reboot_required_desc' "list=$pkg_list")" \
-            "Schedule a system reboot to apply kernel/security updates" \
+            "$(i18n 'update.reboot_required_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'update.reboot_required')"

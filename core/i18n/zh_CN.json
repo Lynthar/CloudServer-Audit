@@ -125,7 +125,9 @@
     "dep_optional": "可选依赖缺失: {dep} (相关功能将被禁用)",
     "virtualization": "虚拟化类型: {type}",
     "listening_ports": "监听端口: {count} 个",
-    "dangerous_ports": "危险端口暴露: {ports}"
+    "dangerous_ports": "危险端口暴露: {ports}",
+    "os_unsupported_suggestion": "请使用 Debian 12/13、Ubuntu 22.04/24.04/26.04、RHEL 8/9/10 系发行版（Rocky/Alma/CentOS Stream）或 Arch",
+    "network_fail_suggestion": "检查网络配置与 DNS"
   },
   "ssh": {
     "admin_no_key_desc": "未找到 authorized_keys 文件",
@@ -261,7 +263,16 @@
     "reload_failed": "重载 SSH 失败",
     "rescue_fw_no_source": "无法识别你的来源 IP（控制台登录或环境变量被清除）。",
     "rescue_fw_ask_cidr": "允许访问救援端口 {port} 的来源 IP/CIDR（输入 any = 全网开放；留空 = 不添加规则）",
-    "rescue_fw_bad_cidr": "不是有效的 IP/CIDR：{value}——将不添加防火墙规则"
+    "rescue_fw_bad_cidr": "不是有效的 IP/CIDR：{value}——将不添加防火墙规则",
+    "suggest_set_directive": "在 /etc/ssh/sshd_config.d/ 中将 {directive} 设为 {value}",
+    "admin_no_key_suggestion": "为 {user} 添加 SSH 公钥",
+    "authkeys_permissions_suggestion": "修复权限: chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys",
+    "no_admin_user_suggestion": "先创建一个非 root 管理员用户，再禁止 root 登录",
+    "max_auth_tries_high_suggestion": "将 MaxAuthTries 设为 4 或更小",
+    "login_grace_time_long_suggestion": "将 LoginGraceTime 设为 60",
+    "x11_forwarding_enabled_suggestion": "除非确需，否则禁用 X11 转发",
+    "tcp_keepalive_enabled_suggestion": "将 TCPKeepAlive 设为 no，改用 ClientAliveInterval",
+    "default_port_suggestion": "建议改用非标准端口（如 2222、22222）"
   },
   "ufw": {
     "default_accept_desc": "默认入站策略为 ACCEPT",
@@ -372,7 +383,10 @@
     "timesync_failed": "时间同步未配置",
     "check_failed": "无法查询待更新数量",
     "check_failed_desc": "包管理器的更新查询失败（源损坏、元数据缓存为空或缺少工具）。这不等于“没有更新”——这个问题根本没有得到回答。",
-    "check_failed_fix": "手动刷新软件包索引（apt-get update / dnf makecache / pacman -Sy）后重新审计"
+    "check_failed_fix": "手动刷新软件包索引（apt-get update / dnf makecache / pacman -Sy）后重新审计",
+    "apt_locked_suggestion": "等待其他进程结束，或移除锁文件",
+    "updates_available_suggestion": "用系统的包管理器安装待更新的软件包",
+    "reboot_required_suggestion": "安排一次系统重启以应用内核/安全更新"
   },
   "docker": {
     "all_root_containers_desc": "所有容器都以 root 用户运行",
@@ -456,7 +470,12 @@
     "fix_unlimited_memory": "为每个容器加上 --memory=<size>（如 --memory=512m），或在 docker-compose 中设置 mem_limit",
     "daemon_unreachable": "容器运行时存在但连不上",
     "daemon_unreachable_desc": "无法查询容器守护进程（{found}），因此没有任何容器检查执行过。rootless 守护进程对 sudo 下的审计不可见，Podman 则从未被探测。",
-    "daemon_unreachable_fix": "rootless Docker 请以属主用户身份重跑，或先启动守护进程；Podman 不在审计范围内"
+    "daemon_unreachable_fix": "rootless Docker 请以属主用户身份重跑，或先启动守护进程；Podman 不在审计范围内",
+    "exposed_ports_suggestion": "改用反向代理，或绑定到 127.0.0.1",
+    "privileged_containers_suggestion": "去掉 --privileged，改为按需授予具体 capabilities",
+    "root_containers_suggestion": "在 Dockerfile 中使用 USER 指令，或加上 --user 参数",
+    "no_live_restore_suggestion": "在 daemon.json 中启用 live-restore",
+    "no_new_privileges_disabled_suggestion": "在 daemon.json 中启用 no-new-privileges"
   },
   "nginx": {
     "client_body_timeout_high_desc": "client_body_timeout={cbt_raw}（CIS 5.2.1：≤10s）",
@@ -566,7 +585,16 @@
     "insecure_services_clean": "未发现不安全的传统服务",
     "apparmor_profiles_disabled": "被显式禁用的 AppArmor 配置文件：{count} 个",
     "apparmor_profiles_disabled_desc": "这些配置文件被软链到 disable 目录，因此既不计入强制模式也不计入投诉模式：{list}",
-    "apparmor_profiles_disabled_fix": "检查 {dir}；删掉软链并重新加载该配置文件即可恢复"
+    "apparmor_profiles_disabled_fix": "检查 {dir}；删掉软链并重新加载该配置文件即可恢复",
+    "insecure_services_active_suggestion": "禁用该服务（systemctl disable --now <name>）并卸载软件包（{remove_hint}）",
+    "pkg_remove_manual": "用本机的包管理器",
+    "integrity_missing_suggestion": "安装文件完整性工具: {cmd}",
+    "integrity_missing_suggestion_generic": "安装文件完整性工具（AIDE、Tripwire 或 Samhain）",
+    "selinux_many_denials_suggestion": "查看拒绝事件: ausearch -m avc -ts today",
+    "selinux_permissive_suggestion": "将 SELinux 设为 enforcing: setenforce 1",
+    "selinux_disabled_suggestion": "在 /etc/selinux/config 中启用 SELinux 并重启",
+    "apparmor_many_complain_suggestion": "检查这些 profile 并切换到 enforce 模式",
+    "no_mac_system_suggestion": "安装并启用 AppArmor 或 SELinux"
   },
   "logging": {
     "title": "日志与审计",
@@ -758,6 +786,17 @@
   "fail2ban": {
     "title": "Fail2ban 防护",
     "desc": "检查和配置暴力破解防护",
+    "not_installed_desc": "未安装 fail2ban",
+    "service_active_desc": "服务运行中，且已设为开机自启",
+    "service_not_enabled_desc": "服务运行中，但未设为开机自启",
+    "service_inactive_desc": "fail2ban 服务未运行",
+    "no_jails_active_desc": "fail2ban-client status 报告 0 个活动 jail —— 服务没有在做任何事",
+    "jails_active_desc": "活动 jail：{jails}",
+    "ssh_jail_enabled_desc": "当前封禁：{current}，累计：{total}，maxretry：{maxretry}，bantime：{bantime}",
+    "maxretry_high_desc": "maxretry={value}（建议 3-5）",
+    "ssh_jail_disabled_desc": "未启用 SSH jail",
+    "custom_config_desc": "发现自定义配置",
+    "default_config_desc": "jail.local 与 jail.d 中未发现运维侧调整 —— 生效的是出厂默认：5 次重试 / 封禁 10 分钟",
     "check_installed": "检查 fail2ban 安装状态",
     "check_service": "检查 fail2ban 服务状态",
     "check_ssh_jail": "检查 SSH jail 配置",
@@ -795,7 +834,9 @@
     "check_any_jail": "检查活动 jail",
     "jails_active": "活动 jail",
     "no_jails_active": "fail2ban 在运行但无任何活动 jail",
-    "fix_enable_jail": "启用至少一个 jail（“配置 SSH jail”修复项会写入 jail.d/99-vpssec-sshd.local）"
+    "fix_enable_jail": "启用至少一个 jail（“配置 SSH jail”修复项会写入 jail.d/99-vpssec-sshd.local）",
+    "maxretry_high_suggestion": "调低 maxretry 值",
+    "default_config_suggestion": "应用本工具的 jail.d drop-in 配置"
   },
   "networking": {
     "exposed_dangerous_ports_desc": "对外暴露：{list}",
@@ -810,7 +851,10 @@
     "listeners_loopback_only": "所有监听都仅在本地回环",
     "listeners_ok": "公网监听符合预期（SSH/HTTP/HTTPS/DNS）",
     "promiscuous_interface": "网卡处于混杂模式",
-    "no_promisc": "未发现混杂模式接口"
+    "no_promisc": "未发现混杂模式接口",
+    "exposed_dangerous_ports_suggestion": "将这些服务绑定到 127.0.0.1 或指定的内网地址，并置于带认证的反向代理 / WireGuard / SSH 隧道之后",
+    "public_listeners_present_suggestion": "逐一确认是否确需对公网开放；否则绑定到 127.0.0.1",
+    "promiscuous_interface_suggestion": "排查接口为何处于 PROMISC——是正在运行 tcpdump/wireshark，还是意外的嗅探程序"
   },
   "scheduling": {
     "at_jobs_present_desc": "at 任务 ID：{list}",
@@ -822,7 +866,9 @@
     "at_jobs_present": "队列中存在 {count} 个 at 任务",
     "no_at_jobs": "无 at 任务",
     "cron_fetches_internet": "{count} 条 cron 条目通过管道下载并执行远程内容",
-    "cron_clean": "未发现可疑的 cron 模式"
+    "cron_clean": "未发现可疑的 cron 模式",
+    "at_jobs_present_suggestion": "用 'at -c <jobid>' 查看，用 'atrm <jobid>' 删除。服务器上很少使用 at 任务——请逐一确认是否有意为之",
+    "cron_fetches_internet_suggestion": "逐条检查；将 curl/wget 的输出直接管道给 sh 执行，是典型的后门 / 供应链投毒手法"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR 已禁用（randomize_va_space=0）",
@@ -902,7 +948,10 @@
     "auditd_not_running": "审计守护进程未运行",
     "network_params_unreadable": "内核网络参数无法读取",
     "network_params_unreadable_desc": "检查清单中的所有 net.* sysctl 均不可读（受限容器或缺少 /proc/sys）——实际验证了 0 个参数，因此不做任何加固判定。",
-    "persist_failed": "有 {count} 个 sysctl 值未能写入持久化配置——该更改在重启后将失效"
+    "persist_failed": "有 {count} 个 sysctl 值未能写入持久化配置——该更改在重启后将失效",
+    "unused_protocols_unblocked_suggestion": "通过 /etc/modprobe.d/blacklist-rare-network.conf 拉黑",
+    "ipv6_unused_insecure_suggestion": "建议禁用 IPv6，或加固相关设置",
+    "ipv6_firewall_missing_suggestion": "在防火墙配置中启用 IPv6 规则"
   },
   "filesystem": {
     "caps_unavailable_desc": "安装 libcap2-bin 后才能检查文件 capabilities",
@@ -977,7 +1026,13 @@
     "review_caps": "检查并移除不必要的能力",
     "check_cron": "检查 cron 任务是否存在可疑条目",
     "suspicious_cron": "发现 {count} 个可疑 cron 条目",
-    "cron_ok": "cron 任务看起来正常"
+    "cron_ok": "cron 任务看起来正常",
+    "tmp_not_separate_suggestion": "建议为 /tmp 使用独立分区或 tmpfs",
+    "tmp_mount_missing_opts_suggestion": "为 /tmp 挂载项添加 noexec,nosuid,nodev",
+    "umask_default_suggestion": "在 /etc/login.defs 中将 umask 设为 027",
+    "umask_weak_suggestion": "将 umask 设为 027 或 077",
+    "non_standard_caps_suggestion": "确认这些 capabilities 是否必要",
+    "suspicious_cron_suggestion": "逐条检查 cron 条目，排查恶意程序或后门"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "元数据无会话令牌即可访问；阿里云建议开启加固模式（Security Hardening Mode）",
@@ -1251,6 +1306,8 @@
   },
   "status": {
     "title": "vpssec 状态",
+    "version": "版本: {version}",
+    "update_available": "有更新的发布版本: {latest}（本地安装：重新运行 install.sh；一次性运行：重跑那条 curl 命令）",
     "last_run": "上次运行: {time}",
     "completed_fixes": "已完成修复: {count}",
     "latest_backup": "最新备份: {time}",
@@ -1517,7 +1574,8 @@
     "module_failed": "模块未完成：{module}",
     "module_failed_desc": "{module} 模块的审计中途退出（退出码 {rc}），其余检查从未执行。本报告对该模块而言是不完整的。",
     "module_failed_load_desc": "{module} 模块加载失败，其所有检查均未运行。本报告对该模块而言是不完整的。",
-    "module_failed_fix": "用 --debug 重新运行并查看 logs/vpssec.log；若持续出现请反馈。"
+    "module_failed_fix": "用 --debug 重新运行并查看 logs/vpssec.log；若持续出现请反馈。",
+    "malformed_check_fix": "请将 logs/vpssec.log 中的相关条目反馈给 vpssec 维护者"
   },
   "fixwarn": {
     "baseline.selinux_enable": "启用 SELinux 需要重启系统，且可能导致服务被拒绝",

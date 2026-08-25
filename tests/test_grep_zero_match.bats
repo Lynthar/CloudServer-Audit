@@ -1,20 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression: under `set -euo pipefail` (which vpssec runs with),
-# the idiom
-#
-#     n=$(some_cmd | grep -c PATTERN || echo 0)
-#
-# is broken when grep finds zero matches: grep -c prints "0" AND exits
-# with status 1, so the `|| echo 0` fallback ALSO fires and stdout
-# becomes the literal "0\n0". A subsequent `[[ "$n" -gt N ]]` then
-# blows up with "syntax error in expression" and, under set -e, kills
-# the audit.
-#
-# The user-visible failure was in modules/ufw.sh:24 on a host where
-# iptables existed but had no ACCEPT/DROP/REJECT lines. Same anti-
-# pattern lived in ufw.sh, kernel.sh, and logging.sh. The fix is
-# `|| true` (grep -c / wc -l already print 0 to stdout).
+# Under `set -euo pipefail` the idiom n=$(cmd | grep -c PAT || echo 0) breaks
+# on zero matches: grep -c prints "0" AND exits 1, so the fallback also fires
+# and stdout becomes "0\n0", which then kills the audit in an arithmetic test.
 
 load helpers.bash
 
@@ -24,10 +11,8 @@ setup() {
     source "$(_vpssec_repo_root)/modules/ufw.sh"
 }
 
-# ---------------------------------------------------------------------
-# Direct repro of the broken pattern. If this test ever passes (i.e.
-# the bug is back), the check below would print "0\n0".
-# ---------------------------------------------------------------------
+# Direct repro of the broken pattern. If this test ever passes — i.e. the bug is
+# back — the check below would print "0\n0".
 
 @test "anti-pattern: grep -c with no matches under pipefail produces double output" {
     set -o pipefail

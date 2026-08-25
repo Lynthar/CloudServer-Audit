@@ -1,22 +1,7 @@
 #!/usr/bin/env bats
-#
-# The rollback contract for a file's PERMISSIONS, which was broken by two
-# individually correct decisions:
-#
-#   backup_file chmods its own copy to 600, so a snapshot of /etc/shadow is
-#   not left readable in backups/. backup_restore restores with `cp -p`,
-#   which takes the mode from that copy. So every rolled-back file came back
-#   at 600 while the restore reported full success.
-#
-# On root-read config (sshd_config, nginx.conf) that is survivable. On what
-# filesystem.fix_sensitive_perms backs up it is not: /etc/passwd and
-# /etc/group at 600 break name lookups for every non-root process, so the
-# rollback left the host worse off than either the pre-fix or post-fix state.
-# And the fix's own comment asserted the opposite ("backup_file uses cp -p,
-# preserving the original mode bits"), which is presumably why it stood.
-#
-# Verified against the real primitives before the fix: 666 -> fix -> rollback
-# gave 600. These tests run the same chain, so they fail on a revert.
+# The rollback contract for a file's PERMISSIONS. backup_file chmods its own
+# copy to 600 and backup_restore uses `cp -p`, so without .vpssec_modes every
+# file comes back at 600 — /etc/passwd at 600 breaks non-root name lookups.
 
 load helpers.bash
 
@@ -104,11 +89,9 @@ _mode_of() { stat -c '%a' "$1"; }
 }
 
 @test "modes: recording the same path twice keeps the first mode" {
-    # backup_track_mode is called directly here, not through backup_file:
-    # backup_file returns early on the second call for a file it has already
-    # snapshotted this session, so its own dedup hides this one. The guard
-    # still matters — it is what keeps the helper idempotent for any future
-    # call site — and this is the only way to exercise it.
+    # backup_track_mode is called directly, not through backup_file: backup_file
+    # returns early for a file it already snapshotted this session, so its dedup
+    # hides this guard. This is the only way to exercise the helper's idempotence.
     local f="$etc/passwd"
     _make_file "$f" 666
 
@@ -128,10 +111,8 @@ _mode_of() { stat -c '%a' "$1"; }
     _make_file "$f" 644
     # helpers.bash sets VPSSEC_QUIET_SCAN=1, which silences the count line.
     VPSSEC_QUIET_SCAN=0
-    # Self-healing: when this assertion fails it does so by CREATING the file
-    # it refutes, which would then make every later run fail for a reason that
-    # has nothing to do with the code under test. Mutation testing hits this
-    # case on purpose.
+    # Self-healing: when this assertion fails it does so by CREATING the file it
+    # refutes, which would make every later run fail for an unrelated reason.
     rm -f /.vpssec_modes
 
     backup_file "$f" >/dev/null

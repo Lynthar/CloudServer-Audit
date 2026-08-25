@@ -1,8 +1,6 @@
 #!/usr/bin/env bats
-#
-# Regression tests for word-boundary matching in
-# _webapp_php_disable_functions and the strict HSTS check in
-# _webapp_nginx_hsts.
+# Regression tests for word-boundary matching in _webapp_php_disable_functions
+# and the strict HSTS check in _webapp_nginx_hsts.
 
 load helpers.bash
 

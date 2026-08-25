@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _ufw_ssh_allowed (M4). The original pattern
-# accepted only ALLOW; `ufw limit ssh` (the rate-limited variant
-# recommended for SSH) was misreported as "no SSH rule", which routed
-# users to fix_allow_ssh — silently downgrading their LIMIT to a
-# plain ALLOW.
+# Regression tests for _ufw_ssh_allowed. Accepting only ALLOW misreports
+# `ufw limit ssh` — the rate-limited variant recommended for SSH — as "no SSH
+# rule", which routes the user to a fix that downgrades LIMIT to plain ALLOW.
 
 load helpers.bash
 
@@ -48,7 +45,7 @@ To                         Action      From
 }
 
 @test "ssh: LIMIT rule on 22/tcp is accepted (regression)" {
-    # The exact M4 case: `ufw limit ssh` produces LIMIT, not ALLOW.
+    # `ufw limit ssh` produces LIMIT, not ALLOW.
     _install_ufw_stub "Status: active
 
 To                         Action      From

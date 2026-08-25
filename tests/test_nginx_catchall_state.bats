@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for _nginx_catchall_state_from_text (M7). The original
-# _nginx_has_catchall returned "yes" if both `default_server` and
-# `return 444` appeared anywhere in the merged config — it didn't
-# distinguish port 80 vs 443 nor enforce same-server-block scope.
-# A config with port 80 catchall and a separate vhost on 443 (no
-# catchall) was misreported as fully covered.
+# Tests for _nginx_catchall_state_from_text. Finding `default_server` and
+# `return 444` anywhere in the merged config is not enough: the state must be
+# per-port and scoped to one server block, or a 443-only vhost reads as covered.
 
 load helpers.bash
 
@@ -45,9 +41,8 @@ server {
 }
 
 @test "catchall: only port 80 has catchall, 443 vhost present (regression)" {
-    # The exact M7 case: 80 catchall but 443 has a real cert vhost
-    # without catchall. Old code saw default_server somewhere AND
-    # return 444 somewhere → reported "passed".
+    # 80 has a catchall but 443 has a real cert vhost without one. Seeing
+    # default_server somewhere AND return 444 somewhere must not read as passed.
     local cfg='server {
     listen 80 default_server;
     server_name _;

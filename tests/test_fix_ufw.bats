@@ -1,29 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for the ufw module's fix functions.
-#
-# ufw.enable and ufw.set_default_deny are the two fixes outside the SSH
-# module that can cut the operator's own session, and both defend against
-# it the same way: open every sshd port FIRST, abort if that fails, and
-# only then touch the firewall. The ordering is the whole contract — a
-# suite that only asserts "the allow ran" and "the enable ran" would pass
-# on code that runs them the other way round and locks the user out. Every
-# ordering assertion here therefore compares positions in the stub call
-# log rather than mere invocation.
-#
-# Three further behaviours are deliberate and easy to "clean up" into a
-# lockout, so they are pinned:
-#
-#   - the current-session rescue rule is NOT deleted after a successful
-#     enable (if the port rule turns out not to cover the live connection,
-#     that rescue rule is the only way back in);
-#   - it IS deleted when the operator declines, since nothing else has
-#     changed and it is the broadest rule of the set;
-#   - a failed `ufw allow` aborts, it does not fall through to enabling.
-#
-# The fixes shell out to `ufw` and write nothing under /etc, so this file
-# needs no path redirection — only a `ufw` stub that remembers its rules
-# so that `ufw status` answers consistently with the allows that ran.
+# Coverage for the ufw fixes. ufw.enable and ufw.set_default_deny can cut the
+# operator's session, so ORDER is the contract — open every sshd port first,
+# abort if that fails — and every ordering assertion compares call-log positions.
 
 load helpers.bash
 
@@ -58,11 +36,9 @@ exit 0
 SH
 }
 
-# A ufw that remembers. `allow` records a rule, `status` reports the rules
-# recorded so far, so _ufw_port_allowed sees what earlier calls did — the
-# lifecycle the idempotence check depends on.
-#
-# $1, when given, is a port whose `allow` fails; everything else succeeds.
+# A ufw that remembers: `allow` records a rule and `status` reports the rules
+# recorded so far, so _ufw_port_allowed sees what earlier calls did. $1, when
+# given, is a port whose `allow` fails; everything else succeeds.
 _ufw_working() {
     local failing_port="${1:-}"
     : > "$ufw_rules"

@@ -125,7 +125,9 @@
     "dep_optional": "Optional dependency missing: {dep} (related features disabled)",
     "virtualization": "Virtualization type: {type}",
     "listening_ports": "Listening ports: {count}",
-    "dangerous_ports": "Dangerous ports exposed: {ports}"
+    "dangerous_ports": "Dangerous ports exposed: {ports}",
+    "os_unsupported_suggestion": "Use Debian 12/13, Ubuntu 22.04/24.04/26.04, a RHEL 8/9/10 family distro (Rocky/Alma/CentOS Stream), or Arch",
+    "network_fail_suggestion": "Check network configuration and DNS"
   },
   "ssh": {
     "admin_no_key_desc": "No authorized_keys file found",
@@ -261,7 +263,16 @@
     "reload_failed": "Failed to reload SSH",
     "rescue_fw_no_source": "Could not determine your source IP (console login or stripped environment).",
     "rescue_fw_ask_cidr": "Source IP/CIDR allowed to reach rescue port {port} ('any' = open to the world; empty = add no rule)",
-    "rescue_fw_bad_cidr": "Not a valid IP/CIDR: {value} — adding no firewall rule"
+    "rescue_fw_bad_cidr": "Not a valid IP/CIDR: {value} — adding no firewall rule",
+    "suggest_set_directive": "Set {directive} to {value} in /etc/ssh/sshd_config.d/",
+    "admin_no_key_suggestion": "Add SSH public key for {user}",
+    "authkeys_permissions_suggestion": "Fix permissions: chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys",
+    "no_admin_user_suggestion": "Create a non-root admin user before disabling root login",
+    "max_auth_tries_high_suggestion": "Set MaxAuthTries to 4 or less",
+    "login_grace_time_long_suggestion": "Set LoginGraceTime to 60",
+    "x11_forwarding_enabled_suggestion": "Disable X11 forwarding unless needed",
+    "tcp_keepalive_enabled_suggestion": "Set TCPKeepAlive to no and rely on ClientAliveInterval instead",
+    "default_port_suggestion": "Consider changing to a non-standard port (e.g., 2222, 22222)"
   },
   "ufw": {
     "default_accept_desc": "Default incoming policy is ACCEPT",
@@ -372,7 +383,10 @@
     "timesync_failed": "Time synchronization not configured",
     "check_failed": "Could not query pending updates",
     "check_failed_desc": "The package manager's update query failed (broken sources, cold metadata cache, or missing tool). This is NOT \"no updates\" — the question went unanswered.",
-    "check_failed_fix": "Refresh the package index manually (apt-get update / dnf makecache / pacman -Sy) and re-run the audit"
+    "check_failed_fix": "Refresh the package index manually (apt-get update / dnf makecache / pacman -Sy) and re-run the audit",
+    "apt_locked_suggestion": "Wait for other process to finish or remove lock",
+    "updates_available_suggestion": "Apply pending updates with the system package manager",
+    "reboot_required_suggestion": "Schedule a system reboot to apply kernel/security updates"
   },
   "docker": {
     "all_root_containers_desc": "All containers are running as root user",
@@ -456,7 +470,12 @@
     "fix_unlimited_memory": "Re-run each container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose",
     "daemon_unreachable": "Container runtime present but unreachable",
     "daemon_unreachable_desc": "Cannot query a container daemon ({found}), so no container check ran. A rootless daemon is not visible to a sudo'd audit, and Podman is not probed at all.",
-    "daemon_unreachable_fix": "Re-run as the owning user for rootless Docker, or start the daemon; Podman is not audited"
+    "daemon_unreachable_fix": "Re-run as the owning user for rootless Docker, or start the daemon; Podman is not audited",
+    "exposed_ports_suggestion": "Use reverse proxy or bind to 127.0.0.1",
+    "privileged_containers_suggestion": "Remove --privileged flag, use specific capabilities instead",
+    "root_containers_suggestion": "Use USER directive in Dockerfile or --user flag",
+    "no_live_restore_suggestion": "Enable live-restore in daemon.json",
+    "no_new_privileges_disabled_suggestion": "Enable no-new-privileges in daemon.json"
   },
   "nginx": {
     "client_body_timeout_high_desc": "client_body_timeout={cbt_raw} (CIS 5.2.1: ≤10s)",
@@ -566,7 +585,16 @@
     "insecure_services_clean": "No insecure legacy services found",
     "apparmor_profiles_disabled": "AppArmor profiles explicitly disabled: {count}",
     "apparmor_profiles_disabled_desc": "These profiles are symlinked into the disable directory, so they appear in neither the enforcing nor the complain count: {list}",
-    "apparmor_profiles_disabled_fix": "Review {dir}; remove the symlink and reload the profile to re-enable it"
+    "apparmor_profiles_disabled_fix": "Review {dir}; remove the symlink and reload the profile to re-enable it",
+    "insecure_services_active_suggestion": "Disable the service (systemctl disable --now <name>) and remove the package ({remove_hint})",
+    "pkg_remove_manual": "with your package manager",
+    "integrity_missing_suggestion": "Install a file integrity tool: {cmd}",
+    "integrity_missing_suggestion_generic": "Install a file integrity tool (AIDE, Tripwire or Samhain)",
+    "selinux_many_denials_suggestion": "Review denials: ausearch -m avc -ts today",
+    "selinux_permissive_suggestion": "Set SELinux to enforcing: setenforce 1",
+    "selinux_disabled_suggestion": "Enable SELinux in /etc/selinux/config and reboot",
+    "apparmor_many_complain_suggestion": "Review and set profiles to enforce mode",
+    "no_mac_system_suggestion": "Install and enable AppArmor or SELinux"
   },
   "logging": {
     "title": "Logging & Audit",
@@ -758,6 +786,17 @@
   "fail2ban": {
     "title": "Fail2ban Protection",
     "desc": "Check and configure brute force attack protection",
+    "not_installed_desc": "fail2ban is not installed",
+    "service_active_desc": "Service is running and enabled",
+    "service_not_enabled_desc": "Service is running but not enabled at boot",
+    "service_inactive_desc": "fail2ban service is not running",
+    "no_jails_active_desc": "fail2ban-client status reports 0 active jails — service is doing nothing",
+    "jails_active_desc": "Jails: {jails}",
+    "ssh_jail_enabled_desc": "Currently banned: {current}, total: {total}, maxretry: {maxretry}, bantime: {bantime}",
+    "maxretry_high_desc": "maxretry={value} (recommended: 3-5)",
+    "ssh_jail_disabled_desc": "SSH jail is not enabled",
+    "custom_config_desc": "Custom configuration found",
+    "default_config_desc": "No operator tuning found in jail.local or jail.d — the stock 5-retry / 10-minute-ban defaults are in effect",
     "check_installed": "Checking fail2ban installation",
     "check_service": "Checking fail2ban service status",
     "check_ssh_jail": "Checking SSH jail configuration",
@@ -795,7 +834,9 @@
     "check_any_jail": "Checking active jails",
     "jails_active": "Active jails",
     "no_jails_active": "fail2ban running but no jails active",
-    "fix_enable_jail": "Enable at least one jail (the 'configure SSH jail' fix writes jail.d/99-vpssec-sshd.local)"
+    "fix_enable_jail": "Enable at least one jail (the 'configure SSH jail' fix writes jail.d/99-vpssec-sshd.local)",
+    "maxretry_high_suggestion": "Lower maxretry value",
+    "default_config_suggestion": "Apply this tool's jail.d drop-in"
   },
   "networking": {
     "exposed_dangerous_ports_desc": "Public: {list}",
@@ -810,7 +851,10 @@
     "listeners_loopback_only": "All listeners are loopback-only",
     "listeners_ok": "Public listeners match expected services (SSH/HTTP/HTTPS/DNS)",
     "promiscuous_interface": "Interface(s) in promiscuous mode",
-    "no_promisc": "No promiscuous interfaces"
+    "no_promisc": "No promiscuous interfaces",
+    "exposed_dangerous_ports_suggestion": "Bind these services to 127.0.0.1 or a specific private IP and place behind authenticated reverse proxy / WireGuard / SSH tunnel",
+    "public_listeners_present_suggestion": "Verify each is intentionally internet-facing; otherwise bind to 127.0.0.1",
+    "promiscuous_interface_suggestion": "Investigate why an interface is in PROMISC — tcpdump/wireshark in progress, or unexpected sniffer"
   },
   "scheduling": {
     "at_jobs_present_desc": "at-job IDs: {list}",
@@ -822,7 +866,9 @@
     "at_jobs_present": "{count} at job(s) queued",
     "no_at_jobs": "No at jobs queued",
     "cron_fetches_internet": "{count} cron entry(ies) pipe remote downloads to a shell",
-    "cron_clean": "No suspicious cron patterns detected"
+    "cron_clean": "No suspicious cron patterns detected",
+    "at_jobs_present_suggestion": "Inspect with 'at -c <jobid>'; remove with 'atrm <jobid>'. at jobs are uncommon on servers — verify each is intentional",
+    "cron_fetches_internet_suggestion": "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR is disabled (randomize_va_space=0)",
@@ -902,7 +948,10 @@
     "auditd_not_running": "Audit daemon is not running",
     "network_params_unreadable": "Kernel network parameters could not be read",
     "network_params_unreadable_desc": "Every net.* sysctl in the check list was unreadable (restricted container or missing /proc/sys) — 0 parameters were actually verified, so no hardening claim is made.",
-    "persist_failed": "Failed to persist {count} sysctl value(s) to the drop-in — the change would not survive a reboot"
+    "persist_failed": "Failed to persist {count} sysctl value(s) to the drop-in — the change would not survive a reboot",
+    "unused_protocols_unblocked_suggestion": "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf",
+    "ipv6_unused_insecure_suggestion": "Consider disabling IPv6 or hardening settings",
+    "ipv6_firewall_missing_suggestion": "Enable IPv6 in firewall configuration"
   },
   "filesystem": {
     "caps_unavailable_desc": "Install libcap2-bin to check file capabilities",
@@ -977,7 +1026,13 @@
     "review_caps": "Review and remove unnecessary capabilities",
     "check_cron": "Checking cron jobs for suspicious entries",
     "suspicious_cron": "{count} suspicious cron entries found",
-    "cron_ok": "Cron entries appear clean"
+    "cron_ok": "Cron entries appear clean",
+    "tmp_not_separate_suggestion": "Consider using separate /tmp partition or tmpfs",
+    "tmp_mount_missing_opts_suggestion": "Add noexec,nosuid,nodev to /tmp mount",
+    "umask_default_suggestion": "Set umask to 027 in /etc/login.defs",
+    "umask_weak_suggestion": "Set umask to 027 or 077",
+    "non_standard_caps_suggestion": "Review if these capabilities are needed",
+    "suspicious_cron_suggestion": "Review cron entries for potential malware or backdoors"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode",
@@ -1251,6 +1306,8 @@
   },
   "status": {
     "title": "vpssec Status",
+    "version": "Version: {version}",
+    "update_available": "A newer release is available: {latest} (installed: run install.sh again; one-off: re-run the curl command)",
     "last_run": "Last run: {time}",
     "completed_fixes": "Completed fixes: {count}",
     "latest_backup": "Latest backup: {time}",
@@ -1517,7 +1574,8 @@
     "module_failed": "Module did not complete: {module}",
     "module_failed_desc": "The {module} audit stopped partway (exit {rc}); its remaining checks were never evaluated. This report is incomplete for that module.",
     "module_failed_load_desc": "The {module} module failed to load; none of its checks ran. This report is incomplete for that module.",
-    "module_failed_fix": "Re-run with --debug and check logs/vpssec.log; report the failure if it persists."
+    "module_failed_fix": "Re-run with --debug and check logs/vpssec.log; report the failure if it persists.",
+    "malformed_check_fix": "Please report to vpssec maintainers with the relevant logs/vpssec.log entry"
   },
   "fixwarn": {
     "baseline.selinux_enable": "Enabling SELinux requires system reboot and may cause service issues",

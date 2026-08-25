@@ -1,0 +1,27 @@
+# Mutation cases: tests/test_run_modes.bats against run.sh.
+# mutate-suite: run.sh tests/test_run_modes.bats
+#
+# Every failure modelled here is silent: the runner would go on to harden the
+# host and then delete the backups, reporting success the whole way. Only an
+# assertion on the refusal itself can tell the difference.
+
+# The gate stops matching, so guide reaches the download and then the fix path.
+run_case "run-modes/gate-lets-guide-through" 1 \
+    '        guide|rollback) ;;' \
+    '        rollback) ;;'
+
+# Refusing with 4 would tell automation "this host cannot be hardened", which
+# is a different diagnosis from "you used the wrong entry point".
+run_case "run-modes/refuse-with-host-code" 1 \
+    '    exit 2' \
+    '    exit 4'
+
+# The refusal stops naming a way forward, leaving the operator with a no.
+run_case "run-modes/no-way-forward" 1 \
+    '        echo "    curl -fsSL https://raw.githubusercontent.com/${VPSSEC_REPO}/main/install.sh | sudo bash"' \
+    '        echo ""'
+
+# The gate moves after the download: a release is fetched only to be declined.
+run_case "run-modes/refuse-after-download" 1 \
+    '    _refuse_stateful_mode "$mode"' \
+    '    :'

@@ -1,13 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the plan-resume filter logic in core/engine.sh's
-# _guide_resume.
-#
-# We don't run execute_plan end-to-end here (that needs root + real
-# system state). What matters for correctness is the jq filter that
-# decides which fixes to re-apply: it must drop everything in
-# progress.completed[] and KEEP progress.current_fix (so the half-
-# applied fix gets re-run idempotently). These tests pin that.
+# Tests for the plan-resume filter in core/engine.sh's _guide_resume. The jq
+# filter must drop everything in progress.completed[] and KEEP
+# progress.current_fix, so the half-applied fix is re-run idempotently.
 
 load helpers
 
@@ -15,18 +9,18 @@ setup() {
     _vpssec_load
 }
 
-# Reproduce the same jq filter that lives inside _guide_resume.
-# Kept in sync manually; if the production filter changes, update
-# the corresponding line here too. (jq variable name is
-# `$completed_ids`, not `$done`, to dodge a ShellCheck false-
-# positive — see the note next to the production version.)
+# The one copy of the filter this file exercises. The last test asserts that
+# core/engine.sh still contains this exact string — without that, editing the
+# production filter leaves every test below green against a stale copy.
+# The jq variable is `$completed_ids`, not `$done`, to dodge ShellCheck SC1010.
+RESUME_FILTER='.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))'
+
 _filter_remaining() {
     local plan="$1"
     local progress="$2"
     local completed
     completed=$(echo "$progress" | jq -c '.completed // []')
-    echo "$plan" | jq --argjson completed_ids "$completed" \
-        '.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))'
+    echo "$plan" | jq --argjson completed_ids "$completed" "$RESUME_FILTER"
 }
 
 @test "resume filter: drops fixes already in completed[]" {
@@ -96,6 +90,13 @@ _filter_remaining() {
     local out
     out=$(_filter_remaining "$plan" "$progress")
     [ "$(echo "$out" | jq 'length')" = "0" ]
+}
+
+@test "resume filter: the filter tested here is the one production runs" {
+    # This file re-implements _guide_resume's filter rather than calling it, so
+    # nothing else stops the two drifting. Without this assertion a change to
+    # the production filter leaves the whole suite green against a stale copy.
+    grep -qF "$RESUME_FILTER" "$(_vpssec_repo_root)/core/engine.sh"
 }
 
 @test "resume filter: tolerates missing 'completed' key" {

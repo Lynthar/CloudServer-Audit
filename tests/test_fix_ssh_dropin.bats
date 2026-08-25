@@ -1,21 +1,7 @@
 #!/usr/bin/env bats
-#
 # The SSH hardening write path: drop-in validation, rollback, and the
-# post-reload effectiveness assertion.
-#
-# This is the code that can lock an operator out of their own server, and
-# every behaviour pinned here corresponds to a real defect:
-#
-#   - The hardening drop-in was named `99-` and lost the merge to
-#     `50-cloud-init.conf`, so every SSH fix reported success while the
-#     effective value never changed. The fix was a `00-` prefix PLUS an
-#     `sshd -T` assertion after the reload — file ordering is an assumption,
-#     the merged config is the fact. The assertion is what these tests guard.
-#   - The pre-write backup was created but never used, so a drop-in that
-#     passed in isolation and failed in full context stayed on disk and
-#     blocked sshd on the next restart.
-#   - A first-run drop-in had no backup entry at all, so "rollback" left SSH
-#     hardening applied after the user asked to undo it.
+# post-reload effectiveness assertion. File ordering is an assumption and the
+# merged config is the fact, so `sshd -T` after the reload is what these guard.
 
 load helpers.bash
 
@@ -33,20 +19,16 @@ setup() {
 
     export VPSSEC_TEST_SSHD_DIR="$BATS_TEST_TMPDIR"
     # _ssh_write_hardening_config stages through `mktemp -t`, which honours
-    # TMPDIR. Without this the staging files land in the shared /tmp and the
-    # leak assertion below is not hermetic: one leftover from any earlier run
-    # makes it fail forever, for reasons that have nothing to do with the
-    # code under test.
+    # TMPDIR. Without this the staging files land in the shared /tmp and one
+    # leftover from an earlier run makes the leak assertion below fail forever.
     export TMPDIR="$BATS_TEST_TMPDIR"
     _stub_sshd
     _vpssec_stub systemctl
 }
 
-# One sshd stub for every invocation shape the module uses. Behaviour is
-# driven by files so a test can change its mind mid-run:
-#   sshd-t-f.rc  exit status for `sshd -t -f <file>`  (drop-in in isolation)
-#   sshd-t.rc    exit status for `sshd -t`            (full merged context)
-#   sshd-T.out   what `sshd -T` prints                (the effective config)
+# One sshd stub for every invocation shape, driven by files so a test can change
+# its mind mid-run: sshd-t-f.rc is `sshd -t -f <file>` (drop-in alone), sshd-t.rc
+# is `sshd -t` (full merged context), sshd-T.out is what `sshd -T` prints.
 _stub_sshd() {
     _vpssec_stub_script sshd <<'SH'
 d="${VPSSEC_TEST_SSHD_DIR:-/nonexistent}"
@@ -155,10 +137,9 @@ _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
 }
 
 @test "ssh reload: a drop-in that lost the merge is a FAILURE, not a success" {
-    # The flagship defect: the file was written, sshd -t passed, the reload
-    # succeeded — and the effective value was still `yes` because another
-    # drop-in sorted earlier. Reporting success there is how every SSH fix
-    # silently did nothing on stock cloud images.
+    # The file written, sshd -t passed and the reload succeeded, yet the effective
+    # value can still be `yes` because another drop-in sorts earlier. Reporting
+    # success there is how an SSH fix silently does nothing on a cloud image.
     _vpssec_begin_backup_session
     _ssh_write_hardening_config "PasswordAuthentication no"
     _sshd_effective "passwordauthentication yes"

@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _logging_journald_max_size_from_text (M2).
-# The original _logging_journald_max_size only read the main
-# /etc/systemd/journald.conf, so vpssec writing its own
-# 99-vpssec.conf drop-in via _logging_fix_enable_persistent_journal
-# became invisible to the next audit — display kept saying "auto".
+# Regression tests for _logging_journald_max_size_from_text. Reading only
+# /etc/systemd/journald.conf makes vpssec's own 99-vpssec.conf drop-in invisible
+# to the next audit, which keeps displaying "auto".
 
 load helpers.bash
 

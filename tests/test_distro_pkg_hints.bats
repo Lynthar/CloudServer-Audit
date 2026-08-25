@@ -1,20 +1,7 @@
 #!/usr/bin/env bats
-#
-# The audit must not hand an operator a command that cannot run on their host.
-#
-# It supports Debian, the RHEL family and Arch, and it was telling all three
-# to run `apt install`. Two of the four sites were worse than distro-wrong:
-# they passed COMMAND names to a package manager, so
-#
-#     apt install jq ss systemctl sed awk tar grep
-#
-# failed on Debian too — ss ships in iproute2, systemctl in systemd. The
-# suggestion had never been correct anywhere.
-#
-# The hints are advice, never executed: hardening stays Debian-only, and the
-# fixes there install through their own apt calls. So what these tests pin is
-# the wording handed to a human, plus the two places it must refuse to guess:
-# an unknown package manager, and a package the distribution does not ship.
+# The audit must not hand an operator a command that cannot run on their host:
+# package names are not command names, and the manager comes from the distro.
+# The hints are advice, never executed, so what is pinned is the wording.
 
 load helpers.bash
 

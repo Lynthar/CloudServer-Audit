@@ -1,22 +1,7 @@
 #!/usr/bin/env bats
-#
-# execute_fix must not record a completion a fix cannot deliver.
-#
-# A fix's exit status carries one fact — did my work succeed. Whether the
-# FINDING is resolved is a second fact, and for the template generators it
-# never can be: they write a template, or a file the operator still has to
-# wire in. Two opposite conventions had grown around that single exit code,
-# each defensible on its own:
-#
-#   - four FIX_SAFE generators returned 0, so state_mark_fix_complete wrote a
-#     line into ok.json that the very next audit contradicted; and
-#   - webapp's SSL fix returned 1 to avoid exactly that, and so reported a
-#     FAILURE for a snippet it had written perfectly well.
-#
-# FIX_TEMPLATE_ONLY holds the second fact separately. These tests pin the
-# behaviour that follows from it, in both directions — a map that only ever
-# suppressed the record would be indistinguishable from one that suppressed
-# every record.
+# execute_fix must not record a completion a fix cannot deliver. A fix's exit
+# status says only whether its work succeeded; FIX_TEMPLATE_ONLY carries the
+# separate fact that the finding stays open, and both directions are pinned.
 
 load helpers.bash
 
@@ -111,11 +96,8 @@ _completed_fixes() {
 }
 
 @test "the HSTS template fix is in the map too" {
-    # Found by a sweep rather than by reading: `return 1` within three lines
-    # after a print_ok/print_warn (not a print_error) turned up 20 candidates,
-    # 19 of them legitimate refusals and this one the same family as the SSL
-    # snippets. Leaving it out would have kept half the inconsistency item 9
-    # named.
+    # webapp.nginx_hsts is the same family as the SSL snippets: it writes a
+    # template the operator must still wire in, so it belongs in the map.
     run fix_is_template_only webapp.nginx_hsts
     [ "$status" -eq 0 ]
 
@@ -127,10 +109,8 @@ _completed_fixes() {
 
 @test "a fix whose manual step is conditional is NOT in the map" {
     # The key is a fix_id, so membership claims the fix can NEVER resolve its
-    # finding. baseline's SELinux fix leaves a manual step only on a host with
-    # no config file to persist to — dynamic, so it keeps returning 1 on that
-    # branch instead. Putting it here would suppress the completion record on
-    # the hosts where it genuinely succeeded.
+    # finding. baseline's SELinux fix leaves a manual step only on a host with no
+    # config file — dynamic, so it returns 1 on that branch instead.
     run fix_is_template_only baseline.selinux_set_enforcing
     [ "$status" -ne 0 ]
 }
@@ -157,14 +137,9 @@ _completed_fixes() {
 }
 
 @test "get_fix_manual_step ignores a stray fixtmpl key for a fix not in the map" {
-    # The map is the authority on which fixes leave a manual step; the i18n
-    # file only supplies wording. Without the early return the lookup would run
-    # for any fix_id, so a leftover or mistyped fixtmpl.* key would make an
-    # ordinary fix announce a manual step that does not exist.
-    #
-    # This input is the ONLY thing that separates the guard from its absence:
-    # with no such key both paths echo an empty string, which is why the
-    # mutation removing the guard survived the assertion above.
+    # The map is the authority on which fixes leave a manual step; i18n only
+    # supplies wording. Without the early return a stray fixtmpl.* key would make
+    # an ordinary fix announce a manual step, and both paths echo empty otherwise.
     VPSSEC_I18N["fixtmpl.ufw.allow_ssh"]="SHOULD NOT BE SHOWN"
     run get_fix_manual_step ufw.allow_ssh
     [ "$output" = "" ]

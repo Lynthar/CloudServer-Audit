@@ -7,8 +7,17 @@ set -euo pipefail
 
 # --- Global Variables ---
 
-VPSSEC_VERSION="1.2.0"
 VPSSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# VERSION is the only source of the version string; release.yml refuses a tag
+# that disagrees with it. Guard with -r: the shell reports a failed `<`
+# redirection itself, so `2>/dev/null` on the substitution would not catch it.
+VPSSEC_VERSION=""
+if [[ -r "${VPSSEC_ROOT}/VERSION" ]]; then
+    VPSSEC_VERSION="$(tr -d '[:space:]' < "${VPSSEC_ROOT}/VERSION")"
+fi
+# Report "unknown" rather than an empty string: a blank version field in a
+# report reads as "not applicable" instead of "this file was not shipped".
+[[ "$VPSSEC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || VPSSEC_VERSION="unknown"
 VPSSEC_CORE="${VPSSEC_ROOT}/core"
 VPSSEC_MODULES="${VPSSEC_ROOT}/modules"
 VPSSEC_STATE="${VPSSEC_ROOT}/state"
@@ -19,6 +28,8 @@ VPSSEC_BACKUPS="${VPSSEC_ROOT}/backups"
 VPSSEC_BACKUP_SESSION=""
 VPSSEC_LOGS="${VPSSEC_ROOT}/logs"
 VPSSEC_TEMPLATES="${VPSSEC_ROOT}/templates"
+# Upstream identity, used only to look up the newest release tag.
+VPSSEC_REPO="${VPSSEC_REPO:-Lynthar/CloudServer-Audit}"
 
 # Default settings
 VPSSEC_LANG="${VPSSEC_LANG:-zh_CN}"
@@ -428,6 +439,26 @@ i18n_load() {
     done < <(jq -r 'paths(scalars) as $p | "\($p | join("."))=\(getpath($p))"' "$i18n_file")
 
     log_debug "Loaded ${#VPSSEC_I18N[@]} i18n entries from $lang"
+}
+
+# Newest release tag, or empty. Never fails the caller and never blocks long:
+# a status command that errors because GitHub is unreachable is worse than one
+# that says nothing about updates.
+_vpssec_latest_release_tag() {
+    command -v curl &>/dev/null || return 0
+    command -v jq &>/dev/null || return 0
+    curl -fsSL --connect-timeout 3 --max-time 5 \
+        "https://api.github.com/repos/${VPSSEC_REPO}/releases/latest" 2>/dev/null \
+        | jq -r '.tag_name // empty' 2>/dev/null || true
+}
+
+# True when $2 is strictly newer than $1 under version sort. Returns false
+# rather than guessing when `sort -V` is unavailable — a wrong "update
+# available" is worse than a missing one.
+_vpssec_version_lt() {
+    [[ "$1" != "$2" ]] || return 1
+    printf '%s\n' 1.0.0 1.0.1 | sort -V >/dev/null 2>&1 || return 1
+    [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
 
 # Get translated string with optional variable substitution

@@ -1,17 +1,7 @@
 #!/usr/bin/env bats
-#
-# Latent-bug regression: production sources every module from inside
-# core/engine.sh's `module_load` function. bash makes `declare -a NAME=(...)`
-# function-local even though it is at the script's top level, so any
-# audit code that ran later (called from a sibling function `audit_all`)
-# saw the array as unset. Under `set -u` the for-loop expansion of an
-# empty/unset array is special-cased to NOT error, so the check silently
-# iterated zero entries and reported "all OK".
-#
-# This test simulates that flow: source modules from inside a function,
-# return, then assert each module-level array is still readable. It
-# fails (under set -u) if any module reverts to the bare `declare -a`
-# without -g.
+# Production sources every module from inside core/engine.sh's `module_load`, and
+# bash makes a top-level `declare -a NAME=(...)` function-local, so a sibling
+# function sees it unset — and `set -u` does not error on an empty array loop.
 
 load helpers.bash
 

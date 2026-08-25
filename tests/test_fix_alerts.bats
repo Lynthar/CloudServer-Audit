@@ -1,31 +1,7 @@
 #!/usr/bin/env bats
-#
 # Regression tests for the alerts fix: the interactivity gate and every write
-# whose status the fix used to discard.
-#
-# Three defects motivate this file:
-#
-#   1. _alerts_fix_setup_config gated its prompts on `[[ -t 0 ]]`, which asks
-#      about stdin while the prompts themselves read from /dev/tty, and which
-#      ignores --yes / --json-only entirely. `guide --yes` on a real terminal
-#      therefore parked on "Webhook URL:" forever — exactly what --yes exists
-#      to prevent. The decision now lives in _alerts_should_prompt, extracted
-#      so it can be tested at all: stdin is never a terminal under bats, so
-#      an inline `[[ -t 0 ]]` and the correct gate return the same answer here
-#      and no end-to-end test could tell them apart.
-#   2. The config write, the five template writes and the mkdir before them
-#      all had their status discarded, and the function ended `return 0`.
-#      errexit is off inside a fix (execute_fix calls it in a condition
-#      context), so an unwritable state directory produced "alert
-#      configuration saved" and a fix the engine recorded as complete.
-#   3. The sed pass that points the generated hooks at this installation's
-#      paths ran as `... 2>/dev/null || true`. Its own comment says that
-#      without it "every alert silently never fires" — so that was the one
-#      failure in the function that must not be swallowed.
-#
-# These fixes write into vpssec's own state/templates trees, never /etc, and
-# call neither backup_file nor write_file_atomic. That is deliberate and the
-# suite pins it: the generated artifacts must stay inert.
+# whose status must not be discarded. These fixes write into vpssec's own
+# state/templates trees, never /etc, and the generated artifacts stay inert.
 
 load helpers.bash
 
@@ -150,10 +126,9 @@ setup() {
 
     run _alerts_fix_setup_config
     [ "$status" -eq 1 ]
-    # Specifically the directory message. Asserting the generic write failure
-    # here would pass with the mkdir guard deleted, because the write below
-    # then fails too and prints that one — the two guards would be
-    # indistinguishable and this test would pin neither.
+    # Specifically the directory message: asserting the generic write failure
+    # would pass with the mkdir guard deleted, because the write below fails too
+    # and prints that one — the two guards would be indistinguishable.
     [[ "$output" == *"Could not create the directory for the alert configuration"* ]]
 }
 
@@ -215,10 +190,9 @@ setup() {
 }
 
 @test "generate_templates: the generated hooks point at this installation, not /var/lib/vpssec" {
-    # The load-bearing assertion of the sed pass. The heredocs are authored
-    # with a /var/lib/vpssec literal so the quoted bodies don't expand
-    # $WEBHOOK_URL; if the rewrite does not happen, `source .../alert-lib.sh`
-    # fails and every generated alert silently never fires.
+    # The load-bearing assertion of the sed pass. The heredocs carry a
+    # /var/lib/vpssec literal so the quoted bodies do not expand $WEBHOOK_URL; if
+    # the rewrite does not happen, sourcing alert-lib.sh fails and no alert fires.
     run _alerts_fix_generate_templates
     [ "$status" -eq 0 ]
 
@@ -249,12 +223,9 @@ setup() {
 }
 
 @test "generate_templates: a failed write of ANY of the five artifacts fails the fix" {
-    # Every write needs its own status check, and a suite that only ever
-    # fails the FIRST artifact pins only the first one — dropping the check
-    # from the third or fourth then changes nothing observable. Mutation
-    # testing found exactly that: two `|| return 1` survived until this test
-    # existed. Iterating beats five near-identical tests, since all five
-    # writes live in one function and differ only in the name.
+    # Every write needs its own status check, and a suite that only ever fails
+    # the FIRST artifact pins only the first one — dropping the check from the
+    # third or fourth would then change nothing observable.
     local artifact
     for artifact in alert-lib.sh ssh-login-monitor.sh ufw-monitor.sh \
                     service-monitor.sh README.md; do

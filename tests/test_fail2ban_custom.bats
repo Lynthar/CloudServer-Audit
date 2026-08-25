@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _f2b_has_custom_config. The original
-# implementation accepted ANY *.conf in jail.d/ as evidence of custom
-# tuning, so the Debian/Ubuntu shipped `defaults-debian.conf` (just
-# `[sshd] enabled=true`) made every fresh install pass the
-# "custom_config" check while still running stock 5-retry / 10-min
-# defaults.
+# Regression tests for _f2b_has_custom_config. The distro ships
+# jail.d/defaults-debian.conf, so accepting any *.conf there as evidence of
+# tuning makes every fresh install pass while running stock defaults.
 
 load helpers.bash
 
@@ -71,14 +67,9 @@ EOF
 }
 
 @test "jail.local empty + jail.d/*.local operator file → custom" {
-    # This test used to assert the opposite, on the reasoning that "the
-    # current glob matches *.conf only" — describing the implementation
-    # rather than a requirement, and so pinning a defect as if it were the
-    # spec. fail2ban reads jail.d/*.local as well as jail.d/*.conf (measured
-    # against fail2ban-client), so a .local carrying maxretry IS operator
-    # tuning. Reading it as "not custom" made the audit report "using default
-    # configuration only" on a tuned host — and, once this tool's own fix
-    # started writing a .local drop-in, on a host it had just configured.
+    # fail2ban reads jail.d/*.local as well as jail.d/*.conf (measured against
+    # fail2ban-client), so a .local carrying maxretry IS operator tuning. Reading
+    # it as "not custom" reports default config on a host this tool just tuned.
     : >"$F2B_JAIL_LOCAL"
     cat >"$F2B_JAIL_D/sshd.local" <<'EOF'
 [sshd]

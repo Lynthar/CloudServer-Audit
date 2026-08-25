@@ -1,0 +1,51 @@
+# Mutation cases: tests/test_install_verify.bats against install.sh.
+# mutate-suite: install.sh tests/test_install_verify.bats
+#
+# Two occurrence indexes here are load-bearing. `    if [[ "$VPSSEC_NO_VERIFY"
+# == "1" ]]; then` appears twice — 1 is ensure_cosign's short-circuit, 2 is
+# install_vpssec's skip branch. `            exit 1` also appears twice — 1 is
+# check_system's missing-package-manager exit, 2 is the verify failure. Check
+# the runner's reported line before believing any survivor from those two.
+#
+# The last two cases are the ones worth the wall-clock: they model a release
+# asset that fails verification, and the property under test is that the
+# operator's existing /opt/vpssec is still there afterwards.
+
+# The tag filter accepts anything: a branch name or a traversal reaches a URL.
+run_case "install-verify/tag-filter-open" 1 \
+    '    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then' \
+    '    if [[ ! "$tag" =~ . ]]; then'
+
+# A bare 1.2.0 is no longer normalised, so it never matches the release asset.
+run_case "install-verify/no-tag-normalise" 1 \
+    '        [[ "$VPSSEC_VERSION" == v* ]] || VPSSEC_VERSION="v${VPSSEC_VERSION}"' \
+    '        :'
+
+# resolve_version stops validating: `main` would flow into the download URL.
+run_case "install-verify/resolve-skips-validate" 1 \
+    '        _validate_version_tag "$VPSSEC_VERSION"' \
+    '        :'
+
+# Opting out of verification stops short-circuiting, so ensure_cosign reaches
+# for a package manager even when the operator asked it not to.
+run_case "install-verify/nover-not-short-circuit" 1 \
+    '    if [[ "$VPSSEC_NO_VERIFY" == "1" ]]; then' \
+    '    if false; then'
+
+# A failed download no longer aborts: the installer proceeds to verify, and
+# then to replace, a file it never received.
+run_case "install-verify/download-failure-ignored" 1 \
+    '        || { print_error "Download failed: ${base}/${archive}"; exit 1; }' \
+    '        || true'
+
+# Verification failure becomes advisory. This is the case the suite exists
+# for: the existing installation must still be intact afterwards.
+run_case "install-verify/verify-failure-advisory" 2 \
+    '            exit 1' \
+    '            :'
+
+# The tarball's top level is no longer checked, so a re-pointed asset with a
+# different prefix installs whatever it happened to contain.
+run_case "install-verify/top-level-unchecked" 1 \
+    '    if [[ ! -d "${VPSSEC_STAGING}/vpssec-${ver}" ]]; then' \
+    '    if false; then'

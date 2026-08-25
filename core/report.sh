@@ -5,10 +5,9 @@
 
 # --- Report Generation ---
 
-# The module scope a report may claim: "all" for an unfiltered run, otherwise
-# the modules that actually ran — the raw --include string alone omits the
-# auto-added context modules and ignores --exclude entirely, so an
-# exclude-only run used to claim "all" while a module was missing.
+# The module scope a report may claim: "all" only for an unfiltered run. The
+# raw --include string omits auto-added context modules and ignores --exclude,
+# so an exclude-only run used to claim "all" with a module missing.
 _report_modules_scope() {
     if [[ -z "${VPSSEC_INCLUDE:-}" && -z "${VPSSEC_EXCLUDE:-}" ]]; then
         echo "all"
@@ -166,10 +165,9 @@ report_generate_markdown() {
     local label_info=$(i18n "common.info")
     local label_recommendations=$(i18n "report.recommendations")
 
-    # The whole document is assembled in ONE substitution and committed with
-    # the same checked atomic write as the JSON and SARIF: a dozen bare
-    # appends can each fail (full disk, unwritable target) while the function
-    # still returns 0 and the caller publishes a truncated report.
+    # Assembled in ONE substitution, committed with the same checked atomic
+    # write as JSON and SARIF: a dozen bare appends can each fail while the
+    # function still returns 0 and the caller publishes a truncated report.
     local content
     content=$(
     cat <<EOF

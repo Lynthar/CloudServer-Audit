@@ -1046,7 +1046,7 @@ _fs_audit_tmp_mount() {
             "failed" \
             "$(i18n 'filesystem.tmp_not_separate')" \
             "$(i18n 'filesystem.tmp_not_separate_desc')" \
-            "Consider using separate /tmp partition or tmpfs" \
+            "$(i18n 'filesystem.tmp_not_separate_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'filesystem.tmp_not_separate')"
@@ -1059,7 +1059,7 @@ _fs_audit_tmp_mount() {
             "failed" \
             "$(i18n 'filesystem.tmp_mount_missing_opts')" \
             "$(i18n 'filesystem.tmp_mount_missing_opts_desc' "missing=$missing")" \
-            "Add noexec,nosuid,nodev to /tmp mount" \
+            "$(i18n 'filesystem.tmp_mount_missing_opts_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "/tmp missing mount options: $missing"
@@ -1110,7 +1110,7 @@ _fs_audit_umask() {
             "failed" \
             "$(i18n 'filesystem.umask_default')" \
             "$(i18n 'filesystem.umask_default_desc' "desc=$desc")" \
-            "Set umask to 027 in /etc/login.defs" \
+            "$(i18n 'filesystem.umask_default_suggestion')" \
             "filesystem.fix_umask")
         state_add_check "$check"
         print_severity "low" "$(i18n 'filesystem.umask_default') ($desc)"
@@ -1122,7 +1122,7 @@ _fs_audit_umask() {
             "failed" \
             "$(i18n 'filesystem.umask_weak')" \
             "$(i18n 'filesystem.umask_weak_desc' "desc=$desc")" \
-            "Set umask to 027 or 077" \
+            "$(i18n 'filesystem.umask_weak_suggestion')" \
             "filesystem.fix_umask")
         state_add_check "$check"
         print_severity "low" "Weak umask: $desc"
@@ -1206,7 +1206,7 @@ _fs_audit_caps() {
             "failed" \
             "$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
             "$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
-            "Review if these capabilities are needed" \
+            "$(i18n 'filesystem.non_standard_caps_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "Non-standard file capabilities: $total_count"
@@ -1247,7 +1247,7 @@ _fs_audit_cron() {
             "failed" \
             "$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
             "$sus_list" \
-            "Review cron entries for potential malware or backdoors" \
+            "$(i18n 'filesystem.suspicious_cron_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "medium" "Suspicious cron entries found: $sus_count"

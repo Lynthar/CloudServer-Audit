@@ -1,30 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for calculate_score and get_check_stats in core/state.sh.
-#
-# The scoring formula was reworked in e041a59 (commit message: "rework
-# security score to pass-rate minus penalty + info reclassification").
-# Today's contract:
-#
-#   base    = 100 × passed / scored_total
-#   penalty = 8 × high + 2 × medium + 0.5 × low
-#   score   = clamp(0, 100, base − penalty)
-#
-# `info`-category checks are excluded from `scored_total`, so they
-# do NOT dilute the pass rate.
-#
-# These tests pin the formula end-to-end via fabricated checks.json
-# files. Drift here would silently misreport host security posture.
-#
-# The check ids in the fixtures below must be ids some module ACTUALLY
-# emits, and their CHECK_SCORE_CATEGORY entry is what puts them in or out
-# of the denominator. These fixtures used to name `fail2ban.installed`,
-# which no module has ever emitted — its only reason to exist in
-# security_levels.sh was to keep these tests arithmetically happy, so the
-# map carried a stale entry and the tests pinned behaviour for a check
-# that does not exist. Replaced with fail2ban.service_inactive: real,
-# emitted, and `recommended` like the id it stands in for, so the
-# expected scores are unchanged.
+# Tests for calculate_score and get_check_stats in core/state.sh. The contract:
+# base = 100 × passed / scored_total, penalty = 5×high + 1.5×medium + 0.25×low,
+# score = clamp(0, 100, base − penalty); `info` checks stay out of scored_total.
 
 load helpers
 
@@ -45,10 +22,8 @@ _write_checks() {
         IFS='|' read -r id sev status <<< "$t"
         jq_args+=(--arg "id$i" "$id" --arg "sev$i" "$sev" --arg "st$i" "$status")
         jq_filter+=" + [{id: \$id$i, module: (\$id$i|split(\".\")[0]), severity: \$sev$i, status: \$st$i, title: \$id$i, desc: \"\", suggestion: \"\", fix_id: \"\"}]"
-        # Use pre-increment, not post: `((i++))` returns the OLD value
-        # as exit code, so when i==0 it exits 1 and set -e aborts.
-        # Production code dodges this with `|| true`; pre-increment is
-        # equivalent and reads cleaner here.
+        # Pre-increment, not post: `((i++))` returns the OLD value as its exit
+        # code, so at i==0 it exits 1 and set -e aborts.
         ((++i))
     done
     jq -n "${jq_args[@]}" "$jq_filter" > "$out"
@@ -102,10 +77,9 @@ _write_checks() {
 }
 
 @test "calculate_score: info-category checks do not dilute" {
-    # ssh.x11_forwarding_enabled is classified as 'info' — must be
-    # excluded from the scored_total denominator. Without this the
-    # presence of harmless info findings would silently lower scores
-    # on every host.
+    # ssh.x11_forwarding_enabled is classified as 'info' and must stay out of
+    # the scored_total denominator, or harmless info findings silently lower
+    # the score on every host.
     _write_checks \
         "ssh.password_auth_disabled|low|passed" \
         "ssh.root_login_disabled|low|passed" \
@@ -128,10 +102,9 @@ _write_checks() {
 }
 
 @test "calculate_score: README example reproduces" {
-    # 2 high + 1 medium failures on a 15-scored-check host with 12
-    # safe; matches the example shown in README.md / README.zh-CN.md.
-    # base = 100 * 12 / 15 = 80; penalty = 5*2 + 1.5*1 = 11.5,
-    # integer-divided in 4× space → 11. score = 69.
+    # 2 high + 1 medium failures on a 15-scored-check host with 12 safe; the
+    # example shown in README.md / README.zh-CN.md. base = 100*12/15 = 80;
+    # penalty = 5*2 + 1.5*1 = 11.5, integer-divided in 4× space → 11; score 69.
     local fails=(
         "ssh.password_auth_enabled|high|failed"
         "users.uid0_found|high|failed"
@@ -159,14 +132,9 @@ _write_checks() {
 # ---- get_check_stats -------------------------------------------------
 
 @test "get_check_stats: counts by severity, info overlaps" {
-    # Severity and category are orthogonal dimensions:
-    #   - low counts ALL failed low-severity checks (so the summary
-    #     table matches the body listing, which filters purely on
-    #     .severity).
-    #   - info counts info-category checks regardless of severity, as
-    #     a separate informational dimension. Score is unaffected —
-    #     calculate_score() applies its own _check_counts_in_score
-    #     filter.
+    # Severity and category are orthogonal: `low` counts ALL failed low-severity
+    # checks so the summary table matches the body listing, while `info` counts
+    # info-category checks at any severity and does not touch the score.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
         "fail2ban.service_inactive|medium|failed" \
@@ -189,10 +157,9 @@ _write_checks() {
 }
 
 @test "get_check_stats: exposes the score denominator" {
-    # scored_total is what calculate_score actually divided by. Without
-    # it a reader cannot tell "40/100 over 60 checks" from "40/100 over
-    # 3", which is the whole reason a single-module run can print 0/100
-    # on a nearly-clean host.
+    # scored_total is what calculate_score actually divided by. Without it a
+    # reader cannot tell "40/100 over 60 checks" from "40/100 over 3", which is
+    # why a single-module run can print 0/100 on a nearly-clean host.
     _write_checks \
         "ssh.password_auth_enabled|high|failed" \
         "fail2ban.service_inactive|medium|failed" \

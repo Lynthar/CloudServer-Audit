@@ -1134,9 +1134,10 @@ preflight/cloud/timezone 会自动随任何 `--include` 一起运行，无需手
 ```
 vpssec/
 ├── vpssec              # 主入口脚本
-├── run.sh              # 一行安装入口（拉 release tarball + cosign 验签）
-├── install.sh          # 安装到 /opt/vpssec（校验 manifest.sha256）
-├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；install.sh 启动时校验
+├── VERSION             # 版本号唯一来源；release.yml 拒绝与它不一致的 tag
+├── run.sh              # 一次性运行入口（拉 release tarball + cosign 验签，跑完自删）
+├── install.sh          # 安装到 /opt/vpssec（同样 cosign 验签，升级保留 state/backups）
+├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；install.sh 验签后再校验一道
 ├── core/               # 核心引擎
 │   ├── common.sh       # 公共工具（日志、i18n、校验、原子写、单例锁）
 │   ├── engine.sh       # 模块加载、audit/guide 调度、计划恢复

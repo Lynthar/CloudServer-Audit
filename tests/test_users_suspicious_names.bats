@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _is_suspicious_username (M8). Original pattern
-# list contained `.*\..*` which flagged every dotted username (e.g. the
-# firstname.lastname convention universal in LDAP/AD environments) as
-# suspicious. The dot pattern was dropped because real malicious accounts
-# almost never use dotted names anyway.
+# Regression tests for _is_suspicious_username. The pattern list must not carry
+# `.*\..*`: it flags every firstname.lastname account, the universal LDAP/AD
+# convention, and real malicious accounts almost never use dotted names.
 
 load helpers.bash
 

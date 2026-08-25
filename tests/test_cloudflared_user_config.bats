@@ -1,9 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _cloudflared_find_user_config_from_passwd. The
-# original code probed "$HOME/.cloudflared/config.yml" — under sudo
-# (audits run as root) $HOME is /root, so user-mode tunnel installs at
-# /home/<user>/.cloudflared/config.yml were never seen.
+# Regression tests for _cloudflared_find_user_config_from_passwd. Audits run as
+# root, so $HOME is /root and probing "$HOME/.cloudflared/config.yml" never sees
+# a user-mode tunnel at /home/<user>/.cloudflared/config.yml.
 
 load helpers.bash
 

@@ -1,28 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for filesystem's two fixes. Both are FIX_SAFE — guide mode applies
-# them with no prompt — and neither had a single test.
-#
-# Four defects motivated this file:
-#
-#   1. _fs_fix_umask rewrote /etc/login.defs with `sed -i`, and appended with
-#      `echo >>` when no UMASK line existed. PAM reads that file at every
-#      login, so an interrupted rewrite or a partial append is a login-time
-#      failure — on a fix nobody was asked to confirm. It is now staged,
-#      validated and written with write_file_atomic.
-#   2. It printed print_ok unconditionally after the edit, with no
-#      postcondition. `sed` exits 0 having matched nothing.
-#   3. _fs_check_umask took every ^UMASK line, so a login.defs with two of
-#      them yielded "077 022", which normalises to a nonsense mask and made
-#      the audit report a weak umask on a strict host. Verified on Debian 12
-#      with pam_umask enabled: the FIRST line is the one a session gets.
-#   4. _fs_fix_sensitive_perms backed a file up before chmod'ing it with the
-#      comment "so the prior mode can be restored on rollback" — which
-#      backup_file could not deliver until .vpssec_modes existed. See
-#      test_backup_mode_restore.bats; the end-to-end half is pinned here.
-#
-# The paths all of this needs were function-local literals, which is why none
-# of it was reachable from a test before.
+# Coverage for filesystem's two fixes. Both are FIX_SAFE, so guide mode applies
+# them with no prompt: /etc/login.defs is written atomically and post-checked,
+# and the perms fix relies on .vpssec_modes to give a rollback the prior mode.
 
 load helpers.bash
 
@@ -146,14 +125,8 @@ _pam_umask_enabled() {
 
 @test "umask fix: a write the atomic writer refuses is reported as failure" {
     # The lever is the final rename, not a '..' path: backup_file validates the
-    # same path and now aborts the fix before the write, so a rejected path
-    # tests the backup guard rather than this one. The live file must survive.
-    #
-    # The assertion is on the MESSAGE, not just the status: the postcondition
-    # further down also returns 1 here (it re-reads the unchanged file and sees
-    # 022), so status alone cannot tell "the write was refused" from "the write
-    # silently failed and the postcondition caught it" — and mutation testing
-    # showed the status-only version passing with the write check deleted.
+    # same path and aborts the fix before the write. The assertion is on the
+    # MESSAGE — the postcondition also returns 1 here, so status cannot tell them apart.
     VPSSEC_QUIET_SCAN=0
     _login_defs "$(printf 'UMASK\t\t022')"
     _pam_umask_enabled
@@ -167,10 +140,9 @@ _pam_umask_enabled() {
 }
 
 @test "umask fix: staged content without a UMASK 027 line is refused" {
-    # sed is stubbed because that is the only way to reach this guard: given
-    # the ^UMASK gate above it, real sed always produces the line. The guard is
-    # still worth having — it is what stops a future edit to the staging step
-    # from writing something arbitrary into a file PAM reads.
+    # sed is stubbed because that is the only way to reach this guard: past the
+    # ^UMASK gate real sed always produces the line. The guard stops a future
+    # edit to the staging step from writing something arbitrary into a PAM file.
     VPSSEC_QUIET_SCAN=0
     _login_defs "$(printf 'UMASK\t\t022')"
     _pam_umask_enabled
@@ -183,10 +155,9 @@ _pam_umask_enabled() {
 }
 
 @test "umask fix: a write the audit still reads as weak is not reported as done" {
-    # The postcondition, and the reason it asks the audit's own question rather
-    # than checking that the write happened: here the file DOES contain
-    # UMASK 027, but it is the second line, and the first is what a session
-    # gets. Verified on Debian 12 — first occurrence wins.
+    # The postcondition asks the audit's own question rather than checking that
+    # the write happened: the file DOES contain UMASK 027, but as the second
+    # line, and the first occurrence is what a session gets.
     VPSSEC_QUIET_SCAN=0
     _login_defs "$(printf 'UMASK\t\t022')"
     _pam_umask_enabled
@@ -362,10 +333,9 @@ _make() {
 }
 
 @test "perms fix: the pre-fix mode is recorded so rollback can restore it" {
-    # The whole point of the backup here is the MODE, not the content — the
-    # fix does not change a byte. Without .vpssec_modes the rollback returned
-    # every one of these files at 600, which on /etc/passwd breaks name
-    # lookups for every non-root process.
+    # The point of the backup here is the MODE, not the content — the fix does
+    # not change a byte. Without .vpssec_modes a rollback returns every one of
+    # these files at 600, and /etc/passwd at 600 breaks non-root name lookups.
     _make passwd 666
     _sensitive "passwd:644"
     _vpssec_begin_backup_session
@@ -462,12 +432,9 @@ _make() {
     grep -q '022' "$FS_LOGIN_DEFS"
 }
 
-# ==============================================================================
 # Production expectations for the cron/at family. crontab(1) is setgid crontab
 # and at(1) runs as daemon: both read these files through group or world bits,
-# so an expectation that strips world-read from a root:root file locks every
-# non-root user out of the tool (measured on Debian 12).
-# ==============================================================================
+# so stripping world-read from a root:root file locks non-root users out.
 
 @test "perms table: cron/at family keeps the read bits its setgid readers need" {
     [ "${FS_SENSITIVE_FILES[/etc/at.deny]}" = "640" ]

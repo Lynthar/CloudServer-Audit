@@ -35,11 +35,9 @@ _distro_family_from() {
     echo "unknown"
 }
 
-# Package manager by tool presence, not by mapping from family: family
-# mapping is only correct for downstreams we enumerated, presence is also
-# correct for the ones we didn't. Corollary: is_supported_os reduces to
-# "a distro we have a backend for", so adding one means adding a backend
-# here rather than another case arm elsewhere.
+# Package manager by tool presence, not by mapping from family: presence is
+# also correct for downstreams nobody enumerated. So adding a distro means
+# adding a backend here, not another case arm elsewhere.
 _distro_pkg_mgr() {
     if   command -v apt-get >/dev/null 2>&1; then echo "apt"
     elif command -v dnf     >/dev/null 2>&1; then echo "dnf"

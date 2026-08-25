@@ -1,31 +1,7 @@
 #!/usr/bin/env bats
-#
-# The cloud agent table must not print Chinese on an English report.
-#
-# KNOWN_CLOUD_AGENTS used to carry display text in its vendor and description
-# columns, and half of it was Chinese ("阿里云", "安骑士/云安全中心"). Those
-# strings were concatenated straight into the cloud.agents_found title and
-# description, so `--lang=en_US` on an Alibaba host produced a check that read
-#
-#     Cloud Monitoring Agents Found: 3 | AliYunDun (阿里云), ...
-#
-# i18n key parity could never catch this: the keys were all present and in
-# sync. The text simply was not going through i18n at all. The same held for
-# _get_provider_name, which hard-coded "阿里云 (Alibaba Cloud)" into the
-# provider_detected title.
-#
-# Both columns are stable machine keys now. The tests below pin the two things
-# that can regress:
-#
-#   1. every key the table names exists in BOTH language files — a new agent
-#      row with no translation fails here, and the failure lists the rows
-#   2. the emitted check follows --lang, asserted on the check in checks.json
-#      rather than on which branch ran
-#
-# The vendor column is load-bearing beyond display: it is the machine-side
-# identity of the vendor. That is why _find_known_agents is pinned to emit
-# keys, not rendered names — resolving early would put a translated string
-# where later code expects an identifier.
+# The cloud agent table must not print Chinese on an English report: both its
+# vendor and description columns hold machine keys, and _find_known_agents emits
+# those keys, because later code expects an identifier and not a rendered name.
 
 load helpers.bash
 
@@ -103,10 +79,9 @@ _provider_ids() {
     while read -r id; do
         [[ -z "$id" || "$id" == "unknown" ]] && continue
         rendered=$(_get_provider_name "$id")
-        # Two shapes of "nobody translated this". The catch-all arm of
-        # _get_provider_name echoes the id back; a key that resolves to
-        # nothing comes out of i18n as the key itself, which is not equal to
-        # the id and would otherwise read as a successful translation.
+    # Two shapes of "nobody translated this": the catch-all arm of
+    # _get_provider_name echoes the id back, while an unresolved key comes out of
+    # i18n as the key itself, which would otherwise read as a translation.
         if [[ "$rendered" == "$id" || "$rendered" == cloud.* ]]; then
             missing+="${id} -> ${rendered}"$'\n'
         fi
@@ -119,10 +94,9 @@ _provider_ids() {
 }
 
 @test "cloud i18n: no vendor or agent key is left over from a deleted row" {
-    # The other direction. Without it the guard is one-way: dropping an agent
-    # row leaves its strings behind in both language files, where they read as
-    # supported vendors nobody detects any more. Same reasoning as the
-    # two-way check in test_fix_id_classification.bats.
+    # The other direction. Without it the guard is one-way: dropping an agent row
+    # leaves its strings in both language files, where they read as supported
+    # vendors nobody detects any more.
     local used="" entry vendor_key desc_key key suffix orphans=""
     for entry in "${KNOWN_CLOUD_AGENTS[@]}"; do
         IFS='|' read -r _ _ vendor_key desc_key _ <<< "$entry"
@@ -173,10 +147,8 @@ SH
     _vpssec_stub systemctl 1
     _vpssec_stub ps 0 "bash"
     # Pre-seed the detection cache so cloud_audit neither reads DMI nor probes
-    # 169.254.169.254. The pair is deliberately inconsistent — alibaba is a
-    # tier1 provider — because "unknown" is what makes _cloud_audit_imds
-    # return before its first curl. Nothing here reads the tier for anything
-    # else; do not "correct" it to tier1 without stubbing curl.
+    # 169.254.169.254. The pair is deliberately inconsistent: "unknown" is what
+    # makes _cloud_audit_imds return before its first curl. Do not "correct" it.
     export VPSSEC_CLOUD_PROVIDER=alibaba
     export VPSSEC_CLOUD_TIER=unknown
 }

@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the help dispatcher (core/help.sh).
-#
-# Help is read-only and runs in pre-init context (no root, no lock,
-# no module loading), so we can call vpssec_help_dispatch directly
-# after sourcing common + security_levels + engine + help.
+# Tests for the help dispatcher (core/help.sh). Help is read-only and runs in
+# pre-init context — no root, no lock, no module loading — so vpssec_help_dispatch
+# can be called directly after sourcing common + security_levels + engine + help.
 
 load helpers
 
@@ -19,17 +16,9 @@ setup() {
 # ---- _help_collect_fixes: per-module bucketing -----------------------
 
 @test "_help_collect_fixes: ssh populates all four buckets" {
-    # ssh is the one module shipping fixes in every safety class, so it is
-    # what proves the bucketing works rather than one bucket catching
-    # everything.
-    #
-    # The exact counts (once pinned here as 5/1/2/4) are deliberately NOT
-    # asserted. They are a snapshot of security_levels.sh, so adding any ssh
-    # fix turned this red for a reason that had nothing to do with a defect,
-    # and the "fix" was to retype the number — which is not a test. Deriving
-    # them from the maps instead would be worse: _help_collect_fixes IS a
-    # prefix filter over those maps, so the expectation would re-implement
-    # the function and pass no matter what it did.
+    # ssh is the one module shipping fixes in every safety class, so it proves the
+    # bucketing. The exact counts are deliberately NOT asserted: they are a
+    # snapshot, and deriving them from the maps would re-implement the function.
     _help_collect_fixes "ssh"
     [ "$(count_lines "${_help_fix_table[safe]}")"        -gt 0 ]
     [ "$(count_lines "${_help_fix_table[confirm]}")"     -gt 0 ]
@@ -52,12 +41,9 @@ setup() {
 }
 
 @test "_help_collect_fixes: the module filter is anchored at the dot" {
-    # `cloud` and `cloudflared` are a real prefix pair in this repo:
-    # cloudflared ships 2 FIX_SAFE and 3 FIX_ALERT_ONLY entries, cloud ships
-    # none and two respectively. An unanchored `[[ $id == $module* ]]` would
-    # therefore print cloudflared's fixes on `vpssec help cloud` — and no
-    # other test in this suite could notice, because ssh has no prefix
-    # sibling to leak from.
+    # `cloud` and `cloudflared` are a real prefix pair here, so an unanchored
+    # `[[ $id == $module* ]]` would print cloudflared's fixes on `help cloud`.
+    # No other test notices, because ssh has no prefix sibling to leak from.
     _help_collect_fixes "cloud"
     local all
     all="${_help_fix_table[safe]}${_help_fix_table[confirm]}"
@@ -96,9 +82,8 @@ setup() {
 }
 
 @test "_help_collect_fixes: malware module is all alert_only" {
-    # CLAUDE.md pins the contract: every malware finding is alert-only.
-    # Re-asserting from the help angle catches accidental moves of a
-    # malware fix into FIX_SAFE/CONFIRM/RISKY.
+    # Every malware finding is alert-only. Re-asserting from the help angle
+    # catches an accidental move of a malware fix into FIX_SAFE/CONFIRM/RISKY.
     _help_collect_fixes "malware"
     [ "$(count_lines "${_help_fix_table[safe]}")"     = "0" ]
     [ "$(count_lines "${_help_fix_table[confirm]}")"  = "0" ]
@@ -107,10 +92,8 @@ setup() {
 }
 
 @test "_help_collect_fixes: returns 0 even when last bucket is empty" {
-    # Regression: the original implementation ended with a for-loop
-    # whose final iteration was `[[ X ]] && y` — when X was false,
-    # the function returned 1 and set -e killed the caller mid-render.
-    # Pin success-return for any module input.
+    # A for-loop whose final iteration is `[[ X ]] && y` returns 1 when X is
+    # false, and set -e then kills the caller mid-render. Pin success-return.
     _help_collect_fixes "ssh"
     [ "$?" -eq 0 ]
     _help_collect_fixes "nonexistent_module_xyz"

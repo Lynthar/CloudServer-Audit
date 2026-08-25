@@ -1,15 +1,20 @@
 name: cosign pin freshness
 
-# Weekly: is run.sh's pinned cosign still the current sigstore stable?
-# If a newer release exists, this opens a PR that updates the version
-# string + the per-arch SHA256 hashes baked into run.sh. The PR is the
-# human review step — nothing auto-merges.
+# Weekly: is the pinned cosign still the current sigstore stable? If a
+# newer release exists, this opens a PR that updates the version string +
+# the per-arch SHA256 hashes baked into BOTH run.sh and install.sh. The PR
+# is the human review step — nothing auto-merges.
 #
-# Why a bot at all: the pinned cosign is what Debian users install in
-# the apt-fallback path. Letting it drift means users eventually get a
+# Why a bot at all: the pinned cosign is what users install in the
+# package-manager-fallback path. Letting it drift means users eventually get a
 # cosign too old to verify against rotated Fulcio roots. Tracking
 # sigstore releases manually is exactly the kind of thing that gets
 # forgotten until it breaks.
+#
+# The two files carry the same five pins because each must stand alone as a
+# `curl | bash` entry point. That duplication is only safe while this job
+# rewrites both and hard-fails when either stops matching — if you add a third
+# consumer of these pins, add it here in the same commit.
 
 on:
   schedule:
@@ -33,6 +38,13 @@ jobs:
         run: |
           set -euo pipefail
           current=$(grep -oP 'COSIGN_PIN_VERSION="\K[^"]+' run.sh)
+          # The two entry points must already agree before a bump. If they have
+          # drifted some other way, rewriting both would silently paper over it.
+          current_install=$(grep -oP 'COSIGN_PIN_VERSION="\K[^"]+' install.sh)
+          if [[ "$current" != "$current_install" ]]; then
+            echo "::error::run.sh pins cosign v$current but install.sh pins v$current_install. Reconcile them before this job can bump either."
+            exit 1
+          fi
           latest=$(curl -fsSL https://api.github.com/repos/sigstore/cosign/releases/latest \
             | jq -r '.tag_name | sub("^v"; "")')
           echo "current=$current" >> "$GITHUB_OUTPUT"
@@ -72,7 +84,7 @@ jobs:
             echo "bin ${arch}: ${bh}"
           done
 
-      - name: Rewrite pin in run.sh
+      - name: Rewrite pin in run.sh and install.sh
         if: steps.detect.outputs.skip != 'true'
         run: |
           set -euo pipefail
@@ -83,19 +95,23 @@ jobs:
           bin_arm64="${{ steps.hashes.outputs.bin_arm64 }}"
           # Anchor to the start of the line so we never accidentally
           # match a similar-looking string elsewhere (e.g. in comments).
-          sed -i -E "s|^(COSIGN_PIN_VERSION=)\".*\"|\\1\"${v}\"|"                  run.sh
-          sed -i -E "s|^(COSIGN_PIN_SHA256_AMD64=)\".*\"|\\1\"${amd64}\"|"           run.sh
-          sed -i -E "s|^(COSIGN_PIN_SHA256_ARM64=)\".*\"|\\1\"${arm64}\"|"           run.sh
-          sed -i -E "s|^(COSIGN_PIN_SHA256_BIN_AMD64=)\".*\"|\\1\"${bin_amd64}\"|"   run.sh
-          sed -i -E "s|^(COSIGN_PIN_SHA256_BIN_ARM64=)\".*\"|\\1\"${bin_arm64}\"|"   run.sh
+          for f in run.sh install.sh; do
+            sed -i -E "s|^(COSIGN_PIN_VERSION=)\".*\"|\\1\"${v}\"|"                  "$f"
+            sed -i -E "s|^(COSIGN_PIN_SHA256_AMD64=)\".*\"|\\1\"${amd64}\"|"           "$f"
+            sed -i -E "s|^(COSIGN_PIN_SHA256_ARM64=)\".*\"|\\1\"${arm64}\"|"           "$f"
+            sed -i -E "s|^(COSIGN_PIN_SHA256_BIN_AMD64=)\".*\"|\\1\"${bin_amd64}\"|"   "$f"
+            sed -i -E "s|^(COSIGN_PIN_SHA256_BIN_ARM64=)\".*\"|\\1\"${bin_arm64}\"|"   "$f"
+          done
           # Hard-fail if any line wasn't actually rewritten (e.g. pin names
-          # changed in run.sh and the sed regex no longer matches). grep -F
+          # changed in a file and the sed regex no longer matches). grep -F
           # + set -e turns that into a workflow failure.
-          grep -F "COSIGN_PIN_VERSION=\"${v}\""                  run.sh
-          grep -F "COSIGN_PIN_SHA256_AMD64=\"${amd64}\""           run.sh
-          grep -F "COSIGN_PIN_SHA256_ARM64=\"${arm64}\""           run.sh
-          grep -F "COSIGN_PIN_SHA256_BIN_AMD64=\"${bin_amd64}\""   run.sh
-          grep -F "COSIGN_PIN_SHA256_BIN_ARM64=\"${bin_arm64}\""   run.sh
+          for f in run.sh install.sh; do
+            grep -F "COSIGN_PIN_VERSION=\"${v}\""                  "$f"
+            grep -F "COSIGN_PIN_SHA256_AMD64=\"${amd64}\""           "$f"
+            grep -F "COSIGN_PIN_SHA256_ARM64=\"${arm64}\""           "$f"
+            grep -F "COSIGN_PIN_SHA256_BIN_AMD64=\"${bin_amd64}\""   "$f"
+            grep -F "COSIGN_PIN_SHA256_BIN_ARM64=\"${bin_arm64}\""   "$f"
+          done
 
       - name: Push branch and open or update PR
         if: steps.detect.outputs.skip != 'true'
@@ -110,8 +126,8 @@ jobs:
           git config user.name  "cosign-bump-bot"
           git config user.email "noreply@github.com"
           git checkout -b "$branch"
-          git add run.sh
-          git commit -m "chore(run.sh): bump pinned cosign to v${v}"
+          git add run.sh install.sh
+          git commit -m "chore: bump pinned cosign to v${v}"
 
           # --force-with-lease so a re-run for the same target version
           # (e.g. manual dispatch after a sigstore re-upload) updates
@@ -147,7 +163,7 @@ jobs:
           # lost — say so, and still exit non-zero so the red run stays the
           # notification.
           if ! gh pr create \
-              --title "chore(run.sh): bump pinned cosign to v${v}" \
+              --title "chore: bump pinned cosign to v${v}" \
               --body "$(cat <<EOF
           Auto-bump: cosign \`v${current}\` → \`v${v}\`.
 
@@ -159,7 +175,7 @@ jobs:
             curl -fsSL https://github.com/sigstore/cosign/releases/download/v${v}/cosign_checksums.txt \\
               | grep -E 'cosign_${v}_(amd64|arm64)\.deb|cosign-linux-(amd64|arm64)$'
             \`\`\`
-          - [ ] Smoke-test \`run.sh\` on a Debian VM (.deb path) and a RHEL or Arch VM (static-binary path).
+          - [ ] Smoke-test both \`run.sh\` and \`install.sh\` on a Debian VM (.deb path) and a RHEL or Arch VM (static-binary path).
 
           Generated by \`.github/workflows/cosign-bump.yml\`.
           EOF

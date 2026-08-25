@@ -1,28 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for the kernel module's fix functions — the six that write
-# sysctl drop-ins, limits.conf and the systemd-coredump drop-in.
-#
-# Three things are worth covering here, in descending order of what a
-# defect would cost the user:
-#
-#   1. The RA/SLAAC guard. Setting net.ipv6.conf.*.accept_ra=0 on a host
-#      that gets its IPv6 default route from Router Advertisements drops
-#      that route and the global address — on an IPv6-only VPS that cuts
-#      the live session before a rollback can run. The guard has to hold
-#      on BOTH paths that can apply the parameter: the dedicated
-#      harden_ipv6 fix and the generic harden_network one. It previously
-#      lived only in the former, and harden_network reintroduced the
-#      lockout it exists to prevent.
-#   2. The drop-in writer. It is replayed on every boot, rewrites itself
-#      in full on each parameter, and is the file a rollback restores.
-#   3. That a fix reports what it achieved. _kernel_fix_core_dump used to
-#      print "core dumps properly restricted" and return 0 unconditionally
-#      — including on hosts where it had written nothing at all.
-#
-# The sysctl stub below keeps a real key/value store rather than answering
-# a constant, so a test can cover write-then-read-back the way the audit
-# does after a fix.
+# Coverage for the kernel fixes that write sysctl drop-ins, limits.conf and the
+# systemd-coredump drop-in. The RA/SLAAC guard on accept_ra=0 must hold on BOTH
+# paths — harden_ipv6 and harden_network — or an IPv6-only VPS loses its route.
 
 load helpers.bash
 
@@ -339,10 +318,9 @@ SH
 }
 
 @test "core dump: the systemd drop-in is written when only coredump.conf exists" {
-    # Debian and Ubuntu ship /etc/systemd/coredump.conf and no
-    # coredump.conf.d. The fix used to require the directory, so on exactly
-    # those hosts it wrote nothing, reported success, and the audit — which
-    # flags on either path — kept reporting core dumps as unrestricted.
+    # Debian and Ubuntu ship /etc/systemd/coredump.conf and no coredump.conf.d,
+    # so a fix that requires the directory writes nothing there while the audit,
+    # which flags on either path, keeps reporting core dumps as unrestricted.
     printf '[Coredump]\n' > "$KERNEL_COREDUMP_CONF"
     _sysctl_seed "fs.suid_dumpable" "1"
 

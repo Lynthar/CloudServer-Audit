@@ -1,28 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for the backup template generator.
-#
-# The defect: _backup_fix_generate_templates called three sub-generators and
-# discarded every one of their statuses, then `return 0`. Each sub-generator
-# was in turn a bare `cat >` whose status it also discarded. errexit is off
-# inside a fix (execute_fix invokes it in a condition context, and bash's
-# exemption reaches into the function body), so a templates tree that could
-# not be written still ended in "Backup templates generated in: ..." and a
-# fix the engine recorded as complete via state_mark_fix_complete.
-#
-# This module writes only into vpssec's own templates tree — never /etc — and
-# calls neither backup_file nor write_file_atomic. That is deliberate, and the
-# last two tests pin it: the artifacts must stay inert, and nothing here may
-# end up in a rollback manifest.
-#
-# Note what this suite deliberately does NOT assert. backup.generate_templates
-# returns 0 while the findings it is attached to (backup.no_tools,
-# backup.no_schedule) both stay red — installing restic and wiring up the timer
-# are manual steps. That is the convention shared by the whole FIX_SAFE
-# "template generation only" group (docker.generate_proxy_template,
-# cloudflared.generate_config), and webapp's manual-step fixes take the
-# opposite one (return 1). Reconciling the two is a design question recorded
-# in the review archive, not something to settle inside one suite.
+# Regression tests for the backup template generator. It writes only into
+# vpssec's own templates tree — never /etc — and calls neither backup_file nor
+# write_file_atomic; the last two tests pin that the artifacts stay inert.
 
 load helpers.bash
 
@@ -183,15 +162,8 @@ setup() {
 
 @test "critical-paths check: the report does not claim those paths are backed up" {
     # This check is hardcoded `passed` and only asks which of five directories
-    # exist on disk. It never reads the backup tool's configuration, its
-    # exclude list, or whether a single snapshot exists — so worded as
-    # "critical paths identified for backup" next to a green tick it read as
-    # "your backup covers these", which the operator can disprove by pointing
-    # at their own excludes. The wording now says what was measured, and this
-    # pins the disclaimer against a later "cleanup".
-    #
-    # i18n parity only checks that a key exists and bats only checks which
-    # branch runs, so this family has no other automated guard.
+    # exist; it never reads the backup tool's config, excludes or snapshots. The
+    # wording must keep saying what was measured, or the green tick overclaims.
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/core/state.sh"
     state_init

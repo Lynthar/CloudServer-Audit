@@ -9,19 +9,42 @@
 
 ## 快速开始
 
-一行命令安装（下载执行；若选择保存，报告会复制到 `/tmp/vpssec-report-*`）：
+**一次性运行，不安装任何东西。** 把最新发布版下载到临时目录，验签、运行，退出时自删。
+若选择保存，报告会复制到 `/tmp/vpssec-report-*`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
-或者克隆仓库手动运行（推荐重复使用）：
+跑完机器上不留任何东西，**`backups/` 也不留**。因此**这条路径拒绝 `guide` 与 `rollback`**（退出码 2，
+错误消息里直接给出安装命令）：修复写入的备份就在这个退出即删的目录里，从这里加固等于改了 `/etc`
+又在同一条命令里销毁了撤销它的唯一凭据。审计是只读的，不受影响。
+
+**安装到本地重复使用。** 同一个发布版、同一道验签，但装进 `/opt/vpssec` 并在 `PATH` 里留下
+`vpssec` 命令，升级时保留 `state/` 与 `backups/`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo bash
+
+sudo vpssec audit          # 任何目录下都能跑
+sudo vpssec status         # 上次运行、最新备份，以及是否有更新版本
+```
+
+升级就是重跑同一条命令——`state/` 与 `backups/` 会先移走再放回，重装不会带走 `vpssec rollback`
+所依赖的数据。卸载用 `sudo /opt/vpssec/uninstall.sh`（删除状态与备份前会询问，默认保留）。
+
+两条入口装的都是**最新发布版**，都不是 `main` 分支。用 `VPSSEC_VERSION` 钉具体版本、
+用 `INSTALL_DIR` 换安装位置——见下方环境变量说明，注意它们必须写在管道的 `bash` 那一侧。
+
+**或者从克隆的仓库运行**（开发用，或想先读代码再运行）：
 
 ```bash
 git clone https://github.com/Lynthar/CloudServer-Audit.git
 cd CloudServer-Audit
 sudo ./vpssec audit
 ```
+
+克隆跟的是 `main`，它领先于最新发布版且没有签名。生产主机请用发布版。
 
 交互式审计结束后会提示是否保存；选择保存才会写入 `reports/summary.{md,json,sarif}`。`--json-only` 同样会重写这三个文件，只是仅把 JSON 打印到标准输出——这样 CI 里发布 Markdown 或消费 SARIF 的环节不会读到上一轮跑剩下的旧文件。
 
@@ -31,33 +54,38 @@ sudo ./vpssec audit
 
 **引导式加固 + 回滚：** 仅 Debian / Ubuntu
 
-一行命令下载最新 release tarball，**用 cosign keyless（sigstore + GitHub
-Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
+`run.sh` 与 `install.sh` 都会下载 release tarball，**用 cosign keyless（sigstore
++ GitHub Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
 workflow 在**所装 tag** 上的那次签名，被调包或换标签的 release 资产过不了
 验证。但保证的边界要说清：它验证的是"资产出自本仓库的发布流水线"，防不住
 仓库本身被攻破——拿到仓库写权限的人可以走正规流水线签出新版本，也可以直接
-改 `main` 上的这个引导脚本。想要更强的锚点，请从你已经审计过的 release
-里下载 `run.sh`，而不是从 `main` 取。
+改 `main` 上的这两个引导脚本。想要更强的锚点，请从你已经审计过的 release
+里下载引导脚本，而不是从 `main` 取。
 Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；其它系统从 sigstore GitHub
 release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 `.deb`
 （`dpkg`），RHEL/Arch 等无 dpkg 的系统装静态 `cosign` 二进制到
 `/usr/local/bin`。fallback 路径把 cosign 的引导信任从 distro
-仓库切到 github.com —— 与下载 `run.sh` 本身同源，不引入新的攻击面。完全
+仓库切到 github.com —— 与下载引导脚本本身同源，不引入新的攻击面。完全
 跳过验证用 `VPSSEC_NO_VERIFY=1`（不推荐）。
 
-```bash
-# 固定版本。变量必须设在管道右侧的 bash 上——写成 `VPSSEC_VERSION=… curl … | sudo bash`
-# 只会把变量传给 curl，固定版本根本不会生效。
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.2.0 bash
+下面每个变量都必须设在管道的 **bash** 那一侧：写反了——`VPSSEC_VERSION=… curl … | sudo bash`
+——变量只传给了 `curl`，脚本根本看不到。
 
-# 跳过验证（不推荐）
+```bash
+# 固定版本（v1.3.0 与 1.3.0 两种写法都收）
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.3.0 bash
+
+# 装到 /opt/vpssec 以外的位置
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo env INSTALL_DIR=/opt/vpssec-staging bash
+
+# 跳过验证（不推荐）。两条入口都适用。
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_NO_VERIFY=1 bash
 ```
 
 手动验证某个 release：
 
 ```bash
-TAG=v1.2.0
+TAG=v1.3.0
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \
@@ -198,7 +226,7 @@ score   = clamp(0, 100, base − penalty)
 - 单元测试：`bats tests/`（800+ 用例，具体数以 CI 为准）
 - 变异测试有两套工具、问两个问题：`bash tools/mutate-all.sh` 往模块源码里植入缺陷，问配对的 bats 套件能不能发现（哪里都能跑）；`tests/mutation/` 往**真实 `/etc`** 里植入错误配置，问审计能不能发现——后者仅在可丢弃的 VM 上跑
 - commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`
-- 发布版本：在 main 打 `vX.Y.Z` tag 并 push —— `release.yml` 会用 cosign keyless 构建+签名 tarball 并创建 GitHub release
+- 发布版本：先改 `VERSION` 并提交，再打对应的 `vX.Y.Z` tag 并 push —— `release.yml` 会拒绝与 `VERSION` 不一致的 tag，通过后用 cosign keyless 构建+签名 tarball 并创建 GitHub release
 
 ## 许可证
 

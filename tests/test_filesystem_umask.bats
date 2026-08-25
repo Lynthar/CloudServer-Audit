@@ -1,15 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for the umask audit helpers (M14 + M15).
-#
-# M15: _fs_audit_umask used to compare the literal UMASK in login.defs
-#      against the recommended values, but on Debian (USERGROUPS_ENAB=yes
-#      by default) pam_umask rewrites group bits to match owner bits at
-#      session start — so configured 027 becomes effective 007. The audit
-#      now reports the *effective* value.
-# M14: pam_umask presence in /etc/pam.d/common-session* gates whether the
-#      login.defs UMASK is even applied at session start. The audit now
-#      surfaces this as info.
+# Regression tests for the umask audit helpers. The audit reports the EFFECTIVE
+# umask, not the literal login.defs UMASK: with USERGROUPS_ENAB=yes pam_umask can
+# rewrite group bits at session start, and its presence gates whether UMASK applies.
 
 load helpers.bash
 
@@ -19,10 +11,8 @@ setup() {
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/filesystem.sh"
 
-    # Redirect the paths this family reads. Until these became module
-    # variables the two tests at the bottom of this file could not run at all:
-    # one skipped on every host that has /etc/login.defs (i.e. all of CI), and
-    # the other could only assert that a function existed.
+    # Redirect the paths this family reads. Without these module variables the
+    # tests below cannot run on any host that already has /etc/login.defs.
     etc=$(_vpssec_fake_etc)
     FS_LOGIN_DEFS="$etc/login.defs"
     FS_PROFILE="$etc/profile"
@@ -42,8 +32,8 @@ setup() {
 }
 
 @test "umask: USERGROUPS_ENAB=yes rewrites 027 → 0007 (regression)" {
-    # The exact M15 case: configured 027, effective is 007 because
-    # pam_umask copies owner bits (0) to group bits.
+    # configured 027, effective 007 because pam_umask copies owner bits (0) to
+    # group bits.
     run _fs_compute_effective_umask 027 yes
     [ "$status" -eq 0 ]
     [ "$output" = "0007" ]
@@ -92,10 +82,8 @@ setup() {
 # ---------- _fs_get_usergroups_enab ----------
 
 @test "usergroups: missing login.defs → defaults to yes" {
-    # This used to skip on every host that HAS /etc/login.defs, which is every
-    # Linux host including CI — so the default-when-absent contract was never
-    # actually exercised. With FS_LOGIN_DEFS pointed at a scratch path it runs
-    # everywhere.
+    # FS_LOGIN_DEFS must point at a scratch path: on a host that HAS
+    # /etc/login.defs the default-when-absent contract is never exercised.
     [ ! -f "$FS_LOGIN_DEFS" ]
 
     run _fs_get_usergroups_enab
@@ -154,15 +142,9 @@ setup() {
     [ "$status" -eq 1 ]
 }
 
-# ---------- what _fs_audit_umask REPORTS ----------
-#
-# The model that turns configured 027 into effective 007 does not reproduce on
-# Debian 12: with pam_umask enabled, USERGROUPS_ENAB=yes and a private-group
-# user, configured 077 gave a session umask of 0077. Whether that holds for a
-# full getty/sshd login was not established, so the model stays and the
-# SEVERITY BRANCH is untouched — these tests pin that, because changing it
-# would move every host's score. What changed is the wording: the rewrite is
-# reported as a possibility, and only when pam_umask is in the session stack.
+# What _fs_audit_umask REPORTS. The severity branch is pinned here because
+# changing it moves every host's score; only the wording may move, and the
+# rewrite is reported as a possibility only when pam_umask is in the stack.
 
 # The JSON key is `desc`, not `description` — see create_check_json.
 _emitted_ids()  { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
@@ -175,10 +157,9 @@ _emitted_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSE
     printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
 
     _fs_audit_umask
-    # The ids are captured first: `_vpssec_refute _emitted_ids | grep …` would
-    # bind the pipe to the refutation, so _vpssec_refute would negate
-    # _emitted_ids (which always succeeds) and the grep result would be
-    # discarded — an assertion that asserts nothing.
+    # The ids are captured first: `_vpssec_refute _emitted_ids | grep …` binds the
+    # pipe to the refutation, so _vpssec_refute negates _emitted_ids (which always
+    # succeeds) and the grep result is discarded — an assertion asserting nothing.
     local ids
     ids=$(_emitted_ids)
     grep -qx 'filesystem.umask_default' <<<"$ids"
@@ -243,11 +224,9 @@ _emitted_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSE
 }
 
 @test "audit umask: USERGROUPS_ENAB=no reports no rewrite at all" {
-    # The regression this uncovered: `configured` is what the file says (027)
-    # and `effective` is always four digits (0027), so comparing them raw
-    # differed for every 3-digit value and the qualifier was emitted even here
-    # — the old text read "effective=0027 (USERGROUPS_ENAB=no rewrites group
-    # bits)", which contradicts itself.
+    # `configured` is what the file says (027) while `effective` is always four
+    # digits (0027), so comparing them raw differs for every 3-digit value and
+    # emits the rewrite qualifier even where no rewrite can happen.
     printf 'UMASK\t\t027\nUSERGROUPS_ENAB\tno\n' > "$FS_LOGIN_DEFS"
     printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
 
@@ -256,17 +235,9 @@ _emitted_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSE
 }
 
 @test "audit umask: a permissive value still lands in the scored branch" {
-    # umask_weak is the ONLY one of the three umask checks in a scored
-    # category (`recommended`; umask_ok and umask_default are `info`), so it is
-    # the branch any "this change moves no score" claim rests on. Nothing above
-    # reached it, and a mutation that widened umask_default to swallow
-    # everything survived until this test existed.
-    #
-    # 072 with USERGROUPS_ENAB=no is deliberate: it is one of the six values
-    # (0b2 with b not in {0,2}) where the rewrite model and the measured
-    # behaviour would classify differently, so pinning it with the rewrite
-    # switched off keeps the assertion stable whichever way that question is
-    # settled later.
+    # umask_weak is the ONLY one of the three umask checks in a scored category
+    # (umask_ok and umask_default are `info`), so it is the branch any "this moves
+    # no score" claim rests on. 072 with USERGROUPS_ENAB=no keeps the rewrite off.
     printf 'UMASK\t\t072\nUSERGROUPS_ENAB\tno\n' > "$FS_LOGIN_DEFS"
     printf 'session\toptional\tpam_umask.so\n' > "${FS_PAM_SESSION_FILES[0]}"
 

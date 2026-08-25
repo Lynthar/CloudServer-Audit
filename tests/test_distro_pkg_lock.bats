@@ -1,21 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the package-manager lock predicate in core/distro.sh.
-#
-# The defect: the apt branch was three bare `lsof` calls ORed together. On a
-# host without lsof each exits 127, the || chain yields 1, and the single
-# caller (_update_audit_apt_lock) read that as "not locked" and emitted
-# `update.apt_available` — status passed, category **required**, i.e. scored.
-# So any host missing lsof was handed a scored pass for a question nobody had
-# asked, and vpssec's own Debian verification container is such a host: that
-# green line was in every smoke run this project has ever taken.
-#
-# The repair is two-part and both parts are pinned below:
-#   1. /proc/locks became the primary source, which needs no package at all,
-#      so the answer is real on a bare host rather than merely honest.
-#   2. pkg_manager_locked gained a third return, 2 = could not determine, and
-#      the audit emits an unscored info finding for it. "I could not tell"
-#      must not be spelled the same as "no".
+# Tests for the package-manager lock predicate in core/distro.sh. /proc/locks is
+# the primary source, so the answer is real on a host without lsof; and
+# pkg_manager_locked returns 2 for "could not determine", never the same as "no".
 
 load helpers.bash
 
@@ -36,33 +22,17 @@ teardown() {
 }
 
 # Hold an flock on $1 from a LIVE process, and block until it really is held.
-#
-# `exec 9>f; flock -n 9` looks equivalent and is not. That idiom does take
-# the lock — a second flock is refused — but the lock never appears in
-# /proc/locks, because the kernel omits entries whose owning pid it cannot
-# resolve in the READER's pid namespace, and the `flock` process that took
-# it has already exited. Measured in the verification container, not assumed:
-# the first draft of this suite used that idiom and three tests failed
-# against correct production code.
-#
-# A live holder is also the case that matters: apt and dpkg hold their locks
-# from a running process.
+# `exec 9>f; flock -n 9` is NOT equivalent: the lock never shows in /proc/locks
+# once the taking process exits, and apt and dpkg hold theirs from a live one.
 _hold_lock() {
     local f="$1" ready="$BATS_TEST_TMPDIR/lock-ready"
     _lock_hold_file="$BATS_TEST_TMPDIR/lock-hold"
     _lock_file="$f"
     rm -f "$ready"
     : > "$_lock_hold_file"
-    # The holder exits when the sentinel disappears, rather than being killed.
-    # `flock f -c CMD` runs CMD as a CHILD that inherits the locked fd, so
-    # `kill $flock_pid` leaves that child alive and orphaned — verified in the
-    # container, where the /bin/sh holding `sleep 30` outlived the kill. Asking
-    # it to exit means flock reaps it and exits itself, so `wait` returning
-    # really does mean every fd is closed.
-    # POSIX `[` inside the command string, not `[[`: flock runs it with
-    # /bin/sh, which is dash on Debian and has no `[[`. The bashism failed
-    # instantly, the holder exited, and the lock the test needed was never
-    # there — four tests red with a one-line shell error buried in the output.
+    # The holder exits via the sentinel, not a kill: `flock f -c CMD` runs CMD as
+    # a CHILD inheriting the locked fd, so killing flock orphans it. POSIX `[`,
+    # not `[[` — flock runs the string with /bin/sh, which is dash on Debian.
     flock "$f" -c "touch '$ready'; while [ -e '$_lock_hold_file' ]; do sleep 0.05; done" &
     _lock_pid=$!
     local i=0
@@ -90,12 +60,9 @@ _release_lock() {
     wait "$_lock_pid" 2>/dev/null || true
     _lock_pid=""
 
-    # Then wait for the KERNEL to agree. `wait` returning proves the holder was
-    # reaped; on a busy runner /proc/locks has been observed to still list the
-    # entry at that instant, which is what turned this suite red on
-    # ubuntu-latest while it stayed green in the container for weeks. Polling
-    # the kernel instead of assuming the release is instantaneous makes the
-    # test independent of how fast the host happens to be.
+    # Then wait for the KERNEL to agree: `wait` returning only proves the holder
+    # was reaped, and on a busy runner /proc/locks can still list the entry at
+    # that instant. Polling makes the test independent of host speed.
     local i=0
     while _kernel_lock_present "${_lock_file:-/nonexistent}"; do
         if (( ++i > 200 )); then
@@ -106,11 +73,9 @@ _release_lock() {
     done
 }
 
-# ---- _pkg_lock_held, against the REAL /proc/locks --------------------
-#
-# These two are the only place the dev:inode encoding is verified against
-# the kernel rather than against our own arithmetic. Everything below them
-# uses a fixture, which cannot prove the encoding is right.
+# _pkg_lock_held against the REAL /proc/locks: these two are the only place the
+# dev:inode encoding is checked against the kernel rather than our own arithmetic.
+# Everything below uses a fixture, which cannot prove the encoding is right.
 
 @test "lock_held: a file another process holds an flock on reads as held" {
     [ -r /proc/locks ] || skip "no readable /proc/locks on this host"
@@ -219,14 +184,9 @@ _release_lock() {
 }
 
 @test "pkg_manager_locked: an unmeasurable file does not mask a held one" {
-    # Mixed answers: the first file cannot be measured, the second is
-    # genuinely locked. Returning 2 as soon as one file is unknown would
-    # report "could not determine" for a host that demonstrably IS locked —
-    # so the loop records the unknown and keeps going.
-    #
-    # Per-file unknown needs stat to fail for that file only, which is why
-    # stat is stubbed by argv rather than /proc/locks being hidden (hiding
-    # it makes EVERY file unknown and cannot construct this case).
+    # Returning 2 as soon as one file is unknown would report "could not
+    # determine" for a host that demonstrably IS locked, so the loop records the
+    # unknown and keeps going. stat is stubbed by argv; hiding /proc/locks cannot.
     [ -r /proc/locks ] || skip "no readable /proc/locks on this host"
 
     local real_stat ghost="$etc/ghost-lock"

@@ -1,28 +1,7 @@
 #!/usr/bin/env bats
-#
-# The created-file contract, asserted by OUTCOME rather than by call shape.
-#
-# `.vpssec_created` is the only input backup_restore has when deciding what a
-# rollback should delete. Nine fixes have shipped that created a file without
-# registering it, across five modules, and each time the missing-registration
-# looked different in the source:
-#
-#   logging/webapp/update  `[[ -f X ]] && backup_file X`   (one line)
-#   fail2ban               the same guard split over two lines
-#   docker                 a full if/else with backup_file only in the then-branch
-#
-# Every closing grep written for one shape missed the next. This suite asserts
-# the outcome instead — whatever appeared on disk must match the manifest —
-# which is shape-independent and, more to the point, primitive-independent:
-# it covers the three creators that write_file_atomic can never see, namely
-# ssh's staged `sshd -t` chain, docker's jq merge and nginx's openssl-written
-# certificate. Those three are exactly what blocked redesigning backup_file
-# twice; the guard makes the redesign unnecessary rather than easier.
-#
-# The last test is the enumerable half: every selectable fix_id must be
-# declared here as either creating files or not, so a NEW fix cannot be added
-# without someone answering the question. A grep proves a shape is gone; only
-# an enumeration can produce the counter-example.
+# The created-file contract, asserted by OUTCOME not by call shape: whatever
+# appears on disk must match .vpssec_created, the only input backup_restore has
+# when deciding what a rollback deletes. Every selectable fix_id is declared below.
 
 load helpers.bash
 
@@ -80,10 +59,9 @@ _setup_docker() {
 }
 
 @test "docker: an existing daemon.json is snapshotted, not tracked as created" {
-    # Snapshotting an existing file goes through the two-argument form of
-    # validate_path, which needs GNU `realpath -m`. Tracking a created path
-    # uses the one-argument form and works anywhere, which is why only this
-    # test carries the guard.
+    # Snapshotting an existing file uses the two-argument form of validate_path,
+    # which needs GNU `realpath -m`; tracking a created path works anywhere, which
+    # is why only this test carries the guard.
     _vpssec_require_gnu_realpath
     _setup_docker
     mkdir -p "$(dirname "$DOCKER_DAEMON_JSON")"
@@ -91,11 +69,9 @@ _setup_docker() {
 
     _docker_fix_enable_daemon_setting "live-restore" "true" || true
 
-    # Assert the fix did its job BEFORE asserting the rollback undoes it. A
-    # rollback test that only inspects the post-restore file passes just as
-    # happily when the fix wrote nothing at all — the restored content is the
-    # same either way. Two mutations survived on exactly this: deleting the
-    # update branch's write, and turning its merge into a clobber.
+    # Assert the fix did its job BEFORE asserting the rollback undoes it: a test
+    # that only inspects the post-restore file passes just as happily when the fix
+    # wrote nothing at all, because the restored content is the same either way.
     grep -q 'live-restore' "$DOCKER_DAEMON_JSON"
     grep -q 'journald' "$DOCKER_DAEMON_JSON"
 
@@ -116,11 +92,9 @@ _setup_docker() {
     run _docker_fix_enable_daemon_setting "live-restore" "true"
 
     [ "$status" -eq 1 ]
-    # Assert WHICH refusal, not merely that it failed. Skipping the validity
-    # check also ends in status 1 — the jq merge fails on invalid input a few
-    # lines later — so a status-only assertion cannot tell "refused up front,
-    # session untouched" from "went ahead, backed the file up, then failed".
-    # Mutation testing found this: disabling the check left the test green.
+    # Assert WHICH refusal, not merely that it failed. Skipping the validity check
+    # also ends in status 1 (the jq merge fails a few lines later), so status alone
+    # cannot tell "refused up front" from "backed the file up, then failed".
     [[ "$output" == *"not valid JSON"* ]]
     # The check runs BEFORE the backup on purpose: a file the fix refuses to
     # touch must leave no trace in the session at all.
@@ -185,10 +159,9 @@ SH
 }
 
 @test "nginx: a sites-enabled symlink is NOT tracked" {
-    # backup_restore refuses to delete a tracked path that is a symlink and
-    # counts it as skipped, which turns a complete rollback into an exit-2
-    # "partially restored". Symlinks are handled by printing the undo command
-    # instead; this pins that they never reach the manifest.
+    # backup_restore refuses to delete a tracked path that is a symlink and counts
+    # it as skipped, turning a complete rollback into an exit-2 "partially
+    # restored". Symlinks get a printed undo command; they never reach the manifest.
     _load_module nginx
     local link="$etc/nginx/sites-enabled/vpssec-catchall.conf"
     mkdir -p "$(dirname "$link")" "$etc/nginx/sites-available"
@@ -217,10 +190,9 @@ SH
 }
 
 @test "the contract assertion actually fails on an untracked file" {
-    # Without this the whole suite could be passing vacuously — every other
-    # test here asserts that _vpssec_assert_created_contract succeeds, and an
-    # assertion that can only succeed proves nothing. Same defect the ufw
-    # suite shipped 22 of.
+    # Without this the suite could pass vacuously: every other test here asserts
+    # that _vpssec_assert_created_contract succeeds, and an assertion that can
+    # only succeed proves nothing.
     snap=$(_vpssec_tree_snapshot "$etc")
     mkdir -p "$etc/somewhere"
     printf 'x\n' > "$etc/somewhere/untracked.conf"
@@ -271,9 +243,8 @@ _CREATES_FILES=(
 )
 
 # Fixes that create nothing under /etc: they change modes, drive a service,
-# install a package, edit an existing file in place, or write only into
-# vpssec's own template directory. Listed rather than omitted so a new fix
-# cannot slip through unclassified.
+# install a package, edit an existing file in place, or write only into vpssec's
+# own template directory. Listed rather than omitted, so none slips through.
 _CREATES_NOTHING=(
     alerts.setup_config                 # vpssec's own template dir
     backup.generate_templates           # vpssec's own template dir

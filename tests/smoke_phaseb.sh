@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# EVERY LINE HERE IS `--help` OUTPUT, up to the first EMPTY line — a bare `#`
+# does not end it, so replacing one with a blank line truncates the usage text.
+#
 # smoke_phaseb.sh — real-box smoke tests for the Phase B fix-mode safety work.
 #
 # These exercise the ACTUAL vpssec functions (not re-implementations) against
@@ -51,7 +54,10 @@ while [[ $# -gt 0 ]]; do
         --yes|-y) FORCE=1 ;;
         --tier)   ONLY_TIER="${2:-0}"; shift ;;
         --help|-h)
-            grep '^#' "$0" | sed 's/^# \{0,1\}//'
+            # Only the header block, and never a tool directive: this used to
+            # be `grep '^#' "$0"`, which printed every column-0 comment in the
+            # file — `# shellcheck` lines included — as user-facing help.
+            sed -n '2,/^$/p' "$0" | grep -v '^# shellcheck' | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac

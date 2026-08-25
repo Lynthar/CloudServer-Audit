@@ -1,8 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for input-validation helpers in core/common.sh.
-# These are the boundary functions that gate every backup/write
-# operation, so silent regressions here would be high-impact.
+# Tests for input-validation helpers in core/common.sh. These are the boundary
+# functions that gate every backup and write, so a silent regression here is
+# high-impact.
 
 load helpers
 
@@ -154,10 +153,9 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
-# ---- validate_ip: strengthened bounds (post-2026-08 review) -----------
-# The old checks accepted 999.999.999.999 (shape only, no octet bounds)
-# and "::::" (any hex-and-colon soup). This feeds ufw source scoping for
-# the SSH rescue rule, so junk must be rejected, not passed downstream.
+# validate_ip bounds. A shape-only check accepts 999.999.999.999 and "::::";
+# this feeds ufw source scoping for the SSH rescue rule, so junk must be
+# rejected rather than passed downstream.
 
 @test "validate_ip: 999.999.999.999 is invalid (octet bounds)" {
     run validate_ip "999.999.999.999"
@@ -195,10 +193,9 @@ setup() {
 }
 
 @test "validate_ip: two double-colons with eight groups is invalid" {
-    # The discriminating specimen for the '::'-count rule: with the count
-    # check gone, "1::2::3" still bounces off the 8-group requirement, but
-    # THIS input satisfies it — only the double-colon counter rejects it.
-    # (Found via a surviving mutant; lesson ⑥: fix the assertion's question.)
+    # The discriminating specimen for the '::'-count rule: with the count check
+    # gone, "1::2::3" still bounces off the 8-group requirement, but THIS input
+    # satisfies it — only the double-colon counter rejects it.
     run validate_ip "1::2:3:4:5:6:7::8"
     [ "$status" -eq 1 ]
 }

@@ -1,9 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the new IPv6-consistency helpers (M6).
-# /etc/default/ufw IPV6=no + host has global v6 = v6 traffic bypasses
-# UFW entirely. These pure-data helpers are the primitives the audit
-# function composes.
+# Tests for the IPv6-consistency helpers: /etc/default/ufw IPV6=no on a host
+# with a global v6 address means v6 traffic bypasses UFW entirely. These pure
+# data helpers are the primitives the audit function composes.
 
 load helpers.bash
 

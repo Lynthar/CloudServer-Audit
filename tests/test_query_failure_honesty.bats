@@ -1,15 +1,7 @@
 #!/usr/bin/env bats
-#
-# "A failed query is not a clean result." Four audits used to fold "the
-# tool could not answer" into their green path:
-#   - update:  apt/dnf/pacman query error  -> "no updates" (passed, scored)
-#   - logging: journalctl failure          -> "0 failed logins" (passed)
-#   - kernel:  zero readable sysctls       -> "network params OK" (passed)
-#   - backup_file: cp failure              -> rc 0 + a path to a copy that
-#                                             does not exist
-# Each now reports the non-observation (failed + info-category, unscored) or
-# fails loudly. networking's specific-public case rides along: a bind on the
-# host's PUBLIC address used to be dropped from the exposure checks entirely.
+# "A failed query is not a clean result." An audit that cannot answer must report
+# the non-observation (failed + info-category, unscored) or fail loudly — never
+# fold it into the green path as "no updates" or "0 failed logins".
 
 load helpers.bash
 

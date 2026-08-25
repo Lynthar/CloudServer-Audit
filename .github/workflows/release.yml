@@ -49,6 +49,30 @@ jobs:
         with:
           cosign-release: 'v2.4.1'
 
+      - name: Assert VERSION matches the tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # The VERSION file is what every runtime surface reports (core/common.sh
+          # reads it). Publishing a tag it disagrees with ships a release that
+          # misreports its own identity in --version, status and all three report
+          # formats — which is how the old hardcoded constant sat at 1.2.0 for 37
+          # commits. Refuse the release instead: bump VERSION and re-tag.
+          if [[ ! -f VERSION ]]; then
+              echo "::error::VERSION file is missing"
+              exit 1
+          fi
+          FILE_VER="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$FILE_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+              echo "::error::VERSION content is not a version string (got: '$FILE_VER')"
+              exit 1
+          fi
+          if [[ "v$FILE_VER" != "$TAG" ]]; then
+              echo "::error::VERSION says '$FILE_VER' but the tag is '$TAG'. Bump VERSION, commit, and move the tag."
+              exit 1
+          fi
+          echo "VERSION and tag agree: $TAG"
+
       - name: Build tarball
         id: build
         run: |

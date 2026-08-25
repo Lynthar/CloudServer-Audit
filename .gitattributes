@@ -11,6 +11,9 @@
 # Extensionless executables
 vpssec         text eol=lf
 
+# Version source of truth. A CR here reaches the release tag comparison.
+VERSION        text eol=lf
+
 # Binary (do not touch)
 *.png          binary
 *.jpg          binary

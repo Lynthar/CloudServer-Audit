@@ -1,26 +1,7 @@
 #!/usr/bin/env bats
-#
-# The audit must not describe a host it did not look at.
-#
-# Four checks used to state something false about real machines, and all four
-# were passed or silently absent, which is what made them hard to notice:
-#
-#   docker    a daemon it could not reach was reported as "not installed",
-#             and every container check was skipped behind a green tick.
-#             Rootless Docker answers exactly this way to a sudo'd audit.
-#   webapp    a host running caddy or openresty was reported as having no web
-#             server at all — a passed check meaning "nothing to see here".
-#   baseline  a profile symlinked into apparmor.d/disable appears in neither
-#             the enforcing nor the complain count, so disabling one left no
-#             trace anywhere in the report.
-#   preflight a Debian derivative (Mint, Kali, Armbian) failed the supported-OS
-#             test and made the entry point ask "Continue anyway?" with a
-#             default of no, while every distro.sh primitive resolved fine.
-#
-# These are one family: the tool asserting something the operator can disprove
-# by looking at their own machine. There is no automated gate for it — i18n
-# parity only checks that keys exist, and bats only checks which branch ran —
-# so the assertions here are about the emitted check, not about a code path.
+# The audit must not describe a host it did not look at. Nothing gates this
+# automatically — i18n parity only checks that keys exist and bats only checks
+# which branch ran — so every assertion here is about the emitted check.
 
 load helpers.bash
 
@@ -79,20 +60,17 @@ _load_docker() {
 
 @test "docker: a rootless socket under a user's runtime dir is found" {
     _load_docker
-    # A real socket, not a regular file: the predicate tests -S, and a plain
-    # file would let it pass while the production check stayed broken.
-    # Short root on purpose — an AF_UNIX path is capped near 104 bytes and
-    # BATS_TEST_TMPDIR alone is longer than that on macOS.
+    # A real socket, not a regular file: the predicate tests -S, and a plain file
+    # would let it pass while the production check stayed broken. Short root on
+    # purpose — an AF_UNIX path is capped near 104 bytes.
     local sock_root
     sock_root=$(mktemp -d "${TMPDIR:-/tmp}/vpsk.XXXXXX")
     sock_root=$(cd "$sock_root" && pwd -P)
     local sock_dir="$sock_root/h/.docker/run"
     mkdir -p "$sock_dir"
-    # Two different reasons to skip, kept apart on purpose. The single
-    # message used to blame AF_UNIX for both, and on Arch — where the base
-    # image ships no python at all — it sent the reader looking at sockets
-    # and path lengths for a missing interpreter. A skip that names the
-    # wrong cause is worse than a failure.
+    # Two reasons to skip, kept apart on purpose: one message blaming AF_UNIX for
+    # a missing interpreter sends the reader looking at sockets and path lengths.
+    # A skip that names the wrong cause is worse than a failure.
     command -v python3 >/dev/null 2>&1 || skip "python3 is needed to create the test socket"
     python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" \
         "$sock_dir/docker.sock" || skip "cannot create an AF_UNIX socket here"
@@ -157,10 +135,9 @@ SH
     for c in caddy openresty lighttpd traefik haproxy; do
         _vpssec_absent_command "$c"
     done
-    # Absence has to be asserted, not inherited: whether this host ships caddy
-    # is a property of the runner, and a test that depends on it passes in one
-    # environment and fails in another. That is how this suite went red on
-    # ubuntu-latest, which preinstalls podman.
+    # Absence has to be asserted, not inherited: whether this host ships caddy is
+    # a property of the runner, and a test that depends on it passes in one
+    # environment and fails in another.
     run _webapp_other_webserver
 
     [ -z "$output" ]
@@ -185,12 +162,9 @@ SH
 }
 
 @test "webapp: detection goes through the project's own command wrapper" {
-    # Stub caddy so `command -v caddy` succeeds, and declare it absent so
-    # check_command fails. The two answers now differ, which is the only way
-    # to tell the wrapper from a bare `command -v` on a host that does not
-    # ship caddy — and every host in CI and in the container is such a host.
-    # Without this the difference is invisible until it is invisible in the
-    # wrong direction, which is how ubuntu-latest went red.
+    # Stub caddy so `command -v caddy` succeeds while check_command reports it
+    # absent: the two answers differing is the only way to tell the project's own
+    # wrapper from a bare `command -v` on a host that does not ship caddy.
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/webapp.sh"
     local c
@@ -201,10 +175,9 @@ SH
 
     run _webapp_other_webserver
 
-    # Only caddy is asserted about — the others are declared absent so the
-    # host cannot contribute, but the claim under test is narrow: a binary the
-    # wrapper says is absent must not appear, however loudly `command -v`
-    # answers.
+    # Only caddy is asserted about — the others are declared absent so the host
+    # cannot contribute. The claim is narrow: a binary the wrapper calls absent
+    # must not appear, however loudly `command -v` answers.
     [[ "$output" != *caddy* ]]
 }
 

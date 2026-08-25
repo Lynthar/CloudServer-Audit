@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for count_lines (core/common.sh).
-#
-# count_lines exists specifically to replace the `grep -c PAT |
-# || echo 0` idiom that emitted "0\n0" on empty input and crashed
-# arithmetic under set -e (see comment in common.sh:614). These tests
-# pin the behaviour so future refactors can't reintroduce the bug.
+# Regression tests for count_lines (core/common.sh). It replaces the
+# `grep -c PAT || echo 0` idiom, which emitted "0\n0" on empty input and crashed
+# arithmetic under set -e; these pin the behaviour against a refactor.
 
 load helpers
 
@@ -53,12 +49,9 @@ setup() {
 
 @test "output is a single integer (no '0\\n0' regression)" {
     run count_lines ""
-    # The whole bug that motivated count_lines was that the legacy
-    # `grep -c . || echo 0` produced a literal "0\n0" on empty input.
-    # Assert: output is exactly "0" and contains no embedded newline.
-    # Uses bash regex rather than `wc -l` because BSD wc -l emits
-    # leading whitespace ("       0") that makes a string-equals
-    # check brittle across platforms.
+    # The legacy `grep -c . || echo 0` produced a literal "0\n0" on empty input,
+    # so assert the output is exactly "0" with no embedded newline. Bash regex,
+    # not `wc -l`: BSD wc pads with leading whitespace.
     [ "$output" = "0" ]
     [[ "$output" != *$'\n'* ]]
     [[ "$output" =~ ^[0-9]+$ ]]

@@ -1,12 +1,7 @@
 #!/usr/bin/env bats
-#
 # execute_fix must not record a success its declared postcondition contradicts.
-#
-# FIX_VERIFY maps a fix_id to the audit predicate that can see whether the
-# fix's change is actually in effect. Declared entries are enforced by the
-# engine: the fix's exit status still means "my work succeeded", and the
-# predicate then decides whether that may stand as success. Undeclared fixes
-# keep the old behaviour, so the map can grow one fix at a time.
+# FIX_VERIFY maps a fix_id to the audit predicate that sees whether the change is
+# in effect; undeclared fixes keep the old behaviour, so the map grows gradually.
 
 load helpers.bash
 

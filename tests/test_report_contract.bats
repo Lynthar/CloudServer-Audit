@@ -1,13 +1,7 @@
 #!/usr/bin/env bats
-#
-# The reports' write-and-scope contract: a failed write is a failed report
-# function, --json-only never replays a stale summary.json, meta describes
-# the scope that actually ran, and the SARIF stays schema-valid (a fix
-# object without artifactChanges is not valid SARIF 2.1.0).
-#
-# Write failures are injected by wrapping write_file_atomic, not by
-# permissions: these suites run as root in the verification container,
-# where no path is unwritable.
+# The reports' write-and-scope contract: a failed write fails the report
+# function, --json-only never replays a stale summary.json, meta describes the
+# scope that ran, and the SARIF stays valid (a fix needs artifactChanges).
 
 load helpers.bash
 

@@ -9,19 +9,51 @@ English | [简体中文](README.zh-CN.md) | [User Guide](docs/user-guide.md)
 
 ## Quick start
 
-One-line install (downloads, runs; a saved report is copied to `/tmp/vpssec-report-*`):
+**Run once, install nothing.** Downloads the latest release to a temporary
+directory, verifies its signature, runs, and deletes itself. A saved report is
+copied to `/tmp/vpssec-report-*`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
-Or clone and run manually (recommended for repeated use):
+Nothing persists after this — including `backups/`. **`guide` and `rollback`
+are therefore refused here** (exit 2, with the install command in the message):
+a fix writes its backups inside the tree this runner deletes on exit, so
+hardening this way would change `/etc` and destroy the only means of undoing it
+in the same command. Auditing is read-only and unaffected.
+
+**Install for repeated use.** Same release, same signature check, but it lands
+in `/opt/vpssec` with a `vpssec` command on your `PATH`, and it keeps `state/`
+and `backups/` across upgrades:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo bash
+
+sudo vpssec audit          # from any directory
+sudo vpssec status         # last run, latest backup, and whether a newer release exists
+```
+
+To upgrade, re-run the same command — `state/` and `backups/` are moved aside
+and restored, so a reinstall never costs you the data `vpssec rollback` needs.
+To remove it, `sudo /opt/vpssec/uninstall.sh` (it asks before deleting state
+and backups, and keeps them by default).
+
+Both entry points install **the newest release**, never the `main` branch.
+`VPSSEC_VERSION` pins a specific one and `INSTALL_DIR` moves the install tree
+— see the environment variables below, and note they must be set on the `bash`
+side of the pipe.
+
+**Or work from a clone** (development, or to read the code before running it):
 
 ```bash
 git clone https://github.com/Lynthar/CloudServer-Audit.git
 cd CloudServer-Audit
 sudo ./vpssec audit
 ```
+
+A clone tracks `main`, which is ahead of the latest release and is not signed.
+Use a release for production hosts.
 
 After an interactive audit you're prompted to save the report; if you accept, `reports/summary.{md,json,sarif}` are written. `--json-only` writes all three too — only the JSON goes to stdout — so a CI job that publishes the Markdown or feeds the SARIF to a dashboard never picks up a stale file from an earlier run.
 
@@ -31,16 +63,16 @@ After an interactive audit you're prompted to save the report; if you accept, `r
 
 **Guided hardening + rollback:** Debian / Ubuntu only
 
-The one-liner downloads the latest release tarball and **verifies its
+Both `run.sh` and `install.sh` download the release tarball and **verify its
 signature with cosign keyless** (sigstore + GitHub Actions OIDC) before
 extracting. The signing identity is pinned to this repo's `release.yml`
 workflow at the exact tag being installed, so a swapped or re-labelled
 release asset fails verification. The guarantee is scoped: it authenticates
 the asset against this repository's release pipeline — it cannot protect
 against a compromise of the repository itself, which could mint a new
-validly-signed release or alter this bootstrap script on `main`. For a
-stronger anchor, download `run.sh` from a release you have already audited
-instead of from `main`. `cosign` is auto-installed via `apt` on Ubuntu
+validly-signed release or alter these bootstrap scripts on `main`. For a
+stronger anchor, download the bootstrap from a release you have already
+audited instead of from `main`. `cosign` is auto-installed via `apt` on Ubuntu
 22.04+; otherwise the script installs a pinned asset from sigstore's
 GitHub release with its SHA256 verified locally first — a `.deb` via
 `dpkg` on Debian, or the static `cosign` binary into `/usr/local/bin`
@@ -50,19 +82,25 @@ trust root used to fetch `run.sh` itself, so no new attack surface vs.
 the existing one-liner. Skip verification entirely with `VPSSEC_NO_VERIFY=1`
 (not recommended).
 
-```bash
-# Pin to a specific release. The variable must be set on the bash side of
-# the pipe — `VPSSEC_VERSION=… curl … | sudo bash` only sets it for curl.
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.2.0 bash
+Every variable below must be set on the **bash** side of the pipe: written the
+other way round, `VPSSEC_VERSION=… curl … | sudo bash` sets it for `curl` and
+the script never sees it.
 
-# Skip verification (NOT recommended)
+```bash
+# Pin to a specific release (both v1.3.0 and 1.3.0 are accepted)
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.3.0 bash
+
+# Install somewhere other than /opt/vpssec
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo env INSTALL_DIR=/opt/vpssec-staging bash
+
+# Skip verification (NOT recommended). Applies to both entry points.
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_NO_VERIFY=1 bash
 ```
 
 Verify a release manually:
 
 ```bash
-TAG=v1.2.0
+TAG=v1.3.0
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
 curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
 cosign verify-blob \
@@ -207,7 +245,7 @@ PRs welcome.
 - Unit tests: `bats tests/` (800+ cases; see CI for the current count)
 - Mutation testing, two tools for two questions: `bash tools/mutate-all.sh` plants defects in module source and asks whether the paired bats suite notices (safe anywhere); `tests/mutation/` plants misconfigurations in a REAL `/etc` and asks whether the audit notices — only run that one on a disposable VM
 - Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`
-- Releasing: push a `vX.Y.Z` tag — `release.yml` builds and signs the tarball with cosign keyless, then publishes the GitHub release
+- Releasing: bump `VERSION` and commit it, then push a matching `vX.Y.Z` tag — `release.yml` refuses any tag that disagrees with `VERSION`, then builds and signs the tarball with cosign keyless and publishes the GitHub release
 
 ## License
 

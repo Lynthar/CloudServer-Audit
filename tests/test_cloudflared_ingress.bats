@@ -1,21 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _cloudflared_check_ingress_security.
-#
-# All three checks used unanchored greps that matched inside YAML comments,
-# and the damage ran both ways:
-#
-#   False positive — this module GENERATES a config.yml.example whose header
-#   says "Copy this file to /etc/cloudflared/config.yml", and whose commented
-#   "private network access" example contains
-#       #     noTLSVerify: true  # Only for internal services
-#   so anyone who followed the tool's own instructions was flagged for a
-#   setting they never enabled. The last test here closes that loop directly:
-#   it generates the template and feeds it to the checker.
-#
-#   False negative — the two `! grep -q` checks were satisfied by a
-#   commented-out catch-all rule or originRequest block, quietly passing a
-#   config that has neither.
+# Regression tests for _cloudflared_check_ingress_security. Every grep here must
+# be anchored past comments: the module's own config.yml.example carries a
+# commented `noTLSVerify: true`, and `! grep -q` checks pass on commented rules.
 
 load helpers.bash
 

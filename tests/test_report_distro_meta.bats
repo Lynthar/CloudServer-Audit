@@ -1,18 +1,7 @@
 #!/usr/bin/env bats
-#
-# A report has to say which host it describes, including what vpssec could
-# not have done there.
-#
-# The audit runs on Debian, the RHEL family and Arch; hardening and rollback
-# refuse to run anywhere but Debian and Ubuntu. Nothing in any of the three
-# report formats said so, and every failed check still carried a fix_id — so
-# a summary.json produced on Rocky listed dozens of fixes that the tool would
-# have declined to apply on that machine, with nothing to distinguish it from
-# one produced on Debian.
-#
-# guide_supported is named after what is actually gated: guide_mode as a
-# whole, on is_debian_based. Naming it fix_supported would have made it a lie
-# the day any single fix grew a non-Debian path.
+# A report has to say which host it describes, including what vpssec could not
+# have done there: the audit runs on Debian, RHEL and Arch, but hardening and
+# rollback refuse anywhere but Debian and Ubuntu, and every format must say so.
 
 load helpers.bash
 

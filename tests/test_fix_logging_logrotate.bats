@@ -1,16 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _logging_fix_setup_logrotate.
-#
-# The original implementation discarded apt's exit status and ended with an
-# unconditional `return 0`, so on a host that could not install logrotate it
-# printed "log rotation configured", the engine recorded the fix as complete
-# via state_mark_fix_complete, and the very next audit re-flagged logrotate as
-# missing — a fix permanently at odds with its own audit. It also wrote
-# /etc/logrotate.conf with a bare `cat >` redirect: an interrupted write could
-# truncate the file, and because it bypassed backup_file the created path was
-# never recorded in the session's .vpssec_created manifest, so a rollback could
-# not remove a file the fix itself had created.
+# Regression tests for _logging_fix_setup_logrotate: apt's exit status must
+# reach the caller, and /etc/logrotate.conf must go through backup_file and an
+# atomic write, or a rollback cannot remove a file the fix itself created.
 
 load helpers.bash
 
@@ -33,16 +24,9 @@ setup() {
     i18n_load en_US
 }
 
-# ---- install failure must propagate ----------------------------------
-#
 # Every test below reaches the apt block, which the fix guards with
-# `check_command logrotate`. That guard must be answered by the test and not by
-# the host: stubbing steers it the wrong way (a stub on PATH makes the binary
-# look INSTALLED), so absence is only ever whatever the test box lacks. These
-# three passed in the Debian container, which ships no logrotate, and went red
-# on ubuntu-latest, which preinstalls it — the fix skipped the whole block and
-# returned 0 without calling apt-get. The fourth test stayed green while
-# proving nothing, since skipping the block hands it the status 0 it asserts.
+# `check_command logrotate`. That guard must be answered by the test, not by the
+# host — and a stub steers it the wrong way, making the binary look INSTALLED.
 
 @test "logrotate: apt install failure returns non-zero" {
     _vpssec_absent_command logrotate
@@ -135,12 +119,9 @@ SH
 }
 
 @test "logrotate: a write that fails is reported as a write failure" {
-    # The only branch of this fix nothing reached. write_file_atomic mkdir -p's
-    # the parent, so a merely-missing directory is not enough to fail it — make
-    # the parent a regular FILE, which defeats both the mkdir and the mktemp.
-    #
-    # Both failure paths return 1, so status alone cannot tell a failed write
-    # from a failed install. "write" appears only in logrotate_failed.
+    # write_file_atomic mkdir -p's the parent, so a merely-missing directory is
+    # not enough — make the parent a regular FILE. Both failure paths return 1,
+    # so the message is the only discriminator; "write" is in logrotate_failed.
     VPSSEC_QUIET_SCAN=0
     _vpssec_absent_command logrotate
     _vpssec_stub apt-get 0

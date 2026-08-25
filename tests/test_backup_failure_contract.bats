@@ -1,16 +1,7 @@
 #!/usr/bin/env bats
-#
-# A backup that could not be taken must abort the fix that asked for it.
-#
-# The per-fix suites assert the OUTCOME — the fix returns non-zero and the
-# target file is untouched — for one call site per module. This file asserts
-# the ENUMERATION: that no call site anywhere discards backup_file's status,
-# including the ones no fix suite drives. It works the opposite way round from
-# a grep for a known-bad shape: it lists every call site and requires each to
-# match an approved one, so a call site written a fourth way goes red instead
-# of passing unnoticed. That distinction is why the guard is worth having —
-# the same defect has shipped in three different shapes before, and every
-# closing grep written for one of them missed the next.
+# A backup that could not be taken must abort the fix that asked for it. This
+# file enumerates every backup_file call site and requires each to match one of
+# the approved shapes below, so a call site written a fourth way goes red.
 #
 # Approved shapes:
 #   backup_file "$x" >/dev/null || return 1        discard the path, abort

@@ -1,35 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for nginx.add_catchall — the module's only fix, and the one that
-# had neither a test nor a single call into vpssec's own file machinery.
-#
-# What the entry survey found, and what each group below pins:
-#
-#   1. No backup_file and no write_file_atomic anywhere in the module. The
-#      config, the certificate and the private key were all invisible to
-#      `vpssec rollback`, and the config was written with a bare `cat >` —
-#      the last non-atomic /etc writer in the repo.
-#   2. The symlink under sites-enabled must NOT be registered for rollback.
-#      backup_restore deliberately skips a created path that is a symlink and
-#      counts it as *skipped*, so registering it would leave the link in place
-#      AND drag the rollback's exit status from 0 to 2 — a rollback that did
-#      everything it could would report "partial". The fix prints and logs the
-#      `rm` instead, the way baseline's disable_unused prints its way back.
-#   3. `ln -sf` was guarded by `[[ -d sites-enabled ]]` and silently skipped
-#      when absent. Then `nginx -t` passed (nothing new to parse), the reload
-#      succeeded, two print_ok's fired and the fix returned 0 — while the
-#      catchall was not live and the next audit still reported it missing.
-#   4. Four discarded statuses: the config write, the ssl mkdir, `openssl req`
-#      and `chmod 600` on the key. errexit is OFF inside a fix, so none of them
-#      aborted anything; an openssl failure surfaced several steps later as
-#      "nginx test failed", pointing the operator at their own config.
-#   5. No postcondition. The fix never re-asked _nginx_catchall_state, which is
-#      the only thing that can tell "the config parses and was loaded" apart
-#      from "this host now has a catchall".
-#
-# The certificate paths were hardcoded /etc/nginx/ssl literals, so none of the
-# above was testable until NGINX_SSL_DIR / NGINX_CATCHALL_CERT /
-# NGINX_CATCHALL_KEY / NGINX_CATCHALL_LINK became module path variables.
+# Coverage for nginx.add_catchall. The sites-enabled symlink must NOT be
+# registered for rollback: backup_restore skips a created symlink and counts it
+# as skipped, so the link survives AND the rollback's status goes 0 -> 2.
 
 load helpers.bash
 
@@ -59,12 +31,9 @@ setup() {
 
 # ---- stubs -----------------------------------------------------------------
 
-# `nginx -T` dumps what nginx actually LOADS, so the stub reads sites-enabled
-# rather than sites-available: a config staged but not linked must not show up,
-# which is defect 3's whole point. The baseline vhost keeps the output
-# non-empty, so _nginx_catchall_state always takes its primary branch — with an
-# empty dump it would fall back to grepping NGINX_CONF_DIR, find the staged
-# file in sites-available, and report a catchall that is not live.
+# The stub reads sites-enabled, not sites-available: a config staged but not
+# linked must not show up. The baseline vhost keeps the dump non-empty, or
+# _nginx_catchall_state falls back to the tree and reports a catchall not live.
 _nginx_effective_reflects_link() {
     _vpssec_stub_script nginx <<SH
 case "\$*" in
@@ -130,15 +99,11 @@ exit 0
 SH
 }
 
-# ==============================================================================
-# The rollback contract — the reason this module was next in the queue
-# ==============================================================================
+# ---- the rollback contract -------------------------------------------------
 
 @test "catchall: a first run records config, cert and key so rollback can delete them" {
-    # The module called backup_file zero times, so all three were invisible to
-    # `vpssec rollback`. backup_file's second job is recording an ABSENT path in
-    # .vpssec_created, which is the only thing that lets a rollback remove a
-    # file the fix created — and on a first run none of these exist.
+    # backup_file's second job is recording an ABSENT path in .vpssec_created,
+    # the only thing that lets a rollback remove a file the fix created.
     _vpssec_begin_backup_session
     [ ! -f "$NGINX_CATCHALL_CONF" ]
     [ ! -f "$NGINX_CATCHALL_CERT" ]
@@ -166,11 +131,9 @@ SH
 }
 
 @test "catchall: the symlink is not registered, so the rollback reports 0 and not partial" {
-    # Registering it would be worse than not registering it: backup_restore
-    # skips a created path that is a symlink (symlink-escape safety) and counts
-    # it as skipped, so the link would survive anyway AND the return would go
-    # from 0 to 2. An operator whose rollback did everything it could would be
-    # told it was partial.
+    # backup_restore skips a created path that is a symlink (symlink-escape
+    # safety) and counts it as skipped, so registering the link would leave it
+    # in place anyway AND turn the rollback's 0 into a partial 2.
     _vpssec_begin_backup_session
 
     run _nginx_fix_add_catchall
@@ -204,15 +167,11 @@ SH
     grep -qF 'return 301 https://example.com' "${VPSSEC_BACKUP_SESSION}${NGINX_CATCHALL_CONF}"
 }
 
-# ==============================================================================
-# sites-enabled absent — the "reports a success it did not achieve" defect
-# ==============================================================================
+# ---- sites-enabled absent --------------------------------------------------
 
 @test "catchall: a host without sites-enabled is refused, not silently skipped" {
-    # The headline defect. `ln -sf` sat under `[[ -d sites-enabled ]]`; with the
-    # directory absent the link was skipped, nginx -t passed because nothing new
-    # was included, the reload succeeded, and the fix returned 0 with the
-    # catchall not live.
+    # With sites-enabled absent, nginx -t passes and the reload succeeds, so
+    # nothing downstream catches it — only an explicit refusal does.
     VPSSEC_QUIET_SCAN=0
     rmdir "$NGINX_SITES_ENABLED"
 
@@ -242,15 +201,12 @@ SH
     [ ! -f "$NGINX_CATCHALL_CERT" ]
 }
 
-# ==============================================================================
-# The four statuses that used to be discarded
-# ==============================================================================
+# ---- the four statuses that must not be discarded ---------------------------
 
 @test "catchall: a config write the atomic writer refuses is reported" {
-    # A regular file where the parent directory belongs defeats both the
-    # mkdir -p and the mktemp inside write_file_atomic, so the real guard chain
-    # refuses without mocking it. Not a '..' path any more: backup_file
-    # validates the same path and would now abort the fix before the write.
+    # A regular file where the parent directory belongs defeats both the mkdir -p
+    # and the mktemp inside write_file_atomic, so the real guard chain refuses
+    # without mocking it. Not a '..' path: backup_file aborts before the write.
     VPSSEC_QUIET_SCAN=0
     : > "$NGINX_SITES_AVAILABLE/notadir"
     NGINX_CATCHALL_CONF="$NGINX_SITES_AVAILABLE/notadir/99-catchall.conf"
@@ -309,10 +265,8 @@ SH
 
 @test "catchall: a symlink that cannot be created is reported" {
     # Stubbed rather than provoked with a real filesystem state: the tests run
-    # as root, so a read-only sites-enabled would not stop `ln`, and a
-    # directory at the link path makes `ln` succeed by putting the link inside
-    # it (-n only un-dereferences a symlink-to-directory, not a real one — that
-    # case is caught by the postcondition instead, one message further on).
+    # as root, so a read-only sites-enabled would not stop `ln`, and a directory
+    # at the link path makes `ln` succeed by putting the link inside it.
     VPSSEC_QUIET_SCAN=0
     _vpssec_stub ln 1
 
@@ -332,9 +286,7 @@ SH
     _vpssec_refute _vpssec_stub_called openssl
 }
 
-# ==============================================================================
-# Validation failure: undo what this run staged, and only that
-# ==============================================================================
+# ---- validation failure: undo what this run staged, and only that ----------
 
 @test "catchall: a rejected config leaves nothing this run created behind" {
     _nginx_test_rejects
@@ -343,20 +295,15 @@ SH
     [ "$status" -eq 1 ]
     [ ! -f "$NGINX_CATCHALL_CONF" ]
     # -L, not -e. -e follows the link, and the cleanup deletes the config the
-    # link points at, so a surviving link is DANGLING and `[ ! -e link ]` is
-    # true whether or not the removal happened — the assertion passed with the
-    # removal deleted until mutation testing said so.
+    # link points at, so a surviving link is DANGLING and `[ ! -e link ]` is true
+    # whether or not the removal happened.
     [ ! -L "$NGINX_CATCHALL_LINK" ]
 }
 
 @test "catchall: nginx's own diagnostic reaches the operator" {
-    # Measured against real nginx-light on stock Debian 12: this fix ALWAYS
-    # lands on the validation-failure path there, because the distro's own
-    # sites-enabled/default already carries `listen 80 default_server` and
-    # nginx refuses a second one. "Configuration test failed" alone names
-    # neither the file nor the line, so the operator cannot act on it — and
-    # nothing in the module had ever been run against a real nginx until this
-    # batch.
+    # On a stock Debian host this fix ALWAYS lands on the validation-failure
+    # path: sites-enabled/default already carries `listen 80 default_server`.
+    # "Configuration test failed" names neither file nor line, so nginx's own must.
     VPSSEC_QUIET_SCAN=0
     _nginx_test_rejects
 
@@ -367,10 +314,9 @@ SH
 }
 
 @test "catchall: a pre-existing dangling symlink counts as pre-existing" {
-    # Same -e trap, one level up: the fix decides what its cleanup may delete
-    # by asking whether the link was already there. With -e a dangling link
-    # reads as absent, so the cleanup would remove a link this run did not
-    # create.
+    # Same -e trap one level up: the fix decides what its cleanup may delete by
+    # asking whether the link was already there, and with -e a dangling link
+    # reads as absent, so the cleanup would remove a link this run did not create.
     ln -s "$NGINX_SITES_AVAILABLE/gone.conf" "$NGINX_CATCHALL_LINK"
     _nginx_test_rejects
 
@@ -393,9 +339,7 @@ SH
     grep -q 'existed before this run' <<<"$output"
 }
 
-# ==============================================================================
-# Reload and postcondition
-# ==============================================================================
+# ---- reload and postcondition ----------------------------------------------
 
 @test "catchall: a failed reload is reported rather than counted as success" {
     VPSSEC_QUIET_SCAN=0
@@ -407,10 +351,9 @@ SH
 }
 
 @test "catchall: a reload that does not put the catchall in force fails the fix" {
-    # nginx -t passing says the config PARSES and the reload says it was
-    # loaded. Neither says this host now has a catchall — a nginx.conf that
-    # includes only conf.d/ leaves the answer exactly where it was, and without
-    # the postcondition the fix reported a success the next audit contradicted.
+    # nginx -t passing says the config PARSES and the reload says it was loaded.
+    # Neither says this host now has a catchall — a nginx.conf that includes only
+    # conf.d/ leaves the answer exactly where it was.
     VPSSEC_QUIET_SCAN=0
     _nginx_effective_ignores_link
 
@@ -446,9 +389,7 @@ SH
     [ "$output" = "both" ]
 }
 
-# ==============================================================================
-# The generated config
-# ==============================================================================
+# ---- the generated config --------------------------------------------------
 
 @test "catchall: the config points at the module's certificate paths" {
     # The heredoc used to be non-expanding with /etc/nginx/ssl written into it,
@@ -472,10 +413,9 @@ SH
 }
 
 @test "catchall: no line of the generated config ends in a backslash" {
-    # The heredoc is expanding now, so a trailing backslash is a line
-    # continuation: the three-line openssl hint the config used to carry would
-    # be silently glued into one, and any future edit that reintroduces the
-    # continuations would do the same to whatever followed.
+    # The heredoc expands, so a trailing backslash becomes a line continuation:
+    # a multi-line hint in the generated config would be silently glued into one
+    # line, taking whatever followed with it.
     run _nginx_catchall_config
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q '\\$' <<<"$output"

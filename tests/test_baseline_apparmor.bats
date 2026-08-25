@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _baseline_apparmor_count_profiles. Original code
-# parsed `aa-status` text output with an English-only regex
-# ("X profiles are in enforce mode"), which silently returns 0/0 on
-# hosts running zh_CN.UTF-8 / de_DE.UTF-8 / etc. The new helper prefers
-# `aa-status --json` (machine-readable, locale-immune) and falls back
-# to `LC_ALL=C aa-status` so the human-text path is also locale-safe.
+# Regression tests for _baseline_apparmor_count_profiles. Parsing `aa-status`
+# text with an English-only regex silently returns 0/0 under any other locale,
+# so the helper prefers `aa-status --json` and falls back to `LC_ALL=C aa-status`.
 
 load helpers.bash
 
@@ -79,14 +75,9 @@ EOF
 }
 
 @test "apparmor: text fallback regression — non-English (zh) text would have failed old regex" {
-    # The original regex `^\s*[0-9]+ profiles are in enforce mode` only
-    # matches English. With LC_ALL=C the stub still returns English
-    # (because we pass it directly), but if the helper didn't apply
-    # LC_ALL=C and the host locale was zh_CN, aa-status would emit
-    # localized strings and the regex would silently return 0/0. This
-    # test asserts the helper does invoke aa-status (so LC_ALL=C wraps
-    # it) — we can't fully reproduce locale leakage in a stub, but we
-    # verify the JSON-first path is preferred when both are available.
+    # A stub cannot reproduce locale leakage, so what is asserted is that the
+    # helper invokes aa-status at all (which is what LC_ALL=C wraps) and that the
+    # JSON path wins when both are available.
     _install_aa_stub "garbage that won't match the regex" '{"version":"1","profiles":{"/x":"enforce"},"processes":{}}'
     run _baseline_apparmor_count_profiles
     [ "$status" -eq 0 ]

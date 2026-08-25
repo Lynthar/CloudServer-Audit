@@ -1,13 +1,6 @@
-# Shared bats helpers for vpssec unit tests.
-#
-# Sourced by every test file in this directory. Responsible for:
-#   - Locating the project root regardless of where bats was invoked from
-#   - Providing per-test isolated state / log / backup directories so
-#     functions that touch the filesystem don't pollute the dev tree
-#   - Sourcing the production code under test
-#
-# Tests should call _vpssec_load to bring the production functions into
-# scope after setting any per-test environment overrides.
+# Shared bats helpers, sourced by every test file here: locates the repo root,
+# gives each test isolated state/log/backup directories, and sources the
+# production code. Set per-test environment overrides before _vpssec_load.
 
 _vpssec_repo_root() {
     # tests/ lives directly under the repo root. BATS_TEST_DIRNAME points
@@ -27,12 +20,9 @@ _vpssec_isolate_dirs() {
              "$VPSSEC_LOGS" "$VPSSEC_TEMPLATES"
 }
 
-# Source production code. Pass extra files as args to layer additional
-# sources (state.sh, security_levels.sh) on top of common.sh.
-#
-#   _vpssec_load                                # common.sh only
-#   _vpssec_load core/state.sh                  # common.sh + state.sh
-#   _vpssec_load core/security_levels.sh        # common.sh + security_levels.sh
+# Source production code; extra args layer more files (core/state.sh,
+# core/security_levels.sh) on top of common.sh. Export any environment
+# override BEFORE calling this — common.sh reads them at source time.
 _vpssec_load() {
     local root
     root=$(_vpssec_repo_root)
@@ -49,11 +39,9 @@ _vpssec_load() {
     # shellcheck source=/dev/null
     source "$root/core/common.sh"
 
-    # common.sh hard-codes path vars from VPSSEC_ROOT (no `:-`). We
-    # need test-isolated paths instead, so override AFTER sourcing.
-    # state.sh and other consumers re-derive STATE_*_FILE from these
-    # at their own source time, so the order matters: paths first,
-    # then layered files.
+    # common.sh hard-codes path vars from VPSSEC_ROOT (no `:-`), so isolation
+    # must come AFTER sourcing it and BEFORE the layered files, which re-derive
+    # STATE_*_FILE from these at their own source time.
     _vpssec_isolate_dirs
 
     local extra
@@ -72,50 +60,13 @@ _vpssec_require_gnu_realpath() {
     fi
 }
 
-# ==============================================================================
-# Fixture for testing *_fix_* functions
-# ==============================================================================
-#
-# The fix functions are the most dangerous code in the project — they are
-# the part that actually rewrites /etc — and were also the least covered:
-# of 56 fix implementations only 6 were referenced by any test. They resist
-# the plain `_vpssec_load` treatment for two reasons:
-#
-#   1. they shell out to apt-get / systemctl / docker / nginx / sshd, none
-#      of which may run for real in a test; and
-#   2. they write to absolute paths under /etc.
-#
-# The two helpers below address exactly those. Nothing here mocks vpssec's
-# own functions — `backup_file`, `write_file_atomic` and friends run for
-# real against a redirected tree, so a test still exercises the atomic
-# write, the backup session and the created-file manifest.
-#
-# Typical use:
-#
-#     setup() {
-#         _vpssec_load
-#         source "$(_vpssec_repo_root)/modules/logging.sh"
-#         etc=$(_vpssec_fake_etc)
-#         LOGROTATE_CONF="$etc/logrotate.conf"      # module path var
-#         _vpssec_stub apt-get 100                  # make the install fail
-#     }
-#
-#     @test "install failure is propagated" {
-#         run _logging_fix_setup_logrotate
-#         [ "$status" -eq 1 ]
-#         [ ! -f "$LOGROTATE_CONF" ]
-#     }
+# Fixture for *_fix_* functions: they shell out to apt-get/systemctl/docker and
+# write absolute /etc paths, so tests stub the commands and redirect the
+# module's path variables. Never mock backup_file or write_file_atomic.
 
-# Absolute path to the real chmod, resolved at load time — before any stub can
-# shadow it.
-#
-# The helpers below make each stub executable with chmod, so stubbing `chmod`
-# itself used to be self-defeating: the helper invoked the stub it had just
-# written, that stub exited without making anything executable, and bash then
-# SKIPPED the non-executable candidate during its PATH search and ran the real
-# chmod. The test passed against the real command while believing it had
-# replaced it. Same shape as the empty-directory-on-PATH fixture that claimed
-# to hide nginx.
+# The real chmod, resolved before any stub can shadow it. The helpers below
+# chmod +x every stub they write, so routing `chmod` through a stub is
+# self-defeating: bash skips the non-executable stub and runs the real one.
 _VPSSEC_REAL_CHMOD="$(command -v chmod || echo /bin/chmod)"
 
 # Directory holding this test's command stubs.
@@ -135,22 +86,15 @@ _vpssec_stub_init() {
         *":$dir:"*) ;;
         *) export PATH="$dir:$PATH" ;;
     esac
-    # Drop bash's command hash table. Prepending to PATH does NOT redirect a
-    # command bash has already resolved in this shell: if the test's own setup
-    # ran `chmod` before stubbing it, the cached /usr/bin/chmod keeps being
-    # used and the stub silently never fires — the test then passes against
-    # the real command. Found when a "chmod fails" test refused to fail.
+    # Drop bash's command hash table: prepending to PATH does NOT redirect a
+    # command already resolved in this shell, so a stub written after the test
+    # ran that command never fires and the test passes against the real one.
     hash -r 2>/dev/null || true
 }
 
-# Stub COMMAND with a fixed exit status and optional stdout.
-#
-#   _vpssec_stub systemctl            # succeeds, prints nothing
-#   _vpssec_stub apt-get 100          # exits 100
-#   _vpssec_stub docker 0 false       # exits 0, prints "false"
-#
-# `command -v COMMAND` also starts succeeding, which is how tests steer
-# the `check_command` guards inside the fixes.
+# Stub COMMAND with a fixed exit status and optional stdout, e.g.
+# `_vpssec_stub apt-get 100` or `_vpssec_stub docker 0 false`. `command -v`
+# also starts succeeding — that is how tests steer check_command guards.
 _vpssec_stub() {
     local cmd="$1" rc="${2:-0}" out="${3:-}"
     _vpssec_stub_init
@@ -163,16 +107,9 @@ _vpssec_stub() {
     "$_VPSSEC_REAL_CHMOD" +x "$(_vpssec_stub_dir)/$cmd"
 }
 
-# Stub COMMAND with an arbitrary body read from stdin, for the cases where
-# the answer depends on argv (`docker info --format ...` vs `docker ps`).
-# Call logging is prepended for you; the body sees the original "$@".
-#
-#     _vpssec_stub_script docker <<'SH'
-#     case "$*" in
-#         *LiveRestoreEnabled*) echo false ;;
-#         *) echo "" ;;
-#     esac
-#     SH
+# Stub COMMAND with a body read from stdin, for when the answer depends on
+# argv (`docker info --format ...` vs `docker ps`). Call logging is prepended
+# for you; the body sees the original "$@".
 _vpssec_stub_script() {
     local cmd="$1"
     _vpssec_stub_init
@@ -184,38 +121,13 @@ _vpssec_stub_script() {
     "$_VPSSEC_REAL_CHMOD" +x "$(_vpssec_stub_dir)/$cmd"
 }
 
-# Make `check_command NAME` answer "not installed", whatever the host has.
+# Make `check_command NAME` answer "not installed" whatever the host ships;
+# call it AFTER _vpssec_load, which defines the real one. Stubbing does the
+# OPPOSITE — it puts a binary on PATH, so check_command starts succeeding.
 #
-# Stubbing cannot do this job — it does the opposite. _vpssec_stub puts an
-# executable on PATH, so `command -v` and therefore check_command start
-# SUCCEEDING. There is no way to steer the guard the other way from PATH: the
-# only thing that makes check_command fail is the genuine absence of a binary,
-# i.e. whatever the test host happens not to ship. A test written that way
-# asserts nothing about the code and everything about the container.
-#
-# That is not hypothetical. Three tests in test_fix_logging_logrotate.bats
-# covered the apt-install-failure branch of _logging_fix_setup_logrotate in the
-# Debian container, which has no logrotate, and stopped covering it on
-# ubuntu-latest, which preinstalls it: check_command succeeded, the whole apt
-# block was skipped, and the fix returned 0 without calling apt-get. Three went
-# red in CI. A fourth ("a failing apt-get update alone does not fail the fix")
-# stayed GREEN and proved nothing, because the status 0 it asserts is what
-# skipping the block hands it for free — the more dangerous half.
-#
-# Still stub the binary alongside this, so a "never called" refutation is real.
-#
-#     _vpssec_absent_command logrotate            # absent for this whole test
-#     _vpssec_absent_command aa-status "$marker"  # absent until $marker exists
-#
-# The two-argument form models a lifecycle (absent -> apt-get installs it ->
-# present) and takes a FILE on purpose. A nested function closing over a
-# `local` captures the NAME, not the value, so by the time the guard calls it
-# the variable is out of scope, `set -u` aborts — and an aborted guard is
-# indistinguishable from a guard that refused, so every "it refused" assertion
-# passes vacuously.
-#
-# Call it AFTER _vpssec_load: common.sh defines the real check_command at
-# source time and would overwrite this one.
+# A test relying on genuine absence instead asserts what the container ships,
+# and stops covering its branch the moment it runs somewhere that has the
+# binary. Stub the binary alongside this, so "never called" refutes something.
 declare -gA _VPSSEC_ABSENT_CMDS=()
 _vpssec_absent_command() {
     _VPSSEC_ABSENT_CMDS["$1"]="${2:-}"
@@ -223,6 +135,9 @@ _vpssec_absent_command() {
     check_command() {
         local marker
         if [[ -n "${_VPSSEC_ABSENT_CMDS[$1]+set}" ]]; then
+            # A FILE, not a closure: closing over a `local` captures the NAME,
+            # out of scope by call time, so `set -u` aborts the guard — which
+            # no "it refused" assertion can tell apart from a real refusal.
             marker="${_VPSSEC_ABSENT_CMDS[$1]}"
             # No marker: absent for good. With one: absent until it appears,
             # after which the normal PATH lookup (i.e. the stub) answers.
@@ -250,39 +165,18 @@ _vpssec_stub_called() {
     fi
 }
 
-# Per-test stand-in for /etc. Echoes its path; the caller points the
-# module's own path variables at it (LOGROTATE_CONF, DOCKER_DAEMON_JSON,
-# ...). Kept separate from _vpssec_isolate_dirs because those are vpssec's
-# OWN directories, whereas this is the system tree a fix writes into.
+# Per-test stand-in for /etc; the caller points the module's own path variables
+# at it. Separate from _vpssec_isolate_dirs, which isolates vpssec's OWN
+# directories rather than the system tree a fix writes into.
 _vpssec_fake_etc() {
     local dir="$BATS_TEST_TMPDIR/etc"
     mkdir -p "$dir"
     printf '%s\n' "$dir"
 }
 
-# ==============================================================================
-# The created-file contract
-# ==============================================================================
-#
-# `.vpssec_created` is the ONLY thing backup_restore consults when deciding
-# which files a rollback should delete. A fix that creates a file without
-# registering it leaves that file on the host after the operator asked to undo
-# the whole plan. Eight instances of this shipped across logging, webapp,
-# update and fail2ban before a ninth turned up in docker's daemon.json writer,
-# and the shape mutates every time: a one-line `[[ -f X ]] && backup_file X`,
-# then the same guard split over two lines, then a full if/else with the backup
-# call in the then-branch only. Every closing grep written for one shape missed the
-# next, because a grep can only prove "this shape is gone", never "this defect
-# is gone" — so this pair asserts the OUTCOME instead: whatever appeared on
-# disk must match the manifest, no matter which primitive wrote it.
-#
-# That is also why this works for the three creators write_file_atomic can
-# never cover — ssh's staged `sshd -t` chain, docker's jq merge, and nginx's
-# openssl-written certificate — which is what blocked the API redesign twice.
-#
-#     snap=$(_vpssec_tree_snapshot "$etc")
-#     run _docker_fix_enable_daemon_setting live-restore true
-#     _vpssec_assert_created_contract "$etc" "$snap"
+# The created-file contract. `.vpssec_created` is the ONLY thing backup_restore
+# consults when deciding what a rollback deletes, so a fix that creates a file
+# without registering it leaves it behind after the operator undid the plan.
 
 # Every regular file and symlink under DIR, one "<type> <path>" line each.
 # `find -printf` would be shorter but is GNU-only; this stays portable to the
@@ -295,13 +189,13 @@ _vpssec_tree_snapshot() {
     } | sort
 }
 
-# Assert the contract for everything that appeared under DIR since SNAPSHOT.
+# Assert, for everything that appeared under DIR since SNAPSHOT, that regular
+# files are tracked and symlinks are NOT — backup_restore skips a tracked
+# symlink and drags its return code to 2, reporting a partial restore.
 #
-# Regular files must be tracked. Symlinks must NOT be: backup_restore runs a
-# symlink-escape check over the manifest, skips any entry that matches it and
-# counts it as skipped — so a tracked symlink both survives the rollback AND
-# drags its return code from 0 to 2, reporting "partially restored" for a
-# rollback that in fact did everything it was supposed to.
+# This asserts the OUTCOME, not the call shape: whatever appeared on disk must
+# match the manifest, whichever primitive wrote it. A grep for the calling
+# idiom can only prove one spelling is gone, never that the defect is.
 _vpssec_assert_created_contract() {
     local dir="$1" before="$2" rc=0
     local manifest="${VPSSEC_BACKUP_SESSION:-/nonexistent}/${VPSSEC_CREATED_MANIFEST:-.vpssec_created}"
@@ -331,17 +225,9 @@ _vpssec_assert_created_contract() {
     return "$rc"
 }
 
-# Assert that COMMAND fails. Use this instead of `! command`.
-#
-# Bash exempts a command preceded by `!` from errexit and the ERR trap,
-# which is how bats detects a failed assertion. So `! command` only ends
-# the test when it happens to be the LAST statement in the test body —
-# anywhere else a failed assertion is silently discarded and the test
-# passes vacuously. Mutation testing caught one such assertion in the ufw
-# suite; the same shape was present in five other files.
-#
-#     _vpssec_refute _vpssec_stub_called ufw 'enable'
-#     _vpssec_refute grep -q accept_ra "$VPSSEC_SYSCTL_CONF"
+# Assert that COMMAND fails. Use this instead of `! command`: bash exempts a
+# `!`-prefixed command from errexit and the ERR trap, so `! command` only ends
+# the test as the LAST statement — anywhere else it passes vacuously.
 _vpssec_refute() {
     if "$@"; then
         printf 'expected to fail but succeeded: %s\n' "$*" >&2
@@ -350,19 +236,17 @@ _vpssec_refute() {
     return 0
 }
 
-# Open a backup session rooted in the per-test backups dir, so a fix's
-# backup_file calls land somewhere assertable and the created-file
-# manifest (.vpssec_created) is exercised the way execute_plan does it.
+# Open a backup session in the per-test backups dir so a fix's backup_file
+# calls land somewhere assertable and .vpssec_created is exercised the way
+# execute_plan does it.
 #
-# SETS $VPSSEC_BACKUP_SESSION — call it plainly, never as `s=$(...)`.
-# Command substitution runs it in a subshell where the export dies with
-# the subshell, and the fix under test then silently records nothing.
+# SETS $VPSSEC_BACKUP_SESSION — call it plainly, never as `s=$(...)`: command
+# substitution runs it in a subshell, the export dies there, and the fix under
+# test then silently records nothing.
 #
-# The directory is named like a real session (YYYYMMDD_HHMMSS) because
-# backup_restore refuses any timestamp that doesn't match that shape — with
-# the old "test_session" name a test could set a backup up but never roll it
-# back, which is half the contract. Pass VPSSEC_TEST_BACKUP_SESSION_TS to
-# backup_restore.
+# The YYYYMMDD_HHMMSS name is required, not cosmetic: backup_restore refuses
+# any other timestamp shape, so a differently-named session can be written but
+# never rolled back. Pass VPSSEC_TEST_BACKUP_SESSION_TS to backup_restore.
 VPSSEC_TEST_BACKUP_SESSION_TS="20260101_000000"
 _vpssec_begin_backup_session() {
     VPSSEC_BACKUP_SESSION="${VPSSEC_BACKUPS}/${VPSSEC_TEST_BACKUP_SESSION_TS}"

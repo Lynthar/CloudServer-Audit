@@ -272,7 +272,7 @@ fail2ban_audit() {
             "low" \
             "failed" \
             "$(i18n 'fail2ban.not_installed')" \
-            "fail2ban is not installed" \
+            "$(i18n 'fail2ban.not_installed_desc')" \
             "$(i18n 'fail2ban.fix_install')" \
             "fail2ban.install")
         state_add_check "$check"
@@ -308,7 +308,7 @@ _f2b_audit_service() {
                 "low" \
                 "passed" \
                 "$(i18n 'fail2ban.service_active')" \
-                "Service is running and enabled" \
+                "$(i18n 'fail2ban.service_active_desc')" \
                 "" \
                 "")
             state_add_check "$check"
@@ -320,8 +320,8 @@ _f2b_audit_service() {
                 "low" \
                 "failed" \
                 "$(i18n 'fail2ban.service_not_enabled')" \
-                "Service is running but not enabled at boot" \
-                "Enable fail2ban service" \
+                "$(i18n 'fail2ban.service_not_enabled_desc')" \
+                "$(i18n 'fail2ban.fix_enable')" \
                 "fail2ban.enable_service")
             state_add_check "$check"
             print_severity "low" "$(i18n 'fail2ban.service_not_enabled')"
@@ -333,7 +333,7 @@ _f2b_audit_service() {
             "low" \
             "failed" \
             "$(i18n 'fail2ban.service_inactive')" \
-            "fail2ban service is not running" \
+            "$(i18n 'fail2ban.service_inactive_desc')" \
             "$(i18n 'fail2ban.fix_enable')" \
             "fail2ban.enable_service")
         state_add_check "$check"
@@ -356,7 +356,7 @@ _f2b_audit_any_jail() {
             "low" \
             "failed" \
             "$(i18n 'fail2ban.no_jails_active' 2>/dev/null || echo 'fail2ban running but no jails active')" \
-            "fail2ban-client status reports 0 active jails — service is doing nothing" \
+            "$(i18n 'fail2ban.no_jails_active_desc')" \
             "$(i18n 'fail2ban.fix_enable_jail')" \
             "fail2ban.enable_ssh_jail")
         state_add_check "$check"
@@ -371,7 +371,7 @@ _f2b_audit_any_jail() {
             "low" \
             "passed" \
             "$(i18n 'fail2ban.jails_active' 2>/dev/null || echo "Active jails"): $jail_count" \
-            "Jails: $jail_list" \
+            "$(i18n 'fail2ban.jails_active_desc' "jails=$jail_list")" \
             "" \
             "")
         state_add_check "$check"
@@ -396,7 +396,7 @@ _f2b_audit_ssh_jail() {
             "low" \
             "passed" \
             "$(i18n 'fail2ban.ssh_jail_enabled')" \
-            "Currently banned: $current_banned, Total: $total_banned, maxretry: $maxretry, bantime: $bantime" \
+            "$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")" \
             "" \
             "")
         state_add_check "$check"
@@ -411,8 +411,8 @@ _f2b_audit_ssh_jail() {
                 "low" \
                 "failed" \
                 "$(i18n 'fail2ban.maxretry_high')" \
-                "maxretry=$maxretry (recommended: 3-5)" \
-                "Lower maxretry value" \
+                "$(i18n 'fail2ban.maxretry_high_desc' "value=$maxretry")" \
+                "$(i18n 'fail2ban.maxretry_high_suggestion')" \
                 "fail2ban.configure_ssh_jail")
             state_add_check "$check"
             print_severity "low" "$(i18n 'fail2ban.maxretry_high'): $maxretry"
@@ -424,7 +424,7 @@ _f2b_audit_ssh_jail() {
             "low" \
             "failed" \
             "$(i18n 'fail2ban.ssh_jail_disabled')" \
-            "SSH jail is not enabled" \
+            "$(i18n 'fail2ban.ssh_jail_disabled_desc')" \
             "$(i18n 'fail2ban.fix_enable_ssh_jail')" \
             "fail2ban.enable_ssh_jail")
         state_add_check "$check"
@@ -444,7 +444,7 @@ _f2b_audit_config() {
             "low" \
             "passed" \
             "$(i18n 'fail2ban.custom_config')" \
-            "Custom configuration found" \
+            "$(i18n 'fail2ban.custom_config_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -456,8 +456,8 @@ _f2b_audit_config() {
             "low" \
             "failed" \
             "$(i18n 'fail2ban.default_config')" \
-            "No operator tuning found in jail.local or jail.d — the stock 5-retry / 10-minute-ban defaults are in effect" \
-            "Apply this tool's jail.d drop-in" \
+            "$(i18n 'fail2ban.default_config_desc')" \
+            "$(i18n 'fail2ban.default_config_suggestion')" \
             "fail2ban.configure_ssh_jail")
         state_add_check "$check"
         print_severity "low" "$(i18n 'fail2ban.default_config')"

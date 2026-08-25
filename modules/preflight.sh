@@ -54,7 +54,7 @@ _preflight_check_os() {
             "failed" \
             "$(i18n 'preflight.os_unsupported')" \
             "${os} ${version} - $(i18n 'preflight.os_unsupported')" \
-            "Use Debian 12/13, Ubuntu 22.04/24.04/26.04, a RHEL 8/9/10 family distro (Rocky/Alma/CentOS Stream), or Arch" \
+            "$(i18n 'preflight.os_unsupported_suggestion')" \
             "")
         state_add_check "$check"
         print_warn "$(i18n 'preflight.os_unsupported'): ${os} ${version}"
@@ -110,7 +110,7 @@ _preflight_check_network() {
             "failed" \
             "$(i18n 'preflight.network_fail')" \
             "$(i18n 'preflight.network_fail_desc')" \
-            "Check network configuration and DNS" \
+            "$(i18n 'preflight.network_fail_suggestion')" \
             "")
         state_add_check "$check"
         print_warn "$(i18n 'preflight.network_fail')"

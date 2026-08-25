@@ -814,10 +814,9 @@ _guide_resume() {
 
 # Guide mode main flow
 guide_mode() {
-    # Fix paths are apt/dpkg-based; only the audit is distro-aware.
-    # Refuse rather than run apt on a system that lacks it. 4 = capability
-    # not supported here, distinct from success (0) and a failed fix (1) —
-    # automation must be able to tell "done" from "refused to start".
+    # Fix paths are apt/dpkg-based; refuse rather than run apt where it is
+    # absent. Exit 4 = capability not supported, distinct from success (0) and
+    # a failed fix (1) — automation must tell "done" from "refused to start".
     if ! is_debian_based; then
         print_warn "$(i18n 'guide.fix_debian_only')"
         return 4
@@ -1167,20 +1166,32 @@ status_mode() {
         return 0
     fi
 
+    print_msg "  $(i18n 'status.version' "version=${VPSSEC_VERSION}")"
+
+    # The only command that reaches the network to compare versions. audit and
+    # guide never do: an audit that phones home on every CI run is a different
+    # product, and an unreachable GitHub must not colour a security verdict.
+    local latest
+    latest=$(_vpssec_latest_release_tag)
+    if [[ -n "$latest" && "$VPSSEC_VERSION" != "unknown" ]] \
+       && _vpssec_version_lt "v${VPSSEC_VERSION}" "$latest"; then
+        print_warn "  $(i18n 'status.update_available' "latest=$latest")"
+    fi
+
     # Last run info
     local ok_state="${STATE_OK_FILE}"
     if [[ -f "$ok_state" ]]; then
         local last_run=$(jq -r '.last_run // "never"' "$ok_state")
-        print_msg "  Last run: $last_run"
+        print_msg "  $(i18n 'status.last_run' "time=$last_run")"
 
         local completed=$(jq -r '.completed_fixes | length' "$ok_state")
-        print_msg "  Completed fixes: $completed"
+        print_msg "  $(i18n 'status.completed_fixes' "count=$completed")"
     fi
 
     # Backup info
     local latest_backup=$(backup_get_latest)
     if [[ -n "$latest_backup" ]]; then
-        print_msg "  Latest backup: $latest_backup"
+        print_msg "  $(i18n 'status.latest_backup' "time=$latest_backup")"
     fi
 
     # progress.json is only present between a mid-fix kill and the next

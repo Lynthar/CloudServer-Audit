@@ -1,12 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _auto_update_apt_periodic_from_dump and
-# _auto_update_apt_origins_from_dump (core/distro.sh — they moved there so the
-# audit and the unattended-upgrades fix share one implementation). Original
-# audit only verified
-# `APT::Periodic::Unattended-Upgrade "1"` in /etc/apt/apt.conf.d/20auto-upgrades,
-# missing the case where 50unattended-upgrades or a drop-in clears the
-# Allowed-Origins/Origins-Pattern list — u-u then runs but updates nothing.
+# Regression tests for the apt-config dump readers in core/distro.sh, shared by
+# the audit and the unattended-upgrades fix. Checking 20auto-upgrades alone
+# misses a drop-in that clears Allowed-Origins: u-u runs and updates nothing.
 
 load helpers.bash
 
@@ -34,10 +29,8 @@ setup() {
 }
 
 @test "periodic: drop-in re-set to 0 wins (last-write semantics in dump)" {
-    # apt-config dump emits one final line per scalar key after merging
-    # all drop-ins; if 20auto-upgrades sets 1 and 99-local sets 0, only
-    # the latter appears. Our awk takes the first match, so simulate the
-    # merged result directly.
+    # apt-config dump emits one final line per scalar key after merging all
+    # drop-ins, and the awk takes the first match, so simulate the merged result.
     local dump='APT::Periodic::Unattended-Upgrade "0";
 APT::Periodic::AutocleanInterval "7";'
     run _auto_update_apt_periodic_from_dump "$dump"
@@ -46,10 +39,8 @@ APT::Periodic::AutocleanInterval "7";'
 
 @test "periodic: a repeated key is read as its first occurrence" {
     # apt-config dump emits one merged line per scalar key, so this input is
-    # artificial — but the helper's `exit` is a deliberate "first match wins"
-    # and its comment says so, and without a test that claim is unverified:
-    # dropping the `exit` makes awk print "1\n0", which compares unequal to "1"
-    # and silently flips the answer to disabled.
+    # artificial — but it is what pins the awk's "first match wins" exit: dropping
+    # it makes awk print "1\n0", which compares unequal and flips the answer.
     local dump='APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::Unattended-Upgrade "0";'
     run _auto_update_apt_periodic_from_dump "$dump"
@@ -84,10 +75,9 @@ Unattended-Upgrade::Allowed-Origins:: "${distro_id}ESMApps:${distro_codename}-ap
 }
 
 @test "origins: only the empty anchor present → not effective (regression)" {
-    # The exact case the H4 fix exists to catch: u-u config reduced to
-    # an empty list (user commented every entry, or a drop-in cleared
-    # it). apt-config dump still emits the anchor line but no `::`
-    # element — should be reported as ineffective.
+    # u-u config reduced to an empty list (every entry commented, or a drop-in
+    # cleared it): apt-config dump still emits the anchor line but no `::`
+    # element, and that must be reported as ineffective.
     local dump='Unattended-Upgrade::Origins-Pattern "";
 Unattended-Upgrade::Allowed-Origins "";
 Unattended-Upgrade::Package-Blacklist "";'

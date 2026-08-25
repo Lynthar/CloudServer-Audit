@@ -333,7 +333,7 @@ _docker_audit_exposed_ports() {
             "failed" \
             "$(i18n 'docker.exposed_ports' "count=$count")" \
             "$(i18n 'docker.exposed_ports_desc' "list=$port_list")" \
-            "Use reverse proxy or bind to 127.0.0.1" \
+            "$(i18n 'docker.exposed_ports_suggestion')" \
             "docker.generate_proxy_template")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'docker.exposed_ports' "count=$count"): $port_list"
@@ -365,7 +365,7 @@ _docker_audit_privileged() {
             "failed" \
             "$(i18n 'docker.privileged_containers' "count=$count")" \
             "$(i18n 'docker.privileged_containers_desc' "list=$container_list")" \
-            "Remove --privileged flag, use specific capabilities instead" \
+            "$(i18n 'docker.privileged_containers_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "medium" "$(i18n 'docker.privileged_containers' "count=$count"): $container_list"
@@ -397,7 +397,7 @@ _docker_audit_root_containers() {
             "failed" \
             "All containers running as root ($count)" \
             "$(i18n 'docker.all_root_containers_desc')" \
-            "Use USER directive in Dockerfile or --user flag" \
+            "$(i18n 'docker.root_containers_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "All $count containers running as root"
@@ -409,7 +409,7 @@ _docker_audit_root_containers() {
             "failed" \
             "$count of $total containers running as root" \
             "$(i18n 'docker.some_root_containers_desc')" \
-            "Use USER directive in Dockerfile or --user flag" \
+            "$(i18n 'docker.root_containers_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "$count of $total containers running as root"
@@ -472,7 +472,7 @@ _docker_audit_daemon_settings() {
             "failed" \
             "Docker live-restore not enabled" \
             "$(i18n 'docker.no_live_restore_desc')" \
-            "Enable live-restore in daemon.json" \
+            "$(i18n 'docker.no_live_restore_suggestion')" \
             "docker.enable_live_restore")
         state_add_check "$check"
         print_severity "low" "Docker live-restore not enabled"
@@ -488,7 +488,7 @@ _docker_audit_daemon_settings() {
             "failed" \
             "Docker no-new-privileges not set as default" \
             "$(i18n 'docker.no_new_privileges_disabled_desc')" \
-            "Enable no-new-privileges in daemon.json" \
+            "$(i18n 'docker.no_new_privileges_disabled_suggestion')" \
             "docker.enable_no_new_privileges")
         state_add_check "$check"
         print_severity "low" "Docker no-new-privileges not set as default"

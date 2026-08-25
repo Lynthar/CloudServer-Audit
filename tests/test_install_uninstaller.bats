@@ -1,31 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the uninstaller install.sh generates.
-#
-# Three defects motivate this file, all in one 20-line heredoc:
-#
-#   1. `rm -rf /opt/vpssec` was a LITERAL while INSTALL_DIR is configurable,
-#      so `INSTALL_DIR=/srv/vpssec ./install.sh` produced an uninstaller that
-#      deleted a directory it had never installed to — someone else's copy,
-#      or nothing — and left the real install in place.
-#   2. It asked "Remove state and backups?" one line AFTER `rm -rf` had
-#      already taken them. state/ and backups/ live under $INSTALL_DIR, not
-#      under the /var/lib/vpssec that prompt offered to delete — a path
-#      nothing in this codebase uses (it was the only occurrence in the whole
-#      repo). So the question could not be honoured either way, and every
-#      uninstall silently destroyed the backups `vpssec rollback` restores
-#      from while appearing to ask first.
-#   3. install.sh guards its own `rm -rf` with safe_remove_install_dir's
-#      allowlist; the script it GENERATED had no guard at all. Making the
-#      path configurable without adding one would have been strictly worse
-#      than the bug being fixed.
-#
-# What this suite can and cannot reach: the allowlist only accepts
-# /opt/<name> and /var/lib/<name>, so every path bats can write to is
-# refused by design. The refusal paths and the generated text are covered
-# here; the destructive success paths (data kept, data purged) need real
-# allowlisted directories and live in tests/uninstall/run.sh, which is
-# root-and-throwaway-container only, exactly like tests/mutation/.
+# Tests for the uninstaller install.sh generates. The allowlist accepts only
+# /opt/<name> and /var/lib/<name>, so every path bats can write to is refused by
+# design; the destructive success paths live in tests/uninstall/run.sh.
 
 load helpers.bash
 

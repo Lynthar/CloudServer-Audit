@@ -1,40 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for fail2ban's four fixes. Until this file existed the module was
-# the only one in the project with selectable fixes and no test touching any
-# of them — `ls tests/*fail2ban*.bats` matched test_fail2ban_custom.bats and
-# made it look covered, but that suite exercises _f2b_has_custom_config, an
-# AUDIT-side predicate. Same name-collision failure mode the backup module hit
-# from the other direction; read what a matched suite sources.
-#
-# What the fixes now have to get right, and what each was getting wrong:
-#
-#   1. configure_ssh_jail wrote the whole of /etc/fail2ban/jail.local, which is
-#      the operator's file. It now writes jail.d/99-vpssec-sshd.local, so a
-#      hand-written multi-jail or ignoreip config survives. What makes the
-#      drop-in take effect was measured against a real fail2ban-client, not
-#      assumed: jail.d beats jail.local, and within jail.d the *.local tier
-#      beats the *.conf tier. The `99-` prefix does none of that work — in byte
-#      order it sorts before `defaults-`.
-#   2. backup_file sat under an `[[ -f ]]` guard. Its other job is recording an
-#      ABSENT path in .vpssec_created, the only thing that lets a rollback
-#      delete a fix-created file — and the drop-in never exists beforehand, so
-#      nothing was recorded and `vpssec rollback` left this tool's jail config
-#      live. Eighth instance of that defect; it hid from the closing grep
-#      because the guard and the call were on separate lines.
-#   3. Three audit-side readers globbed only jail.d/*.conf, so they could not
-#      see the .local the fix had just written: on the file-fallback path the
-#      fix would succeed and the next audit would report "using default
-#      configuration only". Verified against a real fail2ban-client that both
-#      suffixes are read and that [DEFAULT] in a drop-in takes effect.
-#   4. install auto-configured whenever jail.local was absent. The question that
-#      matters is whether the OPERATOR configured anything, which is what
-#      _f2b_has_custom_config answers — and it deliberately ignores the distro's
-#      shipped defaults-debian.conf, so a fresh install still gets configured.
-#
-# The assertions are deliberately about behaviour — what lands on disk, what a
-# rollback deletes — not about which core function the fix calls, so they stay
-# valid through any later change to the backup API.
+# Coverage for fail2ban's four fixes. The assertions are deliberately about
+# behaviour — what lands on disk, what a rollback deletes — not about which
+# core function a fix calls, so they survive any change to the backup API.
 
 load helpers.bash
 
@@ -131,11 +98,9 @@ EOF
 }
 
 @test "configure: the drop-in lands in jail.d and is a .local" {
-    # Both halves are load-bearing, and measurement (see the module header)
-    # rather than convention decides them: jail.d is what beats the operator's
-    # jail.local, and the *.local tier is what beats the distro's own
-    # jail.d/defaults-debian.conf. Renaming it to .conf would lose the second
-    # while looking harmless.
+    # Both halves are load-bearing, and measured against a real fail2ban-client:
+    # jail.d beats the operator's jail.local, and within jail.d the *.local tier
+    # beats the distro's defaults-debian.conf. Renaming to .conf loses the second.
     _f2b_jail_comes_up
     run _f2b_fix_configure_ssh_jail
     [ "$status" -eq 0 ]
@@ -193,10 +158,9 @@ EOF
 }
 
 @test "configure: the systemd backend is only chosen when fail2ban can read the journal" {
-    # journald running and journalctl working say nothing about whether
-    # fail2ban can use the systemd backend — that needs the python3-systemd
-    # module, which Debian only Recommends. Getting this wrong makes fail2ban
-    # fail to initialize the jail at all. Measured against a real fail2ban.
+    # journald running and journalctl working say nothing about whether fail2ban
+    # can use the systemd backend — that needs python3-systemd, which Debian only
+    # Recommends. Getting it wrong makes fail2ban fail to initialize the jail.
     _vpssec_stub systemctl          # journald active
     _vpssec_stub journalctl
     _vpssec_stub python3 1          # `import systemd.journal` fails
@@ -308,11 +272,9 @@ SH
 }
 
 @test "configure: a jail that never comes up gets the drop-in taken back out" {
-    # Found by running the fix against a real fail2ban, not by any stub. A
-    # drop-in that passes `fail2ban-client -t` can still make fail2ban fail to
+    # A drop-in that passes `fail2ban-client -t` can still make fail2ban fail to
     # initialize the jail at runtime, and then the host has NO sshd jail — the
-    # distro's own went with ours. Reporting the failure is not enough; a
-    # hardening fix must not leave the box less protected than it found it.
+    # distro's own went with ours. A hardening fix must not leave the box worse.
     _f2b_jail_stays_down
     run _f2b_fix_configure_ssh_jail
     [ "$status" -eq 1 ]
@@ -329,10 +291,9 @@ SH
 }
 
 @test "configure: a down service does not cost us a validated drop-in" {
-    # The other side of the rule above. A missing jail on a host where
-    # fail2ban is not running says nothing about our drop-in, and deleting a
-    # file that already passed validation throws away correct work — install
-    # on a service that is slow to start is exactly this case.
+    # The other side of the rule above. A missing jail on a host where fail2ban
+    # is not running says nothing about our drop-in, and deleting a file that
+    # already passed validation throws away correct work.
     _vpssec_stub systemctl 3          # is-active fails: service down
     _f2b_jail_stays_down
     run _f2b_fix_configure_ssh_jail
@@ -478,13 +439,9 @@ SH
 }
 
 @test "install: a service that failed to start still fails it once the jail comes up" {
-    # The test above cannot pin enable_service's return value. Both it and
-    # configure_ssh_jail's postcondition consult `systemctl is-active`, so a
-    # stub answering uniformly makes them fail together — discarding
-    # enable_service's status then looks harmless because configure fails
-    # anyway, and the mutation survives. Split them with a service that is
-    # down when enable_service looks and up by the time configure does, which
-    # is also the real "slow to start" case.
+    # enable_service and configure_ssh_jail both consult `systemctl is-active`, so
+    # a uniformly answering stub makes them fail together and hides a discarded
+    # enable_service status. Split them: down when one looks, up when the other does.
     local marker="$BATS_TEST_TMPDIR/f2b-came-up"
     _vpssec_stub_script systemctl <<SH
 case "\$*" in
@@ -503,12 +460,9 @@ SH
     [ -f "$F2B_DROPIN" ]
 }
 
-# ==============================================================================
-# The audit must be able to see what the fix wrote
-# ==============================================================================
-#
-# These three readers globbed jail.d/*.conf only. The drop-in is a .local, so
-# the fix succeeded and the next audit contradicted it.
+# The audit must be able to see what the fix wrote: these three readers must not
+# glob jail.d/*.conf only, or the drop-in (a .local) is invisible and the next
+# audit contradicts a fix that succeeded.
 
 @test "audit: the drop-in counts as custom config" {
     _f2b_jail_comes_up
@@ -561,10 +515,8 @@ SH
 
 @test "configure: a drop-in this plan created is not removed when there is nothing to restore" {
     # backup_file returns 0 with NO path for a file already registered as
-    # fix-created this session, so the restore has no snapshot to put back —
-    # and must leave the file for the plan-level rollback to delete rather
-    # than removing it here. Until 2026-08-17 this state was reached by a
-    # FAILED backup instead, which now aborts the fix outright.
+    # fix-created this session, so there is no snapshot to put back — and the
+    # file must be left for the plan-level rollback rather than removed here.
     _vpssec_begin_backup_session
     printf '%s\n' '# created earlier in this plan' > "$F2B_DROPIN"
     printf '%s\n' "$F2B_DROPIN" > "$VPSSEC_BACKUP_SESSION/$VPSSEC_CREATED_MANIFEST"

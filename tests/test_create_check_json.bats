@@ -1,35 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression: jq 1.7.0 (Debian trixie / Ubuntu 24.04+) added a `module`
-# keyword for the new module system. This bit create_check_json TWICE:
-#
-#   (1) The unquoted shorthand object form `{module: $module, ...}` is
-#       rejected because `module` can't appear as an unquoted identifier
-#       in object-key position.
-#   (2) Less obvious: even after quoting the key, `--arg module ...`
-#       creates a jq variable named `$module`, and the lexer rejects
-#       that on the SAME ground — `module` can't be a variable name.
-#
-# Both forms produce the same error (note "line 1" points at the FILTER
-# string, not the argument list, which made (2) easy to misdiagnose):
-#
-#     unexpected module, expecting IDENT or __loc__
-#
-# Every state_add_check call therefore failed silently, leaving
-# state/checks.json empty and the audit appearing to "hang" at the
-# end (the report writer had no data to render). The macOS / Apple
-# build of jq 1.7.1 is more permissive and accepts both forms — that's
-# why the bug never surfaced in development.
-#
-# This test asserts that:
-#   1. create_check_json produces well-formed JSON jq itself can re-parse
-#   2. All eight expected fields are present with the correct values
-#   3. Values containing shell metacharacters survive intact
-#   4. The filter source neither uses shorthand keys nor a `$module`
-#      jq variable — so a future refactor that re-introduces either
-#      form fails at CI rather than in production
-#   5. `--arg <reserved-word>` is explicitly rejected by jq 1.7+ — the
-#      smoke test that proves the fix shape is necessary
+# create_check_json must not name a jq object key `module` unquoted, nor pass
+# `--arg module`: jq 1.7+ made `module` a keyword and rejects both, and every
+# state_add_check then fails silently. Apple's jq accepts them, so test on Linux.
 
 load helpers.bash
 
@@ -82,13 +54,9 @@ setup() {
 }
 
 @test "create_check_json: source uses --arg mod, NOT --arg module" {
-    # `--arg module` injects a jq variable named $module, which jq 1.7+
-    # rejects because `module` is a reserved word. The fix must be
-    # `--arg mod` (or any other non-reserved name).
-    #
-    # Match only actual jq command lines (which are followed by a
-    # quoted "$..." value) — explanatory comments mentioning the old
-    # form are exempt.
+    # `--arg module` injects a jq variable named $module, which jq 1.7+ rejects
+    # as a reserved word; the fix is `--arg mod`. The pattern matches only real
+    # jq command lines, so comments naming the old form are exempt.
     local root
     root=$(_vpssec_repo_root)
     run grep -nE -- '--arg +module +"' "$root/core/common.sh"

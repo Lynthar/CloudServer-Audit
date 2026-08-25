@@ -1,24 +1,7 @@
 #!/usr/bin/env bats
-#
-# The two safety gates that stand between a user and being locked out of
-# their own server: disabling password authentication, and disabling root
-# login. Both refuse to proceed unless a working way back in survives.
-#
-# The defects these encode:
-#
-#   - The password-off gate counted root's authorized_keys unconditionally.
-#     On a host with PermitRootLogin=no and a keyless sudo admin it passed,
-#     and after the change nobody could authenticate at all: the admin had
-#     no key, and root was refused by PermitRootLogin.
-#   - Disabling root login only required "a sudo user exists". With password
-#     auth already off (say an earlier fix in the same plan turned it off),
-#     an admin without a key is not a way back in either. The two fixes are
-#     individually safe and jointly fatal, in either order.
-#
-# The gates are the seam under test, so the predicates that feed them
-# (which admins exist, who holds a usable key, whether password auth is on)
-# are redefined per test. The rescue daemon is stubbed out: it launches a
-# real sshd, which a unit test must not do.
+# The two gates between a user and being locked out of their own server:
+# disabling password authentication, and disabling root login. Each is safe
+# alone and fatal with the other, so both must check a surviving way back in.
 
 load helpers.bash
 
@@ -51,11 +34,8 @@ setup() {
 }
 
 # `sshd -T` answers from whatever the module last wrote into the drop-in,
-# lowercased the way real sshd prints it. That models a host where our
-# drop-in wins the merge — the precondition for a fix to legitimately
-# report success. Losing the merge is covered in test_fix_ssh_dropin.bats;
-# without a stub like this every "the gate lets it through" assertion would
-# fail for the unrelated reason that the effective value never confirmed.
+# lowercased the way real sshd prints it: a host where our drop-in wins the
+# merge, without which every "the gate lets it through" assertion fails blind.
 _stub_sshd_honours_dropin() {
     export VPSSEC_TEST_DROPIN="$SSH_HARDENING_DROPIN"
     _vpssec_stub_script sshd <<'SH'
@@ -70,11 +50,9 @@ exit 0
 SH
 }
 
-# The world the gate sees. State lives in globals rather than being closed
-# over: a function defined inside another captures the NAME of a `local`,
-# not its value, so by the time the gate calls it the variable is out of
-# scope and `set -u` aborts — which looks exactly like the gate refusing.
-# Every "the gate refuses" assertion would have passed for the wrong reason.
+# The world the gate sees. State lives in globals, not closed over: a function
+# defined inside another captures the NAME of a `local`, so by call time it is
+# out of scope and `set -u` aborts — which looks exactly like the gate refusing.
 _TEST_ADMINS=""
 _TEST_KEYED=""
 _TEST_ROOT_KEY_LOGIN="no"
@@ -129,10 +107,9 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
 }
 
 @test "password-off gate: root's key alone proceeds, but warns" {
-    # Legitimate on a fresh cloud image with no admin yet — the operator is
-    # told the path back in is fragile. helpers.bash sets VPSSEC_QUIET_SCAN=1
-    # to keep test output readable, which also swallows print_warn; turn it
-    # back on for this one assertion.
+    # Legitimate on a fresh cloud image with no admin yet — the operator is told
+    # the path back in is fragile. helpers.bash sets VPSSEC_QUIET_SCAN=1, which
+    # swallows print_warn; turn it back on for this one assertion.
     _admins_are
     _users_with_keys
     _root_can_key_login yes

@@ -474,7 +474,7 @@ _kernel_audit_unused_protocols() {
             "failed" \
             "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")" \
             "$(i18n 'kernel.unused_protocols_unblocked_desc' "list=$list")" \
-            "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf" \
+            "$(i18n 'kernel.unused_protocols_unblocked_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")"
@@ -560,7 +560,7 @@ _kernel_audit_ipv6() {
                 "failed" \
                 "$(i18n 'kernel.ipv6_unused_insecure')" \
                 "$(i18n 'kernel.ipv6_unused_insecure_desc')" \
-                "Consider disabling IPv6 or hardening settings" \
+                "$(i18n 'kernel.ipv6_unused_insecure_suggestion')" \
                 "kernel.harden_ipv6")
             state_add_check "$check"
             print_severity "low" "$(i18n 'kernel.ipv6_unused_insecure')"
@@ -590,7 +590,7 @@ _kernel_audit_ipv6() {
                     "failed" \
                     "$(i18n 'kernel.ipv6_firewall_missing')" \
                     "$(i18n 'kernel.ipv6_firewall_missing_desc')" \
-                    "Enable IPv6 in firewall configuration" \
+                    "$(i18n 'kernel.ipv6_firewall_missing_suggestion')" \
                     "")
                 state_add_check "$check"
                 print_severity "medium" "$(i18n 'kernel.ipv6_firewall_missing')"

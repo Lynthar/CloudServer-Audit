@@ -1,17 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for users.sh helpers.
-#
-# H8: _group_all_members must return primary-GID members in addition to
-#     the secondary `members` field of getent group. The original
-#     `getent group sudo | cut -d: -f4` only saw secondary members, so
-#     `useradd -g sudo bob` was silently absent from the audit.
-#
-# H9: _pwquality_get_directive_from_files must merge /etc/security/pwquality.conf
-#     and /etc/security/pwquality.conf.d/*.conf with last-write-wins semantics
-#     (libpwquality reads drop-in directory in ASCII order). The original code
-#     read only the main file, missing the recommended Debian 11+ / Ubuntu 22.04+
-#     layout.
+# Regression tests for users.sh helpers. _group_all_members must include
+# primary-GID members, not just getent's secondary `members` field; and pwquality
+# must merge conf.d/*.conf over the main file, last-write-wins in ASCII order.
 
 load helpers.bash
 
@@ -21,7 +11,7 @@ setup() {
     source "$(_vpssec_repo_root)/modules/users.sh"
 }
 
-# ---------- H8: _group_all_members_from_streams ----------
+# ---------- _group_all_members_from_streams ----------
 
 @test "group: secondary members emitted (sudo:x:27:alice,bob)" {
     local group_line='sudo:x:27:alice,bob'
@@ -34,9 +24,8 @@ daemon:x:1:1::/usr/sbin:/usr/sbin/nologin'
 }
 
 @test "group: primary-GID member emitted even when secondary list is empty (regression)" {
-    # The exact case the H8 fix exists to catch: bob has primary GID 27
-    # (sudo) so getent group sudo | cut -d: -f4 returns nothing, but
-    # bob still gets sudo membership.
+    # bob has primary GID 27 (sudo), so `getent group sudo | cut -d: -f4`
+    # returns nothing, but bob still holds sudo membership.
     local group_line='sudo:x:27:'
     local passwd_text='root:x:0:0::/root:/bin/bash
 bob:x:1001:27::/home/bob:/bin/bash
@@ -85,7 +74,7 @@ sudoer:x:1003:27::/home/sudoer:/bin/bash'
     [[ "$output" != *"twoseventy"* ]]
 }
 
-# ---------- H9: _pwquality_get_directive_from_files ----------
+# ---------- _pwquality_get_directive_from_files ----------
 
 # Build a fixture set and return the file paths in ASCII order.
 _make_pwquality_fixture() {
@@ -113,8 +102,8 @@ EOF
 }
 
 @test "pwquality: drop-in overrides main (regression)" {
-    # The H9 case: main says minlen=8 but a drop-in file says minlen=14.
-    # libpwquality reads drop-in last → effective value is 14.
+    # Main says minlen=8 but a drop-in says minlen=14; libpwquality reads the
+    # drop-in last, so the effective value is 14.
     local main="$BATS_TEST_TMPDIR/pwquality.conf"
     local drop="$BATS_TEST_TMPDIR/50-strict.conf"
     cat >"$main" <<'EOF'

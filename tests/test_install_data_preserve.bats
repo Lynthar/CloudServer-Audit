@@ -1,12 +1,7 @@
 #!/usr/bin/env bats
-#
-# A reinstall over an existing directory must not destroy state/ and
-# backups/: the uninstaller's default is to KEEP them, and the upgrade path
-# honours the same contract via stash_data_dirs/restore_data_dirs.
-#
-# The stash pair is extracted and exercised alone: safe_remove_install_dir's
-# allowlist refuses every bats-writable path by design, so its stash-then-rm
-# ordering is pinned on the source text instead.
+# A reinstall over an existing directory must not destroy state/ and backups/:
+# the uninstaller defaults to KEEP and the upgrade path honours the same
+# contract. safe_remove_install_dir's allowlist refuses every bats-writable path.
 
 load helpers.bash
 

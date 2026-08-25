@@ -1,30 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for the four logging fixes that were untested: the persistent
-# journal drop-in, and the auditd install / enable / rules trio.
-#
-# All four are FIX_SAFE, which in guide mode means they are applied with no
-# confirmation at all — so a defect here reaches every user silently, and
-# the only thing standing between the operator and a surprise is that the
-# fix does what it says and can be undone.
-#
-# Two rollback-contract defects motivated this file, both found while
-# writing it:
-#
-#   1. _logging_fix_enable_persistent_journal called backup_file only when
-#      the drop-in already existed. backup_file's other job is to record an
-#      ABSENT path as fix-created in .vpssec_created, which is the only
-#      thing that lets a rollback delete it — so the very first run left a
-#      drop-in that no rollback could remove, and an operator who undid the
-#      plan still had journald reconfigured.
-#   2. _logging_fix_setup_audit_rules had no backup_file call at all, so
-#      the same hole applied to 99-vpssec.rules, and a pre-existing file
-#      was replaced with nothing kept.
-#
-# The audit-rules content is pinned too: it must NOT contain a `-D`.
-# augenrules concatenates rules.d/*.rules in lexical order and this file
-# sorts last, so a delete-all here would wipe every rule loaded from an
-# operator's own 10-*/20-* files.
+# Coverage for four FIX_SAFE logging fixes — applied in guide mode with no
+# confirmation. The audit-rules content must NOT contain a `-D`: augenrules
+# concatenates rules.d/*.rules and this file sorts last, so it would wipe them all.
 
 load helpers.bash
 
@@ -285,10 +262,9 @@ _block_path_under() {
 }
 
 @test "install auditd: succeeds even where the service cannot start" {
-    # Deliberate. This fix_id answers "auditd is not installed", and the
-    # install is what that check measures; the service has its own check and
-    # its own fix_id, which report on the next run. Failing here would mark
-    # a correctly installed package as a failed fix on every container.
+    # Deliberate. This fix_id answers "auditd is not installed" and the install
+    # is what that check measures; the service has its own check and fix_id.
+    # Failing here would mark a correctly installed package as a failed fix.
     _vpssec_stub apt-get
     _service_never_starts
 

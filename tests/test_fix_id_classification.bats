@@ -1,18 +1,7 @@
 #!/usr/bin/env bats
-#
-# Guard against orphan fix_ids.
-#
-# Every fix_id a module emits (the 8th positional arg of create_check_json)
-# must be classified in one of the FIX_* maps in core/security_levels.sh.
-# An unclassified fix_id resolves to "unknown" in get_fix_safety(), which
-# silently bypasses the alert_only filter and the safety badge: it shows up
-# as a selectable "(manual)" fix that then fails, and the safety model is
-# not applied. This is the bug class that produced webapp.php_disable_functions
-# (name drift vs the classified/dispatched webapp.php_dangerous_functions),
-# ssh.configure_access_control, ufw.review_rules, users.{nopasswd_sudo,
-# history,password_policy,pwquality}, filesystem.review_caps, etc.
-#
-# Catch it here at PR time instead of at audit time on a user's box.
+# Guard against orphan fix_ids: every fix_id a module emits (the 8th argument of
+# create_check_json) must be classified in a FIX_* map, or get_fix_safety returns
+# "unknown", bypassing the alert_only filter and offering a fix that then fails.
 
 setup() {
     REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
@@ -63,20 +52,9 @@ _emitted_fix_ids() {
     fi
 }
 
-# ---- the other direction ---------------------------------------------
-#
-# The test above only catches emitted-but-unclassified. Classified-but-never-
-# emitted rotted undetected for as long: timezone.sync_time and
-# alerts.generate_templates each had a FIX_SAFE entry, a dispatch case and an
-# implementation, but no check ever handed the engine that fix_id — so they
-# could never be selected, while `vpssec help <module>` cheerfully advertised
-# them as auto-applied fixes. fail2ban.installed was the same rot in
-# CHECK_SCORE_CATEGORY.
-#
-# One convention has to be respected or this fires on ~28 legitimate entries:
-# FIX_ALERT_ONLY is keyed by CHECK id, not fix id. Alert-only findings emit an
-# empty fix_id by definition; the map is what lets _help_collect_fixes explain
-# them in the "alert only" section of `vpssec help <module>`.
+# The other direction: a classified-but-never-emitted fix_id can never be
+# selected while `vpssec help <module>` advertises it. FIX_ALERT_ONLY is keyed by
+# CHECK id, not fix id — alert-only findings emit an empty fix_id by definition.
 
 # Keys of one named map.
 _map_keys() {
@@ -157,13 +135,9 @@ _emitted_check_ids() {
     fi
 }
 
-# ---- FIX_TEMPLATE_ONLY --------------------------------------------------
-#
-# The map records which fixes cannot resolve the finding they hang off. It is
-# ORTHOGONAL to the safety class, not a fifth class: all four generators are
-# FIX_SAFE and webapp's SSL pair is FIX_CONFIRM. So it gets the same both-ways
-# treatment as the others — a key naming nothing is a promise the engine can
-# never keep, and a key with no safety class would slip past get_fix_safety.
+# FIX_TEMPLATE_ONLY records which fixes cannot resolve the finding they hang off.
+# It is ORTHOGONAL to the safety class, not a fifth class, and gets the same
+# both-ways treatment: no key without a fix, and no key without a safety class.
 
 @test "every FIX_TEMPLATE_ONLY key is a fix some check actually offers" {
     local emitted orphans="" id
@@ -204,9 +178,8 @@ _emitted_check_ids() {
 
 @test "every FIX_TEMPLATE_ONLY key has a fixtmpl translation in both languages" {
     # The map's English doubles as the fallback, so a missing key degrades to a
-    # readable sentence rather than printing 'fixtmpl.docker.…' — but only the
-    # English half. A zh_CN user would silently get English, which is the same
-    # last-mile gap fixwarn.* was created to close.
+    # readable sentence rather than 'fixtmpl.docker.…' — but only the English
+    # half; a zh_CN user would silently get English.
     local id missing="" lang
     while IFS= read -r id; do
         [[ -z "$id" ]] && continue
@@ -224,10 +197,8 @@ _emitted_check_ids() {
     fi
 }
 
-# ---- FIX_VERIFY ----------------------------------------------------------
-#
-# Same both-ways discipline: a key naming no emitted fix is a promise the
-# engine never keeps, and a verify on a template-only fix would fail forever
+# FIX_VERIFY, same both-ways discipline: a key naming no emitted fix is a promise
+# the engine never keeps, and a verify on a template-only fix would fail forever
 # by definition — the two maps must stay disjoint.
 
 @test "every FIX_VERIFY key is a fix some check actually offers" {

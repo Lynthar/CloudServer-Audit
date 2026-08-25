@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
-#
 # Regression tests for the bitmask permission comparison in
-# modules/filesystem.sh. Catches the original arithmetic-comparison
-# bug: actual=0604 < expected=0640 numerically, but 0604 grants
-# world-read where 0640 does not, so /etc/shadow at mode 604 was
-# silently passing the audit.
+# modules/filesystem.sh. An arithmetic comparison is wrong: 0604 < 0640
+# numerically, yet 0604 grants world-read, so /etc/shadow at 604 passed.
 
 load helpers.bash
 

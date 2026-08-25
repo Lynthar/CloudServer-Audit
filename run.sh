@@ -1,9 +1,7 @@
 #!/bin/bash
-# One-line runner with a sigstore-verified release. Args after `-s --` are
-# passed to vpssec. VPSSEC_VERSION pins a release tag (default "latest");
-# VPSSEC_NO_VERIFY=1 skips cosign verification entirely.
-# Everything this wrapper prints goes to stderr: stdout belongs to vpssec,
-# so `... | sudo bash -s -- audit --json-only | jq .` stays valid JSON.
+# One-shot runner for a sigstore-verified release; nothing persists. Args after
+# `-s --` go to vpssec; VPSSEC_VERSION pins a tag, VPSSEC_NO_VERIFY=1 skips
+# verification. Everything here prints to stderr — stdout belongs to vpssec.
 
 set -euo pipefail
 
@@ -15,10 +13,9 @@ VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
 # arbitrary-file overwrite.
 VPSSEC_TMP=""
 
-# Only signatures issued to THIS repo's release workflow at EXACTLY the tag
-# being installed pass (identity built in download_and_verify). A looser
-# any-v*-tag match would also accept a signed asset from a different release
-# re-uploaded under this version's URL — a signed downgrade.
+# The identity must name this repo's release workflow at EXACTLY the tag being
+# installed. A looser any-v*-tag match would accept a signed asset from another
+# release re-uploaded under this version's URL — a signed downgrade.
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # Pinned cosign for the apt-fallback path. The hash is verified before dpkg
@@ -285,6 +282,32 @@ cleanup() {
     fi
 }
 
+# guide and rollback need state that outlives the command; this runner deletes
+# its whole tree on exit. A fix's backups land in that tree, so hardening here
+# would change /etc and destroy the only means of undoing it in the same run.
+#
+# Exit 2 = wrong entry point, not 4: 4 means "this HOST cannot be hardened",
+# and automation must not read one as the other. Refused before anything is
+# downloaded — there is no point fetching a release to then decline to use it.
+_refuse_stateful_mode() {
+    case "$1" in
+        guide|rollback) ;;
+        *) return 0 ;;
+    esac
+    print_error "'$1' is not available through the one-line runner."
+    {
+        echo ""
+        echo "  This runner unpacks vpssec to a temporary directory and deletes it on exit,"
+        echo "  so backups written by a fix would not survive the command that made them."
+        echo "  Install vpssec instead, then run '$1' from the installed copy:"
+        echo ""
+        echo "    curl -fsSL https://raw.githubusercontent.com/${VPSSEC_REPO}/main/install.sh | sudo bash"
+        echo "    sudo vpssec $1"
+        echo ""
+    } >&2
+    exit 2
+}
+
 main() {
     print_banner
 
@@ -296,6 +319,8 @@ main() {
             *) args+=("$arg") ;;
         esac
     done
+
+    _refuse_stateful_mode "$mode"
 
     # Installed BEFORE anything creates the temp dir, so an early failure
     # cannot leak a directory holding an unverified tarball.

@@ -1,18 +1,7 @@
 #!/usr/bin/env bats
-#
 # Regression tests for _timezone_current and the non-interactive guard in
-# _timezone_fix_set_timezone.
-#
-# timezone.set_timezone is offered on the PASSING checks too (using_utc /
-# configured) so a guide user can change the timezone on purpose. While it
-# was classified FIX_SAFE that made a select-all run reach an interactive
-# menu on a host whose timezone was already correct, and under --yes /
-# --json-only / no readable /dev/tty the menu could never be answered, so
-# the fix returned 1 and the engine recorded a failure for something the
-# operator never requested.
-#
-# The interactive branch itself is out of scope here — it needs a real tty.
-# What these tests pin down is that a non-interactive run never reaches it.
+# _timezone_fix_set_timezone. Under --yes / --json-only / no readable /dev/tty
+# the fix must never reach its interactive menu; the menu itself needs a real tty.
 
 load helpers.bash
 
@@ -107,8 +96,6 @@ setup() {
     _vpssec_refute grep -qE '^\s+[0-9]\) ' <<<"$output"
 }
 
-# ---- the backup contract ---------------------------------------------
-#
 # STATED GAP: _timezone_fix_set_timezone's two backup calls sit after a
 # `read </dev/tty`, so no non-interactive test can reach them. The locale fix
 # below covers the module's other two.

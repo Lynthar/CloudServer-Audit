@@ -1,14 +1,32 @@
 #!/bin/bash
-# vpssec installer script
-# Usage: curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | bash
+# Persistent installer for a sigstore-verified release, run as root. VPSSEC_VERSION
+# pins a tag and takes `v1.2.0` or `1.2.0` (default: newest release, never a
+# branch); VPSSEC_NO_VERIFY=1 skips cosign verification entirely.
 
 set -euo pipefail
 
 # Configuration
 VPSSEC_VERSION="${VPSSEC_VERSION:-latest}"
+VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vpssec}"
 BIN_LINK="/usr/local/bin/vpssec"
 GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"
+
+# The identity must name this repo's release workflow at EXACTLY the tag being
+# installed. A looser any-v*-tag match would accept a signed asset from another
+# release re-uploaded under this version's URL — a signed downgrade.
+COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
+# Pinned cosign for the package-manager-fallback path; the hash is verified
+# before dpkg or install sees the file. cosign-bump.yml rewrites these in
+# run.sh AND here weekly, and hard-fails if either stops matching.
+COSIGN_PIN_VERSION="3.1.3"
+# .deb assets — Debian/Ubuntu (installed via dpkg)
+COSIGN_PIN_SHA256_AMD64="75357d96161da4d06d37c4b2831fa6978483cdce661999e5951b586f9ee1d710"
+COSIGN_PIN_SHA256_ARM64="cfa1a4ef37201be3086bb68f7d5f6e51dd497f28cdfa5bd990fbdffa92557cf8"
+# static binaries — RHEL/Arch and any other non-dpkg distro
+COSIGN_PIN_SHA256_BIN_AMD64="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+COSIGN_PIN_SHA256_BIN_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a"
 
 # Colors
 RED='\033[0;31m'
@@ -67,14 +85,23 @@ restore_data_dirs() {
     fi
 }
 
+# Download staging, cleared on every exit path so a failed verification never
+# leaves an unverified tarball behind.
+VPSSEC_STAGING=""
+
 # If the installer dies between stash and restore, a silent orphan directory
 # is as bad as deletion — say where the data went.
-_stash_notice() {
+_install_cleanup() {
+    if [[ -n "$VPSSEC_STAGING" && -d "$VPSSEC_STAGING" ]]; then
+        rm -rf "$VPSSEC_STAGING"
+    fi
+    # if-form throughout: a failing test as the trap's last command would
+    # overwrite the script's real exit status.
     if [[ -n "$INSTALL_DATA_STASH" && -d "$INSTALL_DATA_STASH" ]]; then
         print_warn "Install did not finish — your state/backups are preserved at: $INSTALL_DATA_STASH"
     fi
 }
-trap _stash_notice EXIT
+trap _install_cleanup EXIT
 
 # Safely remove install directory (validate path first)
 safe_remove_install_dir() {
@@ -158,55 +185,197 @@ check_system() {
     print_ok "System requirements satisfied"
 }
 
-# Download and install vpssec
-install_vpssec() {
-    print_info "Installing vpssec to $INSTALL_DIR..."
+# Installs a pinned, SHA256-verified cosign asset: .deb via dpkg on Debian,
+# static binary into /usr/local/bin elsewhere. The hash is always checked
+# BEFORE the asset is installed or executed.
+install_cosign_pinned() {
+    local arch arch_sfx want_deb_hash want_bin_hash
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)  arch_sfx="amd64"; want_deb_hash="$COSIGN_PIN_SHA256_AMD64"; want_bin_hash="$COSIGN_PIN_SHA256_BIN_AMD64" ;;
+        aarch64) arch_sfx="arm64"; want_deb_hash="$COSIGN_PIN_SHA256_ARM64"; want_bin_hash="$COSIGN_PIN_SHA256_BIN_ARM64" ;;
+        *)
+            print_error "No pinned cosign for architecture: $arch"
+            return 1
+            ;;
+    esac
 
-    # Create install directory
-    mkdir -p "$INSTALL_DIR"
+    local base_url="https://github.com/sigstore/cosign/releases/download/v${COSIGN_PIN_VERSION}"
+    print_warn "cosign not in package manager — installing pinned v${COSIGN_PIN_VERSION} from sigstore GitHub release"
+    print_warn "  trust root for cosign shifts from distro archive to github.com (same as install.sh itself)"
 
-    # Download from GitHub
-    if [[ "$VPSSEC_VERSION" == "latest" ]]; then
-        print_info "Downloading latest version from GitHub..."
+    # Fresh 0700 mktemp dir. A hash check catches tampered content only
+    # afterwards — the overwrite has already happened.
+    local cosign_tmp
+    cosign_tmp=$(mktemp -d) || {
+        print_error "mktemp failed for cosign download"
+        return 1
+    }
+    chmod 700 "$cosign_tmp"
+    # Self-clearing RETURN trap: fires once on any return path, then unsets
+    # itself. Cannot be forgotten when a new path is added.
+    # shellcheck disable=SC2064  # expand now: cosign_tmp is a local
+    trap "rm -rf '$cosign_tmp'; trap - RETURN" RETURN
 
-        # Clone or download
-        if command -v git &>/dev/null; then
-            if [[ -d "$INSTALL_DIR/.git" ]]; then
-                print_info "Updating existing installation..."
-                cd "$INSTALL_DIR"
-                git pull origin main
-            else
-                safe_remove_install_dir
-                git clone "https://github.com/${GITHUB_REPO}.git" "$INSTALL_DIR"
-            fi
-        else
-            # GitHub tarballs extract to "<repo>-<branch>", so this tracks
-            # the repo name. Extracted into a fresh mktemp dir, never bare
-            # /tmp — a predictable path is a local user's foothold.
-            local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz"
-            local repo_name="${GITHUB_REPO##*/}"
-            local staging
-            staging=$(mktemp -d) || { print_error "mktemp failed"; exit 1; }
-            chmod 700 "$staging"
-            print_info "Downloading from $tarball_url"
-            curl -fsSL "$tarball_url" | tar -xz -C "$staging"
-            safe_remove_install_dir
-            mv "${staging}/${repo_name}-main" "$INSTALL_DIR"
-            rm -rf "$staging"
+    if command -v dpkg &>/dev/null; then
+        # Debian/Ubuntu: pinned .deb. Hash-check before dpkg so a compromised
+        # sigstore can't run a malicious maintainer script.
+        local deb_file="${cosign_tmp}/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb"
+        if ! curl -fsSL "${base_url}/cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb" -o "$deb_file"; then
+            print_error "Download failed: cosign_${COSIGN_PIN_VERSION}_${arch_sfx}.deb"
+            return 1
+        fi
+        local got_hash
+        got_hash=$(sha256sum "$deb_file" | awk '{print $1}')
+        if [[ "$got_hash" != "$want_deb_hash" ]]; then
+            print_error "cosign .deb SHA256 mismatch — refusing to install"
+            print_error "  expected: $want_deb_hash"
+            print_error "  got:      $got_hash"
+            return 1
+        fi
+        print_ok "cosign .deb hash verified"
+        if ! dpkg -i "$deb_file" >/dev/null 2>&1; then
+            print_error "dpkg -i failed for $deb_file"
+            return 1
         fi
     else
-        # Download specific version (same mktemp staging as the latest path).
-        local tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/tags/v${VPSSEC_VERSION}.tar.gz"
-        local repo_name="${GITHUB_REPO##*/}"
-        local staging
-        staging=$(mktemp -d) || { print_error "mktemp failed"; exit 1; }
-        chmod 700 "$staging"
-        print_info "Downloading version $VPSSEC_VERSION..."
-        curl -fsSL "$tarball_url" | tar -xz -C "$staging"
-        safe_remove_install_dir
-        mv "${staging}/${repo_name}-${VPSSEC_VERSION}" "$INSTALL_DIR"
-        rm -rf "$staging"
+        # RHEL/Arch / anything without dpkg: pinned static binary. Same trust
+        # trade-off; hash is checked before the file is executable or run.
+        local bin_file="${cosign_tmp}/cosign-linux-${arch_sfx}"
+        if ! curl -fsSL "${base_url}/cosign-linux-${arch_sfx}" -o "$bin_file"; then
+            print_error "Download failed: cosign-linux-${arch_sfx}"
+            return 1
+        fi
+        local got_hash
+        got_hash=$(sha256sum "$bin_file" | awk '{print $1}')
+        if [[ "$got_hash" != "$want_bin_hash" ]]; then
+            print_error "cosign binary SHA256 mismatch — refusing to install"
+            print_error "  expected: $want_bin_hash"
+            print_error "  got:      $got_hash"
+            return 1
+        fi
+        print_ok "cosign binary hash verified"
+        if ! install -Dm0755 "$bin_file" /usr/local/bin/cosign 2>/dev/null; then
+            print_error "failed to install cosign to /usr/local/bin"
+            return 1
+        fi
+        # Make sure the freshly-installed binary is reachable for the
+        # verify-blob call below even if /usr/local/bin wasn't on PATH.
+        export PATH="/usr/local/bin:${PATH}"
     fi
+
+    if ! command -v cosign &>/dev/null; then
+        print_error "cosign installed but not on PATH"
+        return 1
+    fi
+    print_ok "cosign v${COSIGN_PIN_VERSION} installed"
+}
+
+ensure_cosign() {
+    if [[ "$VPSSEC_NO_VERIFY" == "1" ]]; then
+        return 0
+    fi
+    command -v cosign &>/dev/null && return 0
+
+    print_info "Installing cosign for signature verification..."
+    if apt-get install -y cosign >/dev/null 2>&1; then
+        return 0
+    fi
+    # apt has nothing (Debian, older Ubuntu, RHEL-family). Try the pinned
+    # sigstore asset before giving up.
+    if install_cosign_pinned; then
+        return 0
+    fi
+    print_error "cosign is required to verify the release signature."
+    echo ""
+    echo "  Manual install :  https://docs.sigstore.dev/cosign/system_config/installation/"
+    echo "  Skip verify    :  re-run with  VPSSEC_NO_VERIFY=1  (not recommended)"
+    exit 1
+}
+
+# Reject any tag that is not a clean vX.Y.Z[.-suffix] before it reaches a
+# download URL or local filename. Defence in depth: the tarball is still
+# cosign-verified, but this stops a root-owned curl -o being steered.
+_validate_version_tag() {
+    local tag="$1"
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+        print_error "Refusing suspicious release tag: '$tag'"
+        exit 1
+    fi
+}
+
+# Normalise to the tag form used by the release assets. Both `1.2.0` and
+# `v1.2.0` are accepted so the two entry points take the same input.
+resolve_version() {
+    if [[ "$VPSSEC_VERSION" != "latest" ]]; then
+        [[ "$VPSSEC_VERSION" == v* ]] || VPSSEC_VERSION="v${VPSSEC_VERSION}"
+        _validate_version_tag "$VPSSEC_VERSION"
+        return 0
+    fi
+    print_info "Resolving latest release..."
+    VPSSEC_VERSION=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
+        | jq -r '.tag_name // empty')
+    if [[ -z "$VPSSEC_VERSION" ]]; then
+        print_error "Could not resolve latest release tag from GitHub API"
+        exit 1
+    fi
+    _validate_version_tag "$VPSSEC_VERSION"
+}
+
+# Download and install vpssec
+install_vpssec() {
+    local ver_tag="$VPSSEC_VERSION"
+    local ver="${ver_tag#v}"
+    local archive="vpssec-${ver}.tar.gz"
+    local base="https://github.com/${GITHUB_REPO}/releases/download/${ver_tag}"
+
+    print_info "Installing vpssec ${ver_tag} to $INSTALL_DIR..."
+
+    # 0700 staging, never a predictable path: a local user who pre-creates it
+    # receives root's download. Cleared by the EXIT trap on every path.
+    VPSSEC_STAGING=$(mktemp -d) || { print_error "mktemp failed"; exit 1; }
+    chmod 700 "$VPSSEC_STAGING"
+
+    print_info "Downloading ${archive}..."
+    curl -fsSL "${base}/${archive}" -o "${VPSSEC_STAGING}/${archive}" \
+        || { print_error "Download failed: ${base}/${archive}"; exit 1; }
+
+    if [[ "$VPSSEC_NO_VERIFY" == "1" ]]; then
+        print_warn "VPSSEC_NO_VERIFY=1 — skipping signature verification"
+    else
+        curl -fsSL "${base}/${archive}.sig.json" -o "${VPSSEC_STAGING}/${archive}.sig.json" \
+            || { print_error "Signature download failed"; exit 1; }
+        print_info "Verifying signature (sigstore keyless)..."
+        # Exact-match identity: the signing cert must name this repo's release
+        # workflow at the tag being installed, not just any v* tag.
+        local want_identity="https://github.com/${GITHUB_REPO}/.github/workflows/release.yml@refs/tags/${ver_tag}"
+        if cosign verify-blob \
+            --bundle "${VPSSEC_STAGING}/${archive}.sig.json" \
+            --certificate-identity "$want_identity" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+            "${VPSSEC_STAGING}/${archive}" >/dev/null 2>&1; then
+            print_ok "Signature verified (signer = ${GITHUB_REPO} release workflow @ ${ver_tag})"
+        else
+            print_error "Signature verification FAILED — refusing to install."
+            print_error "If the signer URL changed, check this install.sh against the latest copy."
+            exit 1
+        fi
+    fi
+
+    # The release tarball carries a single vpssec-<ver>/ top level.
+    print_info "Extracting..."
+    tar -xz -f "${VPSSEC_STAGING}/${archive}" -C "$VPSSEC_STAGING" \
+        || { print_error "Extract failed"; exit 1; }
+    if [[ ! -d "${VPSSEC_STAGING}/vpssec-${ver}" ]]; then
+        print_error "Release tarball did not contain vpssec-${ver}/ — refusing to install"
+        exit 1
+    fi
+
+    # Only now is the existing install touched: everything above can fail
+    # without costing the operator a working installation.
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    safe_remove_install_dir
+    mv "${VPSSEC_STAGING}/vpssec-${ver}" "$INSTALL_DIR"
 
     # Create required directories
     mkdir -p "$INSTALL_DIR"/{state,reports,backups,logs,templates}
@@ -278,9 +447,9 @@ EOF
     chmod +x "$INSTALL_DIR/uninstall.sh"
 }
 
-# Verify runtime files against the manifest: absent = warn, verifies =
-# continue, mismatch = abort. Defence in depth only — the manifest ships in
-# the same archive, so it catches partial extraction, not a bad upstream.
+# Manifest check: absent = warn, verifies = continue, mismatch = abort. The
+# upstream check is the cosign signature above; this catches damage after it —
+# partial extraction, a truncated move, a missing VERSION.
 verify_integrity() {
     local manifest="$INSTALL_DIR/manifest.sha256"
 
@@ -328,6 +497,12 @@ post_install() {
     # Show version
     local version=$("$BIN_LINK" --version 2>/dev/null || echo "unknown")
     print_ok "Installed: $version"
+
+    # The tag was resolved from the releases API, so a mismatch here means the
+    # tarball's VERSION disagrees with the tag it was published under.
+    if [[ "$version" != *"${VPSSEC_VERSION#v}"* ]]; then
+        print_warn "Installed tree reports '$version' but was published as ${VPSSEC_VERSION} — report this upstream"
+    fi
 }
 
 # Print usage instructions
@@ -364,6 +539,8 @@ main() {
 
     check_root
     check_system
+    resolve_version
+    ensure_cosign
     install_vpssec
     verify_integrity
     # After verify_integrity: a failed check exits with the data still in the

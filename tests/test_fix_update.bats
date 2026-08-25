@@ -1,28 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for update's three fixes, none of which had a test.
-#
-# What they write is the switch that turns on automatic package installation,
-# which makes the rollback contract the interesting part:
-#
-#   1. Both backup_file calls were guarded by `[[ -f ]]`. backup_file's other
-#      job is recording an ABSENT path in .vpssec_created, which is the only
-#      thing that lets a rollback delete a file the fix created — and on a
-#      first run, the common case for this fix, neither file exists. So an
-#      operator who rolled the whole plan back still had a host installing
-#      packages unattended. Sixth and seventh instance of that defect
-#      (logging x2, webapp x3); this is where it mattered most.
-#   2. write_file_atomic's status was not checked on 20auto-upgrades. The
-#      postcondition reads the MERGED apt config, which another file can
-#      satisfy, so a failed write could still be reported as success.
-#   3. The module carried its own copy of the whole "is auto-update effective"
-#      predicate, reachable only from the fix's postcondition, while the audit
-#      asked core/distro.sh. They agreed, so nothing was broken — but the fix's
-#      success gate and the finding it clears must not be two implementations.
-#      Both now delegate to auto_update_status.
-#
-# apply_security is FIX_RISKY and installs packages, which a rollback cannot
-# undo at all; the fix now says so and points at apt's history log.
+# Coverage for update's three fixes. They write the switch that turns on
+# automatic package installation; apply_security is FIX_RISKY and installs
+# packages, which a rollback cannot undo at all — the fix says so.
 
 load helpers.bash
 
@@ -194,12 +173,9 @@ SH
 }
 
 @test "enable: a write the atomic writer refuses is reported, not ignored" {
-    # A regular file where the parent directory belongs defeats both the
-    # mkdir -p and the mktemp inside write_file_atomic. Not a '..' path any
-    # more: backup_file validates the same path and would now abort the fix
-    # before the write. The status was unchecked before, and the postcondition
-    # reads the merged config — which this stubbed apt-config reports as
-    # effective — so the fix would have claimed success.
+    # A regular file where the parent directory belongs defeats both the mkdir -p
+    # and the mktemp inside write_file_atomic. The postcondition reads the MERGED
+    # apt config, so an unchecked write status would still look like success.
     VPSSEC_QUIET_SCAN=0
     : > "$etc/apt/notadir"
     UPDATE_AUTO_UPGRADES_CONF="$etc/apt/notadir/20auto-upgrades"
@@ -358,16 +334,9 @@ SH
 }
 
 @test "predicate: installed-ness follows the package manager, not dpkg" {
-    # The apt branch of auto_update_installed is byte-identical to the private
-    # copy this module used to keep, so on an apt host the difference is
-    # invisible — the delegation is only observable off apt. On a dnf host the
-    # question is about dnf-automatic; answering it with `dpkg -l
-    # unattended-upgrades` is how a module-local copy drifts from the audit.
-    #
-    # (The fix BODIES still run apt commands regardless of distro. That is
-    # C5-#6 — fix_ids not gated by package manager — and is tracked there;
-    # this test is about the predicate, not about making apply_security
-    # portable.)
+    # The apt branch of auto_update_installed matches the private copy this
+    # module used to keep, so the delegation is only observable off apt: on dnf
+    # the question is dnf-automatic, not `dpkg -l unattended-upgrades`.
     export VPSSEC_PKG_MGR=dnf
     _uu_installed              # dpkg says unattended-upgrades is installed
     _vpssec_stub rpm 1         # ...but dnf-automatic is not

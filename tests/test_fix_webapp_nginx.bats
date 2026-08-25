@@ -1,32 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for webapp's four nginx fixes — the ones that actually write
-# files. The other webapp fix_ids print advice and return 1.
-#
-# Two of the four are FIX_SAFE, so guide mode applies them with no
-# confirmation, to a live web server's configuration. What makes that
-# survivable is a chain each of them has to keep intact: back up, write
-# atomically, run `nginx -t`, and put the old file back if it does not
-# validate. Every step is pinned here.
-#
-# Three defects motivated this file:
-#
-#   1. All three drop-in writers called backup_file only when the target
-#      already existed. backup_file's other job is recording an ABSENT path
-#      as fix-created, which is the only thing that lets a plan rollback
-#      delete it — so a first run left an active conf.d drop-in that no
-#      rollback could remove.
-#   2. server_tokens was appended unconditionally. On a host with an
-#      explicit `server_tokens on;` that produces two of the directive in
-#      one http{} context, which nginx rejects as a duplicate — so `nginx
-#      -t` failed, the backup was restored, and the fix could never repair
-#      the hosts that had most explicitly opted into leaking their version.
-#   3. The headers drop-in sent `X-XSS-Protection: 1; mode=block`. OWASP's
-#      HTTP Headers cheat sheet recommends `0`: the XSS Auditor is gone
-#      from current browsers and, where it survives, has been shown to
-#      introduce XSS into otherwise safe pages. The audit only checks that
-#      the header is present, never its value, so correcting this moves no
-#      host's score.
+# Coverage for webapp's four nginx fixes — the ones that write files; the other
+# webapp fix_ids print advice and return 1. Two of the four are FIX_SAFE, so
+# guide mode applies them unprompted: back up, write atomically, `nginx -t`, restore.
 
 load helpers.bash
 
@@ -34,8 +9,7 @@ setup() {
     _vpssec_load
     # Without this, i18n echoes the KEY, so any assertion against a printed
     # message matches the key name and passes whether or not the string exists
-    # — and a fix printing an unregistered key ships to the operator. No test
-    # here greps a key name, so loading it changes nothing else.
+    # — and a fix printing an unregistered key ships to the operator.
     i18n_load en_US
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/webapp.sh"
@@ -263,11 +237,9 @@ _active_server_tokens() {
 }
 
 @test "hsts: writing the template successfully is reported as success" {
-    # This used to return 1, so that the HSTS finding was not marked resolved
-    # while nothing was on the wire. The cost was reporting a failure for a
-    # template it had written correctly. webapp.nginx_hsts is in
-    # FIX_TEMPLATE_ONLY now, which is what keeps the finding open — see
-    # test_fix_template_only.bats.
+    # The exit status is about the work done, not about whether the finding is
+    # resolved: webapp.nginx_hsts is FIX_TEMPLATE_ONLY, and that is what keeps
+    # the finding open while the template sits inert until the operator includes it.
     run _webapp_fix_nginx_hsts
     [ "$status" -eq 0 ]
 }
@@ -317,13 +289,9 @@ _active_server_tokens() {
 }
 
 @test "ssl: writing the snippet successfully is reported as success" {
-    # This fix used to return 1 here, to stop the weak-SSL finding being
-    # marked resolved — the snippet is inert until the operator includes it.
-    # That made a perfectly good write show up in the guide as a FAILURE. The
-    # two facts are separated now: the exit status is about the work, and
-    # FIX_TEMPLATE_ONLY carries "this does not resolve the finding" (see
-    # test_fix_template_only.bats, which pins that the completion record is
-    # withheld).
+    # The exit status is about the work done; FIX_TEMPLATE_ONLY is what carries
+    # "this does not resolve the finding" for a snippet that stays inert until
+    # the operator includes it. Returning 1 here would report a good write as failure.
     run _webapp_fix_nginx_ssl
     [ "$status" -eq 0 ]
 }
@@ -339,13 +307,9 @@ _active_server_tokens() {
 }
 
 @test "ssl: a rejected config is distinguishable from the ordinary manual step" {
-    # This is what the old convention could not express. Both paths returned 1,
-    # so the exit status could not tell "nginx refused the config" from "wrote
-    # it, now go include it" — asserting on the status alone passed with the
-    # validation branch deleted, which mutation testing caught. Now the two
-    # differ in status as well, and both halves are pinned.
-    #
-    # helpers.bash sets VPSSEC_QUIET_SCAN=1, which silences print_*.
+    # The two paths must differ in status, or "nginx refused the config" and "wrote
+    # it, now go include it" are indistinguishable and a status-only assertion passes
+    # with the validation branch deleted. helpers.bash sets QUIET_SCAN=1, silencing print_*.
     VPSSEC_QUIET_SCAN=0
     _nginx_rejects
 

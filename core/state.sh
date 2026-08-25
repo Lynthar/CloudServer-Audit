@@ -52,7 +52,7 @@ state_add_check() {
             "failed" \
             "Malformed check JSON dropped" \
             "A module emitted invalid JSON for a check. Raw payload (first 500 bytes): ${raw_preview}" \
-            "Please report to vpssec maintainers with the relevant logs/vpssec.log entry" \
+            "$(i18n 'error.malformed_check_fix')" \
             "")
     fi
 

@@ -1,33 +1,21 @@
 #!/usr/bin/env bats
-#
-# Path-safety tests for backup_restore (core/state.sh).
-#
-# These pin the defense-in-depth checks added to prevent
-# backup_restore from becoming a "write any host file" primitive
-# when the backup directory is partially tampered with or the
-# rollback target's parent has been swung to a symlink between
-# backup and restore (TOCTOU).
+# Path-safety tests for backup_restore (core/state.sh): the checks that stop it
+# becoming a "write any host file" primitive when the backup directory is
+# tampered with, or the target's parent is swung to a symlink mid-restore.
 
 load helpers
 
 setup() {
     _vpssec_load core/state.sh
 
-    # Per-test sandbox for both backup source and restore target.
-    # We restore into BATS_TEST_TMPDIR/host so we never touch real
-    # host paths (the production code restores under "/" — fine in
-    # production, fatal for tests). To do that without modifying
-    # production code, we run backup_restore in a subshell that
-    # overrides VPSSEC_BACKUPS to point at our test backup tree;
-    # the destination is "/<relative>", which we then rewrite by
-    # rooting the test backup tree under a sandbox host.
+    # Production restores under "/", so a test must never let a real host path
+    # be the destination: VPSSEC_BACKUPS points at a test tree rooted under this
+    # sandbox, so the "/<relative>" destination lands inside it.
     export TEST_HOST_ROOT="$BATS_TEST_TMPDIR/host"
     mkdir -p "$TEST_HOST_ROOT/etc"
-    # The production destination is hard-coded "/${relative_path}".
-    # For test isolation we *don't* monkeypatch backup_restore;
-    # instead we operate on timestamps that produce paths under
-    # an existing throwaway tree, and we assert via log inspection
-    # plus that no host file outside the tree was touched.
+    # backup_restore is deliberately not monkeypatched: isolation comes from
+    # timestamps whose paths fall inside the throwaway tree, and the assertions
+    # are the log plus the absence of writes outside it.
 }
 
 # Helper: redirect log output to a captureable file
@@ -71,11 +59,9 @@ _make_backup_session() {
 }
 
 @test "reports failure for a valid but empty backup dir" {
-    # A rollback that restores nothing is a failure from the operator's
-    # point of view: they picked a backup, confirmed, and got their
-    # config back — except they didn't. backup_restore used to `return
-    # 0` unconditionally here, so rollback_mode printed a green
-    # "restored" over a no-op.
+    # A rollback that restores nothing is a failure from the operator's point of
+    # view: they picked a backup, confirmed, and did not get their config back.
+    # Returning 0 here makes rollback_mode print a green "restored" over a no-op.
     _capture_logs
     mkdir -p "$VPSSEC_BACKUPS/20260501_120000"
     run backup_restore "20260501_120000"
@@ -87,20 +73,9 @@ _make_backup_session() {
 
 @test "does not propagate symlink-only backup entries to host" {
     _capture_logs
-    # Threat: attacker plants a symlink under backups/<ts>/ that
-    # points at an arbitrary host file. We need to ensure
-    # backup_restore neither reads the linked file nor writes its
-    # contents to the rolled-back location.
-    #
-    # Two valid outcomes:
-    #   - find -type f follows the symlink and returns it; our
-    #     [[ -L ]] check skips with the "symlinked backup entry"
-    #     log. (GNU find on Linux production.)
-    #   - find -type f does not include symlinks at all; the loop
-    #     never sees the entry and nothing is restored. (BSD find
-    #     on macOS dev.)
-    # In either case the trap file's contents must NOT have been
-    # propagated, which is the actual security property.
+    # A symlink planted under backups/<ts>/ must never have its target's contents
+    # written to the restore destination. Either find surfaces it and the [[ -L ]]
+    # check skips it, or find never yields it; both leave the trap file unread.
     local secret="$BATS_TEST_TMPDIR/secret"
     echo "supersecret" > "$secret"
 
@@ -108,18 +83,14 @@ _make_backup_session() {
     mkdir -p "$VPSSEC_BACKUPS/$ts/etc/ssh"
     ln -s "$secret" "$VPSSEC_BACKUPS/$ts/etc/ssh/sshd_config"
 
-    # Nothing restorable either way, so this is a failed rollback (1).
-    # The status is deliberately NOT asserted as 0: whether GNU find
-    # surfaced the symlink and we skipped it, or BSD find never
-    # produced it, the file count is zero.
+    # Nothing is restorable under either find behaviour, so the file count is
+    # zero and this is a failed rollback (1), never 0.
     run backup_restore "$ts"
     [ "$status" -eq 1 ]
 
-    # If the production path (Linux GNU find) reached us, the skip
-    # message should be in the log. We don't fail the test if it
-    # isn't — BSD find on macOS won't even surface the symlink to
-    # backup_restore — but we DO assert the security property:
-    # nothing under "/etc/ssh" was created in the test sandbox.
+    # The skip message is not asserted — a find that never yields the symlink
+    # logs nothing. The security property is: nothing under "/etc/ssh" was
+    # created outside the sandbox.
     [ ! -e "/etc/ssh/sshd_config.tampered_test" ]
 }
 
@@ -131,10 +102,8 @@ _make_backup_session() {
     local ts="20260501_120000"
     local backup_dir="$VPSSEC_BACKUPS/$ts"
 
-    # Use a relative path that maps under TEST_HOST_ROOT after the
-    # leading "/" prefix is added by backup_restore. (Don't pre-
-    # create the destination dir as if it were a file — that was a
-    # test bug.)
+    # A relative path that maps under TEST_HOST_ROOT once backup_restore prefixes
+    # "/". The destination directory must not be pre-created as a file.
     local rel="${TEST_HOST_ROOT#/}/sshd_config"
     mkdir -p "$backup_dir/$(dirname "$rel")"
     printf 'real-content' > "$backup_dir/$rel"
@@ -203,12 +172,9 @@ _make_backup_session() {
     [ "$(cat "$TEST_HOST_ROOT/sshd_config")" = "expected" ]
 }
 
-# ---- Backup session (whole-plan rollback) ----------------------------
-#
-# Regression for the split-across-timestamp-dirs bug: with a session open,
-# every backup_file lands in the SAME directory, so restoring it brings back
-# the WHOLE plan — not just the files touched in the last wall-clock second.
-# backup_file's base_dir validation uses `realpath -m` (GNU only), so guard.
+# Backup session: with a session open every backup_file lands in the SAME
+# directory, so restoring it brings back the WHOLE plan, not just the files
+# touched in the last wall-clock second. base_dir validation needs GNU realpath.
 
 @test "backup session: all backups share one dir and restore together" {
     _vpssec_require_gnu_realpath
@@ -237,11 +203,9 @@ _make_backup_session() {
     VPSSEC_BACKUP_SESSION=""
 }
 
-# ---- Exit-status contract -------------------------------------------
-#
-# 0 = everything restored, 2 = partial, 1 = nothing restored.
-# rollback_mode branches on all three; collapsing them into a boolean
-# is what let a zero-file rollback print a green "restored".
+# Exit-status contract: 0 = everything restored, 2 = partial, 1 = nothing.
+# rollback_mode branches on all three; collapsing them into a boolean lets a
+# zero-file rollback print a green "restored".
 
 @test "partial restore (one file, one skipped entry) returns 2" {
     _capture_logs

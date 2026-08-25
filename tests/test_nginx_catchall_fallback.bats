@@ -1,16 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for the _nginx_catchall_state fallback path (used when
-# `nginx -T` is unavailable).
-#
-# H18 regression: original chained
-#   grep -r ... | head -1 | xargs -I{} grep -l "return 444"
-# which fed xargs the entire `path:matched-line` string from grep -r,
-# so it looked for a file literally named "path:matched-line" — broken
-# both ways (false positive on stray matches, false negative otherwise).
-#
-# M7 follow-up: state now distinguishes "80only" / "443only" / "both" /
-# "none" so HTTPS-only catchalls don't get reported as fully covered.
+# Regression tests for the _nginx_catchall_state fallback path, taken when
+# `nginx -T` is unavailable. It must distinguish 80only / 443only / both / none,
+# so an HTTPS-only catchall is never reported as fully covered.
 
 load helpers.bash
 
@@ -24,16 +15,9 @@ setup() {
     NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
     mkdir -p "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
 
-    # Force the fallback branch: _nginx_catchall_state takes it when
-    # `nginx -T` exits non-zero or prints nothing.
-    #
-    # This used to prepend an EMPTY directory to PATH and claim it hid
-    # nginx. It does not — `nginx` still resolves further down PATH — so on
-    # any host that actually has nginx these tests silently stopped
-    # exercising the fallback and read the host's real configuration
-    # instead. They passed only because the test host happened to have no
-    # nginx installed, which is not a property CI guarantees. A stub of the
-    # same name is what actually shadows the binary.
+    # Force the fallback branch: _nginx_catchall_state takes it when `nginx -T`
+    # exits non-zero or prints nothing. It must be a STUB of the same name —
+    # an empty directory prepended to PATH does not hide a real nginx.
     _vpssec_stub nginx 1
 }
 
@@ -77,10 +61,9 @@ EOF
 }
 
 @test "catchall fallback: 443 listen without default_server → none" {
-    # Mirror of the port-80 case above, and it was missing. Note what actually
-    # decides this one: with no default_server ANYWHERE in the file, the outer
-    # `grep -rl "listen.*default_server"` never lists it, so the per-port greps
-    # are not reached. The two "same file" tests below are what pin those.
+    # Mirror of the port-80 case above. With no default_server ANYWHERE in the
+    # file the outer `grep -rl "listen.*default_server"` never lists it, so the
+    # per-port greps are not reached; the "same file" tests below pin those.
     cat >"$NGINX_SITES_ENABLED/00-default.conf" <<'EOF'
 server {
     listen 443 ssl;
@@ -95,10 +78,8 @@ EOF
 
 @test "catchall fallback: an ordinary port-80 vhost beside a 443 catchall is not counted" {
     # The scan is file-level: one block with default_server gets the whole file
-    # listed, and each per-port grep then has to require default_server for the
-    # port IT is asking about. Nothing pinned that until this test — dropping
-    # the requirement from either grep changed no outcome, because every
-    # existing case either had default_server on both ports or on neither.
+    # listed, so each per-port grep must require default_server for the port IT
+    # asks about, or a mixed file reports coverage it does not have.
     cat >"$NGINX_SITES_ENABLED/00-mixed.conf" <<'EOF'
 server {
     listen 443 ssl default_server;
@@ -135,10 +116,9 @@ EOF
 }
 
 @test "catchall fallback: port 8080 must NOT match port 80" {
-    # The state parser's own suite pins this for `nginx -T` output; the
-    # fallback runs a different, file-level regex and had no equivalent. The
-    # 8080 vhost in the two-file test below carries no `return 444`, so it is
-    # skipped before the port match is ever reached.
+    # The state parser's own suite pins this for `nginx -T` output; the fallback
+    # runs a different, file-level regex. The 8080 vhost in the two-file test
+    # below carries no `return 444`, so it is skipped before the port match.
     cat >"$NGINX_SITES_ENABLED/00-default.conf" <<'EOF'
 server {
     listen 8080 default_server;
@@ -205,8 +185,8 @@ EOF
 }
 
 @test "catchall fallback: separate files for 80 and 443 catchalls → both" {
-    # The behavior change M7 was about: full coverage requires BOTH
-    # ports. Common deployment: catchalls split into two files.
+    # Full coverage requires BOTH ports. Common deployment: the catchalls are
+    # split into two files.
     cat >"$NGINX_SITES_ENABLED/00-catchall-80.conf" <<'EOF'
 server {
     listen 80 default_server;

@@ -1,0 +1,24 @@
+# Mutation cases: tests/test_version_source.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_version_source.bats
+#
+# All three failures here are silent by construction: the version ends up
+# wrong or "unknown" and every report carries it without anything erroring,
+# so only an assertion on the value itself can tell them apart.
+
+# The -r guard goes: a missing VERSION now leaks the shell's own redirection
+# error to stderr, which the pristine-output rule forbids.
+run_case "version/no-readable-guard" 1 \
+    'if [[ -r "${VPSSEC_ROOT}/VERSION" ]]; then' \
+    'if true; then'
+
+# The file stops being read and a literal comes back — the exact drift the
+# VERSION file was introduced to remove.
+run_case "version/hardcoded-literal" 1 \
+    '    VPSSEC_VERSION="$(tr -d '"'"'[:space:]'"'"' < "${VPSSEC_ROOT}/VERSION")"' \
+    '    VPSSEC_VERSION="1.2.0"'
+
+# No fallback: an unreadable VERSION yields an empty version field, which
+# reads as "not applicable" rather than "this file was not shipped".
+run_case "version/no-unknown-fallback" 1 \
+    '[[ "$VPSSEC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || VPSSEC_VERSION="unknown"' \
+    ':'

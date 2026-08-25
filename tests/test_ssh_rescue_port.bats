@@ -1,13 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for the rescue-port SELECTION logic in modules/ssh.sh.
-#
-# The daemon spawn, firewall manipulation and pid verification need a real
-# Linux host (sshd/ss/ufw) and are validated on a VM, not here. What is pure
-# logic and testable anywhere is _ssh_pick_rescue_port: it must never hand back
-# the live SSH port or an already-listening port. That is the exact bug behind
-# the old fixed-2222 rescue, which became a silent no-op when the audit's own
-# "use a non-default port" advice had already put sshd on 2222.
+# Tests for the rescue-port SELECTION logic in modules/ssh.sh; the daemon spawn,
+# firewall and pid verification need a real host. _ssh_pick_rescue_port must
+# never hand back the live SSH port or an already-listening one.
 
 load helpers
 
@@ -55,10 +49,9 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
-# ---- _ssh_valid_cidr: operator-entered rescue scope --------------------
-# When the source IP cannot be detected, the operator types the CIDR that
-# may reach the rescue port; this is the gate between their input and a
-# `ufw allow from` rule.
+# _ssh_valid_cidr: when the source IP cannot be detected the operator types the
+# CIDR that may reach the rescue port, so this is the gate between their input
+# and a `ufw allow from` rule.
 
 @test "rescue cidr: plain IPv4 accepted" {
     _ssh_valid_cidr "203.0.113.7"

@@ -96,7 +96,7 @@ _sched_audit_at_jobs() {
             "failed" \
             "$(i18n 'scheduling.at_jobs_present' "count=$count" 2>/dev/null || echo "${count} at job(s) queued")" \
             "$(i18n 'scheduling.at_jobs_present_desc' "list=$(echo "$jobs" | tr '\n' ' ')")" \
-            "Inspect with 'at -c <jobid>'; remove with 'atrm <jobid>'. at jobs are uncommon on servers — verify each is intentional" \
+            "$(i18n 'scheduling.at_jobs_present_suggestion')" \
             "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'scheduling.at_jobs_present' "count=$count" 2>/dev/null || echo "${count} at job(s) queued")"
@@ -133,7 +133,7 @@ _sched_audit_cron_anomalies() {
             "failed" \
             "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")" \
             "$(i18n 'scheduling.cron_fetches_internet_desc' "sample=${sample}")" \
-            "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern" \
+            "$(i18n 'scheduling.cron_fetches_internet_suggestion')" \
             "")
         state_add_check "$check"
         log_info "Cron internet-fetch entries: $hits"

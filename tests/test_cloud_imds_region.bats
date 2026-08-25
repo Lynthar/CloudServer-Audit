@@ -1,22 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _cloud_provider_from_imds — the disambiguation of an
-# EC2-compatible IMDS payload served at the shared 169.254.169.254 address.
-#
-# The bug that motivated these: the generic AWS rule `*-[0-9])` sat ahead of
-# the Huawei patterns, and EVERY Huawei region ends in a digit (cn-north-4,
-# cn-east-3, cn-south-1, ...). The Huawei branch was therefore unreachable
-# and every Huawei Cloud host was reported as AWS — then handed AWS-specific
-# remediation advice.
-#
-# Fixing it is deliberately not a two-line swap, which is why the ordering
-# deserves tests of its own:
-#   - cn-northwest-* is AWS Ningxia and must stay ahead of the Huawei shapes
-#   - cn-north-1 is a genuine AWS-Beijing/Huawei collision
-#   - ap-southeast-* / af-south-* / me-east-* are shared with Huawei too
-# The last two keep their historical AWS answer: the region string alone
-# cannot separate them, and swapping the winner would just move the
-# misdetection to the other provider.
+# Regression tests for _cloud_provider_from_imds. Region-string ordering is the
+# whole subject: cn-northwest-* must stay ahead of the Huawei shapes, cn-north-1
+# is a real AWS/Huawei collision, and the shared prefixes keep their AWS answer.
 
 load helpers.bash
 

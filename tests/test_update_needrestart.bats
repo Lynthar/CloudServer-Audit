@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _update_needrestart_kernel_pending (M16).
-# /var/run/reboot-required is created by the update-notifier-common
-# package — installed by default on Ubuntu, NOT installed on stock
-# Debian. needrestart (default-installed on Debian 12+) is the
-# distro-agnostic kernel-reboot signal; this helper parses its
-# batch-mode output.
+# Regression tests for _update_needrestart_kernel_pending. /var/run/reboot-required
+# comes from update-notifier-common (Ubuntu only), so needrestart is the
+# distro-agnostic signal; this parses its batch-mode NEEDRESTART-KSTA value.
 #
 # NEEDRESTART-KSTA values per liske/needrestart docs:
 #   0 = detection failure
@@ -40,9 +36,9 @@ NEEDRESTART-KSTA: 2"
 }
 
 @test "needrestart: KSTA=3 (version upgrade) → reboot pending (regression)" {
-    # The case M16 fixes: pure Debian box, kernel updated, no
-    # /var/run/reboot-required because update-notifier-common isn't
-    # installed. needrestart sees the version delta and reports KSTA=3.
+    # Pure Debian box, kernel updated, no /var/run/reboot-required because
+    # update-notifier-common is not installed. needrestart sees the version
+    # delta and reports KSTA=3.
     local out="NEEDRESTART-VER: 3.6
 NEEDRESTART-KCUR: 6.1.0-13-amd64
 NEEDRESTART-KEXP: 6.1.0-15-amd64

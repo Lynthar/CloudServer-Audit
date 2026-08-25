@@ -1,25 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for the Docker daemon.json writer and the live-restore
-# audit predicate the engine asserts for it as a FIX_VERIFY postcondition.
-#
-# Two defects motivate this file:
-#
-#   1. _docker_check_live_restore piped `docker info` straight into
-#      `grep -qi '^true$'`, so ANY non-true answer fell through to a
-#      daemon.json fallback that was only meant for an unreachable daemon.
-#      A running daemon answering "false" was therefore overruled by a
-#      daemon.json that merely said true — masking exactly the "the file
-#      says X but a systemd ExecStart override won" case the check exists
-#      to catch.
-#   2. _docker_fix_enable_daemon_setting returned 0 after the operator
-#      declined the daemon restart, so the engine recorded live-restore as
-#      complete while the daemon was still running without it.
-#
-# The two settings differ on purpose: live-restore is only observable
-# through the running daemon, whereas no-new-privileges has no `docker
-# info` field and its audit accepts daemon.json on its own. A blanket
-# "declining the restart fails the fix" would be wrong for the latter.
+# Regression tests for the daemon.json writer and the live-restore predicate the
+# engine asserts as a FIX_VERIFY postcondition. The two settings differ: only
+# live-restore is observable through the running daemon, so only it needs a restart.
 
 load helpers.bash
 
@@ -98,10 +80,9 @@ SH
 }
 
 @test "live-restore check: the daemon's answer is compared case-insensitively" {
-    # `docker info` renders a Go bool, so today the answer is always lower
-    # case and dropping the ,, would change nothing observable. That is
-    # exactly why it needs pinning: the tolerance is deliberate, and without
-    # a test the next reader has no way to tell it apart from noise.
+    # `docker info` renders a Go bool, so today the answer is always lower case
+    # and dropping the ,, would change nothing observable. That is why it needs
+    # pinning: the tolerance is deliberate, not noise.
     _daemon_reports True
     run _docker_check_live_restore
     [ "$status" -eq 0 ]
@@ -212,9 +193,8 @@ _completed_fixes() {
 
 @test "daemon.json: a merge that fails leaves no .tmp file and no half-written file" {
     # The refusal path above never reaches the merge, so it cannot cover the
-    # cleanup there. `[]` is the input that separates them: valid JSON, so it
-    # passes the refusal guard, but `.["live-restore"] = true` cannot index an
-    # array, so the merge itself fails and the cleanup runs.
+    # cleanup there. `[]` separates them: valid JSON passes the refusal guard,
+    # but `.["live-restore"] = true` cannot index an array, so the merge fails.
     _daemon_reports false
     confirm_critical() { return 0; }
     printf '[]\n' > "$DOCKER_DAEMON_JSON"
@@ -228,13 +208,9 @@ _completed_fixes() {
 }
 
 @test "daemon.json: a refused file is not snapshotted into the backup session" {
-    # What the refusal guard is FOR, and the only thing that distinguishes it
-    # from the merge failing on its own: it sits ahead of backup_file, so a
-    # file the fix declines to touch leaves no trace in the rollback session.
-    # Remove the guard and the malformed file gets snapshotted, the merge
-    # fails anyway, and the session ends up carrying an entry for a file that
-    # was never modified — same exit status, same daemon.json, different
-    # rollback.
+    # What the refusal guard is FOR: it sits ahead of backup_file, so a file the
+    # fix declines to touch leaves no trace in the rollback session. Without it
+    # the session carries an entry for a file that was never modified.
     _daemon_reports false
     confirm_critical() { return 0; }
     printf 'not json' > "$DOCKER_DAEMON_JSON"

@@ -1,13 +1,7 @@
 #!/usr/bin/env bats
-#
-# Tests for count_authorized_keys (core/common.sh), the shared helper that both
-# the SSH module (lockout precondition) and the users module (key audit) use.
-#
-# The contract that matters for safety: a COMMENTED-OUT key (`# ssh-ed25519 …`,
-# e.g. a rotated-out key left as a note) must NOT count as a usable key — the
-# previous inline grep matched it because `#`-then-space let `[[:space:]]ssh-`
-# hit, which could let _ssh_fix_disable_password_auth cut off password auth and
-# lock the user out, and made the users audit over-report.
+# Tests for count_authorized_keys (core/common.sh), used by the SSH lockout
+# precondition and the users key audit. A COMMENTED-OUT key must NOT count as
+# usable, or disabling password auth can cut off the only way in.
 
 load helpers
 

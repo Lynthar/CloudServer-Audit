@@ -2,9 +2,9 @@
 # Regenerate manifest.sha256.
 #
 # Lists SHA-256 hashes for every runtime-critical file shipped to
-# users — the entry script, all of core/, all of modules/, and the
-# installer scripts. Run this after any change to one of those
-# files; CI fails if manifest.sha256 is out of sync.
+# users — the entry script, VERSION, all of core/, all of modules/,
+# and the installer scripts. Run this after any change to one of
+# those files; CI fails if manifest.sha256 is out of sync.
 #
 # Files NOT covered: docs/, tests/, README*, LICENSE, .github/,
 # .git*, manifest.sha256 itself. Those are either dev-time only
@@ -29,7 +29,7 @@ else
 fi
 
 files=()
-files+=( vpssec install.sh run.sh )
+files+=( vpssec install.sh run.sh VERSION )
 while IFS= read -r f; do files+=("$f"); done < <(find core -type f \( -name '*.sh' -o -name '*.json' \) | sort)
 while IFS= read -r f; do files+=("$f"); done < <(find modules -type f -name '*.sh' | sort)
 

@@ -1,18 +1,7 @@
 #!/usr/bin/env bats
-#
-# Regression tests for _find_recent_users.
-#
-# It used to derive "recently created" from the home directory's mtime alone,
-# which is wrong in both directions: a first login writes ~/.cache and bumps
-# mtime, so a years-old account reads as brand new, while `useradd -M` creates
-# no home directory at all and the account became invisible — precisely the
-# backdoor shape this check exists to surface.
-#
-# The replacement tries home birth time, then home mtime, and falls back to
-# /etc/shadow's sp_lstchg ONLY for accounts with no home directory. That last
-# restriction matters: sp_lstchg also moves on every password change, so
-# consulting it for accounts that do have a home would swap one false positive
-# for another.
+# Regression tests for _find_recent_users. It tries home birth time, then home
+# mtime, and falls back to /etc/shadow's sp_lstchg ONLY for accounts with no
+# home: sp_lstchg also moves on every password change.
 
 load helpers.bash
 
@@ -46,15 +35,9 @@ _lstchg_days_ago() {
     echo $(( ( $(date +%s) - $1 * 86400 ) / 86400 ))
 }
 
-# ---- home-directory signals ------------------------------------------
-#
-# Note on aging a directory: `touch -d '30 days ago'` moves mtime but cannot
-# move birth time, and this checker prefers birth time where the filesystem
-# records it (the container's overlayfs does). So "old account" is simulated
-# by moving the WINDOW instead of the file — RECENT_USER_DAYS=-1 puts the
-# cutoff a day in the future, which no real timestamp can beat. That keeps
-# these assertions running everywhere instead of skipping on half of the
-# filesystems the tool actually ships to.
+# Aging a directory does not work: `touch -d` moves mtime but not birth time,
+# which this checker prefers where the filesystem records it. "Old account" is
+# simulated by moving the WINDOW — RECENT_USER_DAYS=-1 puts the cutoff ahead.
 
 @test "recent users: a freshly made home directory is reported" {
     mkdir -p "$homes/alice"
@@ -103,10 +86,9 @@ _lstchg_days_ago() {
 }
 
 @test "recent users: nobody is not reported as a new account" {
-    # Regression from the shadow fallback itself: nobody is UID 65534 with
-    # no home directory and a shadow entry stamped when the image was built,
-    # so it matched the new "homeless account with a recent password date"
-    # rule on every container and cloud image.
+    # nobody is UID 65534 with no home directory and a shadow entry stamped when
+    # the image was built, so it matches the "homeless account with a recent
+    # password date" rule on every container and cloud image.
     _passwd_is "nobody:x:65534:65534::/nonexistent:/usr/sbin/nologin"
     _shadow_line "nobody:*:$(_lstchg_days_ago 1):0:99999:7:::"
 
@@ -137,11 +119,8 @@ _lstchg_days_ago() {
 
 @test "recent users: shadow is never consulted when a home directory exists" {
     # The precedence rule, stated directly. sp_lstchg moves on every password
-    # change, so letting it speak for accounts that DO have a home directory
-    # would report everyone who rotated a password as "recently created" —
-    # trading the old false positive for a new one. The account below is
-    # reported (its home is fresh), but the evidence must come from the home
-    # directory, never from shadow.
+    # change, so letting it speak for accounts that DO have a home would report
+    # every password rotation as a new account. The evidence must be the home dir.
     mkdir -p "$homes/veteran"
     _passwd_is "veteran:x:1006:1006::$homes/veteran:/bin/bash"
     _shadow_line "veteran:\$6\$abc\$def:$(_lstchg_days_ago 1):0:99999:7:::"

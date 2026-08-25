@@ -1,33 +1,7 @@
 #!/usr/bin/env bats
-#
-# Coverage for baseline's four fixes. Nothing here was tested before, and
-# these have the widest blast radius left in the tool: two of them enforce a
-# MAC system and one stops services the operator may be relying on. All four
-# are reachable from guide mode (three FIX_CONFIRM, one alert-only).
-#
-# Five defects motivated this file:
-#
-#   1. _baseline_fix_selinux_enforcing returned 0 after the persistence step
-#      failed — an unexpected config layout printed an error, restored the
-#      backup, and then fell through to `return 0`. The finding was recorded
-#      as resolved on a host that comes back permissive at the next boot.
-#   2. The same fix returned 0 when the config file did not exist at all
-#      (Debian with selinux-utils installed), having made a runtime-only
-#      change that dies at reboot.
-#   3. It edited /etc/selinux/config in place with `sed -i`, i.e. the file
-#      that decides how SELinux initialises at boot was rewritten
-#      non-atomically, and its layout was only checked afterwards.
-#   4. _baseline_fix_enable_apparmor swallowed the apt-get status, so a failed
-#      install surfaced as "Failed to enable AppArmor" — pointing at the
-#      service rather than at the transaction that actually failed.
-#   5. _baseline_fix_disable_unused chained `disable && stop`, so a failed
-#      disable skipped the stop and left the service both running and
-#      enabled, while a failed stop hid a disable that had landed.
-#
-# The audit predicate they all rest on had a sixth: `systemctl is-enabled`
-# exits 0 for `static` and `indirect` units, which `systemctl disable` cannot
-# act on — it exits 0 and changes nothing. That combination is a finding whose
-# fix reports success on every run while the next audit re-reports it.
+# Coverage for baseline's four fixes: two of them enforce a MAC system and one
+# stops services the operator may be relying on. All four are reachable from
+# guide mode (three FIX_CONFIRM, one alert-only).
 
 load helpers.bash
 
@@ -36,12 +10,9 @@ setup() {
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/baseline.sh"
 
-    # Without this, VPSSEC_I18N is empty and `i18n key` echoes the KEY. Every
-    # assertion below that greps a message would then be matching the key name,
-    # which passes whether or not the key exists in the language files — the
-    # exact mistake i18n parity is meant to catch. Loading en_US makes those
-    # assertions read the real strings, so a fix that prints an unregistered
-    # key fails here rather than shipping "baseline.foo" to the operator.
+    # Without this, VPSSEC_I18N is empty and `i18n key` echoes the KEY, so every
+    # assertion that greps a message would match the key name and pass whether
+    # or not the key exists. en_US makes them read the real strings.
     i18n_load en_US
 
     etc=$(_vpssec_fake_etc)
@@ -54,12 +25,9 @@ setup() {
     _vpssec_stub systemctl
 }
 
-# ---- SELinux fixtures ------------------------------------------------
-#
 # setenforce and getenforce are modelled as the pair they are: `setenforce 1`
-# flips the runtime mode and `getenforce` reports it. The marker file is what
-# makes the fix's own postcondition observable — with a constant getenforce,
-# every success assertion would pass on a fix that never called setenforce.
+# flips the runtime mode and `getenforce` reports it. Without the marker file
+# every success assertion passes on a fix that never called setenforce.
 
 _selinux_present() {
     : > "$BASELINE_SELINUX_FS_ENFORCE"
@@ -95,10 +63,9 @@ _config_mode() {
 # ==============================================================================
 
 @test "selinux: a host without setenforce fails instead of editing the config" {
-    # The guard is answered here rather than by un-stubbing setenforce, because
-    # "is the binary absent" must not depend on what the test host happens to
-    # have installed — the tool ships for hosts both with and without
-    # selinux-utils. setenforce IS stubbed, so the refutation below is real.
+    # The guard is answered here rather than by un-stubbing setenforce: "is the
+    # binary absent" must not depend on what the test host happens to have
+    # installed. setenforce IS stubbed, so the refutation below is real.
     _selinux_present
     _permissive_config
     _vpssec_absent_command setenforce
@@ -218,10 +185,8 @@ _config_mode() {
 
 @test "selinux: a write the atomic writer refuses does not claim persistence" {
     # The lever is write_file_atomic's final rename, not a '..' path: backup_file
-    # validates the same path and now aborts the fix before the write, which left
-    # this test passing on the backup guard while no longer reaching the one it
-    # names. The message assertion is what makes the difference observable —
-    # status and file contents look the same either way.
+    # validates the same path and aborts the fix before the write. The message
+    # assertion is what tells the two failures apart — status and file do not.
     _selinux_present
     _permissive_config
     VPSSEC_QUIET_SCAN=0
@@ -259,10 +224,8 @@ _config_mode() {
 # ==============================================================================
 
 # The guard answers from a marker file, so "not installed" is a property of the
-# test rather than of the host, and one test can cover the whole
-# install -> enable -> effective lifecycle. The state lives in a file, not in a
-# local: a nested function closing over a local captures the NAME, and by call
-# time set -u aborts the gate — indistinguishable from the gate refusing.
+# test rather than of the host. The state must live in a file, not a local: a
+# nested function closing over a local captures the NAME and set -u then aborts.
 _apparmor_absent() {
     rm -f "$BATS_TEST_TMPDIR/aa-installed"
     _vpssec_absent_command aa-status "$BATS_TEST_TMPDIR/aa-installed"
@@ -331,10 +294,9 @@ SH
 }
 
 @test "apparmor: a failing systemctl enable does not skip the start" {
-    # enable is best-effort — the unit may be static, or already enabled — so
-    # its failure is logged and the postcondition decides the outcome. What
-    # must not happen is the failure taking the start attempt with it, which is
-    # what chaining the two commands would do.
+    # enable is best-effort — the unit may be static, or already enabled — so its
+    # failure is logged and the postcondition decides the outcome. What must not
+    # happen is the failure taking the start attempt with it, as chaining would.
     _vpssec_stub_script systemctl <<'SH'
 [[ "$1" == "enable" ]] && exit 1
 exit 0
@@ -445,9 +407,8 @@ SH
 
 @test "unused services: a static unit is not offered for disabling" {
     # `systemctl is-enabled` exits 0 for a static unit, and `systemctl disable`
-    # then exits 0 while changing nothing — so keying on the exit status
-    # produced a finding whose fix succeeds forever and whose audit never
-    # clears.
+    # then exits 0 while changing nothing, so keying on the exit status yields a
+    # finding whose fix succeeds forever and whose audit never clears.
     _vpssec_stub_script systemctl <<'SH'
 if [[ "$1" == "is-enabled" ]]; then
     case "$2" in
@@ -480,10 +441,9 @@ SH
 }
 
 @test "unused services: a SysV unit is read past systemctl's redirect notice" {
-    # For an init script systemctl prints "…is not a native service,
-    # redirecting to systemd-sysv-install" before the state word. Ubuntu's
-    # apport is exactly this shape, and `disable` does work on it, so it must
-    # not be dropped by the state matching.
+    # For an init script systemctl prints "…is not a native service, redirecting
+    # to systemd-sysv-install" before the state word. Ubuntu's apport is exactly
+    # this shape and `disable` does work on it, so state matching must keep it.
     _vpssec_stub_script systemctl <<'SH'
 if [[ "$1" == "is-enabled" ]]; then
     case "$2" in
