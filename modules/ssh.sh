@@ -533,12 +533,12 @@ _ssh_audit_admin_user() {
                 "ssh" \
                 "low" \
                 "failed" \
-                "Admin user $first_admin has no SSH key" \
+                "$(i18n 'ssh.admin_no_key' "user=$first_admin")" \
                 "$(i18n 'ssh.admin_no_key_desc')" \
                 "$(i18n 'ssh.admin_no_key_suggestion' "user=$first_admin")" \
                 "")
             state_add_check "$check"
-            print_severity "low" "Admin user $first_admin has no SSH key"
+            print_severity "low" "$(i18n 'ssh.admin_no_key' "user=$first_admin")"
         else
             # Check authorized_keys permissions if key exists
             local perm_issues
@@ -549,12 +549,12 @@ _ssh_audit_admin_user() {
                     "ssh" \
                     "medium" \
                     "failed" \
-                    "SSH key files have insecure permissions" \
+                    "$(i18n 'ssh.authkeys_permissions')" \
                     "$perm_issues" \
                     "$(i18n 'ssh.authkeys_permissions_suggestion')" \
                     "")
                 state_add_check "$check"
-                print_severity "medium" "SSH key files have insecure permissions"
+                print_severity "medium" "$(i18n 'ssh.authkeys_permissions')"
             fi
         fi
     else
@@ -580,12 +580,12 @@ _ssh_audit_empty_password() {
             "ssh" \
             "high" \
             "failed" \
-            "Empty password login allowed" \
+            "$(i18n 'ssh.empty_password_allowed')" \
             "$(i18n 'ssh.empty_password_allowed_desc')" \
             "$(i18n 'ssh.fix_disable_empty_password')" \
             "ssh.disable_empty_password")
         state_add_check "$check"
-        print_severity "high" "Empty password login allowed"
+        print_severity "high" "$(i18n 'ssh.empty_password_allowed')"
     else
         local check=$(create_check_json \
             "ssh.empty_password_denied" \

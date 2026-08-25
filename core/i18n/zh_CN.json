@@ -272,7 +272,9 @@
     "login_grace_time_long_suggestion": "将 LoginGraceTime 设为 60",
     "x11_forwarding_enabled_suggestion": "除非确需，否则禁用 X11 转发",
     "tcp_keepalive_enabled_suggestion": "将 TCPKeepAlive 设为 no，改用 ClientAliveInterval",
-    "default_port_suggestion": "建议改用非标准端口（如 2222、22222）"
+    "default_port_suggestion": "建议改用非标准端口（如 2222、22222）",
+    "admin_no_key": "管理员用户 {user} 没有 SSH 密钥",
+    "authkeys_permissions": "SSH 密钥文件权限不安全"
   },
   "ufw": {
     "default_accept_desc": "默认入站策略为 ACCEPT",
@@ -475,7 +477,11 @@
     "privileged_containers_suggestion": "去掉 --privileged，改为按需授予具体 capabilities",
     "root_containers_suggestion": "在 Dockerfile 中使用 USER 指令，或加上 --user 参数",
     "no_live_restore_suggestion": "在 daemon.json 中启用 live-restore",
-    "no_new_privileges_disabled_suggestion": "在 daemon.json 中启用 no-new-privileges"
+    "no_new_privileges_disabled_suggestion": "在 daemon.json 中启用 no-new-privileges",
+    "all_root_containers": "全部 {count} 个容器以 root 运行",
+    "some_root_containers": "{total} 个容器中有 {count} 个以 root 运行",
+    "no_live_restore": "Docker 未启用 live-restore",
+    "no_new_privileges_disabled": "Docker 未默认启用 no-new-privileges"
   },
   "nginx": {
     "client_body_timeout_high_desc": "client_body_timeout={cbt_raw}（CIS 5.2.1：≤10s）",
@@ -951,7 +957,8 @@
     "persist_failed": "有 {count} 个 sysctl 值未能写入持久化配置——该更改在重启后将失效",
     "unused_protocols_unblocked_suggestion": "通过 /etc/modprobe.d/blacklist-rare-network.conf 拉黑",
     "ipv6_unused_insecure_suggestion": "建议禁用 IPv6，或加固相关设置",
-    "ipv6_firewall_missing_suggestion": "在防火墙配置中启用 IPv6 规则"
+    "ipv6_firewall_missing_suggestion": "在防火墙配置中启用 IPv6 规则",
+    "aslr_unknown": "无法确定 ASLR 状态"
   },
   "filesystem": {
     "caps_unavailable_desc": "安装 libcap2-bin 后才能检查文件 capabilities",
@@ -1032,7 +1039,9 @@
     "umask_default_suggestion": "在 /etc/login.defs 中将 umask 设为 027",
     "umask_weak_suggestion": "将 umask 设为 027 或 077",
     "non_standard_caps_suggestion": "确认这些 capabilities 是否必要",
-    "suspicious_cron_suggestion": "逐条检查 cron 条目，排查恶意程序或后门"
+    "suspicious_cron_suggestion": "逐条检查 cron 条目，排查恶意程序或后门",
+    "pam_umask_disabled": "common-session 中未启用 pam_umask",
+    "caps_unavailable": "getcap 不可用"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "元数据无会话令牌即可访问；阿里云建议开启加固模式（Security Hardening Mode）",
@@ -1575,7 +1584,8 @@
     "module_failed_desc": "{module} 模块的审计中途退出（退出码 {rc}），其余检查从未执行。本报告对该模块而言是不完整的。",
     "module_failed_load_desc": "{module} 模块加载失败，其所有检查均未运行。本报告对该模块而言是不完整的。",
     "module_failed_fix": "用 --debug 重新运行并查看 logs/vpssec.log；若持续出现请反馈。",
-    "malformed_check_fix": "请将 logs/vpssec.log 中的相关条目反馈给 vpssec 维护者"
+    "malformed_check_fix": "请将 logs/vpssec.log 中的相关条目反馈给 vpssec 维护者",
+    "malformed_check": "丢弃了格式错误的检查 JSON"
   },
   "fixwarn": {
     "baseline.selinux_enable": "启用 SELinux 需要重启系统，且可能导致服务被拒绝",

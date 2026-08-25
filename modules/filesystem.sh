@@ -1137,7 +1137,7 @@ _fs_audit_umask() {
             "filesystem" \
             "info" \
             "passed" \
-            "pam_umask not enabled in common-session" \
+            "$(i18n 'filesystem.pam_umask_disabled')" \
             "$(i18n 'filesystem.pam_umask_disabled_desc')" \
             "" \
             "")
@@ -1153,7 +1153,7 @@ _fs_audit_caps() {
             "filesystem" \
             "low" \
             "info" \
-            "getcap not available" \
+            "$(i18n 'filesystem.caps_unavailable')" \
             "$(i18n 'filesystem.caps_unavailable_desc')" \
             "" \
             "")

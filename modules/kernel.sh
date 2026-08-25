@@ -662,7 +662,7 @@ _kernel_audit_aslr() {
                 "kernel" \
                 "low" \
                 "failed" \
-                "Cannot determine ASLR status" \
+                "$(i18n 'kernel.aslr_unknown')" \
                 "" \
                 "" \
                 "")

@@ -50,7 +50,7 @@ state_add_check() {
             "_internal" \
             "medium" \
             "failed" \
-            "Malformed check JSON dropped" \
+            "$(i18n 'error.malformed_check')" \
             "A module emitted invalid JSON for a check. Raw payload (first 500 bytes): ${raw_preview}" \
             "$(i18n 'error.malformed_check_fix')" \
             "")

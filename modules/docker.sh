@@ -395,7 +395,7 @@ _docker_audit_root_containers() {
             "docker" \
             "low" \
             "failed" \
-            "All containers running as root ($count)" \
+            "$(i18n 'docker.all_root_containers' "count=$count")" \
             "$(i18n 'docker.all_root_containers_desc')" \
             "$(i18n 'docker.root_containers_suggestion')" \
             "")
@@ -407,7 +407,7 @@ _docker_audit_root_containers() {
             "docker" \
             "low" \
             "failed" \
-            "$count of $total containers running as root" \
+            "$(i18n 'docker.some_root_containers' "count=$count" "total=$total")" \
             "$(i18n 'docker.some_root_containers_desc')" \
             "$(i18n 'docker.root_containers_suggestion')" \
             "")
@@ -470,7 +470,7 @@ _docker_audit_daemon_settings() {
             "docker" \
             "low" \
             "failed" \
-            "Docker live-restore not enabled" \
+            "$(i18n 'docker.no_live_restore')" \
             "$(i18n 'docker.no_live_restore_desc')" \
             "$(i18n 'docker.no_live_restore_suggestion')" \
             "docker.enable_live_restore")
@@ -486,7 +486,7 @@ _docker_audit_daemon_settings() {
             "docker" \
             "low" \
             "failed" \
-            "Docker no-new-privileges not set as default" \
+            "$(i18n 'docker.no_new_privileges_disabled')" \
             "$(i18n 'docker.no_new_privileges_disabled_desc')" \
             "$(i18n 'docker.no_new_privileges_disabled_suggestion')" \
             "docker.enable_no_new_privileges")

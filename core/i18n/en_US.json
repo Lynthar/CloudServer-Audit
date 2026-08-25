@@ -272,7 +272,9 @@
     "login_grace_time_long_suggestion": "Set LoginGraceTime to 60",
     "x11_forwarding_enabled_suggestion": "Disable X11 forwarding unless needed",
     "tcp_keepalive_enabled_suggestion": "Set TCPKeepAlive to no and rely on ClientAliveInterval instead",
-    "default_port_suggestion": "Consider changing to a non-standard port (e.g., 2222, 22222)"
+    "default_port_suggestion": "Consider changing to a non-standard port (e.g., 2222, 22222)",
+    "admin_no_key": "Admin user {user} has no SSH key",
+    "authkeys_permissions": "SSH key files have insecure permissions"
   },
   "ufw": {
     "default_accept_desc": "Default incoming policy is ACCEPT",
@@ -475,7 +477,11 @@
     "privileged_containers_suggestion": "Remove --privileged flag, use specific capabilities instead",
     "root_containers_suggestion": "Use USER directive in Dockerfile or --user flag",
     "no_live_restore_suggestion": "Enable live-restore in daemon.json",
-    "no_new_privileges_disabled_suggestion": "Enable no-new-privileges in daemon.json"
+    "no_new_privileges_disabled_suggestion": "Enable no-new-privileges in daemon.json",
+    "all_root_containers": "All {count} containers running as root",
+    "some_root_containers": "{count} of {total} containers running as root",
+    "no_live_restore": "Docker live-restore not enabled",
+    "no_new_privileges_disabled": "Docker no-new-privileges not set as default"
   },
   "nginx": {
     "client_body_timeout_high_desc": "client_body_timeout={cbt_raw} (CIS 5.2.1: ≤10s)",
@@ -951,7 +957,8 @@
     "persist_failed": "Failed to persist {count} sysctl value(s) to the drop-in — the change would not survive a reboot",
     "unused_protocols_unblocked_suggestion": "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf",
     "ipv6_unused_insecure_suggestion": "Consider disabling IPv6 or hardening settings",
-    "ipv6_firewall_missing_suggestion": "Enable IPv6 in firewall configuration"
+    "ipv6_firewall_missing_suggestion": "Enable IPv6 in firewall configuration",
+    "aslr_unknown": "Cannot determine ASLR status"
   },
   "filesystem": {
     "caps_unavailable_desc": "Install libcap2-bin to check file capabilities",
@@ -1032,7 +1039,9 @@
     "umask_default_suggestion": "Set umask to 027 in /etc/login.defs",
     "umask_weak_suggestion": "Set umask to 027 or 077",
     "non_standard_caps_suggestion": "Review if these capabilities are needed",
-    "suspicious_cron_suggestion": "Review cron entries for potential malware or backdoors"
+    "suspicious_cron_suggestion": "Review cron entries for potential malware or backdoors",
+    "pam_umask_disabled": "pam_umask not enabled in common-session",
+    "caps_unavailable": "getcap not available"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode",
@@ -1575,7 +1584,8 @@
     "module_failed_desc": "The {module} audit stopped partway (exit {rc}); its remaining checks were never evaluated. This report is incomplete for that module.",
     "module_failed_load_desc": "The {module} module failed to load; none of its checks ran. This report is incomplete for that module.",
     "module_failed_fix": "Re-run with --debug and check logs/vpssec.log; report the failure if it persists.",
-    "malformed_check_fix": "Please report to vpssec maintainers with the relevant logs/vpssec.log entry"
+    "malformed_check_fix": "Please report to vpssec maintainers with the relevant logs/vpssec.log entry",
+    "malformed_check": "Malformed check JSON dropped"
   },
   "fixwarn": {
     "baseline.selinux_enable": "Enabling SELinux requires system reboot and may cause service issues",
