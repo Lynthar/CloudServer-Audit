@@ -461,3 +461,54 @@ _make() {
     [ "$status" -ne 0 ]
     grep -q '022' "$FS_LOGIN_DEFS"
 }
+
+# ==============================================================================
+# Production expectations for the cron/at family. crontab(1) is setgid crontab
+# and at(1) runs as daemon: both read these files through group or world bits,
+# so an expectation that strips world-read from a root:root file locks every
+# non-root user out of the tool (measured on Debian 12).
+# ==============================================================================
+
+@test "perms table: cron/at family keeps the read bits its setgid readers need" {
+    [ "${FS_SENSITIVE_FILES[/etc/at.deny]}" = "640" ]
+    [ "${FS_SENSITIVE_FILES[/etc/crontab]}" = "644" ]
+    [ "${FS_SENSITIVE_FILES[/etc/cron.allow]}" = "644" ]
+    [ "${FS_SENSITIVE_FILES[/etc/cron.deny]}" = "644" ]
+    [ "${FS_SENSITIVE_FILES[/etc/at.allow]}" = "644" ]
+}
+
+@test "perms audit: group daemon is flagged outside /etc/at.*" {
+    [ "$(id -u)" = "0" ] || skip "ownership checks only run as root"
+
+    local f="$BATS_TEST_TMPDIR/cron.allow"
+    printf 'x\n' > "$f"
+    chown root:daemon "$f"
+    chmod 640 "$f"
+    run _fs_check_sensitive_file "$f" 644
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"group daemon grants access"* ]]
+}
+
+@test "perms audit: group crontab is flagged outside /etc/cron*" {
+    [ "$(id -u)" = "0" ] || skip "ownership checks only run as root"
+    getent group crontab >/dev/null || skip "no crontab group on this host"
+
+    local f="$BATS_TEST_TMPDIR/at.deny"
+    printf 'x\n' > "$f"
+    chown root:crontab "$f"
+    chmod 640 "$f"
+    run _fs_check_sensitive_file "$f" 644
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"group crontab grants access"* ]]
+}
+
+@test "perms audit: stock at.deny (root:daemon 640) passes clean" {
+    [ "$(id -u)" = "0" ] || skip "ownership checks only run as root"
+    [ -f /etc/at.deny ] || skip "at not installed"
+    [ "$(stat -c '%U:%G' /etc/at.deny)" = "root:daemon" ] || skip "not the stock ownership"
+    [ "$(stat -c '%a' /etc/at.deny)" = "640" ] || skip "not the stock mode"
+
+    run _fs_check_sensitive_file /etc/at.deny "${FS_SENSITIVE_FILES[/etc/at.deny]}"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}

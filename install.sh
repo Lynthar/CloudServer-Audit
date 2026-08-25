@@ -117,11 +117,8 @@ check_system() {
                 print_ok "Supported OS: $PRETTY_NAME"
                 ;;
             *)
-                # The audit runs on RHEL and Arch, but this installer can
-                # only install dependencies with apt, so say so.
-                print_warn "OS: $PRETTY_NAME — vpssec's audit supports Debian/Ubuntu/RHEL-family/Arch,"
-                print_warn "but THIS installer auto-installs dependencies via apt only."
-                print_warn "On other distros, install missing dependencies manually first."
+                print_warn "OS: $PRETTY_NAME — vpssec's audit supports Debian/Ubuntu/RHEL-family/Arch;"
+                print_warn "hardening (guide/rollback) stays Debian/Ubuntu-only."
                 ;;
         esac
     else
@@ -138,15 +135,24 @@ check_system() {
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         print_warn "Missing dependencies: ${missing[*]}"
-        if ! command -v apt-get &>/dev/null; then
-            # No apt on this host: say what to do instead of running a
-            # command that cannot exist here (exit 127 mid-install).
-            print_error "No apt-get on this system — install these manually, then re-run: ${missing[*]}"
+        print_info "Installing dependencies..."
+        # set -e is on: a failing install aborts here with the real error
+        # visible, instead of exit 127 later mid-install.
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq || true
+            apt-get install -y "${missing[@]}"
+        elif command -v dnf &>/dev/null; then
+            dnf install -y "${missing[@]}"
+        elif command -v yum &>/dev/null; then
+            yum install -y "${missing[@]}"
+        elif command -v pacman &>/dev/null; then
+            pacman -Sy --noconfirm --needed "${missing[@]}"
+        elif command -v zypper &>/dev/null; then
+            zypper --non-interactive install "${missing[@]}"
+        else
+            print_error "No supported package manager — install these manually, then re-run: ${missing[*]}"
             exit 1
         fi
-        print_info "Installing dependencies..."
-        apt-get update -qq
-        apt-get install -y "${missing[@]}"
     fi
 
     print_ok "System requirements satisfied"

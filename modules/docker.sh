@@ -264,7 +264,7 @@ docker_audit() {
             "low" \
             "passed" \
             "$(i18n 'docker.not_installed')" \
-            "Docker is not installed (skip)" \
+            "$(i18n 'docker.not_installed_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -332,7 +332,7 @@ _docker_audit_exposed_ports() {
             "medium" \
             "failed" \
             "$(i18n 'docker.exposed_ports' "count=$count")" \
-            "Exposed ports: $port_list" \
+            "$(i18n 'docker.exposed_ports_desc' "list=$port_list")" \
             "Use reverse proxy or bind to 127.0.0.1" \
             "docker.generate_proxy_template")
         state_add_check "$check"
@@ -364,7 +364,7 @@ _docker_audit_privileged() {
             "medium" \
             "failed" \
             "$(i18n 'docker.privileged_containers' "count=$count")" \
-            "Privileged containers: $container_list" \
+            "$(i18n 'docker.privileged_containers_desc' "list=$container_list")" \
             "Remove --privileged flag, use specific capabilities instead" \
             "")
         state_add_check "$check"
@@ -396,7 +396,7 @@ _docker_audit_root_containers() {
             "low" \
             "failed" \
             "All containers running as root ($count)" \
-            "All containers are running as root user" \
+            "$(i18n 'docker.all_root_containers_desc')" \
             "Use USER directive in Dockerfile or --user flag" \
             "")
         state_add_check "$check"
@@ -408,7 +408,7 @@ _docker_audit_root_containers() {
             "low" \
             "failed" \
             "$count of $total containers running as root" \
-            "Some containers are running as root user" \
+            "$(i18n 'docker.some_root_containers_desc')" \
             "Use USER directive in Dockerfile or --user flag" \
             "")
         state_add_check "$check"
@@ -471,7 +471,7 @@ _docker_audit_daemon_settings() {
             "low" \
             "failed" \
             "Docker live-restore not enabled" \
-            "Containers will stop during Docker daemon restart" \
+            "$(i18n 'docker.no_live_restore_desc')" \
             "Enable live-restore in daemon.json" \
             "docker.enable_live_restore")
         state_add_check "$check"
@@ -487,7 +487,7 @@ _docker_audit_daemon_settings() {
             "low" \
             "failed" \
             "Docker no-new-privileges not set as default" \
-            "Containers can gain new privileges by default" \
+            "$(i18n 'docker.no_new_privileges_disabled_desc')" \
             "Enable no-new-privileges in daemon.json" \
             "docker.enable_no_new_privileges")
         state_add_check "$check"
@@ -642,7 +642,7 @@ _docker_audit_host_network() {
             "medium" \
             "failed" \
             "$(i18n 'docker.host_network_used' "count=$count" 2>/dev/null || echo "${count} container(s) running with --network=host")" \
-            "Containers: ${hn_list% }. These share the host network namespace (bind any port, see all host traffic). Review whether each container actually needs host network." \
+            "$(i18n 'docker.host_network_used_desc' "list=${hn_list% }")" \
             "$(i18n 'docker.fix_host_network' 2>/dev/null || echo 'Recreate the container without --network=host; use a user-defined bridge or default bridge instead unless host networking is truly required (VPN, monitoring)')" \
             "")
         state_add_check "$check"
@@ -680,7 +680,7 @@ _docker_audit_default_bridge_icc() {
             "low" \
             "failed" \
             "$(i18n 'docker.default_bridge_icc_enabled' 2>/dev/null || echo 'Default-bridge ICC enabled (Docker default; allows lateral movement)')" \
-            "Inter-container communication on the docker0 bridge is enabled. If any container is compromised it can reach every other container on the default bridge." \
+            "$(i18n 'docker.default_bridge_icc_enabled_desc')" \
             "$(i18n 'docker.fix_default_bridge_icc' 2>/dev/null || echo 'Add \"icc\": false to /etc/docker/daemon.json, restart docker. Use user-defined networks for containers that genuinely need to communicate.')" \
             "")
         state_add_check "$check"
@@ -706,7 +706,7 @@ _docker_audit_secrets_in_env() {
             "medium" \
             "failed" \
             "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with embedded credentials in env vars")" \
-            "Containers (kinds + counts only; raw values withheld): ${sample}. Any process with docker socket access reads these via 'docker inspect'." \
+            "$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
             "$(i18n 'docker.fix_secrets_in_env' 2>/dev/null || echo 'Rotate the exposed credentials. Use docker secrets / mounted secret files / cloud-provider secret stores instead of -e/--env.')" \
             "")
         state_add_check "$check"
@@ -738,7 +738,7 @@ _docker_audit_unlimited_memory() {
             "low" \
             "failed" \
             "$(i18n 'docker.unlimited_memory' "count=$count" 2>/dev/null || echo "${count} container(s) without a memory limit")" \
-            "Containers: ${um_list% }. Without --memory a runaway / leaking container can OOM the host. Acceptable on single-app servers; address on multi-tenant hosts." \
+            "$(i18n 'docker.unlimited_memory_desc' "list=${um_list% }")" \
             "$(i18n 'docker.fix_unlimited_memory' 2>/dev/null || echo 'Re-run the container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose.')" \
             "")
         state_add_check "$check"
@@ -766,10 +766,10 @@ docker_fix() {
             _docker_fix_generate_proxy_template
             ;;
         docker.enable_live_restore)
-            _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+            _docker_fix_enable_daemon_setting "live-restore" true
             ;;
         docker.enable_no_new_privileges)
-            _docker_fix_enable_daemon_setting "no-new-privileges" true _docker_check_no_new_privileges
+            _docker_fix_enable_daemon_setting "no-new-privileges" true
             ;;
         *)
             log_warn "Docker fix not implemented: $fix_id"
@@ -895,10 +895,8 @@ EOF
 _docker_fix_enable_daemon_setting() {
     local setting="$1"
     local value="$2"
-    # Name of the audit predicate for this setting. Used as a postcondition
-    # below so the fix reports what the next audit will see, not merely that
-    # the file write succeeded. Optional: an empty value skips the assertion.
-    local verify_fn="${3:-}"
+    # No postcondition here: FIX_VERIFY declares the audit predicate for each
+    # daemon setting, and execute_fix runs it after this returns.
     local tmp_file="${DOCKER_DAEMON_JSON}.tmp"
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
@@ -960,16 +958,6 @@ _docker_fix_enable_daemon_setting() {
         fi
     else
         print_warn "$(i18n 'docker.restart_skipped')"
-    fi
-
-    # Postcondition via the audit's own predicate. The two settings differ:
-    # live-restore needs the RUNNING daemon, so declining the restart leaves
-    # it inactive, while no-new-privileges is satisfied by the file alone.
-    if [[ -n "$verify_fn" ]] && declare -f "$verify_fn" >/dev/null 2>&1; then
-        if ! "$verify_fn"; then
-            print_warn "$(i18n 'docker.not_effective')"
-            return 1
-        fi
     fi
 
     return 0

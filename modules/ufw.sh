@@ -401,7 +401,7 @@ _ufw_audit_ruleset_empty() {
         "medium" \
         "failed" \
         "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but host ingress is unfiltered")" \
-        "$backend is active but the host ingress (input) chain has no rules and no default drop/reject policy; host services are unfiltered. Container runtimes add forwarding/NAT rules that do not protect the host." \
+        "$(i18n 'ufw.firewall_empty_desc' "backend=$backend")" \
         "$(i18n 'ufw.fix_firewall_empty' 2>/dev/null || echo "Add input rules (or a default-deny input policy), or use a managed front-end like UFW/firewalld")" \
         "")
     state_add_check "$check"
@@ -428,7 +428,7 @@ _ufw_audit_enabled() {
             "medium" \
             "failed" \
             "$(i18n 'ufw.disabled')" \
-            "UFW is installed but not enabled" \
+            "$(i18n 'ufw.disabled_desc')" \
             "$(i18n 'ufw.fix_enable')" \
             "ufw.enable")
         state_add_check "$check"
@@ -446,7 +446,7 @@ _ufw_audit_default_policy() {
             "low" \
             "passed" \
             "$(i18n 'ufw.default_incoming_deny')" \
-            "Default incoming: $incoming" \
+            "$(i18n 'ufw.default_deny_desc' "incoming=$incoming")" \
             "" \
             "")
         state_add_check "$check"
@@ -458,7 +458,7 @@ _ufw_audit_default_policy() {
             "medium" \
             "failed" \
             "$(i18n 'ufw.default_incoming_accept')" \
-            "Default incoming policy is ACCEPT" \
+            "$(i18n 'ufw.default_accept_desc')" \
             "$(i18n 'ufw.fix_default_deny')" \
             "ufw.set_default_deny")
         state_add_check "$check"
@@ -488,7 +488,7 @@ _ufw_audit_ssh_rule() {
             "low" \
             "failed" \
             "$(i18n 'ufw.no_ssh_rule')" \
-            "SSH port $ssh_port is not explicitly allowed" \
+            "$(i18n 'ufw.no_ssh_rule_desc' "ssh_port=$ssh_port")" \
             "$(i18n 'ufw.fix_allow_ssh')" \
             "ufw.allow_ssh")
         state_add_check "$check"

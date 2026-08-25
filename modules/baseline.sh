@@ -275,7 +275,7 @@ _baseline_audit_insecure_services() {
             "high" \
             "failed" \
             "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "${#found[@]} insecure legacy service(s)/package(s) present")" \
-            "Found: ${list% }" \
+            "$(i18n 'baseline.insecure_services_active_desc' "list=${list% }")" \
             "Disable the service (systemctl disable --now <name>) and remove the package ($(pkg_remove_hint '<name>' || echo 'with your package manager'))" \
             "")
         state_add_check "$check"
@@ -347,7 +347,7 @@ _baseline_audit_integrity() {
             "low" \
             "failed" \
             "$(i18n 'baseline.integrity_missing')" \
-            "No file integrity monitor (AIDE/Tripwire/Samhain) installed" \
+            "$(i18n 'baseline.integrity_missing_desc')" \
             "$integrity_hint" \
             "")
         state_add_check "$check"
@@ -397,7 +397,7 @@ _baseline_audit_selinux() {
             "low" \
             "passed" \
             "$(i18n 'baseline.selinux_enforcing')" \
-            "SELinux enforcing, policy: ${policy:-targeted}, denials today: ${denials}" \
+            "$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials}")" \
             "" \
             "")
         state_add_check "$check"
@@ -411,7 +411,7 @@ _baseline_audit_selinux() {
                 "low" \
                 "failed" \
                 "$(i18n 'baseline.selinux_many_denials' "count=$denials")" \
-                "High number of SELinux denials may indicate misconfiguration" \
+                "$(i18n 'baseline.selinux_many_denials_desc')" \
                 "Review denials: ausearch -m avc -ts today" \
                 "")
             state_add_check "$check"
@@ -425,7 +425,7 @@ _baseline_audit_selinux() {
             "low" \
             "failed" \
             "$(i18n 'baseline.selinux_permissive')" \
-            "SELinux is in permissive mode - violations are logged but not enforced" \
+            "$(i18n 'baseline.selinux_permissive_desc')" \
             "Set SELinux to enforcing: setenforce 1" \
             "baseline.selinux_set_enforcing")
         state_add_check "$check"
@@ -447,7 +447,7 @@ _baseline_audit_selinux_disabled() {
         "low" \
         "failed" \
         "$(i18n 'baseline.selinux_disabled')" \
-        "SELinux is installed but disabled (config: ${config})" \
+        "$(i18n 'baseline.selinux_disabled_desc' "config=${config}")" \
         "Enable SELinux in /etc/selinux/config and reboot" \
         "baseline.selinux_enable")
     state_add_check "$check"
@@ -472,7 +472,7 @@ _baseline_audit_apparmor() {
             "low" \
             "passed" \
             "$(i18n 'baseline.apparmor_enabled')" \
-            "AppArmor enabled: ${enforced} profiles enforcing, ${complain} in complain mode" \
+            "$(i18n 'baseline.apparmor_enabled_desc' "enforced=${enforced}" "complain=${complain}")" \
             "" \
             "")
         state_add_check "$check"
@@ -486,7 +486,7 @@ _baseline_audit_apparmor() {
                 "low" \
                 "failed" \
                 "$(i18n 'baseline.apparmor_many_complain' "count=$complain")" \
-                "Many AppArmor profiles in complain mode (not enforcing)" \
+                "$(i18n 'baseline.apparmor_many_complain_desc')" \
                 "Review and set profiles to enforce mode" \
                 "")
             state_add_check "$check"
@@ -529,7 +529,7 @@ _baseline_audit_apparmor_disabled() {
         "low" \
         "failed" \
         "$(i18n 'baseline.apparmor_disabled')" \
-        "AppArmor is installed but not enabled" \
+        "$(i18n 'baseline.apparmor_disabled_desc')" \
         "Enable AppArmor for additional security" \
         "baseline.enable_apparmor")
     state_add_check "$check"
@@ -543,7 +543,7 @@ _baseline_audit_no_mac() {
         "low" \
         "failed" \
         "$(i18n 'baseline.no_mac_system')" \
-        "No Mandatory Access Control system (SELinux/AppArmor) detected" \
+        "$(i18n 'baseline.no_mac_system_desc')" \
         "Install and enable AppArmor or SELinux" \
         "baseline.enable_apparmor")
     state_add_check "$check"

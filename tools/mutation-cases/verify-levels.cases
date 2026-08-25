@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_fix_docker_daemon.bats against core/security_levels.sh.
+# mutate-suite: core/security_levels.sh tests/test_fix_docker_daemon.bats
+#
+# The FIX_VERIFY declarations for the two docker daemon fixes. Swapping or
+# dropping an entry collapses the live-restore / no-new-privileges asymmetry
+# the map exists to express; hollowing the getter disables the gate entirely.
+
+run_case "verify-map/live-restore-predicate-swapped" 1 \
+    '    ["docker.enable_live_restore"]="_docker_check_live_restore"' \
+    '    ["docker.enable_live_restore"]="_docker_check_no_new_privileges"'
+
+run_case "verify-map/nnp-entry-hollowed" 1 \
+    '    ["docker.enable_no_new_privileges"]="_docker_check_no_new_privileges"' \
+    '    ["docker.enable_no_new_privileges"]=""'
+
+run_case "verify-map/getter-hollowed" 1 \
+    '    echo "${FIX_VERIFY[$fix_id]:-}"' \
+    '    echo ""'

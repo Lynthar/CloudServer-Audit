@@ -299,7 +299,7 @@ _net_audit_listeners() {
             "high" \
             "failed" \
             "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}" 2>/dev/null || echo "${#dangerous[@]} dangerous service(s) bound to wildcard address")" \
-            "Public: ${list% }" \
+            "$(i18n 'networking.exposed_dangerous_ports_desc' "list=${list% }")" \
             "Bind these services to 127.0.0.1 or a specific private IP and place behind authenticated reverse proxy / WireGuard / SSH tunnel" \
             "")
         state_add_check "$check"
@@ -314,7 +314,7 @@ _net_audit_listeners() {
             "medium" \
             "failed" \
             "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}" 2>/dev/null || echo "${#exposed[@]} non-standard service(s) on wildcard address")" \
-            "Public: ${list% }" \
+            "$(i18n 'networking.public_listeners_present_desc' "list=${list% }")" \
             "Verify each is intentionally internet-facing; otherwise bind to 127.0.0.1" \
             "")
         state_add_check "$check"
@@ -355,7 +355,7 @@ _net_audit_promisc() {
             "medium" \
             "failed" \
             "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Interface(s) in promiscuous mode')" \
-            "Interfaces: ${list% }" \
+            "$(i18n 'networking.promiscuous_interface_desc' "list=${list% }")" \
             "Investigate why an interface is in PROMISC — tcpdump/wireshark in progress, or unexpected sniffer" \
             "")
         state_add_check "$check"

@@ -1,0 +1,25 @@
+# Mutation cases: tests/test_fix_verify.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_fix_verify.bats
+#
+# The postcondition gate in execute_fix: a FIX_VERIFY entry makes the audit
+# predicate the arbiter of success. Both directions need pinning — skipping
+# the gate, and forcing it onto fixes that never declared one.
+
+run_case "verify/gate-skipped" 1 \
+    '            if [[ -n "$verify_fn" ]]; then' \
+    '            if false; then'
+
+run_case "verify/gate-forced-on-all" 1 \
+    '            if [[ -n "$verify_fn" ]]; then' \
+    '            if true; then'
+
+# Dropping the declare -f guard still returns 1 (command not found), but the
+# failure stops being attributable — the suite pins the guarded branch via
+# the absence of bash's error text.
+run_case "verify/missing-predicate-tolerated" 1 \
+    '                if ! declare -f "$verify_fn" >/dev/null 2>&1; then' \
+    '                if false; then'
+
+run_case "verify/failure-ignored" 1 \
+    '                if ! "$verify_fn"; then' \
+    '                if false; then'

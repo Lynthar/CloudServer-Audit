@@ -39,7 +39,7 @@ run_case "effective/empty-default-dropped" 1 \
 # ---- what _fs_audit_umask reports (text only; the branch is untouched) ----
 
 run_case "report/rewrite-stated-as-fact" 1 \
-    '        desc="$desc, possibly effective=$effective (USERGROUPS_ENAB=$usergroups may make pam_umask mirror owner bits onto group bits for private-group users; confirm with '"'"'umask'"'"' in a login shell)"' \
+    '        desc="$desc$(i18n '"'"'filesystem.umask_possibly_effective'"'"' "effective=$effective" "usergroups=$usergroups")"' \
     '        desc="$desc, effective=$effective (USERGROUPS_ENAB=$usergroups rewrites group bits)"'
 
 run_case "report/raw-comparison-restored" 1 \

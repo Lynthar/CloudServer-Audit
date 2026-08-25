@@ -72,13 +72,15 @@ declare -gA FS_SENSITIVE_FILES=(
     ["/etc/ssh/ssh_host_rsa_key"]="600"
     ["/etc/ssh/ssh_host_ecdsa_key"]="600"
     ["/etc/ssh/ssh_host_ed25519_key"]="600"
-    # sudo + scheduled jobs
+    # sudo + scheduled jobs. crontab(1) is setgid crontab and at(1) runs as
+    # daemon: both need group or world read on these files, so only at.deny
+    # (shipped root:daemon 640) may forbid world-read; the rest police write bits.
     ["/etc/sudoers"]="440"
-    ["/etc/crontab"]="600"
-    ["/etc/cron.allow"]="600"
-    ["/etc/cron.deny"]="600"
-    ["/etc/at.allow"]="600"
-    ["/etc/at.deny"]="600"
+    ["/etc/crontab"]="644"
+    ["/etc/cron.allow"]="644"
+    ["/etc/cron.deny"]="644"
+    ["/etc/at.allow"]="644"
+    ["/etc/at.deny"]="640"
     # TCP wrappers (public, read-only)
     ["/etc/hosts.allow"]="644"
     ["/etc/hosts.deny"]="644"
@@ -402,12 +404,14 @@ _fs_check_sensitive_file() {
             problems+=("owner $owner (expected root)")
         fi
 
-        # Group only matters when it actually gets access bits AND is
-        # outside the system groups these files legitimately use: root,
-        # shadow on Debian, ssh_keys for RHEL host keys.
+        # Group only matters when it actually gets access bits AND is outside
+        # what THIS file legitimately uses: root/shadow/ssh_keys anywhere;
+        # daemon only on /etc/at.*, crontab only on /etc/cron* (setgid readers).
         if [[ -n "$group" ]] && (( actual_num & 070 )) ; then
             case "$group" in
                 root|shadow|ssh_keys) : ;;
+                daemon) [[ "$file" == /etc/at.* ]] || problems+=("group $group grants access") ;;
+                crontab) [[ "$file" == /etc/cron* ]] || problems+=("group $group grants access") ;;
                 *) problems+=("group $group grants access") ;;
             esac
         fi
@@ -793,7 +797,7 @@ _fs_audit_suid() {
             "medium" \
             "failed" \
             "$(i18n 'filesystem.suspicious_suid' "count=$count")" \
-            "Files: $file_list" \
+            "$(i18n 'filesystem.suspicious_suid_desc' "list=$file_list")" \
             "$(i18n 'filesystem.review_suid')" \
             "")
         state_add_check "$check"
@@ -806,7 +810,7 @@ _fs_audit_suid() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.suid_ok')" \
-            "No unexpected SUID files found" \
+            "$(i18n 'filesystem.suid_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -827,7 +831,7 @@ _fs_audit_sgid() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.suspicious_sgid' "count=$count")" \
-            "Files: $file_list" \
+            "$(i18n 'filesystem.suspicious_sgid_desc' "list=$file_list")" \
             "$(i18n 'filesystem.review_sgid')" \
             "")
         state_add_check "$check"
@@ -839,7 +843,7 @@ _fs_audit_sgid() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.sgid_ok')" \
-            "No unexpected SGID files found" \
+            "$(i18n 'filesystem.sgid_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -865,7 +869,7 @@ _fs_audit_world_writable() {
             "medium" \
             "failed" \
             "$(i18n 'filesystem.world_writable' "count=$total")" \
-            "Items: $items" \
+            "$(i18n 'filesystem.world_writable_desc' "items=$items")" \
             "$(i18n 'filesystem.fix_world_writable')" \
             "")
         state_add_check "$check"
@@ -898,7 +902,7 @@ _fs_audit_no_owner() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.no_owner' "count=$count")" \
-            "Files: $file_list" \
+            "$(i18n 'filesystem.no_owner_desc' "list=$file_list")" \
             "$(i18n 'filesystem.fix_no_owner')" \
             "")
         state_add_check "$check"
@@ -983,7 +987,7 @@ _fs_audit_sensitive_perms() {
                 "high" \
                 "failed" \
                 "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")" \
-                "Files with wrong permissions: $issue_list" \
+                "$(i18n 'filesystem.sensitive_perms_wrong_desc' "list=$issue_list")" \
                 "$(i18n 'filesystem.fix_sensitive_perms')" \
                 "filesystem.fix_sensitive_perms")
             state_add_check "$check"
@@ -997,7 +1001,7 @@ _fs_audit_sensitive_perms() {
                 "low" \
                 "failed" \
                 "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")" \
-                "Files with wrong permissions: $issue_list_m" \
+                "$(i18n 'filesystem.sensitive_perms_wrong_minor_desc' "list=$issue_list_m")" \
                 "$(i18n 'filesystem.fix_sensitive_perms')" \
                 "filesystem.fix_sensitive_perms")
             state_add_check "$check_m"
@@ -1029,7 +1033,7 @@ _fs_audit_tmp_mount() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.tmp_mount_ok')" \
-            "/tmp mounted with noexec,nosuid,nodev" \
+            "$(i18n 'filesystem.tmp_mount_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -1041,7 +1045,7 @@ _fs_audit_tmp_mount() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.tmp_not_separate')" \
-            "/tmp is not a separate mount point" \
+            "$(i18n 'filesystem.tmp_not_separate_desc')" \
             "Consider using separate /tmp partition or tmpfs" \
             "")
         state_add_check "$check"
@@ -1054,7 +1058,7 @@ _fs_audit_tmp_mount() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.tmp_mount_missing_opts')" \
-            "Missing options: $missing" \
+            "$(i18n 'filesystem.tmp_mount_missing_opts_desc' "missing=$missing")" \
             "Add noexec,nosuid,nodev to /tmp mount" \
             "")
         state_add_check "$check"
@@ -1079,9 +1083,9 @@ _fs_audit_umask() {
 
     local desc="configured=$configured"
     if (( pam_umask_on == 0 )); then
-        desc="$desc (not applied at PAM session start: pam_umask is not enabled, so this value reaches console logins but not sshd sessions)"
+        desc="$desc$(i18n 'filesystem.umask_pam_not_applied')"
     elif [[ "$normalized" != "$effective" ]]; then
-        desc="$desc, possibly effective=$effective (USERGROUPS_ENAB=$usergroups may make pam_umask mirror owner bits onto group bits for private-group users; confirm with 'umask' in a login shell)"
+        desc="$desc$(i18n 'filesystem.umask_possibly_effective' "effective=$effective" "usergroups=$usergroups")"
     fi
 
     # OK = world denied (last digit = 7). Captures 027, 077, 007 (the
@@ -1105,7 +1109,7 @@ _fs_audit_umask() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.umask_default')" \
-            "$desc (consider 027)" \
+            "$(i18n 'filesystem.umask_default_desc' "desc=$desc")" \
             "Set umask to 027 in /etc/login.defs" \
             "filesystem.fix_umask")
         state_add_check "$check"
@@ -1117,7 +1121,7 @@ _fs_audit_umask() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.umask_weak')" \
-            "$desc (too permissive)" \
+            "$(i18n 'filesystem.umask_weak_desc' "desc=$desc")" \
             "Set umask to 027 or 077" \
             "filesystem.fix_umask")
         state_add_check "$check"
@@ -1134,7 +1138,7 @@ _fs_audit_umask() {
             "info" \
             "passed" \
             "pam_umask not enabled in common-session" \
-            "Without pam_umask, /etc/login.defs UMASK is only applied via shell rc files (/etc/profile etc), not at PAM session start" \
+            "$(i18n 'filesystem.pam_umask_disabled_desc')" \
             "" \
             "")
         state_add_check "$pam_check"
@@ -1150,7 +1154,7 @@ _fs_audit_caps() {
             "low" \
             "info" \
             "getcap not available" \
-            "Install libcap2-bin to check file capabilities" \
+            "$(i18n 'filesystem.caps_unavailable_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -1181,7 +1185,7 @@ _fs_audit_caps() {
             "medium" \
             "failed" \
             "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
-            "Dangerous capabilities: $dangerous_list" \
+            "$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
             "$(i18n 'filesystem.review_caps')" \
             "filesystem.review_caps")
         state_add_check "$check"
@@ -1201,7 +1205,7 @@ _fs_audit_caps() {
             "low" \
             "failed" \
             "$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
-            "Files with capabilities: $caps_list" \
+            "$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
             "Review if these capabilities are needed" \
             "")
         state_add_check "$check"
@@ -1254,7 +1258,7 @@ _fs_audit_cron() {
             "low" \
             "passed" \
             "$(i18n 'filesystem.cron_ok')" \
-            "User crontabs: $user_crontabs" \
+            "$(i18n 'filesystem.cron_ok_desc' "user_crontabs=$user_crontabs")" \
             "" \
             "")
         state_add_check "$check"

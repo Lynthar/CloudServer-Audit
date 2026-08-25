@@ -15,6 +15,7 @@ load helpers.bash
 
 setup() {
     _vpssec_load core/security_levels.sh core/state.sh
+    i18n_load en_US
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/filesystem.sh"
 

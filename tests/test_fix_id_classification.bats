@@ -224,6 +224,55 @@ _emitted_check_ids() {
     fi
 }
 
+# ---- FIX_VERIFY ----------------------------------------------------------
+#
+# Same both-ways discipline: a key naming no emitted fix is a promise the
+# engine never keeps, and a verify on a template-only fix would fail forever
+# by definition — the two maps must stay disjoint.
+
+@test "every FIX_VERIFY key is a fix some check actually offers" {
+    local emitted orphans="" id
+    emitted=$( { _emitted_fix_ids_all; } | sort -u )
+
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        grep -qxF -- "$id" <<<"$emitted" || orphans+="$id "
+    done < <(_map_keys FIX_VERIFY)
+
+    if [[ -n "$orphans" ]]; then
+        echo "FIX_VERIFY names a fix_id no check emits:"
+        echo "  $orphans"
+        false
+    fi
+}
+
+@test "every FIX_VERIFY key also has a safety class" {
+    local id missing="" classes
+    classes=$( { _map_keys FIX_SAFE; _map_keys FIX_CONFIRM; _map_keys FIX_RISKY; } | sort -u )
+
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        grep -qxF -- "$id" <<<"$classes" || missing+="$id "
+    done < <(_map_keys FIX_VERIFY)
+
+    if [[ -n "$missing" ]]; then
+        echo "FIX_VERIFY entry with no FIX_SAFE/CONFIRM/RISKY class:"
+        echo "  $missing"
+        false
+    fi
+}
+
+@test "FIX_VERIFY and FIX_TEMPLATE_ONLY are disjoint" {
+    local overlap
+    overlap=$(comm -12 <(_map_keys FIX_VERIFY | sort -u)                        <(_map_keys FIX_TEMPLATE_ONLY | sort -u))
+
+    if [[ -n "$overlap" ]]; then
+        echo "A template-only fix cannot pass a verify predicate by definition:"
+        echo "  $overlap"
+        false
+    fi
+}
+
 @test "every scored check id is actually emitted" {
     local emitted orphans="" id
     emitted=$(_emitted_check_ids | sort -u)

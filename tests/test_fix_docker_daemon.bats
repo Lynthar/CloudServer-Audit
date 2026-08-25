@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 #
 # Regression tests for the Docker daemon.json writer and the live-restore
-# audit predicate it now asserts as a postcondition.
+# audit predicate the engine asserts for it as a FIX_VERIFY postcondition.
 #
 # Two defects motivate this file:
 #
@@ -24,7 +24,9 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh core/report.sh
+    i18n_load en_US
+    state_init
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/docker.sh"
 
@@ -111,12 +113,18 @@ SH
 
 # ---- the fix's postcondition ----------------------------------------
 
+_completed_fixes() {
+    jq -r '.completed_fixes[]?.fix_id // .completed_fixes[]? // empty' \
+        "$VPSSEC_STATE/ok.json" 2>/dev/null
+}
+
 @test "live-restore fix: declining the restart reports failure, not success" {
     _daemon_reports false
     confirm_critical() { return 1; }
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run execute_fix docker.enable_live_restore true
     [ "$status" -eq 1 ]
+    _vpssec_refute grep -q 'docker.enable_live_restore' <<<"$(_completed_fixes)"
 }
 
 @test "live-restore fix: the setting is still staged in daemon.json when the restart is declined" {
@@ -126,7 +134,7 @@ SH
     _daemon_reports false
     confirm_critical() { return 1; }
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run execute_fix docker.enable_live_restore true
     jq -e '.["live-restore"] == true' "$DOCKER_DAEMON_JSON"
 }
 
@@ -134,8 +142,9 @@ SH
     _daemon_picks_up_on_restart
     confirm_critical() { return 0; }
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run execute_fix docker.enable_live_restore true
     [ "$status" -eq 0 ]
+    grep -q 'docker.enable_live_restore' <<<"$(_completed_fixes)"
 }
 
 @test "no-new-privileges fix: declining the restart is NOT a failure" {
@@ -144,8 +153,16 @@ SH
     _daemon_reports false
     confirm_critical() { return 1; }
 
-    run _docker_fix_enable_daemon_setting "no-new-privileges" true _docker_check_no_new_privileges
+    run execute_fix docker.enable_no_new_privileges true
     [ "$status" -eq 0 ]
+    grep -q 'docker.enable_no_new_privileges' <<<"$(_completed_fixes)"
+}
+
+@test "FIX_VERIFY: the declared docker predicates exist once the module is loaded" {
+    [ "$(get_fix_verify docker.enable_live_restore)" = "_docker_check_live_restore" ]
+    [ "$(get_fix_verify docker.enable_no_new_privileges)" = "_docker_check_no_new_privileges" ]
+    declare -f _docker_check_live_restore >/dev/null
+    declare -f _docker_check_no_new_privileges >/dev/null
 }
 
 # ---- the writer itself ----------------------------------------------
@@ -155,7 +172,7 @@ SH
     confirm_critical() { return 0; }
     printf 'this is not json' > "$DOCKER_DAEMON_JSON"
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
     [ "$status" -eq 1 ]
     [ "$(cat "$DOCKER_DAEMON_JSON")" = "this is not json" ]
 }
@@ -165,7 +182,7 @@ SH
     confirm_critical() { return 0; }
     printf '{"log-driver": "journald"}\n' > "$DOCKER_DAEMON_JSON"
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
     [ "$status" -eq 0 ]
     jq -e '.["log-driver"] == "journald"' "$DOCKER_DAEMON_JSON"
     jq -e '.["live-restore"] == true' "$DOCKER_DAEMON_JSON"
@@ -177,7 +194,7 @@ SH
     printf '{"log-driver": "journald"}\n' > "$DOCKER_DAEMON_JSON"
     _vpssec_begin_backup_session
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
     [ "$status" -eq 0 ]
     [ -f "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}" ]
     jq -e '.["log-driver"] == "journald"' "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}"
@@ -189,7 +206,7 @@ SH
     confirm_critical() { return 0; }
     printf 'not json' > "$DOCKER_DAEMON_JSON"
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
     [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
 }
 
@@ -202,7 +219,7 @@ SH
     confirm_critical() { return 0; }
     printf '[]\n' > "$DOCKER_DAEMON_JSON"
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
 
     [ "$status" -ne 0 ]
     [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
@@ -223,7 +240,7 @@ SH
     printf 'not json' > "$DOCKER_DAEMON_JSON"
     _vpssec_begin_backup_session
 
-    run _docker_fix_enable_daemon_setting "live-restore" true _docker_check_live_restore
+    run _docker_fix_enable_daemon_setting "live-restore" true
 
     [ "$status" -ne 0 ]
     [ ! -e "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}" ]

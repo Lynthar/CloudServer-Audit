@@ -135,7 +135,7 @@ _update_audit_apt_lock() {
             "low" \
             "failed" \
             "$(i18n 'update.apt_locked')" \
-            "APT is locked by another process" \
+            "$(i18n 'update.apt_locked_desc')" \
             "Wait for other process to finish or remove lock" \
             "")
         state_add_check "$check"
@@ -275,7 +275,7 @@ _update_audit_unattended() {
             "low" \
             "failed" \
             "$(i18n 'update.unattended_disabled')" \
-            "no automatic-update mechanism installed (unattended-upgrades / dnf-automatic)" \
+            "$(i18n 'update.unattended_not_installed_desc')" \
             "$(i18n 'update.fix_install_unattended')" \
             "update.install_unattended")
         state_add_check "$check"
@@ -337,7 +337,7 @@ _update_audit_reboot() {
             "medium" \
             "failed" \
             "$(i18n 'update.reboot_required')" \
-            "Packages requiring reboot: $pkg_list" \
+            "$(i18n 'update.reboot_required_desc' "list=$pkg_list")" \
             "Schedule a system reboot to apply kernel/security updates" \
             "")
         state_add_check "$check"

@@ -109,7 +109,7 @@ _preflight_check_network() {
             "low" \
             "failed" \
             "$(i18n 'preflight.network_fail')" \
-            "Cannot reach external network" \
+            "$(i18n 'preflight.network_fail_desc')" \
             "Check network configuration and DNS" \
             "")
         state_add_check "$check"
@@ -144,7 +144,7 @@ _preflight_check_deps() {
             "low" \
             "failed" \
             "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
-            "Required: ${missing_required[*]}" \
+            "$(i18n 'preflight.deps_missing_desc' "missing_required=${missing_required[*]}")" \
             "$dep_hint" \
             "")
         state_add_check "$check"

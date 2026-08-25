@@ -268,6 +268,24 @@ declare -gA FIX_TEMPLATE_ONLY=(
     ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
 )
 
+# Postcondition predicates: fix_id -> the audit-side function execute_fix
+# runs after the fix succeeds, so the fix reports what the next audit will
+# see, not merely that its file write worked. Undeclared fixes are untouched.
+declare -gA FIX_VERIFY=(
+    # These two differ on purpose: live-restore is observable only on a
+    # RUNNING daemon (declining the restart fails the fix), while
+    # no-new-privileges is satisfied by daemon.json alone.
+    ["docker.enable_live_restore"]="_docker_check_live_restore"
+    ["docker.enable_no_new_privileges"]="_docker_check_no_new_privileges"
+)
+
+# Same ${MAP[$key]:-} discipline as get_fix_safety below: under set -u a
+# missing key aborts the function, and callers capture with 2>/dev/null.
+get_fix_verify() {
+    local fix_id="$1"
+    echo "${FIX_VERIFY[$fix_id]:-}"
+}
+
 # --- Score categories. The score measures configuration posture, so
 # heuristic IOCs, tool prerequisites and operator preferences are info
 # (shown, never scored). Full rules: see the design notes ---

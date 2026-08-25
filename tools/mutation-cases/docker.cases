@@ -46,18 +46,8 @@ run_case "live-restore/case-sensitive-compare" 1 \
 
 # ---- the fix's postcondition ---------------------------------------------
 
-# The second shipped defect: returning 0 after the operator declined the
-# restart recorded the fix as complete while the daemon ran without it.
-run_case "postcondition/declined-restart-reports-success" 1 \
-    '        if ! "$verify_fn"; then' \
-    '        if false; then'
-
-# The postcondition must run the predicate belonging to THIS fix. Hardcoding
-# either one collapses the live-restore / no-new-privileges asymmetry that the
-# third argument exists to express.
-run_case "postcondition/verify-fn-hardcoded" 1 \
-    '        if ! "$verify_fn"; then' \
-    '        if ! _docker_check_no_new_privileges; then'
+# The verify gate itself moved to execute_fix (FIX_VERIFY): its mutations are
+# pinned by verify-engine.cases and verify-levels.cases, not here.
 
 # Declining the restart is not a write failure: the setting stays staged and
 # takes effect on the next restart. Bailing out early would lose it.

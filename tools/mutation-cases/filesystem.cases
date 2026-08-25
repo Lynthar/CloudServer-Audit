@@ -137,3 +137,28 @@ run_case "perms/already-correct-file-touched" 1 \
 run_case "umask/backup-failure-swallowed" 1 \
     '    backup_file "$FS_LOGIN_DEFS" >/dev/null || return 1' \
     '    backup_file "$FS_LOGIN_DEFS" >/dev/null 2>&1 || true'
+
+# ---- filesystem.fix_sensitive_perms: cron/at expectations -------------------
+# 600 here locked every non-root user out of at(1)/crontab(1) - both read these
+# files through group or world bits. Killed by the table-pinning test.
+run_case "sensitive/at-deny-retightened" 1 \
+    '    ["/etc/at.deny"]="640"' \
+    '    ["/etc/at.deny"]="600"'
+
+run_case "sensitive/crontab-retightened" 1 \
+    '    ["/etc/crontab"]="644"' \
+    '    ["/etc/crontab"]="600"'
+
+run_case "sensitive/cron-allow-retightened" 1 \
+    '    ["/etc/cron.allow"]="644"' \
+    '    ["/etc/cron.allow"]="600"'
+
+# Scoping, not existence: a whitelist that accepts these groups on ANY path
+# would let a daemon-group /etc/shadow pass. Killed by the outside-path tests.
+run_case "sensitive/daemon-group-accepted-everywhere" 1 \
+    '                daemon) [[ "$file" == /etc/at.* ]] || problems+=("group $group grants access") ;;' \
+    '                daemon) : ;;'
+
+run_case "sensitive/crontab-group-accepted-everywhere" 1 \
+    '                crontab) [[ "$file" == /etc/cron* ]] || problems+=("group $group grants access") ;;' \
+    '                crontab) : ;;'

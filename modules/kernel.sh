@@ -473,7 +473,7 @@ _kernel_audit_unused_protocols() {
             "low" \
             "failed" \
             "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")" \
-            "Unblacklisted: $list" \
+            "$(i18n 'kernel.unused_protocols_unblocked_desc' "list=$list")" \
             "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf" \
             "")
         state_add_check "$check"
@@ -485,7 +485,7 @@ _kernel_audit_unused_protocols() {
             "low" \
             "passed" \
             "$(i18n 'kernel.unused_protocols_blocked')" \
-            "All of: ${protocols[*]} are blacklisted" \
+            "$(i18n 'kernel.unused_protocols_blocked_desc' "protocols=${protocols[*]}")" \
             "" \
             "")
         state_add_check "$check"
@@ -504,7 +504,7 @@ _kernel_audit_ipv6() {
             "low" \
             "passed" \
             "$(i18n 'kernel.ipv6_disabled')" \
-            "IPv6 is disabled system-wide (reduced attack surface)" \
+            "$(i18n 'kernel.ipv6_disabled_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -530,7 +530,7 @@ _kernel_audit_ipv6() {
                 "low" \
                 "failed" \
                 "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
-                "IPv6 in use with security issues: $ipv6_issues" \
+                "$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=$ipv6_issues")" \
                 "$(i18n 'kernel.fix_ipv6')" \
                 "kernel.harden_ipv6")
             state_add_check "$check"
@@ -542,7 +542,7 @@ _kernel_audit_ipv6() {
                 "low" \
                 "passed" \
                 "$(i18n 'kernel.ipv6_secure')" \
-                "IPv6 enabled and properly secured" \
+                "$(i18n 'kernel.ipv6_secure_desc')" \
                 "" \
                 "")
             state_add_check "$check"
@@ -559,7 +559,7 @@ _kernel_audit_ipv6() {
                 "low" \
                 "failed" \
                 "$(i18n 'kernel.ipv6_unused_insecure')" \
-                "IPv6 enabled but not used, with weak settings" \
+                "$(i18n 'kernel.ipv6_unused_insecure_desc')" \
                 "Consider disabling IPv6 or hardening settings" \
                 "kernel.harden_ipv6")
             state_add_check "$check"
@@ -571,7 +571,7 @@ _kernel_audit_ipv6() {
                 "low" \
                 "passed" \
                 "$(i18n 'kernel.ipv6_enabled_unused')" \
-                "IPv6 enabled but not actively used" \
+                "$(i18n 'kernel.ipv6_enabled_unused_desc')" \
                 "" \
                 "")
             state_add_check "$check"
@@ -589,7 +589,7 @@ _kernel_audit_ipv6() {
                     "medium" \
                     "failed" \
                     "$(i18n 'kernel.ipv6_firewall_missing')" \
-                    "IPv6 is in use but firewall not configured for IPv6" \
+                    "$(i18n 'kernel.ipv6_firewall_missing_desc')" \
                     "Enable IPv6 in firewall configuration" \
                     "")
                 state_add_check "$check"
@@ -602,7 +602,7 @@ _kernel_audit_ipv6() {
                     "low" \
                     "passed" \
                     "$(i18n 'kernel.ipv6_firewall_ok')" \
-                    "IPv6 firewall is configured" \
+                    "$(i18n 'kernel.ipv6_firewall_ok_desc')" \
                     "" \
                     "")
                 state_add_check "$check"
@@ -624,7 +624,7 @@ _kernel_audit_aslr() {
                 "low" \
                 "passed" \
                 "$(i18n 'kernel.aslr_enabled')" \
-                "ASLR is fully enabled (randomize_va_space=2)" \
+                "$(i18n 'kernel.aslr_full_desc')" \
                 "" \
                 "")
             state_add_check "$check"
@@ -637,7 +637,7 @@ _kernel_audit_aslr() {
                 "low" \
                 "failed" \
                 "$(i18n 'kernel.aslr_partial')" \
-                "ASLR is only partially enabled (randomize_va_space=1)" \
+                "$(i18n 'kernel.aslr_partial_desc')" \
                 "$(i18n 'kernel.fix_aslr')" \
                 "kernel.enable_aslr")
             state_add_check "$check"
@@ -650,7 +650,7 @@ _kernel_audit_aslr() {
                 "medium" \
                 "failed" \
                 "$(i18n 'kernel.aslr_disabled')" \
-                "ASLR is disabled (randomize_va_space=0)" \
+                "$(i18n 'kernel.aslr_disabled_desc')" \
                 "$(i18n 'kernel.fix_aslr')" \
                 "kernel.enable_aslr")
             state_add_check "$check"
@@ -746,7 +746,7 @@ _kernel_audit_network_params() {
             "medium" \
             "failed" \
             "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")" \
-            "Critical: $issue_list" \
+            "$(i18n 'kernel.network_params_high_desc' "list=$issue_list")" \
             "$(i18n 'kernel.fix_network_params')" \
             "kernel.harden_network")
         state_add_check "$check"
@@ -765,7 +765,7 @@ _kernel_audit_network_params() {
             "low" \
             "failed" \
             "$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")" \
-            "Issues: $issue_list" \
+            "$(i18n 'kernel.network_params_medium_desc' "list=$issue_list")" \
             "$(i18n 'kernel.fix_network_params')" \
             "kernel.harden_network")
         state_add_check "$check"
@@ -796,7 +796,7 @@ _kernel_audit_network_params() {
             "low" \
             "passed" \
             "$(i18n 'kernel.network_params_ok')" \
-            "$passed parameters checked" \
+            "$(i18n 'kernel.network_params_ok_desc' "passed=$passed")" \
             "" \
             "")
         state_add_check "$check"
@@ -863,7 +863,7 @@ _kernel_audit_kernel_params() {
             "medium" \
             "failed" \
             "$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")" \
-            "Critical: $issue_list" \
+            "$(i18n 'kernel.kernel_params_high_desc' "list=$issue_list")" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
@@ -882,7 +882,7 @@ _kernel_audit_kernel_params() {
             "low" \
             "failed" \
             "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")" \
-            "Issues: $issue_list" \
+            "$(i18n 'kernel.kernel_params_weak_desc' "list=$issue_list")" \
             "$(i18n 'kernel.fix_kernel_params')" \
             "kernel.harden_kernel")
         state_add_check "$check"
@@ -902,7 +902,7 @@ _kernel_audit_kernel_params() {
             "low" \
             "passed" \
             "$(i18n 'kernel.kernel_params_ok')" \
-            "$passed parameters checked" \
+            "$(i18n 'kernel.kernel_params_ok_desc' "passed=$passed")" \
             "" \
             "")
         state_add_check "$check"
@@ -921,7 +921,7 @@ _kernel_audit_core_dump() {
             "low" \
             "passed" \
             "$(i18n 'kernel.core_dump_disabled')" \
-            "Core dumps are properly restricted" \
+            "$(i18n 'kernel.core_dump_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -933,7 +933,7 @@ _kernel_audit_core_dump() {
             "low" \
             "failed" \
             "$(i18n 'kernel.core_dump_enabled')" \
-            "Issues: $issues" \
+            "$(i18n 'kernel.core_dump_enabled_desc' "issues=$issues")" \
             "$(i18n 'kernel.fix_core_dump')" \
             "kernel.disable_core_dump")
         state_add_check "$check"

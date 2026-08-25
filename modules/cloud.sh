@@ -643,7 +643,7 @@ _cloud_audit_imds() {
                 "medium" \
                 "failed" \
                 "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled (HttpTokens=optional)')" \
-                "GET /latest/meta-data/ returned 200 with no session token — IMDSv1 reachable, exposes IAM role credentials to SSRF (Capital One pattern)" \
+                "$(i18n 'cloud.imds_v1_enabled_desc')" \
                 "$(i18n 'cloud.fix_imds_v1' 2>/dev/null || echo 'Run: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required')" \
                 "")
             state_add_check "$check"
@@ -674,7 +674,7 @@ _cloud_audit_imds() {
                 "medium" \
                 "failed" \
                 "$(i18n 'cloud.imds_alibaba_normal_mode' 2>/dev/null || echo 'Alibaba Cloud IMDS accepts token-free reads (normal mode)')" \
-                "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode" \
+                "$(i18n 'cloud.imds_alibaba_normal_mode_desc')" \
                 "$(i18n 'cloud.fix_imds_alibaba' 2>/dev/null || echo 'Enable security hardening mode in the ECS console under instance metadata options')" \
                 "")
             state_add_check "$check"
@@ -706,7 +706,7 @@ _cloud_audit_imds() {
                 "high" \
                 "failed" \
                 "$(i18n 'cloud.user_data_leaked_secrets' 2>/dev/null || echo 'Embedded credentials detected in instance user-data')" \
-                "Pattern matches: $hits (kinds + counts only; raw values withheld). cloud-init user-data is readable by every process on this host — rotate the exposed credentials and remove them from user-data" \
+                "$(i18n 'cloud.user_data_leaked_secrets_desc' "hits=$hits")" \
                 "$(i18n 'cloud.fix_user_data_secrets' 2>/dev/null || echo 'Rotate the exposed credentials immediately; pass secrets via the cloud providers secret store rather than user-data')" \
                 "")
             state_add_check "$check"
@@ -744,7 +744,7 @@ _cloud_audit_imds() {
                 "low" \
                 "failed" \
                 "$(i18n 'cloud.imds_unrestricted' 2>/dev/null || echo 'No host-firewall restriction on IMDS access')" \
-                "iptables/nftables has no rule mentioning 169.254.169.254 or 100.100.100.200 — defense-in-depth recommends restricting IMDS to specific users (e.g. iptables -m owner --uid-owner root)" \
+                "$(i18n 'cloud.imds_unrestricted_desc')" \
                 "$(i18n 'cloud.fix_imds_firewall' 2>/dev/null || echo 'Consider blocking IMDS at the host firewall for non-root users')" \
                 "")
             state_add_check "$check"

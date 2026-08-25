@@ -419,7 +419,7 @@ _ssh_audit_password_auth() {
             "high" \
             "failed" \
             "$(i18n 'ssh.password_auth_enabled')" \
-            "PasswordAuthentication is yes or not explicitly set" \
+            "$(i18n 'ssh.password_auth_enabled_desc')" \
             "$(i18n 'ssh.fix_disable_password')" \
             "ssh.disable_password_auth")
         state_add_check "$check"
@@ -498,7 +498,7 @@ _ssh_audit_pubkey() {
             "medium" \
             "failed" \
             "$(i18n 'ssh.pubkey_disabled')" \
-            "PubkeyAuthentication is disabled" \
+            "$(i18n 'ssh.pubkey_disabled_desc')" \
             "$(i18n 'ssh.fix_enable_pubkey')" \
             "ssh.enable_pubkey")
         state_add_check "$check"
@@ -520,7 +520,7 @@ _ssh_audit_admin_user() {
             "low" \
             "passed" \
             "$(i18n 'ssh.admin_user_exists' "user=$first_admin")" \
-            "Admin users: $admin_users" \
+            "$(i18n 'ssh.admin_user_exists_desc' "admin_users=$admin_users")" \
             "" \
             "")
         state_add_check "$check"
@@ -534,7 +534,7 @@ _ssh_audit_admin_user() {
                 "low" \
                 "failed" \
                 "Admin user $first_admin has no SSH key" \
-                "No authorized_keys file found" \
+                "$(i18n 'ssh.admin_no_key_desc')" \
                 "Add SSH public key for $first_admin" \
                 "")
             state_add_check "$check"
@@ -565,7 +565,7 @@ _ssh_audit_admin_user() {
             "low" \
             "failed" \
             "$(i18n 'ssh.no_admin_user')" \
-            "No non-root user with sudo privileges found" \
+            "$(i18n 'ssh.no_admin_user_desc')" \
             "Create a non-root admin user before disabling root login" \
             "")
         state_add_check "$check"
@@ -581,7 +581,7 @@ _ssh_audit_empty_password() {
             "high" \
             "failed" \
             "Empty password login allowed" \
-            "PermitEmptyPasswords is yes" \
+            "$(i18n 'ssh.empty_password_allowed_desc')" \
             "Disable empty password login" \
             "ssh.disable_empty_password")
         state_add_check "$check"
@@ -623,7 +623,7 @@ _ssh_audit_max_auth_tries() {
             "low" \
             "failed" \
             "$(i18n 'ssh.max_auth_tries_high')" \
-            "MaxAuthTries=$max_auth (recommended: 3-4)" \
+            "$(i18n 'ssh.max_auth_tries_high_desc' "max_auth=$max_auth")" \
             "Set MaxAuthTries to 4 or less" \
             "ssh.set_max_auth_tries")
         state_add_check "$check"
@@ -666,7 +666,7 @@ _ssh_audit_login_grace_time() {
             "low" \
             "failed" \
             "$(i18n 'ssh.login_grace_time_long')" \
-            "LoginGraceTime=$grace_time (recommended: 60s or less)" \
+            "$(i18n 'ssh.login_grace_time_long_desc' "grace_time=$grace_time")" \
             "Set LoginGraceTime to 60" \
             "ssh.set_login_grace_time")
         state_add_check "$check"
@@ -696,7 +696,7 @@ _ssh_audit_x11_forwarding() {
             "low" \
             "failed" \
             "$(i18n 'ssh.x11_forwarding_enabled')" \
-            "X11Forwarding is enabled" \
+            "$(i18n 'ssh.x11_forwarding_enabled_desc')" \
             "Disable X11 forwarding unless needed" \
             "ssh.disable_x11_forwarding")
         state_add_check "$check"
@@ -725,7 +725,7 @@ _ssh_audit_allow_tcp_forwarding() {
             "low" \
             "failed" \
             "$(i18n 'ssh.allow_tcp_forwarding_enabled')" \
-            "AllowTcpForwarding=$val (recommended: no unless tunneling is intentional)" \
+            "$(i18n 'ssh.allow_tcp_forwarding_enabled_desc' "val=$val")" \
             "Set AllowTcpForwarding to no in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -754,7 +754,7 @@ _ssh_audit_client_alive_count_max() {
             "low" \
             "failed" \
             "$(i18n 'ssh.client_alive_high')" \
-            "ClientAliveCountMax=$val (recommended: 2 or less)" \
+            "$(i18n 'ssh.client_alive_high_desc' "val=$val")" \
             "Set ClientAliveCountMax to 2 in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -783,7 +783,7 @@ _ssh_audit_log_level() {
             "low" \
             "failed" \
             "$(i18n 'ssh.log_level_low')" \
-            "LogLevel=$val (VERBOSE logs fingerprints used at auth time)" \
+            "$(i18n 'ssh.log_level_low_desc' "val=$val")" \
             "Set LogLevel to VERBOSE in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -812,7 +812,7 @@ _ssh_audit_max_sessions() {
             "low" \
             "failed" \
             "$(i18n 'ssh.max_sessions_high')" \
-            "MaxSessions=$val (recommended: 4 or less)" \
+            "$(i18n 'ssh.max_sessions_high_desc' "val=$val")" \
             "Set MaxSessions to 4 in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -841,7 +841,7 @@ _ssh_audit_tcp_keepalive() {
             "low" \
             "failed" \
             "$(i18n 'ssh.tcp_keepalive_enabled')" \
-            "TCPKeepAlive=$val (spoofable; ClientAliveInterval is preferred)" \
+            "$(i18n 'ssh.tcp_keepalive_enabled_desc' "val=$val")" \
             "Set TCPKeepAlive to no and rely on ClientAliveInterval instead" \
             "")
         state_add_check "$check"
@@ -870,7 +870,7 @@ _ssh_audit_agent_forwarding() {
             "low" \
             "failed" \
             "$(i18n 'ssh.agent_forwarding_enabled')" \
-            "AllowAgentForwarding=$val (forwarded agent socket can be abused by anyone with root on the remote host)" \
+            "$(i18n 'ssh.agent_forwarding_enabled_desc' "val=$val")" \
             "Set AllowAgentForwarding to no in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -899,7 +899,7 @@ _ssh_audit_ignore_rhosts() {
             "low" \
             "failed" \
             "$(i18n 'ssh.ignore_rhosts_disabled')" \
-            "IgnoreRhosts=$val (default is yes; setting no re-enables legacy rhosts-based trust)" \
+            "$(i18n 'ssh.ignore_rhosts_disabled_desc' "val=$val")" \
             "Set IgnoreRhosts to yes in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -928,7 +928,7 @@ _ssh_audit_strict_modes() {
             "low" \
             "failed" \
             "$(i18n 'ssh.strict_modes_disabled')" \
-            "StrictModes=$val (disables permission checks on host keys and ~/.ssh)" \
+            "$(i18n 'ssh.strict_modes_disabled_desc' "val=$val")" \
             "Set StrictModes to yes in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -957,7 +957,7 @@ _ssh_audit_permit_user_environment() {
             "low" \
             "failed" \
             "$(i18n 'ssh.permit_user_env_enabled')" \
-            "PermitUserEnvironment=$val (lets authorized_keys inject env vars — privilege escalation primitive)" \
+            "$(i18n 'ssh.permit_user_env_enabled_desc' "val=$val")" \
             "Set PermitUserEnvironment to no in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -986,7 +986,7 @@ _ssh_audit_permit_tunnel() {
             "low" \
             "failed" \
             "$(i18n 'ssh.permit_tunnel_enabled')" \
-            "PermitTunnel=$val (allows tun/tap forwarding — network pivot vector)" \
+            "$(i18n 'ssh.permit_tunnel_enabled_desc' "val=$val")" \
             "Set PermitTunnel to no in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -1015,7 +1015,7 @@ _ssh_audit_gateway_ports() {
             "low" \
             "failed" \
             "$(i18n 'ssh.gateway_ports_enabled')" \
-            "GatewayPorts=$val (forwarded ports bind to wildcard address, exposing tunneled services)" \
+            "$(i18n 'ssh.gateway_ports_enabled_desc' "val=$val")" \
             "Set GatewayPorts to no in /etc/ssh/sshd_config.d/" \
             "")
         state_add_check "$check"
@@ -1074,7 +1074,7 @@ _ssh_audit_algorithms() {
             "low" \
             "failed" \
             "$(i18n 'ssh.weak_algorithms')" \
-            "Weak algorithms: $issue_list" \
+            "$(i18n 'ssh.weak_algorithms_desc' "list=$issue_list")" \
             "$(i18n 'ssh.fix_algorithms')" \
             "ssh.harden_algorithms")
         state_add_check "$check"
@@ -1086,7 +1086,7 @@ _ssh_audit_algorithms() {
             "low" \
             "passed" \
             "$(i18n 'ssh.algorithms_ok')" \
-            "No weak algorithms detected" \
+            "$(i18n 'ssh.algorithms_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
@@ -1135,7 +1135,7 @@ _ssh_audit_port() {
             "low" \
             "failed" \
             "$(i18n 'ssh.default_port')" \
-            "SSH running on default port 22" \
+            "$(i18n 'ssh.default_port_desc')" \
             "Consider changing to a non-standard port (e.g., 2222, 22222)" \
             "")
         state_add_check "$check"
@@ -1147,7 +1147,7 @@ _ssh_audit_port() {
             "low" \
             "passed" \
             "$(i18n 'ssh.custom_port')" \
-            "SSH running on port $ssh_port" \
+            "$(i18n 'ssh.custom_port_desc' "ssh_port=$ssh_port")" \
             "" \
             "")
         state_add_check "$check"

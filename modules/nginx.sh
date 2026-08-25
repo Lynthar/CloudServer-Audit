@@ -284,7 +284,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high')" \
-            "client_header_timeout=$cht_raw (CIS 5.2.1: ≤10s; nginx default 60s leaves Slowloris vulnerable)" \
+            "$(i18n 'nginx.client_header_timeout_high_desc' "cht_raw=$cht_raw")" \
             "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_header_timeout 10s; in /etc/nginx/nginx.conf http block')" \
             "")
         state_add_check "$check"
@@ -303,7 +303,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high')" \
-            "client_body_timeout=$cbt_raw (CIS 5.2.1: ≤10s)" \
+            "$(i18n 'nginx.client_body_timeout_high_desc' "cbt_raw=$cbt_raw")" \
             "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_body_timeout 10s; in /etc/nginx/nginx.conf http block')" \
             "")
         state_add_check "$check"
@@ -322,7 +322,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.keepalive_timeout_high' 2>/dev/null || echo 'keepalive_timeout too high')" \
-            "keepalive_timeout=$kt_raw (recommended: ≤30s; nginx default 75s)" \
+            "$(i18n 'nginx.keepalive_timeout_high_desc' "kt_raw=$kt_raw")" \
             "$(i18n 'nginx.fix_dos_keepalive' 2>/dev/null || echo 'Set keepalive_timeout 30s; in /etc/nginx/nginx.conf')" \
             "")
         state_add_check "$check"
@@ -341,7 +341,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.send_timeout_high' 2>/dev/null || echo 'send_timeout too high')" \
-            "send_timeout=$st_raw (recommended: ≤10s; nginx default 60s)" \
+            "$(i18n 'nginx.send_timeout_high_desc' "st_raw=$st_raw")" \
             "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set send_timeout 10s; in /etc/nginx/nginx.conf http block')" \
             "")
         state_add_check "$check"
@@ -358,7 +358,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.no_rate_limiting' 2>/dev/null || echo 'No rate limiting configured (no limit_req_zone)')" \
-            "No limit_req_zone directive in effective config — public-facing nginx benefits from per-IP request rate caps to throttle brute-force and scraping attacks" \
+            "$(i18n 'nginx.no_rate_limiting_desc')" \
             "$(i18n 'nginx.fix_dos_rate_limit' 2>/dev/null || echo 'Add: limit_req_zone \$binary_remote_addr zone=perip:10m rate=10r/s; to nginx.conf http block, then apply per-location with limit_req zone=perip burst=20 nodelay;')" \
             "")
         state_add_check "$check"
@@ -377,7 +377,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "failed" \
             "$(i18n 'nginx.reset_timedout_connection_off' 2>/dev/null || echo 'reset_timedout_connection not enabled')" \
-            "reset_timedout_connection is off (nginx default). Enabling forcibly closes connections with misbehaving / slow clients, accelerating slowloris recovery" \
+            "$(i18n 'nginx.reset_timedout_connection_off_desc')" \
             "$(i18n 'nginx.fix_dos_reset_timedout' 2>/dev/null || echo 'Add: reset_timedout_connection on; to /etc/nginx/nginx.conf http block')" \
             "")
         state_add_check "$check"
@@ -393,7 +393,7 @@ _nginx_audit_dos_hardening() {
             "low" \
             "passed" \
             "$(i18n 'nginx.dos_hardening_ok' 2>/dev/null || echo 'DoS hardening directives configured')" \
-            "client_header/body/send_timeout, keepalive_timeout, rate limiting, and reset_timedout_connection all match CIS / nginx-mitigation recommendations" \
+            "$(i18n 'nginx.dos_hardening_ok_desc')" \
             "" \
             "")
         state_add_check "$check"

@@ -160,13 +160,30 @@ check_requirements() {
 
     if (( ${#missing[@]} > 0 )); then
         print_warn "Installing missing dependencies: ${missing[*]}"
-        # Refresh package metadata only — NOT `yum update` (which upgrades
-        # every package, or stalls on a y/N prompt with no tty). makecache is
-        # the metadata-only equivalent on both yum and dnf.
-        apt-get update -qq 2>/dev/null || yum -q makecache 2>/dev/null || dnf -q makecache 2>/dev/null || true
-        apt-get install -y "${missing[@]}" 2>/dev/null \
-            || yum install -y "${missing[@]}" 2>/dev/null \
-            || { print_error "Failed to install: ${missing[*]}"; exit 1; }
+        # All install chatter goes to >&2: on the curl|bash path this stdout
+        # later carries vpssec's --json-only stream, and any noise here
+        # corrupts it for the `| jq` consumer.
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq >&2 || true
+            apt-get install -y "${missing[@]}" >&2
+        elif command -v dnf &>/dev/null; then
+            # makecache, NOT `update`: update upgrades every package, or
+            # stalls on a y/N prompt with no tty. Same for yum below.
+            dnf -q makecache >&2 || true
+            dnf install -y "${missing[@]}" >&2
+        elif command -v yum &>/dev/null; then
+            yum -q makecache >&2 || true
+            yum install -y "${missing[@]}" >&2
+        elif command -v pacman &>/dev/null; then
+            # One -Sy transaction: a separate refresh-then-install invites a
+            # partial upgrade against the freshly synced database.
+            pacman -Sy --noconfirm --needed "${missing[@]}" >&2
+        elif command -v zypper &>/dev/null; then
+            zypper --non-interactive install "${missing[@]}" >&2
+        else
+            print_error "No supported package manager (apt/dnf/yum/pacman/zypper) — install manually, then re-run: ${missing[*]}"
+            exit 1
+        fi || { print_error "Failed to install: ${missing[*]}"; exit 1; }
     fi
 
     if [[ "$VPSSEC_NO_VERIFY" == "1" ]]; then
@@ -175,7 +192,7 @@ check_requirements() {
 
     if ! command -v cosign &>/dev/null; then
         print_info "Installing cosign for signature verification..."
-        if ! apt-get install -y cosign 2>/dev/null; then
+        if ! apt-get install -y cosign >&2 2>/dev/null; then
             # apt has nothing (Debian, older Ubuntu, RHEL-family). Try
             # the pinned sigstore .deb fallback before giving up.
             if ! install_cosign_pinned; then

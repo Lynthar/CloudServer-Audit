@@ -779,7 +779,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.nginx_version_exposed' 2>/dev/null || echo 'Nginx Version Exposed')" \
-                "server_tokens not disabled - exposes Nginx version" \
+                "$(i18n 'webapp.nginx_server_tokens_desc')" \
                 "$(i18n 'webapp.add_server_tokens_off' 2>/dev/null || echo 'Add server_tokens off; to nginx.conf')" \
                 "webapp.nginx_server_tokens")
             state_add_check "$check_json"
@@ -790,7 +790,7 @@ webapp_audit() {
                 "info" \
                 "passed" \
                 "$(i18n 'webapp.nginx_version_hidden' 2>/dev/null || echo 'Nginx Version Hidden')" \
-                "server_tokens is disabled" \
+                "$(i18n 'webapp.nginx_server_tokens_ok_desc')" \
                 "" \
                 "")
             state_add_check "$check_json"
@@ -818,7 +818,7 @@ webapp_audit() {
                 "info" \
                 "passed" \
                 "$(i18n 'webapp.security_headers_ok' 2>/dev/null || echo 'Security Headers Configured')" \
-                "All recommended security headers present" \
+                "$(i18n 'webapp.nginx_security_headers_ok_desc')" \
                 "" \
                 "")
             state_add_check "$check_json"
@@ -833,7 +833,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')" \
-                "Strict-Transport-Security header not found" \
+                "$(i18n 'webapp.nginx_hsts_missing_desc')" \
                 "$(i18n 'webapp.add_hsts' 2>/dev/null || echo 'Add HSTS header for HTTPS enforcement')" \
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
@@ -846,7 +846,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.hsts_weak' 2>/dev/null || echo 'HSTS missing always token')" \
-                "add_header Strict-Transport-Security ... lacks 'always' — header skipped on error responses" \
+                "$(i18n 'webapp.nginx_hsts_weak_desc')" \
                 "$(i18n 'webapp.fix_hsts_always' 2>/dev/null || echo 'Append the always parameter to add_header')" \
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
@@ -918,7 +918,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.apache_signature_on' 2>/dev/null || echo 'Apache ServerSignature Enabled')" \
-                "ServerSignature exposes Apache version in error pages" \
+                "$(i18n 'webapp.apache_server_signature_desc')" \
                 "$(i18n 'webapp.set_signature_off' 2>/dev/null || echo 'Set ServerSignature Off in apache2.conf')" \
                 "webapp.apache_server_signature")
             state_add_check "$check_json"
@@ -933,7 +933,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.apache_tokens_verbose' 2>/dev/null || echo 'Apache ServerTokens Verbose')" \
-                "ServerTokens is $tokens - exposes too much information" \
+                "$(i18n 'webapp.apache_server_tokens_desc' "tokens=$tokens")" \
                 "$(i18n 'webapp.set_tokens_prod' 2>/dev/null || echo 'Set ServerTokens Prod in apache2.conf')" \
                 "webapp.apache_server_tokens")
             state_add_check "$check_json"
@@ -948,7 +948,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.apache_trace_on' 2>/dev/null || echo 'Apache TRACE Method Enabled')" \
-                "TRACE method can be used for XST attacks" \
+                "$(i18n 'webapp.apache_trace_enabled_desc')" \
                 "$(i18n 'webapp.disable_trace' 2>/dev/null || echo 'Set TraceEnable Off in apache2.conf')" \
                 "webapp.apache_trace")
             state_add_check "$check_json"
@@ -1069,7 +1069,7 @@ webapp_audit() {
                 "low" \
                 "failed" \
                 "$(i18n 'webapp.open_basedir_not_set' 2>/dev/null || echo 'PHP open_basedir Not Configured')" \
-                "No directory restriction for PHP file access" \
+                "$(i18n 'webapp.php_open_basedir_desc')" \
                 "$(i18n 'webapp.set_open_basedir' 2>/dev/null || echo 'Set open_basedir to restrict PHP file access')" \
                 "webapp.php_open_basedir")
             state_add_check "$check_json"
@@ -1130,7 +1130,7 @@ webapp_audit() {
             "info" \
             "passed" \
             "$(i18n 'webapp.no_sensitive_files' 2>/dev/null || echo 'No Sensitive Files Exposed')" \
-            "No common sensitive files found in web roots" \
+            "$(i18n 'webapp.sensitive_files_ok_desc')" \
             "" \
             "")
         state_add_check "$check_json"
@@ -1176,7 +1176,7 @@ webapp_audit() {
                 "info" \
                 "passed" \
                 "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')" \
-                "Neither Nginx nor Apache detected - skipping web server checks" \
+                "$(i18n 'webapp.no_webserver_desc')" \
                 "" \
                 "")
         fi

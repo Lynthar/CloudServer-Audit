@@ -594,6 +594,23 @@ execute_fix() {
     if declare -f "$fix_func" > /dev/null; then
         log_info "Executing fix: $fix_id"
         if "$fix_func" "$fix_id"; then
+            # Declared postcondition: a FIX_VERIFY fix reports success only
+            # once the audit's own predicate sees the new state — a written
+            # file is not yet an effective setting.
+            local verify_fn
+            verify_fn=$(get_fix_verify "$fix_id" 2>/dev/null || echo "")
+            if [[ -n "$verify_fn" ]]; then
+                if ! declare -f "$verify_fn" >/dev/null 2>&1; then
+                    log_error "Verify predicate not found: $verify_fn ($fix_id)"
+                    print_warn "$(i18n 'fix.verify_failed')"
+                    return 1
+                fi
+                if ! "$verify_fn"; then
+                    log_error "Fix verify failed: $fix_id ($verify_fn)"
+                    print_warn "$(i18n 'fix.verify_failed')"
+                    return 1
+                fi
+            fi
             # Returning 0 means "my work succeeded", not "the finding is
             # resolved" — for FIX_TEMPLATE_ONLY it never can be. The exit
             # status stays honest about the work; the map carries the rest.
