@@ -111,9 +111,14 @@ _mode_of() { stat -c '%a' "$1"; }
     _make_file "$f" 644
     # helpers.bash sets VPSSEC_QUIET_SCAN=1, which silences the count line.
     VPSSEC_QUIET_SCAN=0
-    # Self-healing: when this assertion fails it does so by CREATING the file it
-    # refutes, which would make every later run fail for an unrelated reason.
-    rm -f /.vpssec_modes
+    # Self-healing: this assertion fails by CREATING the file it refutes, so a
+    # stale one would fail every later run for the wrong reason. A stray this
+    # runner cannot remove is reported as itself, not as `rm: EPERM`.
+    rm -f /.vpssec_modes 2>/dev/null || true
+    if [ -e /.vpssec_modes ]; then
+        echo "stray /.vpssec_modes: root-run residue, or this regression already fired here - inspect it, then: sudo rm -f /.vpssec_modes" >&2
+        return 1
+    fi
 
     backup_file "$f" >/dev/null
     run backup_restore "$session_ts"
