@@ -1,0 +1,69 @@
+name: mutation sweep
+
+# Nightly rather than per-push: a full sweep re-runs each paired suite once
+# per planted defect (~500 of them, ~40 minutes) — too slow to gate every
+# commit, but exactly what catches a suite that has quietly stopped testing
+# the thing it is named after. Every case file, every anchor, one total.
+#
+# A red run means a planted defect SURVIVED, or an anchor/pairing broke.
+# A survivor has three possible meanings — uncovered code, an assertion
+# asking the wrong question, or inert code — read tools/mutate-suite.sh's
+# header before "fixing" the cases file.
+#
+# GitHub disables cron workflows after ~60 days without repository activity;
+# if this has not run lately, check that before suspecting the sweep.
+
+on:
+  schedule:
+    - cron: '30 19 * * *'
+  workflow_dispatch:
+    inputs:
+      stems:
+        description: 'Space-separated cases-file stems (e.g. "docker fail2ban"); empty = all'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  mutate-all:
+    name: full source-mutation sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install bats-core
+        run: |
+          set -euo pipefail
+          # Same pin as tests.yml, for the same reason: the sweep's verdict
+          # must not drift with Ubuntu's package archive.
+          BATS_VERSION=v1.11.0
+          tmp=$(mktemp -d)
+          git clone --depth 1 --branch "$BATS_VERSION" \
+              https://github.com/bats-core/bats-core.git "$tmp/bats"
+          sudo "$tmp/bats/install.sh" /usr/local
+          bats --version
+
+      - name: Run the sweep
+        env:
+          STEMS: ${{ inputs.stems }}
+        run: |
+          set -euo pipefail
+          # Word-splitting of STEMS is intended: each word is one file stem.
+          if [ -n "${STEMS:-}" ]; then
+            # shellcheck disable=SC2086
+            bash tools/mutate-all.sh $STEMS
+          else
+            bash tools/mutate-all.sh
+          fi
+
+      - name: What a red run means
+        if: failure()
+        run: |
+          echo "A planted defect was NOT caught, or an anchor/pairing broke."
+          echo "Read the per-file lines above, then reproduce one file locally with:"
+          echo "    bash tools/mutate-all.sh <stem>"
+          echo "Interpret a survivor with the three meanings in tools/mutate-suite.sh's"
+          echo "header before touching the cases file."
