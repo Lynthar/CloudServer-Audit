@@ -125,7 +125,9 @@ cosign verify-blob \
 | `status` | Last run summary + latest backup |
 
 Every detection emits a stable `check_id`; fixes carry a `fix_id` you can
-apply manually from the report or interactively via `guide`.
+apply manually from the report or interactively via `guide`. What integrations
+may depend on — exit codes, `check_id`/`fix_id`, the JSON report — and which
+release bump can change it: [docs/compatibility.md](docs/compatibility.md).
 
 ---
 

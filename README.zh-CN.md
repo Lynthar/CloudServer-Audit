@@ -108,7 +108,9 @@ cosign verify-blob \
 | `status` | 上次运行摘要 + 最新备份信息 |
 
 每条检测都有稳定的 `check_id`；可修复项还有 `fix_id`，你可以从报告里
-手动执行，或者通过 `guide` 交互式执行。
+手动执行，或者通过 `guide` 交互式执行。集成方可以依赖什么——退出码、
+`check_id`/`fix_id`、JSON 报告——以及哪种版本号变更才允许改动它们：见
+[docs/compatibility.md](docs/compatibility.md)。
 
 ---
 
