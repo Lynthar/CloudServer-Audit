@@ -1,7 +1,10 @@
 # vpssec
 
-> Pure-bash security auditing & hardening for Linux VPS.
-> Audit (read-only): Debian/Ubuntu/RHEL/Arch · Guided hardening + rollback: Debian/Ubuntu.
+> **Hardening you can undo** — a pure-Bash hardening plan for Debian/Ubuntu VPS
+> hosts: every change is backed up first, validated before it commits, and
+> reversible as a unit, with a rescue sshd guarding the changes that could cost
+> you your SSH session.
+> The read-only audit driving the plan also covers RHEL-family and Arch hosts.
 
 English | [简体中文](README.zh-CN.md) | [User Guide](docs/user-guide.md)
 
@@ -126,6 +129,32 @@ apply manually from the report or interactively via `guide`.
 
 ---
 
+## Non-goals
+
+Knowing what a tool refuses to be is part of trusting it:
+
+- **Not a compliance product.** Checks overlap CIS/Lynis territory, but there
+  are no benchmark profiles, control mappings or waivers, and no score here
+  certifies anything.
+- **Not unattended remediation.** Fixes run inside an interactive, per-fix
+  plan; the riskiest ones require a typed confirmation on a TTY that `--yes`
+  cannot bypass. There is deliberately no "fix everything" flag.
+- **Not fleet management.** One host per run — no agent, no server, no
+  cross-host aggregation.
+- **Not an offline forensic tool.** The audit makes a few small, time-limited
+  network probes and degrades gracefully without connectivity; GitHub being
+  unreachable never changes a security conclusion. The complete list:
+
+| When | Endpoint | Purpose |
+|---|---|---|
+| `audit` (preflight) | `www.google.com`, falling back to `www.baidu.com` | reachability probe, 5 s timeout |
+| `audit` (cloud detection) | `169.254.169.254` (EC2 / Oracle / Hetzner / DigitalOcean paths) · `100.100.100.200` (Alibaba) · `metadata.tencentyun.com` (Tencent) | link-local instance-metadata probes, 1–2 s timeouts |
+| `audit` (cloudflared module) | Cloudflare API, via `cloudflared tunnel list` | only when cloudflared is installed; 8 s timeout |
+| alerts, once you configure them | the webhook URL you set | delivery and test-fire of your own alerts |
+| `status` / `install.sh` | `api.github.com` | newer-release check — never during `audit` or `guide` |
+
+---
+
 ## Modules at a glance
 
 **21 modules** organised into 6 categories. Default runs everything;
@@ -183,6 +212,10 @@ vpssec touches `/etc/*` files. To make that defensible:
 - **SSH rescue port** — before the two lockout-capable changes (disabling password auth / root login), a second sshd is opened on a spare port (2222 by default) and must be confirmed working before the live config is touched.
 - **Critical confirmation** — destructive ops (firewall enable, password-auth disable) require explicit confirmation that `--yes` cannot bypass.
 - **Fix classification** — every fix is tagged `safe` / `confirm` / `risky` / `alert_only`; risky ones surface their warning before applying.
+
+These guarantees are the most-tested code here: 900+ bats tests run on every
+push across Ubuntu, Rocky 9 and Arch, and a nightly CI sweep plants ~500 known
+defects in module source and fails unless the paired suite catches every one.
 
 ---
 
@@ -242,8 +275,8 @@ carries `meta.partial_scope` plus `stats.scored_total` for the same reason.
 PRs welcome.
 
 - Architecture and module-extension patterns: the `<module>_audit` / `<module>_fix` contracts and the comments under `core/`
-- Unit tests: `bats tests/` (800+ cases; see CI for the current count)
-- Mutation testing, two tools for two questions: `bash tools/mutate-all.sh` plants defects in module source and asks whether the paired bats suite notices (safe anywhere); `tests/mutation/` plants misconfigurations in a REAL `/etc` and asks whether the audit notices — only run that one on a disposable VM
+- Unit tests: `bats tests/` (900+ cases; see CI for the current count)
+- Mutation testing, two tools for two questions: `bash tools/mutate-all.sh` plants defects in module source and asks whether the paired bats suite notices (safe anywhere; CI reruns the full sweep nightly); `tests/mutation/` plants misconfigurations in a REAL `/etc` and asks whether the audit notices — only run that one on a disposable VM
 - Manifest update before commit: `bash tools/gen-manifest.sh && git add manifest.sha256`
 - Releasing: bump `VERSION` and commit it, then push a matching `vX.Y.Z` tag — `release.yml` refuses any tag that disagrees with `VERSION`, then builds and signs the tarball with cosign keyless and publishes the GitHub release
 

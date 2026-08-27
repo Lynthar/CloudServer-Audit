@@ -1,7 +1,8 @@
 # vpssec
 
-> 面向 Linux VPS 的纯 Bash 安全审计与加固工具。
-> 审计(只读):Debian/Ubuntu/RHEL/Arch · 引导式加固 + 回滚:Debian/Ubuntu。
+> **敢改，因为改得回来** —— 面向 Debian/Ubuntu VPS 的纯 Bash 加固工具：每个变更都
+> 先备份、上线前先校验、事后可整体回滚，可能断掉你 SSH 连接的变更由临时救援 sshd 看护。
+> 驱动加固计划的只读审计同时覆盖 RHEL 家族与 Arch。
 
 [English](README.md) | 简体中文 | [用户指南](docs/user-guide.md)
 
@@ -111,6 +112,28 @@ cosign verify-blob \
 
 ---
 
+## 它不做什么
+
+明说拒绝做什么，也是可信的一部分：
+
+- **不是合规产品。** 检查与 CIS/Lynis 的领地有重叠，但没有基准 profile、控制项映射与
+  豁免机制，任何分数都不构成认证。
+- **不做无人值守自动修复。** 修复只在交互式计划里逐项执行；最高危的操作要求在 TTY 上
+  手动输入确认，`--yes` 无法绕过。刻意不提供「一键修完」。
+- **不做舰队管理。** 一次一台主机——没有 agent、没有服务端、没有跨主机汇总。
+- **不是离线取证工具。** 审计会发出少量带超时的网络探测，断网时优雅降级；GitHub
+  不可达绝不影响任何安全结论。完整清单：
+
+| 时机 | 端点 | 用途 |
+|---|---|---|
+| `audit`（preflight） | `www.google.com`，不通则 `www.baidu.com` | 连通性探测，超时 5 秒 |
+| `audit`（云厂商识别） | `169.254.169.254`（EC2 / Oracle / Hetzner / DigitalOcean 各自路径）· `100.100.100.200`（阿里云）· `metadata.tencentyun.com`（腾讯云） | 链路本地元数据探测，超时 1–2 秒 |
+| `audit`（cloudflared 模块） | Cloudflare API（经 `cloudflared tunnel list`） | 仅在装有 cloudflared 时；超时 8 秒 |
+| 你配置的告警 | 你自己设置的 webhook 地址 | 投递与试发你配置的告警 |
+| `status` / `install.sh` | `api.github.com` | 检查新版本——`audit` 与 `guide` 绝不调用 |
+
+---
+
 ## 模块速览
 
 **21 个模块**，按 6 类组织。默认全跑；可以通过 CLI 或交互菜单选子集：
@@ -166,6 +189,9 @@ vpssec 会改 `/etc/*` 配置文件。为此设了几道防线：
 - **SSH 救援端口** —— 在两个可能锁死连接的变更（禁用密码登录/禁用 root 登录）动手之前，先在空闲端口（默认 2222）拉起第二个 sshd，并要求你确认能连上，才碰线上配置。
 - **关键操作强制确认** —— 防火墙启用、密码登录禁用等高危操作必须显式确认，`--yes` 无法跳过。
 - **修复分级** —— 每个 fix 标记为 `safe` / `confirm` / `risky` / `alert_only`，risky 项执行前显式告警。
+
+这些保障是全仓测试密度最高的代码：每次 push 在 Ubuntu、Rocky 9 与 Arch 上跑 900+ 条
+bats 测试；每晚 CI 往模块源码植入约 500 个已知缺陷，只要有一个没被配对套件抓住即告红。
 
 ---
 
@@ -223,8 +249,8 @@ score   = clamp(0, 100, base − penalty)
 欢迎 PR。
 
 - 架构和模块扩展规范：见 `<module>_audit` / `<module>_fix` 契约和 `core/` 下的注释
-- 单元测试：`bats tests/`（800+ 用例，具体数以 CI 为准）
-- 变异测试有两套工具、问两个问题：`bash tools/mutate-all.sh` 往模块源码里植入缺陷，问配对的 bats 套件能不能发现（哪里都能跑）；`tests/mutation/` 往**真实 `/etc`** 里植入错误配置，问审计能不能发现——后者仅在可丢弃的 VM 上跑
+- 单元测试：`bats tests/`（900+ 用例，具体数以 CI 为准）
+- 变异测试有两套工具、问两个问题：`bash tools/mutate-all.sh` 往模块源码里植入缺陷，问配对的 bats 套件能不能发现（哪里都能跑；CI 每晚全量重跑）；`tests/mutation/` 往**真实 `/etc`** 里植入错误配置，问审计能不能发现——后者仅在可丢弃的 VM 上跑
 - commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`
 - 发布版本：先改 `VERSION` 并提交，再打对应的 `vX.Y.Z` tag 并 push —— `release.yml` 会拒绝与 `VERSION` 不一致的 tag，通过后用 cosign keyless 构建+签名 tarball 并创建 GitHub release
 
