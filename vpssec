@@ -6,12 +6,14 @@
 set -euo pipefail
 
 # VPSSEC_ROOT is computed ONLY in core/common.sh, relative to its own path.
-# Do not recompute it here — two definitions would drift. The first source
-# below bootstraps via BASH_SOURCE directly.
+# Do not recompute it here — two definitions would drift.
 
 # --- Source Core Modules ---
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core/common.sh"
+# readlink -f is load-bearing: install.sh symlinks /usr/local/bin/vpssec to this
+# file, so BASH_SOURCE[0] is the link. Unresolved, every source below looks in
+# /usr/local/bin/core/ and the installed command dies on the first one.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/core/common.sh"
 source "${VPSSEC_ROOT}/core/distro.sh"
 source "${VPSSEC_ROOT}/core/state.sh"
 source "${VPSSEC_ROOT}/core/report.sh"

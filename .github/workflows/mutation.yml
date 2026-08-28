@@ -1,7 +1,7 @@
 name: mutation sweep
 
 # Nightly rather than per-push: a full sweep re-runs each paired suite once
-# per planted defect (~500 of them, ~40 minutes) — too slow to gate every
+# per planted defect (~500 of them; 144 min measured on ubuntu-latest) — too slow to gate every
 # commit, but exactly what catches a suite that has quietly stopped testing
 # the thing it is named after. Every case file, every anchor, one total.
 #
@@ -30,7 +30,10 @@ jobs:
   mutate-all:
     name: full source-mutation sweep
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # 144 min measured. 150 left six minutes of headroom, so a slower runner
+    # or a handful of new cases would have turned this red for the one reason
+    # that says nothing about the code.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

@@ -83,6 +83,14 @@ for f in "${files[@]}"; do
     k=$(sed -n 's/.*killed=\([0-9]*\).*/\1/p' <<< "$summary")
     g=$(sed -n 's/.*gaps=\([0-9]*\).*/\1/p' <<< "$summary")
     b=$(sed -n 's/.*bad-anchors=\([0-9]*\).*/\1/p' <<< "$summary")
+
+    # Name the offenders, like the DID NOT RUN branch above. A red sweep is
+    # usually read in CI, and if it is green on the machine you have, a count
+    # with no case id leaves nothing to reproduce.
+    if (( ${g:-0} > 0 || ${b:-0} > 0 )); then
+        grep -E 'SURVIVED|ANCHOR-BAD' <<< "$out" | sed 's/^/    /'
+    fi
+
     total_killed=$((total_killed + ${k:-0}))
     total_gaps=$((total_gaps + ${g:-0}))
     total_bad=$((total_bad + ${b:-0}))

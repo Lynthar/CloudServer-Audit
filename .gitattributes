@@ -1,20 +1,10 @@
-# Enforce LF line endings on files that must run on Linux.
-# Without this, Windows contributors with `core.autocrlf=true` can commit
-# CRLF and silently break the shell scripts on the target systems.
+# Everything here runs on Linux and must arrive LF. A CR breaks bash with
+# `$'\r': command not found`, changes every hash in manifest.sha256, and in
+# VERSION reaches the release workflow's tag-vs-VERSION check.
+* text=auto eol=lf
 
-*.sh           text eol=lf
-*.json         text eol=lf
-*.md           text eol=lf
-*.yml          text eol=lf
-*.yaml         text eol=lf
-
-# Extensionless executables
-vpssec         text eol=lf
-
-# Version source of truth. A CR here reaches the release tag comparison.
-VERSION        text eol=lf
-
-# Binary (do not touch)
+# No binary files today; these pre-empt a text=auto misdetection, which
+# would let eol=lf mangle an image.
 *.png          binary
 *.jpg          binary
 *.jpeg         binary

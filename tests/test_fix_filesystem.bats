@@ -469,6 +469,41 @@ _make() {
     [[ "$output" == *"group crontab grants access"* ]]
 }
 
+# The two tests above chown, so they need root and skip on every non-root
+# runner — CI is one, so the group whitelist was unguarded exactly where the
+# nightly sweep runs. These reach the same decision with id and stat stubbed.
+_perms_seeing_group() {
+    _vpssec_stub id 0 0
+    _vpssec_stub_script stat <<STUB
+case "\$2" in
+    %a) printf '%s\n' '640' ;;
+    %U) printf '%s\n' 'root' ;;
+    %G) printf '%s\n' '$1' ;;
+    *)  exit 1 ;;
+esac
+STUB
+}
+
+@test "perms audit: group daemon outside /etc/at.* is flagged, root or not" {
+    local f="$BATS_TEST_TMPDIR/cron.allow"
+    printf 'x\n' > "$f"
+    _perms_seeing_group daemon
+
+    run _fs_check_sensitive_file "$f" 644
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"group daemon grants access"* ]]
+}
+
+@test "perms audit: group crontab outside /etc/cron* is flagged, root or not" {
+    local f="$BATS_TEST_TMPDIR/at.deny"
+    printf 'x\n' > "$f"
+    _perms_seeing_group crontab
+
+    run _fs_check_sensitive_file "$f" 644
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"group crontab grants access"* ]]
+}
+
 @test "perms audit: stock at.deny (root:daemon 640) passes clean" {
     [ "$(id -u)" = "0" ] || skip "ownership checks only run as root"
     [ -f /etc/at.deny ] || skip "at not installed"

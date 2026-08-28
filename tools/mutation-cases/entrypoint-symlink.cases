@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_entrypoint_symlink.bats against the vpssec entry script.
+# mutate-suite: vpssec tests/test_entrypoint_symlink.bats
+#
+# `readlink` appears twice in vpssec — once in the comment above the bootstrap
+# and once in the line itself. Both anchors below are the whole code line, so
+# the comment cannot be hit; check the reported line before believing a survivor.
+
+# The pre-fix bootstrap, verbatim. Restores the defect that made every
+# install.sh run exit 1 and left /usr/local/bin/vpssec dead.
+run_case "entrypoint/symlink-not-resolved" 1 \
+    'source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/core/common.sh"' \
+    'source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core/common.sh"'
+
+# Dropping -f leaves one hop, and on a non-symlink readlink prints nothing —
+# so the direct-invocation baseline is what goes red here, not the chain test.
+run_case "entrypoint/single-hop-readlink" 1 \
+    'source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/core/common.sh"' \
+    'source "$(dirname "$(readlink "${BASH_SOURCE[0]}")")/core/common.sh"'
