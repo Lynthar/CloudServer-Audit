@@ -1,261 +1,135 @@
-# vpssec
+# CloudServer-Audit
 
-> **敢改，因为改得回来** —— 面向 Debian/Ubuntu VPS 的纯 Bash 加固工具：每个变更都
-> 先备份、上线前先校验、事后可整体回滚，可能断掉你 SSH 连接的变更由临时救援 sshd 看护。
-> 驱动加固计划的只读审计同时覆盖 RHEL 家族与 Arch。
+[![license](https://img.shields.io/github/license/Lynthar/CloudServer-Audit)](LICENSE)
+[![tests](https://img.shields.io/github/actions/workflow/status/Lynthar/CloudServer-Audit/tests.yml?branch=main&label=tests)](https://github.com/Lynthar/CloudServer-Audit/actions/workflows/tests.yml)
+[![shellcheck](https://img.shields.io/github/actions/workflow/status/Lynthar/CloudServer-Audit/shellcheck.yml?branch=main&label=shellcheck)](https://github.com/Lynthar/CloudServer-Audit/actions/workflows/shellcheck.yml)
+[![release](https://img.shields.io/github/v/release/Lynthar/CloudServer-Audit)](https://github.com/Lynthar/CloudServer-Audit/releases)
 
-[English](README.md) | 简体中文 | [用户指南](docs/user-guide.md)
+可回滚的 Debian/Ubuntu 主机加固执行器；只读审计另覆盖 RHEL 系与 Arch
 
----
+[English](README.md) | 简体中文
 
-## 快速开始
+命令叫 `vpssec`，是纯 Bash 脚本，以 root 运行，一次处理一台机器，退出之后不留常驻进程。
 
-**一次性运行，不安装任何东西。** 把最新发布版下载到临时目录，验签、运行，退出时自删。
-若选择保存，报告会复制到 `/tmp/vpssec-report-*`：
+审计模式是只读的，可以放心在任何机器上运行，看完报告就结束。引导加固模式会改
+`/etc`：它会先把每个文件备份下来，把新版本验证通过之后才提交，并且能按时间戳把改动
+复原。在动「禁用密码登录」或「禁用 root 登录」之前，它会在另一个端口先起一个 sshd，
+确保你还能连得进来。
+
+## 安装
+
+一次性运行，不在系统里留下文件：这条命令把最新 release 下载到一个私有临时目录，验签、
+执行、然后自删，报告拷到 `/tmp/vpssec-report-*`。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
 ```
 
-跑完机器上不留任何东西，**`backups/` 也不留**。因此**这条路径拒绝 `guide` 与 `rollback`**（退出码 2，
-错误消息里直接给出安装命令）：修复写入的备份就在这个退出即删的目录里，从这里加固等于改了 `/etc`
-又在同一条命令里销毁了撤销它的唯一凭据。审计是只读的，不受影响。
-
-**安装到本地重复使用。** 同一个发布版、同一道验签，但装进 `/opt/vpssec` 并在 `PATH` 里留下
-`vpssec` 命令，升级时保留 `state/` 与 `backups/`：
+想让状态和备份在多次运行之间留存，就用下面这条装到本地（也可以直接 clone 本仓库）。
+重跑同一条命令就是原地升级：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo bash
-
-sudo vpssec audit          # 任何目录下都能跑
-sudo vpssec status         # 上次运行、最新备份，以及是否有更新版本
+sudo vpssec audit
 ```
 
-升级就是重跑同一条命令——`state/` 与 `backups/` 会先移走再放回，重装不会带走 `vpssec rollback`
-所依赖的数据。卸载用 `sudo /opt/vpssec/uninstall.sh`（删除状态与备份前会询问，默认保留）。
+`guide` 和 `rollback` 在一次性运行下会被拒绝，这是有意的：它们的备份会写在一个
+退出时就删掉的目录里。**凡是会改动系统的操作，都要用装在本地的形式。**
 
-两条入口装的都是**最新发布版**，都不是 `main` 分支。用 `VPSSEC_VERSION` 钉具体版本、
-用 `INSTALL_DIR` 换安装位置——见下方环境变量说明，注意它们必须写在管道的 `bash` 那一侧。
-
-**或者从克隆的仓库运行**（开发用，或想先读代码再运行）：
+环境变量要写在管道的 `bash` 那一侧：
 
 ```bash
-git clone https://github.com/Lynthar/CloudServer-Audit.git
-cd CloudServer-Audit
-sudo ./vpssec audit
+curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.3.1 bash
 ```
 
-克隆跟的是 `main`，它领先于最新发布版且没有签名。生产主机请用发布版。
+需要 `jq`。`cosign` 会在需要时按钉死的版本装上。
 
-交互式审计结束后会提示是否保存；选择保存才会写入 `reports/summary.{md,json,sarif}`。`--json-only` 同样会重写这三个文件，只是仅把 JSON 打印到标准输出——这样 CI 里发布 Markdown 或消费 SARIF 的环节不会读到上一轮跑剩下的旧文件。
-
-`--json-only` 与 `--yes` 都意味着非交互运行：语言 / 模式 / 模块三个菜单会被跳过，直接采用默认值（审计、全部模块）。
-
-**审计(只读)：** Debian 12/13 · Ubuntu 22.04/24.04/26.04 · RHEL 8/9/10 家族(Rocky / Alma / CentOS Stream) · Arch
-
-**引导式加固 + 回滚：** 仅 Debian / Ubuntu
-
-`run.sh` 与 `install.sh` 都会下载 release tarball，**用 cosign keyless（sigstore
-+ GitHub Actions OIDC）验证签名**后才解包。签名身份锁定为本仓库的 `release.yml`
-workflow 在**所装 tag** 上的那次签名，被调包或换标签的 release 资产过不了
-验证。但保证的边界要说清：它验证的是"资产出自本仓库的发布流水线"，防不住
-仓库本身被攻破——拿到仓库写权限的人可以走正规流水线签出新版本，也可以直接
-改 `main` 上的这两个引导脚本。想要更强的锚点，请从你已经审计过的 release
-里下载引导脚本，而不是从 `main` 取。
-Ubuntu 22.04+ 走 `apt` 自动安装 `cosign`；其它系统从 sigstore GitHub
-release 下载 pinned 资产、先本地校验 SHA256 再安装——Debian 用 `.deb`
-（`dpkg`），RHEL/Arch 等无 dpkg 的系统装静态 `cosign` 二进制到
-`/usr/local/bin`。fallback 路径把 cosign 的引导信任从 distro
-仓库切到 github.com —— 与下载引导脚本本身同源，不引入新的攻击面。完全
-跳过验证用 `VPSSEC_NO_VERIFY=1`（不推荐）。
-
-下面每个变量都必须设在管道的 **bash** 那一侧：写反了——`VPSSEC_VERSION=… curl … | sudo bash`
-——变量只传给了 `curl`，脚本根本看不到。
+## 用法
 
 ```bash
-# 固定版本（v1.3.0 与 1.3.0 两种写法都收）
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_VERSION=v1.3.0 bash
-
-# 装到 /opt/vpssec 以外的位置
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh | sudo env INSTALL_DIR=/opt/vpssec-staging bash
-
-# 跳过验证（不推荐）。两条入口都适用。
-curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo env VPSSEC_NO_VERIFY=1 bash
+sudo vpssec audit
 ```
-
-手动验证某个 release：
 
 ```bash
-TAG=v1.3.0
-curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz
-curl -LO https://github.com/Lynthar/CloudServer-Audit/releases/download/$TAG/vpssec-${TAG#v}.tar.gz.sig.json
-cosign verify-blob \
-  --bundle vpssec-${TAG#v}.tar.gz.sig.json \
-  --certificate-identity "https://github.com/Lynthar/CloudServer-Audit/.github/workflows/release.yml@refs/tags/$TAG" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  vpssec-${TAG#v}.tar.gz
+sudo vpssec audit --include=ssh,ufw,networking   # 只跑这几个模块
+sudo vpssec audit --json-only                    # 给 CI 用：stdout 只出 JSON
+sudo vpssec guide                                # 交互式走一遍修复
+sudo vpssec rollback                             # 撤销上次运行改过的东西
 ```
 
----
+两条不需要 root：
 
-## 它做什么
+```bash
+vpssec status        # 上次运行、最新备份、有没有新版本
+vpssec help ssh      # 某个模块里的检查项与 fix id
+```
 
-| 模式 | 用途 |
+结果出成 `summary.md` 给人读，`summary.json` 与 SARIF 2.1.0 给机器解析——`summary.md`
+的格式会变，不要拿它做解析。三种输出都支持中英文（`VPSSEC_LANG`）。
+
+## 检查什么
+
+`vpssec audit` 跑 21 个模块共 323 项检查：
+
+| 领域 | 项数 | 主要检查内容 |
+|---|---|---|
+| 系统与内核 | 72 | `sysctl` 的网络与内存参数、挂载选项、全局可写与 SUID 文件、自动更新、时间同步、cron 与 `at` 的访问控制 |
+| SSH 与账号 | 67 | sshd 配置从头到尾、密钥与口令登录、root 登录、空口令、sudo 规则、僵尸账号、口令时效 |
+| 容器与 Web 应用 | 52 | Docker 守护进程暴露面、特权容器与 `--net=host`、socket 权限、nginx 的 TLS 与响应头、暴露的管理路径 |
+| 检测与日志 | 47 | fail2ban 的 jail、rootkit 与可疑二进制扫描、journald 保留策略、日志权限、出事时到底有没有人会被通知到 |
+| 网络与防火墙 | 45 | UFW 规则与默认策略、监听端口与你以为暴露的是否一致、nginx 反代暴露面、cloudflared 隧道 |
+| 基线与运维 | 40 | 与上次运行的偏差、cloud-init 与云厂商 metadata 暴露、备份是否存在、依赖预检 |
+
+**其中 124 项带修复动作**，按可能造成的影响分档：28 项直接执行、18 项执行前询问、
+5 项需要你在终端输入确认，另外 73 项登记在案但**永不自动执行**。
+
+## 配置
+
+没有配置文件——行为由旗标和几个环境变量决定：
+
+| 变量 | 作用 |
 |---|---|
-| `audit` | 只读安全检测 → Markdown + JSON + SARIF 报告 |
-| `guide` | 交互式加固向导，带安全闸门 |
-| `rollback` | 恢复某次运行备份下的文件（服务状态/软链不在其内——vpssec 改动它们时会打印并记录撤销命令） |
-| `status` | 上次运行摘要 + 最新备份信息 |
+| `VPSSEC_VERSION` | 钉一个 release。默认取最新的那个，**永远不是 `main`** |
+| `VPSSEC_LANG` | `zh_CN`（默认）或 `en_US` |
+| `VPSSEC_INCLUDE` / `VPSSEC_EXCLUDE` | 等价于 `--include=` / `--exclude=` |
+| `VPSSEC_NO_VERIFY=1` | 跳过签名校验——见[安全](#安全) |
+| `INSTALL_DIR` | 安装位置，默认 `/opt/vpssec` |
 
-每条检测都有稳定的 `check_id`；可修复项还有 `fix_id`，你可以从报告里
-手动执行，或者通过 `guide` 交互式执行。集成方可以依赖什么——退出码、
-`check_id`/`fix_id`、JSON 报告——以及哪种版本号变更才允许改动它们：见
-[docs/compatibility.md](docs/compatibility.md)。
+状态、报告和备份都在安装目录下面。
 
----
+## 能力边界
 
-## 它不做什么
+- **加固与回滚只支持 Debian 和 Ubuntu。** 审计也读 RHEL 系与 Arch，但 `guide` 在别的
+  发行版上会在模块菜单之前就退出。Mint、Kali 这类 Debian 衍生版可以通过审计，
+  但同样不能加固。
+- **没有「一键全修」这个开关**，以后也不会有。高风险的修复需要在终端输入确认，
+  `--yes` 不能跳过。
+- **回滚只恢复文件。** 其余的改动——停掉的服务、建立的软链接——会连同撤销命令
+  一起打印出来，由你自己执行。
+- **它不是合规工具。** 没有 benchmark profile、没有控制项映射、没有豁免机制，
+  那个分数不构成任何认证。
+- **一次一台。** 没有 agent、没有服务端、没有集群视图。
+- **分数只在同版本、同模块集之间可比。** 用了 `--include=` 的运行会自己标注为部分覆盖。
 
-明说拒绝做什么，也是可信的一部分：
+## 文档
 
-- **不是合规产品。** 检查与 CIS/Lynis 的领地有重叠，但没有基准 profile、控制项映射与
-  豁免机制，任何分数都不构成认证。
-- **不做无人值守自动修复。** 修复只在交互式计划里逐项执行；最高危的操作要求在 TTY 上
-  手动输入确认，`--yes` 无法绕过。刻意不提供「一键修完」。
-- **不做舰队管理。** 一次一台主机——没有 agent、没有服务端、没有跨主机汇总。
-- **不是离线取证工具。** 审计会发出少量带超时的网络探测，断网时优雅降级；GitHub
-  不可达绝不影响任何安全结论。完整清单：
+- [用户指南](docs/user-guide.md) —— 完整命令参考、评分怎么算、每个模块、CI 集成。
+- [兼容性说明](docs/compatibility.md) —— 语义化版本在这里覆盖什么、明确不覆盖什么。
 
-| 时机 | 端点 | 用途 |
-|---|---|---|
-| `audit`（preflight） | `www.google.com`，不通则 `www.baidu.com` | 连通性探测，超时 5 秒 |
-| `audit`（云厂商识别） | `169.254.169.254`（EC2 / Oracle / Hetzner / DigitalOcean 各自路径）· `100.100.100.200`（阿里云）· `metadata.tencentyun.com`（腾讯云） | 链路本地元数据探测，超时 1–2 秒 |
-| `audit`（cloudflared 模块） | Cloudflare API（经 `cloudflared tunnel list`） | 仅在装有 cloudflared 时；超时 8 秒 |
-| 你配置的告警 | 你自己设置的 webhook 地址 | 投递与试发你配置的告警 |
-| `status` / `install.sh` | `api.github.com` | 检查新版本——`audit` 与 `guide` 绝不调用 |
+## 安全
 
----
+发布产物用 cosign keyless 签名，两个入口脚本都会验证签名确实来自**本仓库的 release
+workflow、且对应被安装的那个精确 tag**。这挡不住本仓库自己被攻破——同一个 workflow
+签出来的新版本照样验得过。`VPSSEC_NO_VERIFY=1` 会把这道检查整个关掉。
 
-## 模块速览
+引导脚本是从 `main` 取的，所以安装这个动作等于信任本仓库在你执行命令那一刻的状态。
+不接受这一点的话，从一个你已经审过的 release 里取脚本来运行。
 
-**21 个模块**，按 6 类组织。默认全跑；可以通过 CLI 或交互菜单选子集：
+在禁用密码或 root 登录之前，会在另一个端口起第二个 sshd 并要求你确认还能连进来。
+每次运行都先写 `backups/<时间戳>/`。
 
-```bash
-sudo ./vpssec audit --include=ssh,ufw,networking
-```
-
-| # | 类别 | 模块 |
-|---|---|---|
-| 1 | 访问控制 | `users`, `ssh` |
-| 2 | 网络安全 | `ufw`, `fail2ban`, `networking` |
-| 3 | 系统加固 | `update`, `kernel`, `filesystem`, `baseline` |
-| 4 | 服务安全 | `docker`, `nginx`, `cloudflared`, `webapp` |
-| 5 | 安全扫描 | `malware` |
-| 6 | 运维合规 | `logging`, `backup`, `alerts`, `scheduling` |
-
-> `preflight`、`cloud`、`timezone` 始终作为上下文模块自动运行。
-
-每个模块的检测项详解和修复方法，见[**用户指南**](docs/user-guide.md)。
-
----
-
-## 示例输出
-
-```
-─── 访问控制 ────────────────────────────────────────────────────
-  用户安全                       │  SSH 安全
-    ✓ 无额外 UID 0 账户          │    ✓ 密码登录已禁用
-    ✗ 检测到空密码账户           │    ● authorized_keys 权限过松
-    ✓ 系统账户已锁定             │    ○ MaxAuthTries 超过 4
-
-─── 安全扫描 ────────────────────────────────────────────────────
-  恶意软件检测
-    ✓ 未发现隐藏进程
-    ✗ 检测到已删除二进制进程
-
-────────────────────────────────────────────────────────────────
-  Score: 69 / 100   ● 2 High   ● 1 Medium   ● 12 Safe
-```
-
-图例：`✓` 通过 · `✗` 高危 · `●` 中危 · `○` 低危
-
----
-
-## 安全保障
-
-vpssec 会改 `/etc/*` 配置文件。为此设了几道防线：
-
-- **原子写入** —— 写临时文件、校验、再 rename。不会留下半个写完的配置。
-- **每次运行都备份** —— `backups/<时间戳>/` 镜像所有被改文件，`rollback` 恢复其中任意一次；不是文件的副作用（禁用的服务、创建的软链）按 vpssec 当时打印并记录的撤销命令还原。
-- **改动前先校验** —— `sshd -t`、`nginx -t`、`visudo -c` 都在 staged 文件上跑过才上线。
-- **SSH 救援端口** —— 在两个可能锁死连接的变更（禁用密码登录/禁用 root 登录）动手之前，先在空闲端口（默认 2222）拉起第二个 sshd，并要求你确认能连上，才碰线上配置。
-- **关键操作强制确认** —— 防火墙启用、密码登录禁用等高危操作必须显式确认，`--yes` 无法跳过。
-- **修复分级** —— 每个 fix 标记为 `safe` / `confirm` / `risky` / `alert_only`，risky 项执行前显式告警。
-
-这些保障是全仓测试密度最高的代码：每次 push 在 Ubuntu、Rocky 9 与 Arch 上跑 900+ 条
-bats 测试；每晚 CI 往模块源码植入约 500 个已知缺陷，只要有一个没被配对套件抓住即告红。
-
----
-
-## 常用命令
-
-```bash
-# 审计
-sudo ./vpssec audit                    # 完整审计（首次推荐）
-sudo ./vpssec audit --include=ssh      # 只跑指定模块
-sudo ./vpssec audit --exclude=docker   # 排除某模块
-sudo ./vpssec audit --json-only        # CI 友好输出
-sudo ./vpssec audit --lang=en_US       # 英文输出（默认 zh_CN）
-sudo ./vpssec audit --debug            # 详细日志写到 logs/vpssec.log
-
-# 加固和恢复
-sudo ./vpssec guide                    # 交互式加固
-sudo ./vpssec rollback                 # 恢复上次配置
-
-# 查看（不需要 root）
-./vpssec status                        # 上次运行 + 备份状态
-./vpssec help                          # 列出所有模块和 fix_id
-./vpssec help ssh                      # 某个模块的详情
-```
-
-完整 CLI 参考：[用户指南 → 命令参考](docs/user-guide.md#附录-a-vpssec-命令参考)。
-
----
-
-## 安全评分
-
-分数由"通过率基线"与"严重度加权惩罚"组合而成：
-
-```
-base    = 100 × passed / scored_total
-penalty = 5 × high + 1.5 × medium + 0.25 × low
-score   = clamp(0, 100, base − penalty)
-```
-
-档位：`90+ 优秀 · 75–89 良好 · 50–74 一般 · <50 较差`。
-
-`info` 类检查项（如云厂商识别）不计入评分。完整模型见
-[用户指南 → 安全评分](docs/user-guide.md#附录-b-安全评分计算)。
-
-**只有模块范围相同的两次运行，分数才可比。** `base` 随计分检查数缩放，
-`penalty` 不随之缩放——因此 `--include=` 选的范围越窄，惩罚占比越重；
-若子集里被计分的检查恰好全部失败，无论问题多轻，分数都会落到 0。
-用了 `--include`/`--exclude` 的运行会在分数旁明确标注（"部分评分：仅基于
-… 项计分检查"），`summary.json` 里也会带上 `meta.partial_scope` 与
-`stats.scored_total`。
-
----
-
-## 贡献
-
-欢迎 PR。
-
-- 架构和模块扩展规范：见 `<module>_audit` / `<module>_fix` 契约和 `core/` 下的注释
-- 单元测试：`bats tests/`（900+ 用例，具体数以 CI 为准）
-- 变异测试有两套工具、问两个问题：`bash tools/mutate-all.sh` 往模块源码里植入缺陷，问配对的 bats 套件能不能发现（哪里都能跑；CI 每晚全量重跑）；`tests/mutation/` 往**真实 `/etc`** 里植入错误配置，问审计能不能发现——后者仅在可丢弃的 VM 上跑
-- commit 前更新 manifest：`bash tools/gen-manifest.sh && git add manifest.sha256`
-- 发布版本：先改 `VERSION` 并提交，再打对应的 `vX.Y.Z` tag 并 push —— `release.yml` 会拒绝与 `VERSION` 不一致的 tag，通过后用 cosign keyless 构建+签名 tarball 并创建 GitHub release
+目前没有私密的漏洞报告渠道。在建立之前，敏感问题请不要发公开 issue。
 
 ## 许可证
 
-[GPL-3.0](LICENSE)
+GNU 通用公共许可证 v3.0 —— 见 [LICENSE](LICENSE)。Copyright (c) 2026 Lynthar。
