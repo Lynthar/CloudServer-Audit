@@ -1,6 +1,6 @@
 # Everything here runs on Linux and must arrive LF. A CR breaks bash with
-# `$'\r': command not found`, changes every hash in manifest.sha256, and in
-# VERSION reaches the release workflow's tag-vs-VERSION check.
+# `$'\r': command not found`, and in VERSION it reaches the release workflow's
+# tag-vs-VERSION string comparison.
 * text=auto eol=lf
 
 # No binary files today; these pre-empt a text=auto misdetection, which

@@ -96,7 +96,7 @@ _timezone_check_current() {
             "low" \
             "passed" \
             "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available')" \
             "$(i18n 'timezone.fix_set_timezone')" \
             "timezone.set_timezone")
         state_add_check "$check"
@@ -108,7 +108,7 @@ _timezone_check_current() {
             "low" \
             "passed" \
             "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "$(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.change_available')" \
             "$(i18n 'timezone.fix_set_timezone')" \
             "timezone.set_timezone")
         state_add_check "$check"
@@ -284,7 +284,7 @@ _timezone_check_locale() {
             "low" \
             "passed" \
             "$(i18n 'timezone.locale_ok' "locale=$current_locale")" \
-            "$(i18n 'timezone.change_available' 2>/dev/null || echo 'Change available in guide mode')" \
+            "$(i18n 'timezone.change_available')" \
             "$(i18n 'timezone.fix_set_locale')" \
             "timezone.set_locale")
         state_add_check "$check"

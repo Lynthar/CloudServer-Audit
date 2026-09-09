@@ -766,7 +766,7 @@ webapp_audit() {
     # === Nginx Security ===
     if _webapp_nginx_installed; then
         has_webserver=true
-        print_item "$(i18n 'webapp.checking_nginx' 2>/dev/null || echo 'Checking Nginx security configuration...')"
+        print_item "$(i18n 'webapp.checking_nginx')"
 
         # 1. Server tokens
         local server_tokens=$(_webapp_nginx_server_tokens)
@@ -778,9 +778,9 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.nginx_version_exposed' 2>/dev/null || echo 'Nginx Version Exposed')" \
+                "$(i18n 'webapp.nginx_version_exposed')" \
                 "$(i18n 'webapp.nginx_server_tokens_desc')" \
-                "$(i18n 'webapp.add_server_tokens_off' 2>/dev/null || echo 'Add server_tokens off; to nginx.conf')" \
+                "$(i18n 'webapp.add_server_tokens_off')" \
                 "webapp.nginx_server_tokens")
             state_add_check "$check_json"
         else
@@ -789,7 +789,7 @@ webapp_audit() {
                 "webapp" \
                 "info" \
                 "passed" \
-                "$(i18n 'webapp.nginx_version_hidden' 2>/dev/null || echo 'Nginx Version Hidden')" \
+                "$(i18n 'webapp.nginx_version_hidden')" \
                 "$(i18n 'webapp.nginx_server_tokens_ok_desc')" \
                 "" \
                 "")
@@ -806,9 +806,9 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.missing_security_headers' 2>/dev/null || echo 'Missing Security Headers'): $missing_count" \
+                "$(i18n 'webapp.missing_security_headers'): $missing_count" \
                 "$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
-                "$(i18n 'webapp.add_security_headers' 2>/dev/null || echo 'Add security headers to Nginx configuration')" \
+                "$(i18n 'webapp.add_security_headers')" \
                 "webapp.nginx_security_headers")
             state_add_check "$check_json"
         else
@@ -817,7 +817,7 @@ webapp_audit() {
                 "webapp" \
                 "info" \
                 "passed" \
-                "$(i18n 'webapp.security_headers_ok' 2>/dev/null || echo 'Security Headers Configured')" \
+                "$(i18n 'webapp.security_headers_ok')" \
                 "$(i18n 'webapp.nginx_security_headers_ok_desc')" \
                 "" \
                 "")
@@ -832,9 +832,9 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.hsts_missing' 2>/dev/null || echo 'HSTS Not Configured')" \
+                "$(i18n 'webapp.hsts_missing')" \
                 "$(i18n 'webapp.nginx_hsts_missing_desc')" \
-                "$(i18n 'webapp.add_hsts' 2>/dev/null || echo 'Add HSTS header for HTTPS enforcement')" \
+                "$(i18n 'webapp.add_hsts')" \
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
         elif [[ "$hsts" == "weak" ]]; then
@@ -845,9 +845,9 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.hsts_weak' 2>/dev/null || echo 'HSTS missing always token')" \
+                "$(i18n 'webapp.hsts_weak')" \
                 "$(i18n 'webapp.nginx_hsts_weak_desc')" \
-                "$(i18n 'webapp.fix_hsts_always' 2>/dev/null || echo 'Append the always parameter to add_header')" \
+                "$(i18n 'webapp.fix_hsts_always')" \
                 "webapp.nginx_hsts")
             state_add_check "$check_json"
         fi
@@ -862,10 +862,10 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.directory_listing_on' 2>/dev/null || echo 'Directory Listing Enabled')" \
+                "$(i18n 'webapp.directory_listing_on')" \
                 "$(echo "$dir_listing" | tr '\n' '; ' | sed 's/;$//')" \
-                "$(i18n 'webapp.disable_autoindex' 2>/dev/null || echo 'Set autoindex off; in Nginx configuration')" \
-                "webapp.nginx_directory_listing")
+                "$(i18n 'webapp.disable_autoindex')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -879,9 +879,9 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.weak_ssl_protocols' 2>/dev/null || echo 'Weak SSL/TLS Protocols Enabled'): $weak_ssl_count" \
+                "$(i18n 'webapp.weak_ssl_protocols'): $weak_ssl_count" \
                 "$(echo "$weak_ssl" | head -3 | tr '\n' '; ' | sed 's/;$//')" \
-                "$(i18n 'webapp.disable_weak_ssl' 2>/dev/null || echo 'Use only TLSv1.2 and TLSv1.3')" \
+                "$(i18n 'webapp.disable_weak_ssl')" \
                 "webapp.nginx_ssl_protocols")
             state_add_check "$check_json"
         fi
@@ -896,9 +896,9 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.weak_ciphers' 2>/dev/null || echo 'Weak SSL Ciphers Detected'): $weak_cipher_count" \
+                "$(i18n 'webapp.weak_ciphers'): $weak_cipher_count" \
                 "$(echo "$weak_ciphers" | tr '\n' ', ' | sed 's/,$//')" \
-                "$(i18n 'webapp.update_ciphers' 2>/dev/null || echo 'Update ssl_ciphers to use only strong ciphers')" \
+                "$(i18n 'webapp.update_ciphers')" \
                 "webapp.nginx_ssl_ciphers")
             state_add_check "$check_json"
         fi
@@ -907,7 +907,7 @@ webapp_audit() {
     # === Apache Security ===
     if _webapp_apache_installed; then
         has_webserver=true
-        print_item "$(i18n 'webapp.checking_apache' 2>/dev/null || echo 'Checking Apache security configuration...')"
+        print_item "$(i18n 'webapp.checking_apache')"
 
         # 7. ServerSignature
         local sig=$(_webapp_apache_server_signature)
@@ -917,10 +917,10 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.apache_signature_on' 2>/dev/null || echo 'Apache ServerSignature Enabled')" \
+                "$(i18n 'webapp.apache_signature_on')" \
                 "$(i18n 'webapp.apache_server_signature_desc')" \
-                "$(i18n 'webapp.set_signature_off' 2>/dev/null || echo 'Set ServerSignature Off in apache2.conf')" \
-                "webapp.apache_server_signature")
+                "$(i18n 'webapp.set_signature_off')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -932,10 +932,10 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.apache_tokens_verbose' 2>/dev/null || echo 'Apache ServerTokens Verbose')" \
+                "$(i18n 'webapp.apache_tokens_verbose')" \
                 "$(i18n 'webapp.apache_server_tokens_desc' "tokens=$tokens")" \
-                "$(i18n 'webapp.set_tokens_prod' 2>/dev/null || echo 'Set ServerTokens Prod in apache2.conf')" \
-                "webapp.apache_server_tokens")
+                "$(i18n 'webapp.set_tokens_prod')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -947,10 +947,10 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.apache_trace_on' 2>/dev/null || echo 'Apache TRACE Method Enabled')" \
+                "$(i18n 'webapp.apache_trace_on')" \
                 "$(i18n 'webapp.apache_trace_enabled_desc')" \
-                "$(i18n 'webapp.disable_trace' 2>/dev/null || echo 'Set TraceEnable Off in apache2.conf')" \
-                "webapp.apache_trace")
+                "$(i18n 'webapp.disable_trace')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -964,10 +964,10 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.apache_indexes_on' 2>/dev/null || echo 'Apache Directory Indexing Enabled')" \
+                "$(i18n 'webapp.apache_indexes_on')" \
                 "$(echo "$dir_idx" | tr '\n' '; ' | sed 's/;$//')" \
-                "$(i18n 'webapp.disable_indexes' 2>/dev/null || echo 'Use Options -Indexes in configuration')" \
-                "webapp.apache_directory_index")
+                "$(i18n 'webapp.disable_indexes')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -981,23 +981,23 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.dangerous_modules' 2>/dev/null || echo 'Potentially Dangerous Apache Modules'): $danger_count" \
+                "$(i18n 'webapp.dangerous_modules'): $danger_count" \
                 "$(echo "$danger_mods" | tr '\n' ', ' | sed 's/,$//')" \
-                "$(i18n 'webapp.review_modules' 2>/dev/null || echo 'Review and disable unnecessary modules')" \
-                "webapp.apache_modules")
+                "$(i18n 'webapp.review_modules')" \
+                "")
             state_add_check "$check_json"
         fi
     fi
 
     # === PHP Security ===
     if _webapp_php_installed; then
-        print_item "$(i18n 'webapp.checking_php' 2>/dev/null || echo 'Checking PHP security configuration...')"
+        print_item "$(i18n 'webapp.checking_php')"
 
         local php_issues=()
 
         # 12. expose_php
         local expose=$(_webapp_php_expose)
-        if [[ "$expose" == "On" || "$expose" == "1" ]]; then
+        if _webapp_php_is_true "$expose"; then
             php_issues+=("expose_php=On")
         fi
 
@@ -1009,7 +1009,7 @@ webapp_audit() {
 
         # 14. allow_url_include
         local url_include=$(_webapp_php_allow_url_include)
-        if [[ "$url_include" == "On" || "$url_include" == "1" ]]; then
+        if _webapp_php_is_true "$url_include"; then
             php_issues+=("allow_url_include=On (DANGEROUS)")
         fi
 
@@ -1019,10 +1019,10 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.php_security_issues' 2>/dev/null || echo 'PHP Security Issues'): ${#php_issues[@]}" \
+                "$(i18n 'webapp.php_security_issues'): ${#php_issues[@]}" \
                 "$(printf '%s, ' "${php_issues[@]}" | sed 's/, $//')" \
-                "$(i18n 'webapp.fix_php_settings' 2>/dev/null || echo 'Update php.ini with secure settings')" \
-                "webapp.php_security")
+                "$(i18n 'webapp.fix_php_settings')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -1036,10 +1036,10 @@ webapp_audit() {
                 "webapp" \
                 "medium" \
                 "failed" \
-                "$(i18n 'webapp.dangerous_functions' 2>/dev/null || echo 'Dangerous PHP Functions Enabled'): $not_disabled_count" \
+                "$(i18n 'webapp.dangerous_functions'): $not_disabled_count" \
                 "$(echo "$not_disabled" | head -5 | tr '\n' ', ' | sed 's/,$//')" \
-                "$(i18n 'webapp.disable_functions' 2>/dev/null || echo 'Add dangerous functions to disable_functions in php.ini')" \
-                "webapp.php_dangerous_functions")
+                "$(i18n 'webapp.disable_functions')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -1053,10 +1053,10 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.session_security' 2>/dev/null || echo 'PHP Session Security Issues'): $session_count" \
+                "$(i18n 'webapp.session_security'): $session_count" \
                 "$(echo "$session_issues" | tr '\n' '; ' | sed 's/;$//')" \
-                "$(i18n 'webapp.fix_session_settings' 2>/dev/null || echo 'Update session settings in php.ini')" \
-                "webapp.php_session")
+                "$(i18n 'webapp.fix_session_settings')" \
+                "")
             state_add_check "$check_json"
         fi
 
@@ -1068,16 +1068,16 @@ webapp_audit() {
                 "webapp" \
                 "low" \
                 "failed" \
-                "$(i18n 'webapp.open_basedir_not_set' 2>/dev/null || echo 'PHP open_basedir Not Configured')" \
+                "$(i18n 'webapp.open_basedir_not_set')" \
                 "$(i18n 'webapp.php_open_basedir_desc')" \
-                "$(i18n 'webapp.set_open_basedir' 2>/dev/null || echo 'Set open_basedir to restrict PHP file access')" \
-                "webapp.php_open_basedir")
+                "$(i18n 'webapp.set_open_basedir')" \
+                "")
             state_add_check "$check_json"
         fi
     fi
 
     # === SSL/TLS Certificate Checks ===
-    print_item "$(i18n 'webapp.checking_ssl' 2>/dev/null || echo 'Checking SSL/TLS certificates...')"
+    print_item "$(i18n 'webapp.checking_ssl')"
 
     # 18. Certificate expiry
     local expiring=$(_webapp_ssl_cert_expiry)
@@ -1098,15 +1098,15 @@ webapp_audit() {
             "webapp" \
             "$severity" \
             "failed" \
-            "$(i18n 'webapp.cert_expiring' 2>/dev/null || echo 'SSL Certificates Expiring/Expired'): $expiring_count" \
+            "$(i18n 'webapp.cert_expiring'): $expiring_count" \
             "${expired_list%;*}" \
-            "$(i18n 'webapp.renew_certs' 2>/dev/null || echo 'Renew SSL certificates before expiry')" \
-            "webapp.ssl_cert_expiry")
+            "$(i18n 'webapp.renew_certs')" \
+            "")
         state_add_check "$check_json"
     fi
 
     # === Sensitive File Exposure ===
-    print_item "$(i18n 'webapp.checking_exposure' 2>/dev/null || echo 'Checking for sensitive file exposure...')"
+    print_item "$(i18n 'webapp.checking_exposure')"
 
     # 19. Sensitive files
     local sensitive=$(_webapp_sensitive_files)
@@ -1118,10 +1118,10 @@ webapp_audit() {
             "webapp" \
             "high" \
             "failed" \
-            "$(i18n 'webapp.sensitive_files_found' 2>/dev/null || echo 'Sensitive Files in Web Root'): $sensitive_count" \
+            "$(i18n 'webapp.sensitive_files_found'): $sensitive_count" \
             "$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
-            "$(i18n 'webapp.remove_sensitive' 2>/dev/null || echo 'Remove or restrict access to sensitive files')" \
-            "webapp.sensitive_files")
+            "$(i18n 'webapp.remove_sensitive')" \
+            "")
         state_add_check "$check_json"
     else
         check_json=$(create_check_json \
@@ -1129,7 +1129,7 @@ webapp_audit() {
             "webapp" \
             "info" \
             "passed" \
-            "$(i18n 'webapp.no_sensitive_files' 2>/dev/null || echo 'No Sensitive Files Exposed')" \
+            "$(i18n 'webapp.no_sensitive_files')" \
             "$(i18n 'webapp.sensitive_files_ok_desc')" \
             "" \
             "")
@@ -1146,10 +1146,10 @@ webapp_audit() {
             "webapp" \
             "medium" \
             "failed" \
-            "$(i18n 'webapp.backup_files_found' 2>/dev/null || echo 'Backup Files in Web Root'): $backup_count" \
+            "$(i18n 'webapp.backup_files_found'): $backup_count" \
             "$(echo "$backups" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
-            "$(i18n 'webapp.remove_backups' 2>/dev/null || echo 'Remove backup files from web-accessible directories')" \
-            "webapp.backup_files")
+            "$(i18n 'webapp.remove_backups')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1175,7 +1175,7 @@ webapp_audit() {
                 "webapp" \
                 "info" \
                 "passed" \
-                "$(i18n 'webapp.no_webserver' 2>/dev/null || echo 'No Web Server Detected')" \
+                "$(i18n 'webapp.no_webserver')" \
                 "$(i18n 'webapp.no_webserver_desc')" \
                 "" \
                 "")
@@ -1204,112 +1204,8 @@ webapp_fix() {
             _webapp_fix_nginx_hsts
             ;;
 
-        webapp.nginx_directory_listing)
-            print_info "$(i18n 'webapp.manual_fix' 2>/dev/null || echo 'Manual fix required')"
-            echo ""
-            echo "$(i18n 'webapp.autoindex_fix' 2>/dev/null || echo 'To disable directory listing'):"
-            echo ""
-            echo "  # In nginx.conf or site config:"
-            echo "  autoindex off;"
-            echo ""
-            return 1
-            ;;
-
         webapp.nginx_ssl_protocols|webapp.nginx_ssl_ciphers)
             _webapp_fix_nginx_ssl
-            ;;
-
-        webapp.apache_server_signature|webapp.apache_server_tokens|webapp.apache_trace)
-            _webapp_fix_apache_security
-            ;;
-
-        webapp.apache_directory_index)
-            print_info "$(i18n 'webapp.manual_fix' 2>/dev/null || echo 'Manual fix required')"
-            echo ""
-            echo "$(i18n 'webapp.indexes_fix' 2>/dev/null || echo 'To disable directory indexing'):"
-            echo ""
-            echo "  # In apache2.conf or site config:"
-            echo "  <Directory /var/www/html>"
-            echo "      Options -Indexes"
-            echo "  </Directory>"
-            echo ""
-            return 1
-            ;;
-
-        webapp.apache_modules)
-            print_info "$(i18n 'webapp.review_alert' 2>/dev/null || echo 'Review Required')"
-            echo ""
-            echo "$(i18n 'webapp.modules_review' 2>/dev/null || echo 'Review and disable unnecessary modules'):"
-            echo ""
-            local mods=$(_webapp_apache_modules)
-            for mod in $mods; do
-                local mod_name="${mod#mod_}"
-                echo "  a2dismod $mod_name"
-            done
-            echo ""
-            echo "$(i18n 'webapp.then_restart' 2>/dev/null || echo 'Then restart Apache'):"
-            echo "  systemctl restart apache2"
-            return 1
-            ;;
-
-        webapp.php_security|webapp.php_dangerous_functions|webapp.php_session|webapp.php_open_basedir)
-            _webapp_fix_php_info
-            ;;
-
-        webapp.ssl_cert_expiry)
-            print_info "$(i18n 'webapp.cert_renewal' 2>/dev/null || echo 'Certificate Renewal Required')"
-            echo ""
-            echo "$(i18n 'webapp.renewal_options' 2>/dev/null || echo 'Renewal options'):"
-            echo ""
-            echo "  # For Let's Encrypt:"
-            echo "  certbot renew"
-            echo ""
-            echo "  # For manual certificates:"
-            echo "  # Purchase/obtain new certificate and replace"
-            echo ""
-            local expiring=$(_webapp_ssl_cert_expiry)
-            echo "Expiring certificates:"
-            echo "$expiring" | while IFS='|' read -r cert status days; do
-                [[ -z "$cert" ]] && continue
-                echo "  $cert ($days)"
-            done
-            return 1
-            ;;
-
-        webapp.sensitive_files)
-            print_warn "$(i18n 'webapp.sensitive_warning' 2>/dev/null || echo 'Sensitive Files Detected')"
-            echo ""
-            echo "$(i18n 'webapp.files_to_remove' 2>/dev/null || echo 'Files to remove or protect'):"
-            echo ""
-            local sensitive=$(_webapp_sensitive_files)
-            echo "$sensitive" | while read -r file; do
-                [[ -z "$file" ]] && continue
-                echo "  rm -f \"$file\"  # or move outside web root"
-            done
-            echo ""
-            echo "$(i18n 'webapp.block_access' 2>/dev/null || echo 'Or block access in web server config'):"
-            echo ""
-            echo "  # Nginx:"
-            echo "  location ~ /\\. { deny all; }"
-            echo ""
-            echo "  # Apache (.htaccess or config):"
-            echo "  <FilesMatch \"^\\.(git|env|htaccess)\">"
-            echo "      Require all denied"
-            echo "  </FilesMatch>"
-            return 1
-            ;;
-
-        webapp.backup_files)
-            print_warn "$(i18n 'webapp.backup_warning' 2>/dev/null || echo 'Backup Files Detected')"
-            echo ""
-            echo "$(i18n 'webapp.backups_to_remove' 2>/dev/null || echo 'Backup files to remove'):"
-            echo ""
-            local backups=$(_webapp_backup_files)
-            echo "$backups" | while read -r file; do
-                [[ -z "$file" ]] && continue
-                echo "  rm -f \"$file\""
-            done
-            return 1
             ;;
 
         *)
@@ -1321,13 +1217,13 @@ webapp_fix() {
 
 # Fix: Nginx server_tokens
 _webapp_fix_nginx_server_tokens() {
-    print_info "$(i18n 'webapp.fixing_server_tokens' 2>/dev/null || echo 'Adding server_tokens off...')"
+    print_info "$(i18n 'webapp.fixing_server_tokens')"
 
     # Must be UNCOMMENTED: Debian's default nginx.conf ships the directive
     # commented out, so a bare match makes this FIX_SAFE fix report "already
     # configured", change nothing, and be re-flagged forever.
     if grep -qE '^[^#]*server_tokens[[:space:]]+off' "$NGINX_CONF" 2>/dev/null; then
-        print_ok "$(i18n 'webapp.already_configured' 2>/dev/null || echo 'Already configured')"
+        print_ok "$(i18n 'webapp.already_configured')"
         return 0
     fi
 
@@ -1351,30 +1247,40 @@ _webapp_fix_nginx_server_tokens() {
     fi
 
     if ! write_file_atomic "$NGINX_CONF" "$updated"; then
-        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        print_error "$(i18n 'common.failed')"
         return 1
     fi
 
     # Test and reload. On failure, restore the backup before returning: this
     # fix is auto-applied (FIX_SAFE), so a broken nginx.conf left live would
     # silently fail the next reload/restart/reboot.
-    if nginx -t 2>/dev/null; then
-        systemctl reload nginx
-        print_ok "$(i18n 'webapp.server_tokens_fixed' 2>/dev/null || echo 'server_tokens off added and Nginx reloaded')"
-        return 0
-    else
-        print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+    local test_output
+    if ! test_output=$(nginx -t 2>&1); then
+        print_error "$(i18n 'webapp.nginx_test_failed')"
+        # nginx names the file and the line; "configuration test failed" alone
+        # is not something the operator can act on.
+        [[ -n "$test_output" ]] && print_info "$(i18n 'webapp.nginx_test_output' "msg=$test_output")"
         if [[ -n "$bak" && -f "$bak" ]]; then
             cp -p "$bak" "$NGINX_CONF" && \
-                print_warn "$(i18n 'webapp.nginx_restored' 2>/dev/null || echo 'Restored Nginx configuration from backup after the change failed validation')"
+                print_warn "$(i18n 'webapp.nginx_restored')"
         fi
         return 1
     fi
+
+    # A failed reload leaves the edit on disk but NOT live. Returning 0 here
+    # records the fix as complete while the host still leaks its version.
+    if ! systemctl reload nginx 2>/dev/null; then
+        print_error "$(i18n 'webapp.reload_failed')"
+        return 1
+    fi
+
+    print_ok "$(i18n 'webapp.server_tokens_fixed')"
+    return 0
 }
 
 # Fix: Nginx security headers
 _webapp_fix_nginx_security_headers() {
-    print_info "$(i18n 'webapp.adding_headers' 2>/dev/null || echo 'Adding security headers...')"
+    print_info "$(i18n 'webapp.adding_headers')"
 
     # Create a drop-in configuration
     local headers_conf="$NGINX_CONFD/security-headers.conf"
@@ -1414,32 +1320,45 @@ EOF
 )
 
     if ! write_file_atomic "$headers_conf" "$content"; then
-        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        print_error "$(i18n 'common.failed')"
         return 1
     fi
 
     # Test and reload. On failure, restore the prior drop-in or remove the one
     # we just wrote so an auto-included broken file can't fail the next reload.
-    if nginx -t 2>/dev/null; then
-        systemctl reload nginx
-        print_ok "$(i18n 'webapp.headers_added' 2>/dev/null || echo 'Security headers configuration created'): $headers_conf"
-        print_info "$(i18n 'webapp.include_headers' 2>/dev/null || echo 'Include in server blocks if not automatic')"
-        return 0
-    else
-        print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+    local test_output
+    if ! test_output=$(nginx -t 2>&1); then
+        print_error "$(i18n 'webapp.nginx_test_failed')"
+        [[ -n "$test_output" ]] && print_info "$(i18n 'webapp.nginx_test_output' "msg=$test_output")"
         if [[ "$pre_existed" == "true" && -n "$bak" && -f "$bak" ]]; then
             cp -p "$bak" "$headers_conf"
         else
             rm -f "$headers_conf"
         fi
-        print_warn "$(i18n 'webapp.nginx_restored' 2>/dev/null || echo 'Restored Nginx configuration from backup after the change failed validation')"
+        print_warn "$(i18n 'webapp.nginx_restored')"
         return 1
     fi
+
+    # Same reason as server_tokens: written is not live.
+    if ! systemctl reload nginx 2>/dev/null; then
+        print_error "$(i18n 'webapp.reload_failed')"
+        return 1
+    fi
+
+    # "created" would be a lie on a host that already had this drop-in: the
+    # operator's own file is gone and only the backup path leads back to it.
+    if [[ "$pre_existed" == "true" ]]; then
+        print_warn "$(i18n 'webapp.headers_replaced' "file=$headers_conf" "backup=$bak")"
+    else
+        print_ok "$(i18n 'webapp.headers_added'): $headers_conf"
+    fi
+    print_info "$(i18n 'webapp.include_headers')"
+    return 0
 }
 
 # Fix: Nginx HSTS
 _webapp_fix_nginx_hsts() {
-    print_info "$(i18n 'webapp.adding_hsts' 2>/dev/null || echo 'Adding HSTS header...')"
+    print_info "$(i18n 'webapp.adding_hsts')"
 
     local hsts_conf="$NGINX_CONFD/hsts.conf"
 
@@ -1463,12 +1382,12 @@ EOF
 )
 
     if ! write_file_atomic "$hsts_conf" "$content"; then
-        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        print_error "$(i18n 'common.failed')"
         return 1
     fi
 
-    print_ok "$(i18n 'webapp.hsts_template_created' 2>/dev/null || echo 'HSTS template created'): $hsts_conf"
-    print_warn "$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')"
+    print_ok "$(i18n 'webapp.hsts_template_created'): $hsts_conf"
+    print_warn "$(i18n 'webapp.hsts_warning')"
     # The header is written commented out, so the finding is NOT resolved —
     # but the template was created. FIX_TEMPLATE_ONLY withholds the completion
     # record; this exit status is about the work.
@@ -1479,10 +1398,10 @@ EOF
 # block. snippets/, NOT conf.d/: these directives are already set in the
 # default http{} block, so an auto-included copy is a duplicate emerg.
 _webapp_fix_nginx_ssl() {
-    print_info "$(i18n 'webapp.updating_ssl' 2>/dev/null || echo 'Creating secure SSL configuration...')"
+    print_info "$(i18n 'webapp.updating_ssl')"
 
     if ! mkdir -p "$NGINX_SNIPPETS" 2>/dev/null; then
-        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        print_error "$(i18n 'common.failed')"
         return 1
     fi
     local ssl_conf="$NGINX_SNIPPETS/ssl-security.conf"
@@ -1525,82 +1444,24 @@ EOF
 )
 
     if ! write_file_atomic "$ssl_conf" "$content"; then
-        print_error "$(i18n 'common.failed' 2>/dev/null || echo 'Failed')"
+        print_error "$(i18n 'common.failed')"
         return 1
     fi
 
     # Sanity-check the whole nginx config still parses. The snippet is not
     # included anywhere yet, so this only confirms we did not disturb the live
     # config; if nginx -t is available and fails, surface it.
-    if command -v nginx >/dev/null 2>&1 && ! nginx -t 2>/dev/null; then
-        print_error "$(i18n 'webapp.nginx_test_failed' 2>/dev/null || echo 'Nginx configuration test failed')"
+    local test_output
+    if command -v nginx >/dev/null 2>&1 && ! test_output=$(nginx -t 2>&1); then
+        print_error "$(i18n 'webapp.nginx_test_failed')"
+        [[ -n "$test_output" ]] && print_info "$(i18n 'webapp.nginx_test_output' "msg=$test_output")"
         return 1
     fi
 
-    print_ok "$(i18n 'webapp.ssl_config_created' 2>/dev/null || echo 'Secure SSL configuration created'): $ssl_conf"
-    print_warn "$(i18n 'webapp.include_in_ssl' 2>/dev/null || echo 'Include in each SSL server block, then reload nginx'): include snippets/ssl-security.conf;"
+    print_ok "$(i18n 'webapp.ssl_config_created'): $ssl_conf"
+    print_warn "$(i18n 'webapp.include_in_ssl'): include snippets/ssl-security.conf;"
     # The snippet is inert until the operator includes it, so the finding is
     # NOT resolved — but the write succeeded. FIX_TEMPLATE_ONLY is what stops
     # the completion record; this exit status is about the work.
     return 0
-}
-
-# Fix: Apache security settings
-_webapp_fix_apache_security() {
-    print_info "$(i18n 'webapp.apache_security_info' 2>/dev/null || echo 'Apache Security Configuration')"
-    echo ""
-    echo "$(i18n 'webapp.add_to_apache' 2>/dev/null || echo 'Add to apache2.conf or httpd.conf'):"
-    echo ""
-    echo "  # Hide Apache version"
-    echo "  ServerTokens Prod"
-    echo "  ServerSignature Off"
-    echo ""
-    echo "  # Disable TRACE method"
-    echo "  TraceEnable Off"
-    echo ""
-    echo "  # Security headers"
-    echo "  Header always set X-Frame-Options \"SAMEORIGIN\""
-    echo "  Header always set X-Content-Type-Options \"nosniff\""
-    echo "  Header always set X-XSS-Protection \"0\"   # OWASP: disable the legacy XSS Auditor"
-    echo ""
-    echo "$(i18n 'webapp.enable_headers_mod' 2>/dev/null || echo 'Enable headers module'):"
-    echo "  a2enmod headers"
-    echo "  systemctl restart apache2"
-    return 1
-}
-
-# Fix: PHP security information
-_webapp_fix_php_info() {
-    local ini=$(_webapp_get_php_ini)
-    print_info "$(i18n 'webapp.php_security_info' 2>/dev/null || echo 'PHP Security Configuration')"
-    echo ""
-    echo "$(i18n 'webapp.php_ini_location' 2>/dev/null || echo 'PHP configuration file'): $ini"
-    echo ""
-    echo "$(i18n 'webapp.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
-    echo ""
-    echo "  ; Hide PHP version"
-    echo "  expose_php = Off"
-    echo ""
-    echo "  ; Don't display errors in production"
-    echo "  display_errors = Off"
-    echo "  log_errors = On"
-    echo ""
-    echo "  ; Disable dangerous features"
-    echo "  allow_url_include = Off"
-    echo "  allow_url_fopen = Off"
-    echo ""
-    echo "  ; Disable dangerous functions"
-    echo "  disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,show_source,phpinfo"
-    echo ""
-    echo "  ; Session security"
-    echo "  session.cookie_httponly = 1"
-    echo "  session.cookie_secure = 1"
-    echo "  session.use_strict_mode = 1"
-    echo ""
-    echo "  ; Directory restriction"
-    echo "  open_basedir = /var/www/:/tmp/"
-    echo ""
-    echo "$(i18n 'webapp.restart_php' 2>/dev/null || echo 'After changes, restart PHP-FPM'):"
-    echo "  systemctl restart php*-fpm"
-    return 1
 }

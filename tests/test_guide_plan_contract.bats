@@ -23,6 +23,12 @@ setup() {
     state_add_check "$CHECK_A"
     state_add_check "$CHECK_B"
     state_add_check "$CHECK_C"
+
+    # execute_fix runs only an id some FIX_* map classifies, so the execute_plan
+    # fixtures below have to be classified too — unclassified, both of them are
+    # refused before dispatch and the pair passes for the wrong reason.
+    FIX_SAFE["fake.works"]="test fixture"
+    FIX_SAFE["fake.broken"]="test fixture"
 }
 
 # Selector harness: capture what the checklist is HANDED (its tags are what
@@ -105,6 +111,17 @@ _checklist_tags_only() {
          title: "t", desc: "", suggestion: "", fix_id: "fake.works"}]}')"
     run execute_plan
     [ "$status" -eq 0 ]
+}
+
+@test "execute_fix refuses a fix_id no safety map classifies" {
+    # The gate is a whitelist. An unclassified id used to miss the alert_only
+    # test, miss the confirmation test, and then apply unannounced.
+    export VPSSEC_YES=1
+    fake_fix() { : > "$BATS_TEST_TMPDIR/handler-ran"; return 0; }
+
+    run execute_fix "fake.unclassified"
+    [ "$status" -eq 1 ]
+    [ ! -f "$BATS_TEST_TMPDIR/handler-ran" ]
 }
 
 # ---- module-failure visibility ---------------------------------------------

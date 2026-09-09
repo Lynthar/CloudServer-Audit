@@ -135,6 +135,28 @@ _emitted_check_ids() {
     fi
 }
 
+# The other half of the same contract, which nothing enforced: an alert-only
+# finding has nothing to dispatch, so it must hand the engine an EMPTY fix_id;
+# one that arrives as a fix_id is printed as a "Fix ID" execute_fix then refuses.
+
+@test "no FIX_ALERT_ONLY key is emitted as a fix_id" {
+    local emitted leaks="" id
+    emitted=$( { _emitted_fix_ids_all; } | sort -u )
+
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        if grep -qxF -- "$id" <<<"$emitted"; then
+            leaks+="$id "
+        fi
+    done < <(_map_keys FIX_ALERT_ONLY)
+
+    if [[ -n "$leaks" ]]; then
+        echo "alert-only key handed to the engine as a fix_id (pass \"\" instead):"
+        echo "  $leaks"
+        false
+    fi
+}
+
 # FIX_TEMPLATE_ONLY records which fixes cannot resolve the finding they hang off.
 # It is ORTHOGONAL to the safety class, not a fifth class, and gets the same
 # both-ways treatment: no key without a fix, and no key without a safety class.

@@ -259,12 +259,12 @@ _update_audit_unattended() {
             "update" \
             "low" \
             "passed" \
-            "$(i18n 'update.unattended_unsupported' 2>/dev/null || echo 'No native auto-update mechanism (distro default)')" \
+            "$(i18n 'update.unattended_unsupported')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'update.unattended_unsupported' 2>/dev/null || echo 'No native auto-update mechanism (distro default)')"
+        print_ok "$(i18n 'update.unattended_unsupported')"
         return
     fi
 

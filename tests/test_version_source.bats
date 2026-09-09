@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # VERSION is the only source of the version string. If it stops being readable
-# or stops being covered by the manifest, every report quietly says "unknown"
+# or the install tree arrives without it, every report quietly says "unknown"
 # instead of failing, which is the harder kind of wrong to notice.
 
 load helpers.bash
@@ -40,9 +40,27 @@ setup() {
     [ ! -s "$BATS_TEST_TMPDIR/err" ]
 }
 
-@test "VERSION is covered by the integrity manifest" {
+@test "the installer aborts on a tree that arrived without VERSION" {
     # This is what turns a missing VERSION into an install-time abort rather
-    # than a runtime "unknown": sha256sum -c fails on a listed missing file.
-    run grep -qE '[[:space:]]VERSION$' "$REPO/manifest.sha256"
+    # than a runtime "unknown". Asserted against verify_integrity's behaviour,
+    # not against whatever mechanism happens to implement it.
+    eval "$(awk '/^verify_integrity\(\)/,/^}/' "$REPO/install.sh")"
+    print_ok() { echo "[OK] $*"; }
+    print_warn() { echo "[WARN] $*"; }
+    print_error() { echo "[ERROR] $*"; }
+
+    INSTALL_DIR="$BATS_TEST_TMPDIR/opt-vpssec"
+    BIN_LINK="$BATS_TEST_TMPDIR/bin/vpssec"
+    mkdir -p "$INSTALL_DIR"
+    : > "$INSTALL_DIR/vpssec"
+
+    run verify_integrity
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"VERSION"* ]]
+
+    # The same tree WITH it passes, so the refusal above is about VERSION and
+    # not about a check that refuses everything.
+    : > "$INSTALL_DIR/VERSION"
+    run verify_integrity
     [ "$status" -eq 0 ]
 }

@@ -375,7 +375,10 @@ install_vpssec() {
     # without costing the operator a working installation.
     mkdir -p "$(dirname "$INSTALL_DIR")"
     safe_remove_install_dir
-    mv "${VPSSEC_STAGING}/vpssec-${ver}" "$INSTALL_DIR"
+    # Status-checked: a truncated move is the one way a verified tarball still
+    # lands as a half-tree, and the old install is already gone by this point.
+    mv "${VPSSEC_STAGING}/vpssec-${ver}" "$INSTALL_DIR" \
+        || { print_error "Moving the extracted tree into $INSTALL_DIR failed"; exit 1; }
 
     # Create required directories
     mkdir -p "$INSTALL_DIR"/{state,reports,backups,logs,templates}
@@ -447,25 +450,17 @@ EOF
     chmod +x "$INSTALL_DIR/uninstall.sh"
 }
 
-# Manifest check: absent = warn, verifies = continue, mismatch = abort. The
-# upstream check is the cosign signature above; this catches damage after it —
-# partial extraction, a truncated move, a missing VERSION.
+# Arrival check. Provenance is the cosign signature above; what is left is
+# damage between a verified tarball and the tree on disk, and tar, mv and this
+# cover it. VERSION missing would otherwise degrade to a runtime "unknown".
 verify_integrity() {
-    local manifest="$INSTALL_DIR/manifest.sha256"
+    local missing=()
+    [[ -f "$INSTALL_DIR/VERSION" ]] || missing+=("VERSION")
+    [[ -f "$INSTALL_DIR/vpssec" ]]  || missing+=("vpssec")
 
-    if [[ ! -f "$manifest" ]]; then
-        print_warn "Integrity manifest not present at $manifest; skipping check"
-        return 0
-    fi
-
-    # sha256sum -c reads paths relative to cwd, so cd into the install root.
-    # --quiet hides per-file OK lines but still prints failures.
-    print_info "Verifying file integrity against manifest.sha256..."
-    if ( cd "$INSTALL_DIR" && sha256sum --quiet -c manifest.sha256 ); then
-        print_ok "Integrity check passed (manifest matches)"
-    else
-        print_error "Integrity check FAILED — installation may be corrupted or tampered with"
-        print_error "If you trust this source, re-run after deleting $INSTALL_DIR; otherwise inspect the failed files above"
+    if (( ${#missing[@]} > 0 )); then
+        print_error "Install tree is incomplete — missing: ${missing[*]}"
+        print_error "Delete $INSTALL_DIR and re-run; a partial tree installs a broken command"
         # On an UPDATE the pre-existing symlink already points into the
         # replaced tree (the tarball ships vpssec executable) — leave no
         # entry point to an install that just failed verification.
@@ -475,6 +470,7 @@ verify_integrity() {
         fi
         exit 1
     fi
+    print_ok "Install tree complete"
 }
 
 # Post-install setup

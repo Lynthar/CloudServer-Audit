@@ -396,7 +396,7 @@ _get_provider_name() {
         aws-or-compatible)
             # Not a key on its own line only because of the dash.
             i18n 'cloud.provider_name_aws_compatible' ;;
-        unknown)      echo "$(i18n 'common.unknown' 2>/dev/null || echo 'Unknown')" ;;
+        unknown)      echo "$(i18n 'common.unknown')" ;;
         *)            echo "$provider" ;;
     esac
 }
@@ -642,22 +642,22 @@ _cloud_audit_imds() {
                 "cloud" \
                 "medium" \
                 "failed" \
-                "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled (HttpTokens=optional)')" \
+                "$(i18n 'cloud.imds_v1_enabled')" \
                 "$(i18n 'cloud.imds_v1_enabled_desc')" \
-                "$(i18n 'cloud.fix_imds_v1' 2>/dev/null || echo 'Run: aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required')" \
+                "$(i18n 'cloud.fix_imds_v1')" \
                 "")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'cloud.imds_v1_enabled' 2>/dev/null || echo 'AWS IMDSv1 is enabled')"
+            print_severity "medium" "$(i18n 'cloud.imds_v1_enabled')"
         elif [[ "$v1_status" == "401" && -n "$v2_token" ]]; then
             check=$(create_check_json \
                 "cloud.imds_v2_only" \
                 "cloud" \
                 "info" \
                 "passed" \
-                "$(i18n 'cloud.imds_v2_only' 2>/dev/null || echo 'AWS IMDSv2 enforced (HttpTokens=required)')" \
+                "$(i18n 'cloud.imds_v2_only')" \
                 "" "" "")
             state_add_check "$check"
-            print_ok "$(i18n 'cloud.imds_v2_only' 2>/dev/null || echo 'AWS IMDSv2 enforced')"
+            print_ok "$(i18n 'cloud.imds_v2_only')"
         fi
     fi
 
@@ -673,22 +673,22 @@ _cloud_audit_imds() {
                 "cloud" \
                 "medium" \
                 "failed" \
-                "$(i18n 'cloud.imds_alibaba_normal_mode' 2>/dev/null || echo 'Alibaba Cloud IMDS accepts token-free reads (normal mode)')" \
+                "$(i18n 'cloud.imds_alibaba_normal_mode')" \
                 "$(i18n 'cloud.imds_alibaba_normal_mode_desc')" \
-                "$(i18n 'cloud.fix_imds_alibaba' 2>/dev/null || echo 'Enable security hardening mode in the ECS console under instance metadata options')" \
+                "$(i18n 'cloud.fix_imds_alibaba')" \
                 "")
             state_add_check "$check"
-            print_severity "medium" "$(i18n 'cloud.imds_alibaba_normal_mode' 2>/dev/null || echo 'Alibaba IMDS in normal mode')"
+            print_severity "medium" "$(i18n 'cloud.imds_alibaba_normal_mode')"
         elif [[ "$ali_status" == "403" || "$ali_status" == "401" ]]; then
             check=$(create_check_json \
                 "cloud.imds_alibaba_hardened" \
                 "cloud" \
                 "info" \
                 "passed" \
-                "$(i18n 'cloud.imds_alibaba_hardened' 2>/dev/null || echo 'Alibaba Cloud IMDS security hardening enabled')" \
+                "$(i18n 'cloud.imds_alibaba_hardened')" \
                 "" "" "")
             state_add_check "$check"
-            print_ok "$(i18n 'cloud.imds_alibaba_hardened' 2>/dev/null || echo 'Alibaba IMDS hardened')"
+            print_ok "$(i18n 'cloud.imds_alibaba_hardened')"
         fi
     fi
 
@@ -705,22 +705,22 @@ _cloud_audit_imds() {
                 "cloud" \
                 "high" \
                 "failed" \
-                "$(i18n 'cloud.user_data_leaked_secrets' 2>/dev/null || echo 'Embedded credentials detected in instance user-data')" \
+                "$(i18n 'cloud.user_data_leaked_secrets')" \
                 "$(i18n 'cloud.user_data_leaked_secrets_desc' "hits=$hits")" \
-                "$(i18n 'cloud.fix_user_data_secrets' 2>/dev/null || echo 'Rotate the exposed credentials immediately; pass secrets via the cloud providers secret store rather than user-data')" \
+                "$(i18n 'cloud.fix_user_data_secrets')" \
                 "")
             state_add_check "$check"
-            print_severity "high" "$(i18n 'cloud.user_data_leaked_secrets' 2>/dev/null || echo 'Secrets in user-data'): $hits"
+            print_severity "high" "$(i18n 'cloud.user_data_leaked_secrets'): $hits"
         else
             check=$(create_check_json \
                 "cloud.user_data_clean" \
                 "cloud" \
                 "info" \
                 "passed" \
-                "$(i18n 'cloud.user_data_clean' 2>/dev/null || echo 'user-data scanned, no embedded credential patterns')" \
+                "$(i18n 'cloud.user_data_clean')" \
                 "" "" "")
             state_add_check "$check"
-            print_ok "$(i18n 'cloud.user_data_clean' 2>/dev/null || echo 'user-data clean')"
+            print_ok "$(i18n 'cloud.user_data_clean')"
         fi
     fi
 
@@ -733,22 +733,22 @@ _cloud_audit_imds() {
                 "cloud" \
                 "info" \
                 "passed" \
-                "$(i18n 'cloud.imds_restricted' 2>/dev/null || echo 'Host firewall has rule(s) referencing IMDS address')" \
+                "$(i18n 'cloud.imds_restricted')" \
                 "" "" "")
             state_add_check "$check"
-            print_ok "$(i18n 'cloud.imds_restricted' 2>/dev/null || echo 'IMDS firewall restriction present')"
+            print_ok "$(i18n 'cloud.imds_restricted')"
         else
             check=$(create_check_json \
                 "cloud.imds_unrestricted" \
                 "cloud" \
                 "low" \
                 "failed" \
-                "$(i18n 'cloud.imds_unrestricted' 2>/dev/null || echo 'No host-firewall restriction on IMDS access')" \
+                "$(i18n 'cloud.imds_unrestricted')" \
                 "$(i18n 'cloud.imds_unrestricted_desc')" \
-                "$(i18n 'cloud.fix_imds_firewall' 2>/dev/null || echo 'Consider blocking IMDS at the host firewall for non-root users')" \
+                "$(i18n 'cloud.fix_imds_firewall')" \
                 "")
             state_add_check "$check"
-            print_severity "low" "$(i18n 'cloud.imds_unrestricted' 2>/dev/null || echo 'No firewall restriction on IMDS')"
+            print_severity "low" "$(i18n 'cloud.imds_unrestricted')"
         fi
     fi
 }
@@ -770,8 +770,8 @@ cloud_audit() {
             "cloud" \
             "info" \
             "passed" \
-            "$(i18n 'cloud.provider_detected' 2>/dev/null || echo 'Cloud Provider Detected'): $provider_name" \
-            "$(i18n 'cloud.provider_info' 2>/dev/null || echo 'Running on cloud infrastructure')" \
+            "$(i18n 'cloud.provider_detected'): $provider_name" \
+            "$(i18n 'cloud.provider_info')" \
             "" \
             "")
     else
@@ -780,8 +780,8 @@ cloud_audit() {
             "cloud" \
             "info" \
             "passed" \
-            "$(i18n 'cloud.provider_unknown' 2>/dev/null || echo 'Cloud Provider Unknown')" \
-            "$(i18n 'cloud.provider_unknown_desc' 2>/dev/null || echo 'Could not detect cloud provider, may be bare metal or unrecognized VPS')" \
+            "$(i18n 'cloud.provider_unknown')" \
+            "$(i18n 'cloud.provider_unknown_desc')" \
             "" \
             "")
     fi
@@ -792,14 +792,15 @@ cloud_audit() {
     local agent_count=$(count_lines "$known_agents" '|')
 
     if [[ -n "$known_agents" && "$agent_count" -gt 0 ]]; then
-        # Build agent list for display. The vendor key renders here, at the
-        # edge, so the title follows --lang.
+        # Build agent list for display. Both keys render here, at the edge, so
+        # the text follows --lang; the description says what the agent IS, which
+        # is the whole basis for deciding whether to keep it.
         local agent_list=""
         while IFS='|' read -r proc_name service_name vendor_key desc_key can_disable status; do
             [[ -z "$proc_name" ]] && continue
-            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")), "
+            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")): $(_cloud_agent_desc "$desc_key"); "
         done <<< "$known_agents"
-        agent_list="${agent_list%, }"
+        agent_list="${agent_list%; }"
 
         # Vendor agents are inventory, not exposure, so low on every host.
         # There is deliberately no foreign-vendor escalation: it must arrive
@@ -811,18 +812,18 @@ cloud_audit() {
             "cloud" \
             "$severity" \
             "failed" \
-            "$(i18n 'cloud.agents_found' 2>/dev/null || echo 'Cloud Monitoring Agents Found'): $agent_count" \
+            "$(i18n 'cloud.agents_found'): $agent_count" \
             "$agent_list" \
-            "$(i18n 'cloud.review_agents' 2>/dev/null || echo 'Review if these agents are needed, disable if not required')" \
-            "cloud.agents_found")
+            "$(i18n 'cloud.review_agents')" \
+            "")
     else
         check_json=$(create_check_json \
             "cloud.no_known_agents" \
             "cloud" \
             "info" \
             "passed" \
-            "$(i18n 'cloud.no_known_agents' 2>/dev/null || echo 'No Known Cloud Agents')" \
-            "$(i18n 'cloud.no_known_agents_desc' 2>/dev/null || echo 'No known cloud vendor monitoring agents detected')" \
+            "$(i18n 'cloud.no_known_agents')" \
+            "$(i18n 'cloud.no_known_agents_desc')" \
             "" \
             "")
     fi
@@ -845,10 +846,10 @@ cloud_audit() {
             "cloud" \
             "low" \
             "failed" \
-            "$(i18n 'cloud.suspicious_agents' 2>/dev/null || echo 'Suspicious Agent Processes'): $suspicious_count" \
+            "$(i18n 'cloud.suspicious_agents'): $suspicious_count" \
             "$proc_list" \
-            "$(i18n 'cloud.review_suspicious' 2>/dev/null || echo 'Review these processes - may be legitimate monitoring or unwanted software')" \
-            "cloud.suspicious_agents")
+            "$(i18n 'cloud.review_suspicious')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -858,64 +859,12 @@ cloud_audit() {
     return 0
 }
 
-# --- Fix Functions (Alert Only - No Auto Fix) ---
+# --- Fix Function ---
 
+# Vendor agents are inventory and disabling one is the operator's call:
+# nothing here is auto-fixable. The entry point stays because the engine
+# dispatches <module>_fix by name, and a missing one reads as a silent no-op.
 cloud_fix() {
-    local fix_id="$1"
-
-    case "$fix_id" in
-        cloud.agents_found)
-            print_warn "$(i18n 'cloud.manual_review' 2>/dev/null || echo 'Manual review required')"
-            echo ""
-            echo "$(i18n 'cloud.agents_info' 2>/dev/null || echo 'Detected monitoring agents'):"
-            echo ""
-
-            local known_agents=$(_find_known_agents)
-            # Feed the loop from the data, not stdin: a bare `while read` here
-            # reads the process's stdin (in guide mode, the remaining plan), so
-            # it must be redirected from $known_agents explicitly.
-            while IFS='|' read -r proc_name service_name vendor_key desc_key can_disable status; do
-                [[ -z "$proc_name" ]] && continue
-                echo "  • $proc_name"
-                echo "    $(i18n 'common.info' 2>/dev/null || echo 'Info'): $(_cloud_agent_desc "$desc_key")"
-                echo "    $(i18n 'cloud.vendor' 2>/dev/null || echo 'Vendor'): $(_cloud_vendor_name "$vendor_key")"
-                echo "    $(i18n 'cloud.service' 2>/dev/null || echo 'Service'): $service_name"
-                if [[ "$can_disable" == "yes" ]]; then
-                    echo "    $(i18n 'cloud.can_disable' 2>/dev/null || echo 'Can disable'): systemctl disable --now $service_name"
-                elif [[ "$can_disable" == "no" ]]; then
-                    echo "    $(i18n 'cloud.required' 2>/dev/null || echo 'Required'): $(i18n 'cloud.do_not_disable' 2>/dev/null || echo 'Do not disable - required for cloud functionality')"
-                else
-                    echo "    $(i18n 'cloud.optional' 2>/dev/null || echo 'Optional'): $(i18n 'cloud.review_before_disable' 2>/dev/null || echo 'Review before disabling')"
-                fi
-                echo ""
-            done <<< "$known_agents"
-
-            return 1  # Alert only, no auto-fix
-            ;;
-
-        cloud.suspicious_agents)
-            print_warn "$(i18n 'cloud.manual_review' 2>/dev/null || echo 'Manual review required')"
-            echo ""
-            echo "$(i18n 'cloud.suspicious_info' 2>/dev/null || echo 'Suspicious processes found'):"
-            echo ""
-
-            local suspicious=$(_find_suspicious_agents)
-            # Redirect from the data, not stdin (see cloud.agents_found above).
-            while IFS='|' read -r proc pid user cmdline; do
-                [[ -z "$proc" ]] && continue
-                echo "  • $proc (PID: $pid)"
-                echo "    User: $user"
-                echo "    Command: ${cmdline:0:100}..."
-                echo "    $(i18n 'cloud.investigate' 2>/dev/null || echo 'Investigate'): ps aux | grep $proc"
-                echo ""
-            done <<< "$suspicious"
-
-            return 1  # Alert only, no auto-fix
-            ;;
-
-        *)
-            log_warn "Unknown fix_id: $fix_id"
-            return 1
-            ;;
-    esac
+    log_warn "cloud has no automatic fix; every finding needs human review: ${1:-}"
+    return 1
 }

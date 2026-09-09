@@ -21,8 +21,20 @@ run_case "tokens/no-rollback-on-reject" 1 \
     '            true && \'
 
 run_case "tokens/validation-gate-removed" 1 \
-    '    if nginx -t 2>/dev/null; then' \
-    '    if true; then'
+    '    if ! test_output=$(nginx -t 2>&1); then' \
+    '    if false; then'
+
+# A reload that failed leaves the edit on disk but not live, and the old code
+# reported that as a completed fix.
+run_case "tokens/reload-unchecked" 1 \
+    '    if ! systemctl reload nginx 2>/dev/null; then' \
+    '    if ! systemctl reload nginx 2>/dev/null && false; then'
+
+# Without nginx's own message the operator gets "configuration test failed" and
+# no file, no line.
+run_case "tokens/nginx-message-swallowed" 1 \
+    '        [[ -n "$test_output" ]] && print_info "$(i18n '"'"'webapp.nginx_test_output'"'"' "msg=$test_output")"' \
+    '        :'
 
 run_case "tokens/write-not-persisted" 1 \
     '    if ! write_file_atomic "$NGINX_CONF" "$updated"; then' \
@@ -41,8 +53,18 @@ run_case "headers/rejected-dropin-left-behind" 1 \
     '            :'
 
 run_case "headers/validation-gate-removed" 2 \
-    '    if nginx -t 2>/dev/null; then' \
-    '    if true; then'
+    '    if ! test_output=$(nginx -t 2>&1); then' \
+    '    if false; then'
+
+run_case "headers/reload-unchecked" 2 \
+    '    if ! systemctl reload nginx 2>/dev/null; then' \
+    '    if ! systemctl reload nginx 2>/dev/null && false; then'
+
+# Reporting "created" over the operator's own drop-in is how the replacement
+# went unnoticed: the file is backed up, but nothing said it had been replaced.
+run_case "headers/replacement-reported-as-created" 1 \
+    '    if [[ "$pre_existed" == "true" ]]; then' \
+    '    if false; then'
 
 run_case "hsts/backup-skipped" 1 \
     '    backup_file "$hsts_conf" >/dev/null || return 1' \
@@ -52,11 +74,12 @@ run_case "hsts/backup-skipped" 1 \
 # replacing the print_warn with `return 0` is a no-op on the status now that
 # FIX_TEMPLATE_ONLY lets the success path return 0 legitimately.
 run_case "hsts/instruction-not-printed" 1 \
-    "    print_warn \"\$(i18n 'webapp.hsts_warning' 2>/dev/null || echo 'Uncomment and add to HTTPS server blocks manually')\"" \
+    "    print_warn \"\$(i18n 'webapp.hsts_warning')\"" \
     '    :'
 
-# Occurrence 2 of three: #1 is the dispatch tail, #3 the SSL fix.
-run_case "hsts/success-reported-as-failure" 2 \
+# Occurrence 4 of five: #1 webapp_audit, #2 server_tokens, #3 security_headers,
+# #5 the SSL fix. Recount this index whenever a fix gains a top-level return 0.
+run_case "hsts/success-reported-as-failure" 4 \
     '    return 0' \
     '    return 1'
 
@@ -73,7 +96,7 @@ run_case "ssl/weak-protocol-offered" 1 \
     'ssl_protocols TLSv1 TLSv1.2 TLSv1.3;'
 
 run_case "ssl/validation-ignored" 1 \
-    '    if command -v nginx >/dev/null 2>&1 && ! nginx -t 2>/dev/null; then' \
+    '    if command -v nginx >/dev/null 2>&1 && ! test_output=$(nginx -t 2>&1); then' \
     '    if false; then'
 
 run_case "dispatch/unknown-id-succeeds" 1 \

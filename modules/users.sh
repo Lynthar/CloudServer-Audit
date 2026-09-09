@@ -851,18 +851,18 @@ users_audit() {
             "users" \
             "high" \
             "failed" \
-            "$(i18n 'users.uid0_found' 2>/dev/null || echo 'UID 0 Users Found (Besides root)'): $uid0_count" \
+            "$(i18n 'users.uid0_found'): $uid0_count" \
             "$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.uid0_review' 2>/dev/null || echo 'Review these accounts - may be backdoors')" \
-            "users.uid0_found")
+            "$(i18n 'users.uid0_review')" \
+            "")
     else
         check_json=$(create_check_json \
             "users.uid0_ok" \
             "users" \
             "info" \
             "passed" \
-            "$(i18n 'users.uid0_ok' 2>/dev/null || echo 'No Extra UID 0 Users')" \
-            "$(i18n 'users.uid0_ok_desc' 2>/dev/null || echo 'Only root has UID 0')" \
+            "$(i18n 'users.uid0_ok')" \
+            "$(i18n 'users.uid0_ok_desc')" \
             "" \
             "")
     fi
@@ -878,18 +878,18 @@ users_audit() {
             "users" \
             "high" \
             "failed" \
-            "$(i18n 'users.empty_password' 2>/dev/null || echo 'Empty Password Users'): $empty_count" \
+            "$(i18n 'users.empty_password'): $empty_count" \
             "$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.set_password' 2>/dev/null || echo 'Set passwords or lock these accounts')" \
-            "users.empty_password")
+            "$(i18n 'users.set_password')" \
+            "")
     else
         check_json=$(create_check_json \
             "users.no_empty_password" \
             "users" \
             "info" \
             "passed" \
-            "$(i18n 'users.no_empty_password' 2>/dev/null || echo 'No Empty Password Users')" \
-            "$(i18n 'users.no_empty_password_desc' 2>/dev/null || echo 'All users with shells have passwords')" \
+            "$(i18n 'users.no_empty_password')" \
+            "$(i18n 'users.no_empty_password_desc')" \
             "" \
             "")
     fi
@@ -912,10 +912,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.system_with_shell' 2>/dev/null || echo 'System Users with Login Shells'): $sys_shell_count" \
+            "$(i18n 'users.system_with_shell'): $sys_shell_count" \
             "$user_list" \
-            "$(i18n 'users.change_shell' 2>/dev/null || echo 'Change shell to /usr/sbin/nologin if not needed')" \
-            "users.system_with_shell")
+            "$(i18n 'users.change_shell')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -927,7 +927,7 @@ users_audit() {
     local non_root_count=$(echo "$sudo_users" | grep -vx 'root' | grep -c .)
 
     if [[ -n "$sudo_users" && "$sudo_count" -gt 0 ]]; then
-        local label="$(i18n 'users.sudo_users' 2>/dev/null || echo 'Privileged Users')"
+        local label="$(i18n 'users.sudo_users')"
         local title
         # The qualifier used to be an English literal appended to a
         # translated label, producing "✓ 特权用户: 1 (root only — no
@@ -944,7 +944,7 @@ users_audit() {
             "passed" \
             "$title" \
             "$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.review_sudo' 2>/dev/null || echo 'Review if all these users need sudo access')" \
+            "$(i18n 'users.review_sudo')" \
             "")
         state_add_check "$check_json"
     fi
@@ -975,10 +975,10 @@ users_audit() {
             "users" \
             "$sev" \
             "failed" \
-            "$(i18n "$title_key" 2>/dev/null || echo 'NOPASSWD Sudo Entries Found'): $nopasswd_count" \
+            "$(i18n "$title_key"): $nopasswd_count" \
             "$nopasswd_list" \
-            "$(i18n 'users.review_nopasswd' 2>/dev/null || echo 'NOPASSWD allows privilege escalation without password - review if necessary')" \
-            "users.nopasswd_sudo")
+            "$(i18n 'users.review_nopasswd')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1002,10 +1002,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.recent_users' 2>/dev/null || echo 'Recently Created Users'): $recent_count" \
+            "$(i18n 'users.recent_users'): $recent_count" \
             "$recent_list" \
-            "$(i18n 'users.verify_recent' 2>/dev/null || echo 'Verify these users were intentionally created')" \
-            "users.recent_users")
+            "$(i18n 'users.verify_recent')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1028,10 +1028,10 @@ users_audit() {
             "users" \
             "medium" \
             "failed" \
-            "$(i18n 'users.ssh_keys_perms' 2>/dev/null || echo 'SSH authorized_keys Permission Issues'): $bad_perms" \
-            "$(i18n 'users.ssh_keys_perms_desc' 2>/dev/null || echo 'Some authorized_keys files have weak permissions')" \
-            "$(i18n 'users.fix_key_perms' 2>/dev/null || echo 'Set permissions to 600: chmod 600 ~/.ssh/authorized_keys')" \
-            "users.ssh_keys_perms")
+            "$(i18n 'users.ssh_keys_perms'): $bad_perms" \
+            "$(i18n 'users.ssh_keys_perms_desc')" \
+            "$(i18n 'users.fix_key_perms')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1041,8 +1041,8 @@ users_audit() {
             "users" \
             "info" \
             "passed" \
-            "$(i18n 'users.ssh_keys_info' 2>/dev/null || echo 'Users with SSH Keys'): $users_with_keys" \
-            "$(i18n 'users.ssh_keys_info_desc' 2>/dev/null || echo 'Users configured with SSH public key authentication')" \
+            "$(i18n 'users.ssh_keys_info'): $users_with_keys" \
+            "$(i18n 'users.ssh_keys_info_desc')" \
             "" \
             "")
         state_add_check "$check_json"
@@ -1065,10 +1065,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.suspicious_names' 2>/dev/null || echo 'Suspicious Usernames'): $sus_count" \
+            "$(i18n 'users.suspicious_names'): $sus_count" \
             "$sus_list" \
-            "$(i18n 'users.review_names' 2>/dev/null || echo 'Review these usernames - may be test accounts')" \
-            "users.suspicious_names")
+            "$(i18n 'users.review_names')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1089,10 +1089,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.unusual_home' 2>/dev/null || echo 'Unusual Home Directories'): $unusual_count" \
+            "$(i18n 'users.unusual_home'): $unusual_count" \
             "$unusual_list" \
-            "$(i18n 'users.review_home' 2>/dev/null || echo 'Review these home directory locations')" \
-            "users.unusual_home")
+            "$(i18n 'users.review_home')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1113,10 +1113,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.password_policy_weak' 2>/dev/null || echo 'Weak Password Policy'): $policy_count issues" \
+            "$(i18n 'users.password_policy_weak'): $policy_count issues" \
             "$policy_list" \
-            "$(i18n 'users.fix_password_policy' 2>/dev/null || echo 'Configure password aging in /etc/login.defs')" \
-            "users.password_policy")
+            "$(i18n 'users.fix_password_policy')" \
+            "")
         state_add_check "$check_json"
     else
         check_json=$(create_check_json \
@@ -1124,8 +1124,8 @@ users_audit() {
             "users" \
             "info" \
             "passed" \
-            "$(i18n 'users.password_policy_ok' 2>/dev/null || echo 'Password Policy Configured')" \
-            "$(i18n 'users.password_policy_ok_desc' 2>/dev/null || echo 'Password aging and length policies are set')" \
+            "$(i18n 'users.password_policy_ok')" \
+            "$(i18n 'users.password_policy_ok_desc')" \
             "" \
             "")
         state_add_check "$check_json"
@@ -1148,10 +1148,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.pwquality_weak' 2>/dev/null || echo 'Password Quality Not Enforced'): $pwquality_count issues" \
+            "$(i18n 'users.pwquality_weak'): $pwquality_count issues" \
             "$pwq_list" \
-            "$(i18n 'users.fix_pwquality' 2>/dev/null || echo 'Configure pam_pwquality or pam_cracklib for password complexity')" \
-            "users.pwquality")
+            "$(i18n 'users.fix_pwquality')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1172,10 +1172,10 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.history_insecure' 2>/dev/null || echo 'Bash History Security'): $history_count issues" \
+            "$(i18n 'users.history_insecure'): $history_count issues" \
             "$hist_list" \
-            "$(i18n 'users.fix_history' 2>/dev/null || echo 'Add HISTTIMEFORMAT and HISTCONTROL to /etc/profile')" \
-            "users.history")
+            "$(i18n 'users.fix_history')" \
+            "")
         state_add_check "$check_json"
     fi
 
@@ -1196,9 +1196,9 @@ users_audit() {
             "users" \
             "medium" \
             "failed" \
-            "$(i18n 'users.duplicate_uids' 2>/dev/null || echo 'Duplicate UIDs in /etc/passwd')" \
+            "$(i18n 'users.duplicate_uids')" \
             "$dup_list" \
-            "$(i18n 'users.review_duplicate_uids' 2>/dev/null || echo 'Investigate accounts sharing a UID — backdoor pattern or misconfiguration')" \
+            "$(i18n 'users.review_duplicate_uids')" \
             "")
         state_add_check "$check_json"
     fi
@@ -1218,9 +1218,9 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.weak_hash_method' 2>/dev/null || echo 'Weak password hashing detected')" \
+            "$(i18n 'users.weak_hash_method')" \
             "$hash_list" \
-            "$(i18n 'users.fix_hash_method' 2>/dev/null || echo 'Configure pam_unix for yescrypt or sha512 and re-set affected passwords')" \
+            "$(i18n 'users.fix_hash_method')" \
             "")
         state_add_check "$check_json"
     fi
@@ -1234,9 +1234,9 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.hash_rounds_low' 2>/dev/null || echo 'Password hash rounds below recommended')" \
+            "$(i18n 'users.hash_rounds_low')" \
             "$rounds_issue" \
-            "$(i18n 'users.fix_hash_rounds' 2>/dev/null || echo 'Set SHA_CRYPT_MIN_ROUNDS to 10000 or higher in /etc/login.defs')" \
+            "$(i18n 'users.fix_hash_rounds')" \
             "")
         state_add_check "$check_json"
     fi
@@ -1256,9 +1256,9 @@ users_audit() {
             "users" \
             "low" \
             "failed" \
-            "$(i18n 'users.faillog_disabled' 2>/dev/null || echo 'Login-failure logging not fully enabled')" \
+            "$(i18n 'users.faillog_disabled')" \
             "$fl_list" \
-            "$(i18n 'users.fix_faillog' 2>/dev/null || echo 'Set FAILLOG_ENAB=yes and LOG_UNKFAIL_ENAB=yes in /etc/login.defs')" \
+            "$(i18n 'users.fix_faillog')" \
             "")
         state_add_check "$check_json"
     fi
@@ -1279,9 +1279,9 @@ users_audit() {
             "users" \
             "medium" \
             "failed" \
-            "$(i18n 'users.sudoers_syntax_invalid' 2>/dev/null || echo 'sudoers file has syntax errors')" \
+            "$(i18n 'users.sudoers_syntax_invalid')" \
             "$su_list" \
-            "$(i18n 'users.fix_sudoers_syntax' 2>/dev/null || echo 'Edit via visudo only; check /etc/sudoers and /etc/sudoers.d/*')" \
+            "$(i18n 'users.fix_sudoers_syntax')" \
             "")
         state_add_check "$check_json"
     fi
@@ -1289,197 +1289,12 @@ users_audit() {
     return 0
 }
 
-# --- Fix Functions (ALL ALERT ONLY - NO AUTO MODIFICATIONS) ---
+# --- Fix Function ---
 
+# vpssec never creates, deletes or edits an account: nothing here is
+# auto-fixable. The entry point stays because the engine dispatches
+# <module>_fix by name, and a missing one reads as a fix that did nothing.
 users_fix() {
-    local fix_id="$1"
-
-    # IMPORTANT: This module NEVER modifies users automatically
-    # All fixes are alert-only with manual instructions
-
-    case "$fix_id" in
-        users.uid0_found)
-            print_warn "⚠️  $(i18n 'users.critical_alert' 2>/dev/null || echo 'CRITICAL SECURITY ALERT')"
-            echo ""
-            echo "$(i18n 'users.uid0_warning' 2>/dev/null || echo 'Found non-root users with UID 0 (root privileges)'):"
-            echo ""
-
-            local uid0_users=$(_find_uid0_users)
-            while read -r user; do
-                [[ -z "$user" ]] && continue
-                echo "  • $user"
-                echo "    $(i18n 'users.check_cmd' 2>/dev/null || echo 'Check'): grep \"^$user:\" /etc/passwd"
-                echo "    $(i18n 'users.lock_cmd' 2>/dev/null || echo 'Lock'): usermod -L $user"
-                echo ""
-            done <<< "$uid0_users"
-
-            print_warn "$(i18n 'users.manual_action' 2>/dev/null || echo 'Manual action required - DO NOT delete without investigation')"
-            return 1
-            ;;
-
-        users.empty_password)
-            print_warn "⚠️  $(i18n 'users.critical_alert' 2>/dev/null || echo 'CRITICAL SECURITY ALERT')"
-            echo ""
-            echo "$(i18n 'users.empty_pass_warning' 2>/dev/null || echo 'Found users with empty passwords'):"
-            echo ""
-
-            local empty_pass=$(_find_empty_password_users)
-            while read -r user; do
-                [[ -z "$user" ]] && continue
-                echo "  • $user"
-                echo "    $(i18n 'users.set_pass_cmd' 2>/dev/null || echo 'Set password'): passwd $user"
-                echo "    $(i18n 'users.lock_cmd' 2>/dev/null || echo 'Lock account'): usermod -L $user"
-                echo ""
-            done <<< "$empty_pass"
-
-            print_warn "$(i18n 'users.manual_action' 2>/dev/null || echo 'Manual action required')"
-            return 1
-            ;;
-
-        users.system_with_shell)
-            print_info "$(i18n 'users.review_needed' 2>/dev/null || echo 'Review Needed')"
-            echo ""
-            echo "$(i18n 'users.sys_shell_info' 2>/dev/null || echo 'System users with login shells'):"
-            echo ""
-
-            local sys_shells=$(_find_system_users_with_shells)
-            while IFS='|' read -r user uid shell; do
-                [[ -z "$user" ]] && continue
-                echo "  • $user (UID: $uid, Shell: $shell)"
-                echo "    $(i18n 'users.change_shell_cmd' 2>/dev/null || echo 'Change shell'): usermod -s /usr/sbin/nologin $user"
-                echo ""
-            done <<< "$sys_shells"
-
-            print_info "$(i18n 'users.verify_before_change' 2>/dev/null || echo 'Verify the user does not need shell access before changing')"
-            return 1
-            ;;
-
-        users.nopasswd_sudo)
-            print_warn "⚠️  $(i18n 'users.high_risk_alert' 2>/dev/null || echo 'HIGH RISK SECURITY ISSUE')"
-            echo ""
-            echo "$(i18n 'users.nopasswd_warning' 2>/dev/null || echo 'NOPASSWD sudo entries allow privilege escalation without password verification'):"
-            echo ""
-
-            local nopasswd=$(_find_nopasswd_sudo)
-            while IFS= read -r entry; do
-                [[ -z "$entry" ]] && continue
-                echo "  ⚠️  $entry"
-            done <<< "$nopasswd"
-
-            echo ""
-            echo "$(i18n 'users.nopasswd_risks' 2>/dev/null || echo 'Risks'):"
-            echo "  • $(i18n 'users.nopasswd_risk1' 2>/dev/null || echo 'Compromised user account = full root access')"
-            echo "  • $(i18n 'users.nopasswd_risk2' 2>/dev/null || echo 'Malware can escalate privileges without interaction')"
-            echo "  • $(i18n 'users.nopasswd_risk3' 2>/dev/null || echo 'No audit trail for privilege escalation')"
-            echo ""
-            echo "$(i18n 'users.nopasswd_action' 2>/dev/null || echo 'Recommended actions'):"
-            echo "  1. $(i18n 'users.nopasswd_action1' 2>/dev/null || echo 'Review if NOPASSWD is absolutely necessary')"
-            echo "  2. $(i18n 'users.nopasswd_action2' 2>/dev/null || echo 'Limit NOPASSWD to specific commands only')"
-            echo "  3. $(i18n 'users.nopasswd_action3' 2>/dev/null || echo 'Remove NOPASSWD and use password authentication')"
-            echo ""
-            echo "$(i18n 'users.edit_sudoers' 2>/dev/null || echo 'To edit safely'): sudo visudo"
-            echo ""
-            print_warn "$(i18n 'users.manual_action' 2>/dev/null || echo 'Manual action required - DO NOT auto-modify sudoers')"
-            return 1
-            ;;
-
-        users.recent_users)
-            print_info "$(i18n 'users.info_only' 2>/dev/null || echo 'Information Only')"
-            echo ""
-            echo "$(i18n 'users.recent_info' 2>/dev/null || echo 'Recently created users'):"
-            echo ""
-
-            local recent=$(_find_recent_users)
-            while IFS='|' read -r user uid created home evidence; do
-                [[ -z "$user" ]] && continue
-                echo "  • $user"
-                echo "    UID: $uid"
-                echo "    $(i18n 'users.created' 2>/dev/null || echo 'Created'): $created"
-                echo "    $(i18n 'users.recent_evidence' 2>/dev/null || echo 'Evidence'): $evidence"
-                echo "    Home: $home"
-                echo "    $(i18n 'users.check_cmd' 2>/dev/null || echo 'Check'): id $user && chage -l $user"
-                echo ""
-            done <<< "$recent"
-
-            return 1
-            ;;
-
-        users.ssh_keys_perms)
-            print_info "$(i18n 'users.review_needed' 2>/dev/null || echo 'Review Needed')"
-            echo ""
-            echo "$(i18n 'users.ssh_perms_info' 2>/dev/null || echo 'SSH authorized_keys with incorrect permissions'):"
-            echo ""
-
-            local ssh_keys=$(_analyze_ssh_keys)
-            while IFS='|' read -r user key_count perms perms_ok sus_count path; do
-                [[ -z "$user" || "$perms_ok" == "yes" ]] && continue
-                echo "  • $user: $path"
-                echo "    $(i18n 'users.current_perms' 2>/dev/null || echo 'Current'): $perms (should be 600)"
-                echo "    $(i18n 'users.fix_cmd' 2>/dev/null || echo 'Fix'): chmod 600 $path"
-                echo ""
-            done <<< "$ssh_keys"
-
-            return 1
-            ;;
-
-        users.suspicious_names|users.unusual_home)
-            print_info "$(i18n 'users.info_only' 2>/dev/null || echo 'Information Only')"
-            echo ""
-            echo "$(i18n 'users.review_accounts' 2>/dev/null || echo 'Please review these accounts manually')"
-            echo ""
-            return 1
-            ;;
-
-        users.password_policy)
-            print_info "$(i18n 'users.password_policy_info' 2>/dev/null || echo 'Password Policy Configuration')"
-            echo ""
-            echo "$(i18n 'users.login_defs_location' 2>/dev/null || echo 'Configuration file'): /etc/login.defs"
-            echo ""
-            # Values come from PASSWORD_POLICY, never from literals repeated
-            # here — that is how the advice and the policy drift apart.
-            echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
-            printf '  PASS_MAX_DAYS   %-5s # Password expires after %s days\n' \
-                "${PASSWORD_POLICY[PASS_MAX_DAYS]}" "${PASSWORD_POLICY[PASS_MAX_DAYS]}"
-            printf '  PASS_MIN_DAYS   %-5s # Minimum %s day(s) between changes\n' \
-                "${PASSWORD_POLICY[PASS_MIN_DAYS]}" "${PASSWORD_POLICY[PASS_MIN_DAYS]}"
-            printf '  PASS_MIN_LEN    %-5s # Minimum %s characters (use pam for better)\n' \
-                "${PASSWORD_POLICY[PASS_MIN_LEN]}" "${PASSWORD_POLICY[PASS_MIN_LEN]}"
-            printf '  PASS_WARN_AGE   %-5s # Warn %s days before expiry\n' \
-                "${PASSWORD_POLICY[PASS_WARN_AGE]}" "${PASSWORD_POLICY[PASS_WARN_AGE]}"
-            echo ""
-            echo "$(i18n 'users.apply_to_existing' 2>/dev/null || echo 'To apply to existing users'):"
-            printf '  chage -M %s -m %s -W %s <username>\n' \
-                "${PASSWORD_POLICY[PASS_MAX_DAYS]}" \
-                "${PASSWORD_POLICY[PASS_MIN_DAYS]}" \
-                "${PASSWORD_POLICY[PASS_WARN_AGE]}"
-            echo ""
-            return 1
-            ;;
-
-        users.pwquality)
-            print_info "$(i18n 'users.pwquality_info' 2>/dev/null || echo 'Password Quality Configuration')"
-            echo ""
-            echo "$(i18n 'users.pwquality_location' 2>/dev/null || echo 'Configuration file'): /etc/security/pwquality.conf"
-            echo ""
-            echo "$(i18n 'users.install_pwquality' 2>/dev/null || echo 'Install'): apt install libpam-pwquality"
-            echo ""
-            # Same rule as the login.defs advice above: the numbers live in
-            # PWQUALITY_POLICY, and nowhere else.
-            echo "$(i18n 'users.recommended_settings' 2>/dev/null || echo 'Recommended settings'):"
-            printf '  minlen = %-8s # Minimum password length\n'        "${PWQUALITY_POLICY[minlen]}"
-            printf '  dcredit = %-7s # Require at least 1 digit\n'      "${PWQUALITY_POLICY[dcredit]}"
-            printf '  ucredit = %-7s # Require at least 1 uppercase\n'  "${PWQUALITY_POLICY[ucredit]}"
-            printf '  lcredit = %-7s # Require at least 1 lowercase\n'  "${PWQUALITY_POLICY[lcredit]}"
-            printf '  ocredit = %-7s # Require at least 1 special char\n' "${PWQUALITY_POLICY[ocredit]}"
-            printf '  minclass = %-6s # Require %s character classes\n' \
-                "${PWQUALITY_POLICY[minclass]}" "${PWQUALITY_POLICY[minclass]}"
-            echo ""
-            return 1
-            ;;
-
-        *)
-            log_warn "Unknown fix_id: $fix_id"
-            return 1
-            ;;
-    esac
+    log_warn "users has no automatic fix; every finding needs human review: ${1:-}"
+    return 1
 }

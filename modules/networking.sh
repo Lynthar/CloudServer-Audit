@@ -192,10 +192,10 @@ _net_promiscuous_interfaces() {
 networking_audit() {
     local module="networking"
 
-    print_item "$(i18n 'networking.check_listeners' 2>/dev/null || echo 'Checking listening sockets')"
+    print_item "$(i18n 'networking.check_listeners')"
     _net_audit_listeners
 
-    print_item "$(i18n 'networking.check_promisc' 2>/dev/null || echo 'Checking promiscuous interfaces')"
+    print_item "$(i18n 'networking.check_promisc')"
     _net_audit_promisc
 }
 
@@ -298,12 +298,12 @@ _net_audit_listeners() {
             "networking" \
             "high" \
             "failed" \
-            "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}" 2>/dev/null || echo "${#dangerous[@]} dangerous service(s) bound to wildcard address")" \
+            "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}")" \
             "$(i18n 'networking.exposed_dangerous_ports_desc' "list=${list% }")" \
             "$(i18n 'networking.exposed_dangerous_ports_suggestion')" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}" 2>/dev/null || echo "${#dangerous[@]} dangerous public listener(s)")"
+        print_severity "high" "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}")"
     fi
 
     if (( ${#exposed[@]} > 0 )); then
@@ -313,20 +313,20 @@ _net_audit_listeners() {
             "networking" \
             "medium" \
             "failed" \
-            "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}" 2>/dev/null || echo "${#exposed[@]} non-standard service(s) on wildcard address")" \
+            "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}")" \
             "$(i18n 'networking.public_listeners_present_desc' "list=${list% }")" \
             "$(i18n 'networking.public_listeners_present_suggestion')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}" 2>/dev/null || echo "${#exposed[@]} non-standard public listener(s)")"
+        print_severity "medium" "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}")"
     fi
 
     if (( ${#dangerous[@]} == 0 && ${#exposed[@]} == 0 )); then
         local title
         if (( loopback_only == 1 )); then
-            title=$(i18n 'networking.listeners_loopback_only' 2>/dev/null || echo 'All listeners are loopback-only')
+            title=$(i18n 'networking.listeners_loopback_only')
         else
-            title=$(i18n 'networking.listeners_ok' 2>/dev/null || echo 'Public listeners match expected services (SSH/HTTP/HTTPS/DNS)')
+            title=$(i18n 'networking.listeners_ok')
         fi
         local check=$(create_check_json \
             "networking.listeners_ok" \
@@ -354,24 +354,24 @@ _net_audit_promisc() {
             "networking" \
             "medium" \
             "failed" \
-            "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Interface(s) in promiscuous mode')" \
+            "$(i18n 'networking.promiscuous_interface')" \
             "$(i18n 'networking.promiscuous_interface_desc' "list=${list% }")" \
             "$(i18n 'networking.promiscuous_interface_suggestion')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'networking.promiscuous_interface' 2>/dev/null || echo 'Promiscuous interface detected')"
+        print_severity "medium" "$(i18n 'networking.promiscuous_interface')"
     else
         local check=$(create_check_json \
             "networking.no_promisc" \
             "networking" \
             "low" \
             "passed" \
-            "$(i18n 'networking.no_promisc' 2>/dev/null || echo 'No promiscuous interfaces')" \
+            "$(i18n 'networking.no_promisc')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'networking.no_promisc' 2>/dev/null || echo 'No promiscuous interfaces')"
+        print_ok "$(i18n 'networking.no_promisc')"
     fi
 }
 

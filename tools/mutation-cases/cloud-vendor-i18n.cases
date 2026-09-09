@@ -59,9 +59,15 @@ run_case "wire/desc-resolved-inside-find-known-agents" 1 \
     '            found+=("$proc_name|$service_name|$vendor_key|$(_cloud_agent_desc "$desc_key")|$can_disable|running")'
 
 # Do not resolve at all: the audit prints the raw key to the operator.
-run_case "render/agent-list-prints-the-raw-key" 1 \
-    '            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")), "' \
-    '            agent_list+="$proc_name ($vendor_key), "'
+run_case "render/agent-list-prints-the-raw-vendor-key" 1 \
+    '            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")): $(_cloud_agent_desc "$desc_key"); "' \
+    '            agent_list+="$proc_name ($vendor_key): $(_cloud_agent_desc "$desc_key"); "'
+
+# The description column is the operator's only statement of what the agent IS,
+# and the report is now the only place it appears.
+run_case "render/agent-list-drops-the-description" 1 \
+    '            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")): $(_cloud_agent_desc "$desc_key"); "' \
+    '            agent_list+="$proc_name ($(_cloud_vendor_name "$vendor_key")); "'
 
 # The helpers stop consulting i18n. Both are one line, and both are the kind
 # of "simplification" that passes a reading.
@@ -72,12 +78,6 @@ run_case "render/vendor-helper-echoes-its-argument" 1 \
 run_case "render/desc-helper-echoes-its-argument" 1 \
     '    i18n "cloud.agent_${1}"' \
     '    echo "$1"'
-
-# cloud_fix stops rendering the description column. The audit is unaffected,
-# so only the fix-path test sees it.
-run_case "render/cloud-fix-prints-the-raw-desc-key" 1 \
-    '                echo "    $(i18n '"'"'common.info'"'"' 2>/dev/null || echo '"'"'Info'"'"'): $(_cloud_agent_desc "$desc_key")"' \
-    '                echo "    $(i18n '"'"'common.info'"'"' 2>/dev/null || echo '"'"'Info'"'"'): $desc_key"'
 
 # ---- family 3: the provider name map --------------------------------------
 

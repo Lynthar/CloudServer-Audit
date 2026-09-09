@@ -355,12 +355,12 @@ _f2b_audit_any_jail() {
             "fail2ban" \
             "low" \
             "failed" \
-            "$(i18n 'fail2ban.no_jails_active' 2>/dev/null || echo 'fail2ban running but no jails active')" \
+            "$(i18n 'fail2ban.no_jails_active')" \
             "$(i18n 'fail2ban.no_jails_active_desc')" \
             "$(i18n 'fail2ban.fix_enable_jail')" \
             "fail2ban.enable_ssh_jail")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'fail2ban.no_jails_active' 2>/dev/null || echo 'No active jails')"
+        print_severity "low" "$(i18n 'fail2ban.no_jails_active')"
     else
         local jail_count jail_list
         jail_count=$(echo "$jails" | wc -l)
@@ -370,12 +370,12 @@ _f2b_audit_any_jail() {
             "fail2ban" \
             "low" \
             "passed" \
-            "$(i18n 'fail2ban.jails_active' 2>/dev/null || echo "Active jails"): $jail_count" \
+            "$(i18n 'fail2ban.jails_active'): $jail_count" \
             "$(i18n 'fail2ban.jails_active_desc' "jails=$jail_list")" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'fail2ban.jails_active' 2>/dev/null || echo "Active jails"): $jail_list"
+        print_ok "$(i18n 'fail2ban.jails_active'): $jail_list"
     fi
 }
 

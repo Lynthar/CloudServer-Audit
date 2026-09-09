@@ -1118,7 +1118,7 @@ _ssh_audit_access_control() {
             "$(i18n 'ssh.no_access_control')" \
             "$(i18n 'ssh.no_access_control_desc')" \
             "$(i18n 'ssh.fix_access_control')" \
-            "ssh.configure_access_control")
+            "")
         state_add_check "$check"
         print_severity "low" "$(i18n 'ssh.no_access_control')"
     fi
@@ -1508,7 +1508,7 @@ _ssh_rollback_dropin() {
     if [[ "$backup" == "NEW" ]]; then
         # No prior drop-in: delete the new one we just wrote.
         if [[ -f "$SSH_HARDENING_DROPIN" ]] && rm -f "$SSH_HARDENING_DROPIN"; then
-            print_warn "$(i18n 'ssh.dropin_rolled_back_deleted' 2>/dev/null || echo 'Removed newly written SSH drop-in after validation failed')"
+            print_warn "$(i18n 'ssh.dropin_rolled_back_deleted')"
         fi
     elif [[ -n "$backup" && -f "$backup" ]]; then
         # Restore prior content. Use cp -p to preserve mode/ownership
@@ -1516,13 +1516,13 @@ _ssh_rollback_dropin() {
         # drop-in is 644; let chmod --reference restore that).
         if cp -p "$backup" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
             chmod 644 "$SSH_HARDENING_DROPIN" 2>/dev/null || true
-            print_warn "$(i18n 'ssh.dropin_rolled_back_restored' 2>/dev/null || echo 'Restored previous SSH drop-in from backup after validation failed')"
+            print_warn "$(i18n 'ssh.dropin_rolled_back_restored')"
         else
-            print_error "$(i18n 'ssh.dropin_rollback_failed' 2>/dev/null || echo 'Failed to restore previous SSH drop-in; manual review required')"
+            print_error "$(i18n 'ssh.dropin_rollback_failed')"
         fi
     else
         # Backup path unset or backup file missing (very unusual).
-        print_error "$(i18n 'ssh.dropin_rollback_missing' 2>/dev/null || echo 'No SSH drop-in backup available for rollback')"
+        print_error "$(i18n 'ssh.dropin_rollback_missing')"
     fi
 
     # Reset so a later reload cannot "rollback" stale state.

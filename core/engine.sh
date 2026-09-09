@@ -362,7 +362,7 @@ audit_module() {
         return 0  # Module audit completed (even if with warnings)
     else
         log_warn "Audit function not found: $audit_func"
-        print_error "$(i18n 'error.audit_func_not_found' "func=$audit_func" 2>/dev/null || echo "Audit function not found: $audit_func")"
+        print_error "$(i18n 'error.audit_func_not_found' "func=$audit_func")"
         return 1
     fi
 }
@@ -371,14 +371,14 @@ audit_module() {
 _record_unavailable_modules() {
     for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
         if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]]; then
-            local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+            local mod_title=$(i18n "${module}.title")
             local check=$(create_check_json \
                 "${module}.not_installed" \
                 "${module}" \
                 "low" \
                 "passed" \
-                "$(i18n "${module}.not_installed" 2>/dev/null || echo "${mod_title} not installed")" \
-                "$(i18n 'common.skipping' 2>/dev/null || echo "Skipping") - $(i18n 'common.not_installed' 2>/dev/null || echo "Not installed")" \
+                "$(i18n "${module}.not_installed")" \
+                "$(i18n 'common.skipping') - $(i18n 'common.not_installed')" \
                 "" \
                 "")
             state_add_check "$check"
@@ -410,7 +410,7 @@ _run_audit_pass() {
     export VPSSEC_QUIET_SCAN=1
 
     print_msg ""
-    print_msg "$(i18n 'scan.scanning' 2>/dev/null || echo 'Scanning...')"
+    print_msg "$(i18n 'scan.scanning')"
     print_msg ""
 
     # Pre-warm the cloud cache in THIS shell, with no command substitution:
@@ -430,7 +430,7 @@ _run_audit_pass() {
     local mod_title
     for module in "${modules[@]}"; do
         ((current++)) || true
-        mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+        mod_title=$(i18n "${module}.title")
         _progress "\r  [%d/%d] %s...                    " "$current" "$total" "$mod_title"
 
         audit_module "$module"
@@ -439,8 +439,8 @@ _run_audit_pass() {
     for module in "${VPSSEC_MODULE_ORDER[@]}"; do
         if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]:-0}" == "1" ]]; then
             ((current++)) || true
-            mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
-            _progress "\r  [%d/%d] %s ($(i18n 'common.not_installed' 2>/dev/null || echo 'not installed'))...        " "$current" "$total" "$mod_title"
+            mod_title=$(i18n "${module}.title")
+            _progress "\r  [%d/%d] %s ($(i18n 'common.not_installed'))...        " "$current" "$total" "$mod_title"
         fi
     done
     _record_unavailable_modules
@@ -485,7 +485,6 @@ audit_all() {
 
 # Get available fixes from audit results
 get_available_fixes() {
-    local show_all="${1:-false}"
     local checks=$(state_get_checks)
 
     # Get fixes that have a fix_id (failed items + passed items with fix_id for optional config like timezone)
@@ -507,13 +506,10 @@ get_available_fixes() {
             enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
         done < <(echo "$fixes" | jq -c '.[]')
 
-        # Filter out alert_only items from selection (unless show_all is true)
-        if [[ "$show_all" != "true" ]]; then
-            # Hide alert_only items - they can't be auto-fixed
-            echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only")]'
-        else
-            echo "$enriched_fixes"
-        fi
+        # Alert-only findings emit an empty fix_id, so the select() above has
+        # already dropped them; this stays as the second gate, unconditional
+        # because there has never been a caller that wanted them listed.
+        echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only")]'
     else
         echo "$fixes"
     fi
@@ -561,11 +557,17 @@ execute_fix() {
     if [[ "$skip_safety_check" != "true" ]]; then
         local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
 
-        # Alert-only fixes are never auto-applied — filtered from the selection
-        # UI in get_available_fixes, rejected here as defense-in-depth.
-        if [[ "$safety" == "alert_only" ]]; then
-            local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
-            print_warn "$(i18n 'fix.alert_only' 2>/dev/null || echo "Alert only"): $warning"
+        # A whitelist, not a blacklist: nothing runs unless a FIX_* map says how
+        # safe it is. An unclassified id used to fall past the alert_only test
+        # and apply unconfirmed, with only a source-text grep in CI guarding it.
+        if ! can_fix "$fix_id"; then
+            if [[ "$safety" == "alert_only" ]]; then
+                local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
+                print_warn "$(i18n 'fix.alert_only'): $warning"
+            else
+                log_error "Refusing unclassified fix_id: $fix_id"
+                print_warn "$(i18n 'fix.unclassified' "id=$fix_id")"
+            fi
             return 1
         fi
 
@@ -874,7 +876,7 @@ guide_mode() {
     # Show security level info
     if declare -f get_security_level &>/dev/null; then
         local level=$(get_security_level)
-        print_msg "$(i18n 'guide.security_level' 2>/dev/null || echo "Security Level"): $level"
+        print_msg "$(i18n 'guide.security_level'): $level"
         print_security_level_info "$level" 2>/dev/null | while read -r line; do
             print_msg "  $line"
         done
@@ -922,7 +924,6 @@ guide_mode() {
             local title=$(echo "$fix" | jq -r '.title')
             local severity=$(echo "$fix" | jq -r '.severity')
             local safety=$(echo "$fix" | jq -r '.safety // "unknown"')
-            local can_fix=$(echo "$fix" | jq -r '.can_auto_fix // false')
 
             local prefix=""
             case "$severity" in
@@ -931,22 +932,18 @@ guide_mode() {
                 low)    prefix="${BLUE}[-]${NC}" ;;
             esac
 
-            # Add safety indicator
+            # Add safety indicator. Only the three applicable classes reach
+            # this list: get_available_fixes drops alert_only, and an
+            # unclassified fix_id is a CI failure, not a menu entry.
             local safety_indicator=""
             case "$safety" in
-                safe)       safety_indicator="${GREEN}[safe]${NC}" ;;
-                confirm)    safety_indicator="${YELLOW}[confirm]${NC}" ;;
-                risky)      safety_indicator="${RED}[risky]${NC}" ;;
-                alert_only) safety_indicator="${CYAN}[alert]${NC}" ;;
-                *)          safety_indicator="" ;;
+                safe)    safety_indicator="${GREEN}[safe]${NC}" ;;
+                confirm) safety_indicator="${YELLOW}[confirm]${NC}" ;;
+                risky)   safety_indicator="${RED}[risky]${NC}" ;;
+                *)       safety_indicator="" ;;
             esac
 
-            # Show whether it can be auto-fixed at current level
-            if [[ "$can_fix" == "true" ]]; then
-                echo -e "  $i) $prefix $title $safety_indicator"
-            else
-                echo -e "  $i) $prefix $title $safety_indicator ${DIM}(manual)${NC}"
-            fi
+            echo -e "  $i) $prefix $title $safety_indicator"
             ((i++))
         done < <(echo "$fixes" | jq -c '.[]')
 

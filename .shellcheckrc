@@ -50,12 +50,9 @@ disable=SC1091,SC2005,SC2016,SC2034,SC2053,SC2064,SC2076,SC2128,SC2129,SC2155,SC
 #
 # SC2129 — "combine multiple >> redirects". Cosmetic.
 #
-# SC2155 — "declare and assign separately". Fires 670+ times across the
-#          project where `local foo=$(cmd)` is the established idiom.
-#          Changing every site would dwarf this PR and carries real
-#          regression risk; the underlying concern (masked return codes)
-#          is already handled where it matters by `set -e` + explicit
-#          `|| true` / fallback patterns.
+# SC2155 — "declare and assign separately". Correct in general, moot here:
+#          module audit/fix bodies run with errexit suspended (called from an
+#          `if`), so `local x=$(cmd)` hides nothing `set -e` would have caught.
 #
 # SC2178 — see SC2128.
 #

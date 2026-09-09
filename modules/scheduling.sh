@@ -70,10 +70,10 @@ _sched_list_at_jobs() {
 scheduling_audit() {
     local module="scheduling"
 
-    print_item "$(i18n 'scheduling.check_at_jobs' 2>/dev/null || echo 'Checking at jobs')"
+    print_item "$(i18n 'scheduling.check_at_jobs')"
     _sched_audit_at_jobs
 
-    print_item "$(i18n 'scheduling.check_cron_internet_fetch' 2>/dev/null || echo 'Checking cron jobs for piped fetches')"
+    print_item "$(i18n 'scheduling.check_cron_internet_fetch')"
     _sched_audit_cron_anomalies
 }
 
@@ -94,24 +94,24 @@ _sched_audit_at_jobs() {
             "scheduling" \
             "low" \
             "failed" \
-            "$(i18n 'scheduling.at_jobs_present' "count=$count" 2>/dev/null || echo "${count} at job(s) queued")" \
+            "$(i18n 'scheduling.at_jobs_present' "count=$count")" \
             "$(i18n 'scheduling.at_jobs_present_desc' "list=$(echo "$jobs" | tr '\n' ' ')")" \
             "$(i18n 'scheduling.at_jobs_present_suggestion')" \
             "")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'scheduling.at_jobs_present' "count=$count" 2>/dev/null || echo "${count} at job(s) queued")"
+        print_severity "low" "$(i18n 'scheduling.at_jobs_present' "count=$count")"
     else
         local check=$(create_check_json \
             "scheduling.no_at_jobs" \
             "scheduling" \
             "low" \
             "passed" \
-            "$(i18n 'scheduling.no_at_jobs' 2>/dev/null || echo 'No at jobs queued')" \
+            "$(i18n 'scheduling.no_at_jobs')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'scheduling.no_at_jobs' 2>/dev/null || echo 'No at jobs queued')"
+        print_ok "$(i18n 'scheduling.no_at_jobs')"
     fi
 }
 
@@ -131,25 +131,25 @@ _sched_audit_cron_anomalies() {
             "scheduling" \
             "low" \
             "failed" \
-            "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")" \
+            "$(i18n 'scheduling.cron_fetches_internet' "count=$count")" \
             "$(i18n 'scheduling.cron_fetches_internet_desc' "sample=${sample}")" \
             "$(i18n 'scheduling.cron_fetches_internet_suggestion')" \
             "")
         state_add_check "$check"
         log_info "Cron internet-fetch entries: $hits"
-        print_severity "low" "$(i18n 'scheduling.cron_fetches_internet' "count=$count" 2>/dev/null || echo "${count} cron entr(y/ies) pipe remote downloads to a shell")"
+        print_severity "low" "$(i18n 'scheduling.cron_fetches_internet' "count=$count")"
     else
         local check=$(create_check_json \
             "scheduling.cron_clean" \
             "scheduling" \
             "low" \
             "passed" \
-            "$(i18n 'scheduling.cron_clean' 2>/dev/null || echo 'No suspicious cron patterns detected')" \
+            "$(i18n 'scheduling.cron_clean')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'scheduling.cron_clean' 2>/dev/null || echo 'No suspicious cron patterns')"
+        print_ok "$(i18n 'scheduling.cron_clean')"
     fi
 }
 

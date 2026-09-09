@@ -307,16 +307,16 @@ docker_audit() {
     _docker_audit_userns_remap
 
     # CIS Docker network / secrets / resources additions:
-    print_item "$(i18n 'docker.check_host_network' 2>/dev/null || echo 'Checking host network usage')"
+    print_item "$(i18n 'docker.check_host_network')"
     _docker_audit_host_network
 
-    print_item "$(i18n 'docker.check_default_bridge_icc' 2>/dev/null || echo 'Checking default-bridge ICC setting')"
+    print_item "$(i18n 'docker.check_default_bridge_icc')"
     _docker_audit_default_bridge_icc
 
-    print_item "$(i18n 'docker.check_secrets_in_env' 2>/dev/null || echo 'Scanning container env vars for embedded credentials')"
+    print_item "$(i18n 'docker.check_secrets_in_env')"
     _docker_audit_secrets_in_env
 
-    print_item "$(i18n 'docker.check_unlimited_memory' 2>/dev/null || echo 'Checking container memory limits')"
+    print_item "$(i18n 'docker.check_unlimited_memory')"
     _docker_audit_unlimited_memory
 }
 
@@ -641,22 +641,22 @@ _docker_audit_host_network() {
             "docker" \
             "medium" \
             "failed" \
-            "$(i18n 'docker.host_network_used' "count=$count" 2>/dev/null || echo "${count} container(s) running with --network=host")" \
+            "$(i18n 'docker.host_network_used' "count=$count")" \
             "$(i18n 'docker.host_network_used_desc' "list=${hn_list% }")" \
-            "$(i18n 'docker.fix_host_network' 2>/dev/null || echo 'Recreate the container without --network=host; use a user-defined bridge or default bridge instead unless host networking is truly required (VPN, monitoring)')" \
+            "$(i18n 'docker.fix_host_network')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'docker.host_network_used' "count=$count" 2>/dev/null || echo "${count} container(s) on host network")"
+        print_severity "medium" "$(i18n 'docker.host_network_used' "count=$count")"
     else
         local check=$(create_check_json \
             "docker.no_host_network" \
             "docker" \
             "low" \
             "passed" \
-            "$(i18n 'docker.no_host_network' 2>/dev/null || echo 'No containers using host network namespace')" \
+            "$(i18n 'docker.no_host_network')" \
             "" "" "")
         state_add_check "$check"
-        print_ok "$(i18n 'docker.no_host_network' 2>/dev/null || echo 'No containers using host network')"
+        print_ok "$(i18n 'docker.no_host_network')"
     fi
 }
 
@@ -669,22 +669,22 @@ _docker_audit_default_bridge_icc() {
             "docker" \
             "low" \
             "passed" \
-            "$(i18n 'docker.default_bridge_icc_disabled' 2>/dev/null || echo 'Default-bridge ICC disabled (containers cannot freely cross-talk)')" \
+            "$(i18n 'docker.default_bridge_icc_disabled')" \
             "" "" "")
         state_add_check "$check"
-        print_ok "$(i18n 'docker.default_bridge_icc_disabled' 2>/dev/null || echo 'Default-bridge ICC disabled')"
+        print_ok "$(i18n 'docker.default_bridge_icc_disabled')"
     else
         local check=$(create_check_json \
             "docker.default_bridge_icc_enabled" \
             "docker" \
             "low" \
             "failed" \
-            "$(i18n 'docker.default_bridge_icc_enabled' 2>/dev/null || echo 'Default-bridge ICC enabled (Docker default; allows lateral movement)')" \
+            "$(i18n 'docker.default_bridge_icc_enabled')" \
             "$(i18n 'docker.default_bridge_icc_enabled_desc')" \
-            "$(i18n 'docker.fix_default_bridge_icc' 2>/dev/null || echo 'Add \"icc\": false to /etc/docker/daemon.json, restart docker. Use user-defined networks for containers that genuinely need to communicate.')" \
+            "$(i18n 'docker.fix_default_bridge_icc')" \
             "")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'docker.default_bridge_icc_enabled' 2>/dev/null || echo 'Default-bridge ICC enabled')"
+        print_severity "low" "$(i18n 'docker.default_bridge_icc_enabled')"
     fi
 }
 
@@ -705,22 +705,22 @@ _docker_audit_secrets_in_env() {
             "docker" \
             "medium" \
             "failed" \
-            "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with embedded credentials in env vars")" \
+            "$(i18n 'docker.secrets_in_env' "count=$count")" \
             "$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
-            "$(i18n 'docker.fix_secrets_in_env' 2>/dev/null || echo 'Rotate the exposed credentials. Use docker secrets / mounted secret files / cloud-provider secret stores instead of -e/--env.')" \
+            "$(i18n 'docker.fix_secrets_in_env')" \
             "")
         state_add_check "$check"
-        print_severity "medium" "$(i18n 'docker.secrets_in_env' "count=$count" 2>/dev/null || echo "${count} container(s) with secrets in env")"
+        print_severity "medium" "$(i18n 'docker.secrets_in_env' "count=$count")"
     else
         local check=$(create_check_json \
             "docker.no_env_secrets" \
             "docker" \
             "low" \
             "passed" \
-            "$(i18n 'docker.no_env_secrets' 2>/dev/null || echo 'No embedded credential patterns in container env vars')" \
+            "$(i18n 'docker.no_env_secrets')" \
             "" "" "")
         state_add_check "$check"
-        print_ok "$(i18n 'docker.no_env_secrets' 2>/dev/null || echo 'No embedded credentials in container env')"
+        print_ok "$(i18n 'docker.no_env_secrets')"
     fi
 }
 
@@ -737,22 +737,22 @@ _docker_audit_unlimited_memory() {
             "docker" \
             "low" \
             "failed" \
-            "$(i18n 'docker.unlimited_memory' "count=$count" 2>/dev/null || echo "${count} container(s) without a memory limit")" \
+            "$(i18n 'docker.unlimited_memory' "count=$count")" \
             "$(i18n 'docker.unlimited_memory_desc' "list=${um_list% }")" \
-            "$(i18n 'docker.fix_unlimited_memory' 2>/dev/null || echo 'Re-run the container with --memory=<size> (e.g. --memory=512m) or set mem_limit in docker-compose.')" \
+            "$(i18n 'docker.fix_unlimited_memory')" \
             "")
         state_add_check "$check"
-        print_severity "low" "$(i18n 'docker.unlimited_memory' "count=$count" 2>/dev/null || echo "${count} container(s) without memory limit")"
+        print_severity "low" "$(i18n 'docker.unlimited_memory' "count=$count")"
     else
         local check=$(create_check_json \
             "docker.memory_limits_set" \
             "docker" \
             "low" \
             "passed" \
-            "$(i18n 'docker.memory_limits_set' 2>/dev/null || echo 'All running containers have memory limits configured')" \
+            "$(i18n 'docker.memory_limits_set')" \
             "" "" "")
         state_add_check "$check"
-        print_ok "$(i18n 'docker.memory_limits_set' 2>/dev/null || echo 'All containers have memory limits')"
+        print_ok "$(i18n 'docker.memory_limits_set')"
     fi
 }
 
@@ -964,28 +964,3 @@ _docker_fix_enable_daemon_setting() {
 }
 
 # --- Docker Utility Functions ---
-
-# Generate secure docker-compose snippet for a service
-docker_generate_secure_service() {
-    local service_name="$1"
-    local image="$2"
-    local internal_port="$3"
-
-    cat <<EOF
-  $service_name:
-    image: $image
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/run
-    ports:
-      - "127.0.0.1:$internal_port:$internal_port"
-    networks:
-      - internal
-EOF
-}

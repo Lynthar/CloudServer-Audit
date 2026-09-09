@@ -31,6 +31,22 @@ setup() {
 _nginx_validates() { _vpssec_stub nginx 0; }
 _nginx_rejects()   { _vpssec_stub nginx 1; }
 
+# nginx -t writes its diagnostic to stderr, which is the whole reason the fixes
+# capture 2>&1 rather than discarding it.
+_nginx_rejects_loudly() {
+    _vpssec_stub_script nginx <<'SH'
+echo "nginx: [emerg] unknown directive \"bogus\" in /etc/nginx/nginx.conf:7" >&2
+exit 1
+SH
+}
+
+_reload_fails() {
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$1 $2" == "reload nginx" ]] && exit 1
+exit 0
+SH
+}
+
 # A stock Debian nginx.conf: the directive ships commented out.
 _stock_nginx_conf() {
     cat > "$NGINX_CONF" <<'EOF'
@@ -146,6 +162,28 @@ _active_server_tokens() {
     _vpssec_stub_called systemctl 'reload nginx'
 }
 
+@test "server_tokens: a reload that fails is a failed fix, not a success" {
+    # Returning 0 here records the fix as complete while the running nginx is
+    # still the one that leaks its version — the edit is on disk, not live.
+    _stock_nginx_conf
+    _reload_fails
+
+    run _webapp_fix_nginx_server_tokens
+    [ "$status" -eq 1 ]
+}
+
+@test "server_tokens: nginx's own diagnostic reaches the operator" {
+    # "Nginx configuration test failed" names neither the file nor the line;
+    # discarding nginx's message leaves nothing to act on.
+    VPSSEC_QUIET_SCAN=0
+    _stock_nginx_conf
+    _nginx_rejects_loudly
+
+    run _webapp_fix_nginx_server_tokens
+    [ "$status" -eq 1 ]
+    grep -qF 'unknown directive' <<<"$output"
+}
+
 # ==============================================================================
 # webapp.nginx_security_headers  (FIX_SAFE — writes an auto-included drop-in)
 # ==============================================================================
@@ -190,6 +228,28 @@ _active_server_tokens() {
     run _webapp_fix_nginx_security_headers
     [ "$status" -eq 0 ]
     grep -q 'X-Custom' "${VPSSEC_BACKUP_SESSION}${NGINX_CONFD}/security-headers.conf"
+}
+
+@test "headers: replacing the operator's drop-in says so and names the backup" {
+    # This fix is FIX_SAFE, so it runs unprompted. Reporting "created" over a
+    # file the operator wrote is the difference between a recoverable change
+    # and one nobody knows happened.
+    VPSSEC_QUIET_SCAN=0
+    printf '# operator headers\nadd_header X-Custom "1";\n' > "$NGINX_CONFD/security-headers.conf"
+    _vpssec_begin_backup_session
+
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 0 ]
+    grep -qi 'replaced' <<<"$output"
+    grep -qF "${VPSSEC_BACKUP_SESSION}${NGINX_CONFD}/security-headers.conf" <<<"$output"
+    _vpssec_refute grep -qi 'created' <<<"$output"
+}
+
+@test "headers: a reload that fails is a failed fix, not a success" {
+    _reload_fails
+
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 1 ]
 }
 
 @test "headers: a drop-in nginx rejects is removed again" {

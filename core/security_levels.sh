@@ -190,7 +190,7 @@ declare -gA FIX_ALERT_ONLY=(
     ["cloud.suspicious_agents"]="Investigate unknown agent processes"
 
     # SELinux - requires reboot
-    ["baseline.selinux_enable"]="Enabling SELinux requires system reboot and may cause service issues"
+    ["baseline.selinux_disabled"]="Enabling SELinux requires system reboot and may cause service issues"
 
     # Users - ALL are alert-only, NEVER auto-modify users
     ["users.uid0_found"]="CRITICAL: Review UID 0 accounts - may be backdoors"
@@ -222,12 +222,12 @@ declare -gA FIX_ALERT_ONLY=(
     ["webapp.nginx_directory_listing"]="Disable autoindex in Nginx config"
     ["webapp.apache_server_signature"]="Configure Apache security settings"
     ["webapp.apache_server_tokens"]="Configure Apache security settings"
-    ["webapp.apache_trace"]="Disable TRACE method in Apache"
+    ["webapp.apache_trace_enabled"]="Disable TRACE method in Apache"
     ["webapp.apache_directory_index"]="Disable directory indexing in Apache"
-    ["webapp.apache_modules"]="Review and disable unnecessary modules"
-    ["webapp.php_security"]="Update php.ini security settings"
+    ["webapp.apache_dangerous_modules"]="Review and disable unnecessary modules"
+    ["webapp.php_security_issues"]="Update php.ini security settings"
     ["webapp.php_dangerous_functions"]="Add dangerous functions to disable_functions"
-    ["webapp.php_session"]="Update PHP session security settings"
+    ["webapp.php_session_security"]="Update PHP session security settings"
     ["webapp.php_open_basedir"]="Configure open_basedir restriction"
     ["webapp.ssl_cert_expiry"]="Renew SSL certificates"
     ["webapp.sensitive_files"]="Remove or protect sensitive files"
@@ -235,13 +235,13 @@ declare -gA FIX_ALERT_ONLY=(
 
     # === Review-only findings: their handlers print guidance and return 1
     # without mutating anything, so they are shown but never auto-fixed. ===
-    ["ssh.configure_access_control"]="Restrict access with AllowUsers/AllowGroups manually (wrong values can lock you out)"
-    ["filesystem.review_caps"]="Review file capabilities; remove if not needed"
-    ["ufw.review_rules"]="Review and tighten overly-permissive firewall rules manually"
+    ["ssh.no_access_control"]="Restrict access with AllowUsers/AllowGroups manually (wrong values can lock you out)"
+    ["filesystem.dangerous_caps"]="Review file capabilities; remove if not needed"
+    ["ufw.permissive_rules"]="Review and tighten overly-permissive firewall rules manually"
     ["users.nopasswd_sudo"]="Review NOPASSWD sudoers entries manually (do not auto-modify sudoers)"
-    ["users.history"]="Shell history hardening is an operator preference"
-    ["users.password_policy"]="Tune password policy in /etc/login.defs manually"
-    ["users.pwquality"]="Install/configure libpam-pwquality manually"
+    ["users.history_insecure"]="Shell history hardening is an operator preference"
+    ["users.password_policy_weak"]="Tune password policy in /etc/login.defs manually"
+    ["users.pwquality_weak"]="Install/configure libpam-pwquality manually"
 )
 
 # Fixes that run confirm_critical themselves, at a more precise point than the

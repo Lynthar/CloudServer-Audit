@@ -164,7 +164,7 @@ _agents_found_desc() {
 
     run cloud_audit
 
-    [ "$(_agents_found_desc)" = "AliYunDun (Alibaba Cloud)" ]
+    [ "$(_agents_found_desc)" = "AliYunDun (Alibaba Cloud): Cloud Security Center agent (Aegis)" ]
 }
 
 @test "cloud i18n: the en_US agents_found check has no CJK anywhere" {
@@ -191,7 +191,7 @@ _agents_found_desc() {
 
     run cloud_audit
 
-    [ "$(_agents_found_desc)" = "AliYunDun (阿里云)" ]
+    [ "$(_agents_found_desc)" = "AliYunDun (阿里云): 安骑士/云安全中心" ]
 }
 
 @test "cloud i18n: the provider title follows the language too" {
@@ -219,14 +219,16 @@ _agents_found_desc() {
     [ "$desc_key" = "aliyundun" ]
 }
 
-@test "cloud i18n: cloud_fix renders both columns for the operator" {
+@test "cloud i18n: the audit renders both columns for the operator" {
+    # Both columns have to reach the report, because the report is the only
+    # place the operator sees them: cloud has no fix path at all.
     _stub_one_running_agent
     i18n_load en_US
 
-    run cloud_fix cloud.agents_found
+    run cloud_audit
 
-    # Alert-only: the non-zero return is the contract, not a failure.
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"Cloud Security Center agent (Aegis)"* ]]
-    [[ "$output" == *"Alibaba Cloud"* ]]
+    local desc
+    desc=$(_agents_found_desc)
+    [[ "$desc" == *"Cloud Security Center agent (Aegis)"* ]]
+    [[ "$desc" == *"Alibaba Cloud"* ]]
 }

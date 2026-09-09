@@ -400,12 +400,12 @@ _ufw_audit_ruleset_empty() {
         "ufw" \
         "medium" \
         "failed" \
-        "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but host ingress is unfiltered")" \
+        "$(i18n 'ufw.firewall_empty' "type=$backend")" \
         "$(i18n 'ufw.firewall_empty_desc' "backend=$backend")" \
-        "$(i18n 'ufw.fix_firewall_empty' 2>/dev/null || echo "Add input rules (or a default-deny input policy), or use a managed front-end like UFW/firewalld")" \
+        "$(i18n 'ufw.fix_firewall_empty')" \
         "")
     state_add_check "$check"
-    print_severity "medium" "$(i18n 'ufw.firewall_empty' "type=$backend" 2>/dev/null || echo "$backend active but host ingress unfiltered")"
+    print_severity "medium" "$(i18n 'ufw.firewall_empty' "type=$backend")"
 }
 
 _ufw_audit_enabled() {
@@ -569,7 +569,7 @@ _ufw_audit_permissive_rules() {
             "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")" \
             "$issue_list" \
             "$(i18n 'ufw.fix_restrict_rules')" \
-            "ufw.review_rules")
+            "")
         state_add_check "$check"
         print_severity "$severity" "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")"
     else
@@ -604,9 +604,6 @@ ufw_fix() {
             ;;
         ufw.allow_ssh)
             _ufw_fix_allow_ssh
-            ;;
-        ufw.review_rules)
-            _ufw_fix_review_rules
             ;;
         *)
             log_error "Unknown UFW fix: $fix_id"
@@ -726,42 +723,6 @@ _ufw_fix_allow_ssh() {
     done < <(get_ssh_ports)
     [[ "$any" == 1 ]] && return $rc
     return 1
-}
-
-_ufw_fix_review_rules() {
-    print_warn "$(i18n 'ufw.review_rules_title' 2>/dev/null || echo 'Overly Permissive Firewall Rules Detected')"
-    echo ""
-
-    # Show current problematic rules
-    local issues=$(_ufw_find_permissive_rules)
-    if [[ -n "$issues" ]]; then
-        echo "$(i18n 'ufw.problematic_rules' 2>/dev/null || echo 'Problematic rules found'):"
-        echo ""
-        while IFS= read -r issue; do
-            [[ -z "$issue" ]] && continue
-            echo "  ⚠️  $issue"
-        done <<< "$issues"
-        echo ""
-    fi
-
-    echo "$(i18n 'ufw.recommendations' 2>/dev/null || echo 'Recommendations'):"
-    echo ""
-    echo "  1. $(i18n 'ufw.rec_restrict_source' 2>/dev/null || echo 'Restrict source IPs for database/internal services'):"
-    echo "     ufw delete allow 3306"
-    echo "     ufw allow from 10.0.0.0/8 to any port 3306 comment 'MySQL internal'"
-    echo ""
-    echo "  2. $(i18n 'ufw.rec_use_localhost' 2>/dev/null || echo 'Use localhost binding for database services'):"
-    echo "     Configure MySQL/PostgreSQL/Redis to bind to 127.0.0.1"
-    echo ""
-    echo "  3. $(i18n 'ufw.rec_use_vpn' 2>/dev/null || echo 'Use VPN or SSH tunnel for remote access'):"
-    echo "     ssh -L 3306:localhost:3306 user@server"
-    echo ""
-    echo "  4. $(i18n 'ufw.rec_review_numbered' 2>/dev/null || echo 'Review and delete unnecessary rules'):"
-    echo "     ufw status numbered"
-    echo "     ufw delete <rule_number>"
-    echo ""
-
-    return 1  # Return 1 since this is informational only
 }
 
 # --- UFW Utility Functions for Other Modules ---

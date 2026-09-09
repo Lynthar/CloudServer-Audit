@@ -195,7 +195,7 @@ main() {
     # select_mode.
     if [[ -n "${VPSSEC_MODE:-}" && "$VPSSEC_MODE" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
-        print_error "$(i18n 'error.root_required' 2>/dev/null || echo 'This operation requires root privileges')"
+        print_error "$(i18n 'error.root_required')"
         echo "Please run with: sudo vpssec $VPSSEC_MODE"
         exit 1
     fi
@@ -211,7 +211,7 @@ main() {
     # to be rejected.
     if [[ "${VPSSEC_MODE:-}" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
-        print_error "$(i18n 'error.root_required' 2>/dev/null || echo 'This operation requires root privileges')"
+        print_error "$(i18n 'error.root_required')"
         echo "Please run with: sudo vpssec ${VPSSEC_MODE:-}"
         exit 1
     fi

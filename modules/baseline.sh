@@ -225,7 +225,7 @@ baseline_audit() {
     _baseline_audit_integrity
 
     # Check for known-insecure legacy services (Lynis INSE-* family)
-    print_item "$(i18n 'baseline.check_insecure_services' 2>/dev/null || echo 'Checking for insecure legacy services')"
+    print_item "$(i18n 'baseline.check_insecure_services')"
     _baseline_audit_insecure_services
 }
 
@@ -276,24 +276,24 @@ _baseline_audit_insecure_services() {
             "baseline" \
             "high" \
             "failed" \
-            "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "${#found[@]} insecure legacy service(s)/package(s) present")" \
+            "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}")" \
             "$(i18n 'baseline.insecure_services_active_desc' "list=${list% }")" \
             "$(i18n 'baseline.insecure_services_active_suggestion' "remove_hint=$remove_hint")" \
             "")
         state_add_check "$check"
-        print_severity "high" "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}" 2>/dev/null || echo "Insecure legacy services present")"
+        print_severity "high" "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}")"
     else
         local check=$(create_check_json \
             "baseline.insecure_services_clean" \
             "baseline" \
             "low" \
             "passed" \
-            "$(i18n 'baseline.insecure_services_clean' 2>/dev/null || echo 'No insecure legacy services found')" \
+            "$(i18n 'baseline.insecure_services_clean')" \
             "" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'baseline.insecure_services_clean' 2>/dev/null || echo 'No insecure legacy services found')"
+        print_ok "$(i18n 'baseline.insecure_services_clean')"
     fi
 }
 
@@ -451,7 +451,7 @@ _baseline_audit_selinux_disabled() {
         "$(i18n 'baseline.selinux_disabled')" \
         "$(i18n 'baseline.selinux_disabled_desc' "config=${config}")" \
         "$(i18n 'baseline.selinux_disabled_suggestion')" \
-        "baseline.selinux_enable")
+        "")
     state_add_check "$check"
     print_severity "low" "$(i18n 'baseline.selinux_disabled')"
 }

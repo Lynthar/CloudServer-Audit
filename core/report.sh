@@ -310,7 +310,7 @@ _md_section() {
             (( first_cat )) || printf ','
             first_cat=0
             printf '{"cat":%s,"modules":[' \
-                "$(printf '%s' "$(i18n "category.${category}" 2>/dev/null || echo "$category")" | jq -Rs .)"
+                "$(printf '%s' "$(i18n "category.${category}")" | jq -Rs .)"
             first_mod=1
             for module in $(_get_category_modules "$category"); do
                 (( first_mod )) || printf ','
@@ -394,7 +394,7 @@ _render_module_clean() {
 
     REPLY_LINES=()
 
-    local mod_title=$(i18n "${module}.title" 2>/dev/null || echo "$module")
+    local mod_title=$(i18n "${module}.title")
 
     # Module header - bold cyan, simple style
     REPLY_LINES+=("${BOLD}${CYAN}${mod_title}${NC}")
@@ -515,7 +515,7 @@ report_print_details() {
 
     # Iterate through categories in order
     for category in "${VPSSEC_CATEGORY_ORDER[@]}"; do
-        local category_title=$(i18n "category.${category}" 2>/dev/null || echo "$category")
+        local category_title=$(i18n "category.${category}")
         local category_modules=$(_get_category_modules "$category")
 
         # Collect modules with results
@@ -788,7 +788,7 @@ report_generate_all() {
         print_msg "───────────────────────────────"
         print_msg ""
 
-        local save_prompt=$(i18n 'report.save_prompt' 2>/dev/null || echo "Save report files?")
+        local save_prompt=$(i18n 'report.save_prompt')
         if confirm "$save_prompt" "n"; then
             _report_write_files || print_warn "$(i18n 'report.save_failed')"
 

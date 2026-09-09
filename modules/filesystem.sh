@@ -1187,7 +1187,7 @@ _fs_audit_caps() {
             "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
             "$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
             "$(i18n 'filesystem.review_caps')" \
-            "filesystem.review_caps")
+            "")
         state_add_check "$check"
         print_severity "medium" "Files with dangerous capabilities: $dangerous_count"
     elif ((total_count > 0)); then

@@ -1137,7 +1137,6 @@ vpssec/
 ├── VERSION             # 版本号唯一来源；release.yml 拒绝与它不一致的 tag
 ├── run.sh              # 一次性运行入口（拉 release tarball + cosign 验签，跑完自删）
 ├── install.sh          # 安装到 /opt/vpssec（同样 cosign 验签，升级保留 state/backups）
-├── manifest.sha256     # 所有 runtime 关键文件的 SHA-256；install.sh 验签后再校验一道
 ├── core/               # 核心引擎
 │   ├── common.sh       # 公共工具（日志、i18n、校验、原子写、单例锁）
 │   ├── engine.sh       # 模块加载、audit/guide 调度、计划恢复
@@ -1158,8 +1157,7 @@ vpssec/
 │   │   └── cases/      # 每个 check_id 一个文件
 │   └── uninstall/      # 卸载脚本的破坏性验证
 │       └── run.sh      # 驱动（sudo bash tests/uninstall/run.sh）
-├── tools/              # 开发者工具
-│   └── gen-manifest.sh # 重新生成 manifest.sha256
+├── tools/              # 开发者工具（变异测试驱动与用例）
 ├── docs/               # 用户文档
 ├── state/              # 运行时状态
 ├── reports/            # 生成的报告
@@ -1215,9 +1213,6 @@ mymodule_fix() {
 4. 在 `core/security_levels.sh` 给每个 `fix_id` 分类（`FIX_SAFE` /
    `FIX_CONFIRM` / `FIX_RISKY` / `FIX_ALERT_ONLY`），以及给每个
    `check_id` 加 `CHECK_SCORE_CATEGORY` 条目。
-
-5. 运行 `bash tools/gen-manifest.sh`，commit 更新后的
-   `manifest.sha256` —— 否则 `manifest-freshness` CI job 会拒绝 PR。
 
 `module-contract` CI job 会验证每个 `VPSSEC_MODULE_ORDER` 里的名字
 都对应 `modules/<name>.sh`，并且导出了 `<name>_audit()` 和 `<name>_fix()`。

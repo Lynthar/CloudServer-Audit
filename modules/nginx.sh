@@ -197,7 +197,7 @@ nginx_audit() {
 
     # Timeouts, rate limiting and slow-attack defences, per CIS NGINX
     # Benchmark 5.2.1 and nginx's own DDoS-mitigation guidance.
-    print_item "$(i18n 'nginx.check_dos_hardening' 2>/dev/null || echo 'Checking DoS hardening')"
+    print_item "$(i18n 'nginx.check_dos_hardening')"
     _nginx_audit_dos_hardening
 }
 
@@ -283,13 +283,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high')" \
+            "$(i18n 'nginx.client_header_timeout_high')" \
             "$(i18n 'nginx.client_header_timeout_high_desc' "cht_raw=$cht_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_header_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "$(i18n 'nginx.fix_dos_timeouts')" \
             "")
         state_add_check "$check"
         issues+=("client_header_timeout=$cht_raw")
-        print_severity "low" "$(i18n 'nginx.client_header_timeout_high' 2>/dev/null || echo 'client_header_timeout too high'): $cht_raw"
+        print_severity "low" "$(i18n 'nginx.client_header_timeout_high'): $cht_raw"
     fi
 
     # 2. client_body_timeout — CIS 5.2.1, default 60s, recommended ≤10s.
@@ -302,13 +302,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high')" \
+            "$(i18n 'nginx.client_body_timeout_high')" \
             "$(i18n 'nginx.client_body_timeout_high_desc' "cbt_raw=$cbt_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set client_body_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "$(i18n 'nginx.fix_dos_timeouts')" \
             "")
         state_add_check "$check"
         issues+=("client_body_timeout=$cbt_raw")
-        print_severity "low" "$(i18n 'nginx.client_body_timeout_high' 2>/dev/null || echo 'client_body_timeout too high'): $cbt_raw"
+        print_severity "low" "$(i18n 'nginx.client_body_timeout_high'): $cbt_raw"
     fi
 
     # 3. keepalive_timeout — default 75s, recommended ≤30s (F5 NGINX STIG).
@@ -321,13 +321,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.keepalive_timeout_high' 2>/dev/null || echo 'keepalive_timeout too high')" \
+            "$(i18n 'nginx.keepalive_timeout_high')" \
             "$(i18n 'nginx.keepalive_timeout_high_desc' "kt_raw=$kt_raw")" \
-            "$(i18n 'nginx.fix_dos_keepalive' 2>/dev/null || echo 'Set keepalive_timeout 30s; in /etc/nginx/nginx.conf')" \
+            "$(i18n 'nginx.fix_dos_keepalive')" \
             "")
         state_add_check "$check"
         issues+=("keepalive_timeout=$kt_raw")
-        print_severity "low" "$(i18n 'nginx.keepalive_timeout_high' 2>/dev/null || echo 'keepalive_timeout too high'): $kt_raw"
+        print_severity "low" "$(i18n 'nginx.keepalive_timeout_high'): $kt_raw"
     fi
 
     # 4. send_timeout — default 60s, recommended ≤10s.
@@ -340,13 +340,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.send_timeout_high' 2>/dev/null || echo 'send_timeout too high')" \
+            "$(i18n 'nginx.send_timeout_high')" \
             "$(i18n 'nginx.send_timeout_high_desc' "st_raw=$st_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts' 2>/dev/null || echo 'Set send_timeout 10s; in /etc/nginx/nginx.conf http block')" \
+            "$(i18n 'nginx.fix_dos_timeouts')" \
             "")
         state_add_check "$check"
         issues+=("send_timeout=$st_raw")
-        print_severity "low" "$(i18n 'nginx.send_timeout_high' 2>/dev/null || echo 'send_timeout too high'): $st_raw"
+        print_severity "low" "$(i18n 'nginx.send_timeout_high'): $st_raw"
     fi
 
     # 5. Rate limiting presence — no severity escalation: many static
@@ -357,13 +357,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.no_rate_limiting' 2>/dev/null || echo 'No rate limiting configured (no limit_req_zone)')" \
+            "$(i18n 'nginx.no_rate_limiting')" \
             "$(i18n 'nginx.no_rate_limiting_desc')" \
-            "$(i18n 'nginx.fix_dos_rate_limit' 2>/dev/null || echo 'Add: limit_req_zone \$binary_remote_addr zone=perip:10m rate=10r/s; to nginx.conf http block, then apply per-location with limit_req zone=perip burst=20 nodelay;')" \
+            "$(i18n 'nginx.fix_dos_rate_limit')" \
             "")
         state_add_check "$check"
         issues+=("no_rate_limiting")
-        print_severity "low" "$(i18n 'nginx.no_rate_limiting' 2>/dev/null || echo 'No rate limiting configured')"
+        print_severity "low" "$(i18n 'nginx.no_rate_limiting')"
     fi
 
     # 6. reset_timedout_connection — default off, nginx mitigation guide
@@ -376,13 +376,13 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "failed" \
-            "$(i18n 'nginx.reset_timedout_connection_off' 2>/dev/null || echo 'reset_timedout_connection not enabled')" \
+            "$(i18n 'nginx.reset_timedout_connection_off')" \
             "$(i18n 'nginx.reset_timedout_connection_off_desc')" \
-            "$(i18n 'nginx.fix_dos_reset_timedout' 2>/dev/null || echo 'Add: reset_timedout_connection on; to /etc/nginx/nginx.conf http block')" \
+            "$(i18n 'nginx.fix_dos_reset_timedout')" \
             "")
         state_add_check "$check"
         issues+=("reset_timedout_connection=off")
-        print_severity "low" "$(i18n 'nginx.reset_timedout_connection_off' 2>/dev/null || echo 'reset_timedout_connection not enabled')"
+        print_severity "low" "$(i18n 'nginx.reset_timedout_connection_off')"
     fi
 
     # Positive companion — only when EVERY directive met the threshold.
@@ -392,12 +392,12 @@ _nginx_audit_dos_hardening() {
             "nginx" \
             "low" \
             "passed" \
-            "$(i18n 'nginx.dos_hardening_ok' 2>/dev/null || echo 'DoS hardening directives configured')" \
+            "$(i18n 'nginx.dos_hardening_ok')" \
             "$(i18n 'nginx.dos_hardening_ok_desc')" \
             "" \
             "")
         state_add_check "$check"
-        print_ok "$(i18n 'nginx.dos_hardening_ok' 2>/dev/null || echo 'DoS hardening directives configured')"
+        print_ok "$(i18n 'nginx.dos_hardening_ok')"
     fi
 }
 
