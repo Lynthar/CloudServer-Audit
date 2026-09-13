@@ -1,0 +1,39 @@
+# Mutation cases: tests/test_ssh_directives.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_directives.bats
+#
+# The twelve sshd directive checks are one table and one loop; every case
+# below breaks either a row or the loop's reading of it.
+
+# A row's expected value is the whole check: flip it and the hardened host fails.
+run_case "row/expect-flipped" 1 \
+    '    "x11_forwarding|X11Forwarding|no|=|no|ssh.x11_forwarding_disabled|ssh.x11_forwarding_enabled|ssh.x11_forwarding_enabled_suggestion|ssh.disable_x11_forwarding"' \
+    '    "x11_forwarding|X11Forwarding|no|=|yes|ssh.x11_forwarding_disabled|ssh.x11_forwarding_enabled|ssh.x11_forwarding_enabled_suggestion|ssh.disable_x11_forwarding"'
+
+# sshd accepts directive values in any case; the comparison must too.
+run_case "loop/case-sensitive" 1 \
+    '            '"'"'='"'"')  [[ "${val,,}" == "${expect,,}" ]] && ok=1 ;;' \
+    '            '"'"'='"'"')  [[ "$val" == "$expect" ]] && ok=1 ;;'
+
+# The numeric bound is inclusive (ClientAliveCountMax 2 and MaxSessions 4 pass),
+# and a non-number must fail rather than be treated as zero.
+run_case "loop/bound-exclusive" 1 \
+    '            '"'"'<='"'"') shown=" ($val)"; [[ "$val" =~ ^[0-9]+$ ]] && (( val <= expect )) && ok=1 ;;' \
+    '            '"'"'<='"'"') shown=" ($val)"; [[ "$val" =~ ^[0-9]+$ ]] && (( val < expect )) && ok=1 ;;'
+
+run_case "loop/non-number-passes" 1 \
+    '            '"'"'<='"'"') shown=" ($val)"; [[ "$val" =~ ^[0-9]+$ ]] && (( val <= expect )) && ok=1 ;;' \
+    '            '"'"'<='"'"') shown=" ($val)"; (( val <= expect )) && ok=1 ;;'
+
+# The value follows the terminal line only for the numeric checks.
+run_case "loop/value-shown-everywhere" 1 \
+    '        ok=0; shown=""' \
+    '        ok=0; shown=" ($val)"'
+
+# The two directive-specific suggestions and the one fix_id come from the row.
+run_case "loop/shared-suggestion-always" 1 \
+    '            if [[ "$sugg" == - ]]; then' \
+    '            if true; then'
+
+run_case "loop/fix-dropped" 1 \
+    '                fix="${fix/#-/}"' \
+    '                fix=""'

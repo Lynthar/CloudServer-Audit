@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_check_emit.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_check_emit.bats
+#
+# Both cases attack what check_emit derives rather than takes: the module from
+# the id, and the title from the id's i18n key.
+
+run_case "derive/module-is-whole-id" 1 \
+    '    state_add_check "$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \' \
+    '    state_add_check "$(create_check_json "$id" "$id" "$severity" "$status" \'
+
+run_case "derive/title-default-dropped" 1 \
+    '    [[ -n "$title" ]] || title=$(i18n "$id")' \
+    '    :'

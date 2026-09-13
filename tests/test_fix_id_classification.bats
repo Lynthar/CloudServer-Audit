@@ -18,8 +18,8 @@ _classified_fix_ids() {
 }
 
 # One line per emitted check, "<id>\t<fix>". Sites: `check_emit "<id>" …` /
-# `_malware_emit_finding "<id>" …` with a `fix="…"` continuation line, and
-# core/state.sh's hand-serialised create_check_json fallback block.
+# `_malware_emit_finding "<id>" …` with a `fix="…"` continuation line; rows of
+# ssh.sh's SSH_DIRECTIVE_CHECKS; core/state.sh's hand-serialised fallback block.
 _emitted_sites() {
     awk '
         function flush() { if (id != "") print id "\t" fix; id = ""; fix = "" }
@@ -44,6 +44,12 @@ _emitted_sites() {
             split(substr($0, RSTART, RLENGTH), q, "\""); fix = q[2]
         }
         id != "" && $0 !~ /\\[ \t]*$/ { flush() }
+        /^declare -ga SSH_DIRECTIVE_CHECKS=\(/ { tbl = 1; next }
+        tbl && /^\)/ { tbl = 0 }
+        tbl && /^[ \t]*"/ {
+            gsub(/^[ \t]*"|"[ \t]*$/, ""); split($0, c, "|")
+            print c[6] "\t"; print c[7] "\t" (c[9] == "-" ? "" : c[9])
+        }
         END { flush() }
     ' "$@"
 }

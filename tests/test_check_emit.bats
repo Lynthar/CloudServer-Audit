@@ -48,8 +48,9 @@ _recorded() {
     [ ! -e "$STATE_CHECKS_FILE" ]
 }
 
-# Static views of the call sites. A site is `check_emit "<id>" …` or
-# `_malware_emit_finding "<id>" …`, its fields on continuation lines.
+# Static views of the call sites: `check_emit "<id>" …` or
+# `_malware_emit_finding "<id>" …` with fields on continuation lines, and the
+# rows of ssh.sh's SSH_DIRECTIVE_CHECKS table, whose ids are never titled.
 _emit_field_keys() {
     awk '
         match($0, /(^|[ \t])(check_emit|_malware_emit_finding) "[a-zA-Z0-9_.]+"/) { inblk = 1 }
@@ -69,6 +70,9 @@ _untitled_check_ids() {
         }
         id != "" && /(^|[ \t])title=/ { titled = 1 }
         id != "" && $0 !~ /\\[ \t]*$/ { flush() }
+        /^declare -ga SSH_DIRECTIVE_CHECKS=\(/ { tbl = 1; next }
+        tbl && /^\)/ { tbl = 0 }
+        tbl && /^[ \t]*"/ { gsub(/^[ \t]*"|"[ \t]*$/, ""); split($0, c, "|"); print c[6]; print c[7] }
         END { flush() }
     ' "$@"
 }

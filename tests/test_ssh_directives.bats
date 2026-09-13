@@ -7,12 +7,12 @@ load helpers.bash
 
 # stem|directive|default|expect|pass_input|fail_input|pass_id|fail_id|suggestion|fix|pass_desc|shown|default_state
 # suggestion "-" = ssh.suggest_set_directive with directive/expect; pass_desc
-# "directive" = "<directive>=<value>", "-" = empty; shown = when " (value)" follows.
+# "directive" = "<directive>=<value>"; shown = when " (value)" follows the line.
 SSH_GOLD=(
-    "x11_forwarding|X11Forwarding|no|no|No|yes|ssh.x11_forwarding_disabled|ssh.x11_forwarding_enabled|ssh.x11_forwarding_enabled_suggestion|ssh.disable_x11_forwarding|-|none|passed"
+    "x11_forwarding|X11Forwarding|no|no|No|yes|ssh.x11_forwarding_disabled|ssh.x11_forwarding_enabled|ssh.x11_forwarding_enabled_suggestion|ssh.disable_x11_forwarding|directive|none|passed"
     "allow_tcp_forwarding|AllowTcpForwarding|yes|no|NO|yes|ssh.allow_tcp_forwarding_disabled|ssh.allow_tcp_forwarding_enabled|-|-|directive|none|failed"
     "client_alive|ClientAliveCountMax|3|2|2|3|ssh.client_alive_ok|ssh.client_alive_high|-|-|directive|both|failed"
-    "log_level|LogLevel|INFO|VERBOSE|verbose|INFO|ssh.log_level_ok|ssh.log_level_low|-|-|directive|fail|failed"
+    "log_level|LogLevel|INFO|VERBOSE|verbose|INFO|ssh.log_level_ok|ssh.log_level_low|-|-|directive|none|failed"
     "max_sessions|MaxSessions|10|4|4|10|ssh.max_sessions_ok|ssh.max_sessions_high|-|-|directive|both|failed"
     "tcp_keepalive|TCPKeepAlive|yes|no|no|Yes|ssh.tcp_keepalive_disabled|ssh.tcp_keepalive_enabled|ssh.tcp_keepalive_enabled_suggestion|-|directive|none|failed"
     "agent_forwarding|AllowAgentForwarding|yes|no|no|yes|ssh.agent_forwarding_disabled|ssh.agent_forwarding_enabled|-|-|directive|none|failed"

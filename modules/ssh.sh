@@ -355,48 +355,7 @@ ssh_audit() {
     print_item "$(i18n 'ssh.check_login_grace_time')"
     _ssh_audit_login_grace_time
 
-    # Check X11Forwarding
-    print_item "$(i18n 'ssh.check_x11_forwarding')"
-    _ssh_audit_x11_forwarding
-
-    # Additional hardening options surfaced by Lynis SSH-7408 that the
-    # original module didn't cover. All are advisory (low severity,
-    # info-category) — operator preferences, not security baseline.
-    print_item "$(i18n 'ssh.check_allow_tcp_forwarding')"
-    _ssh_audit_allow_tcp_forwarding
-
-    print_item "$(i18n 'ssh.check_client_alive')"
-    _ssh_audit_client_alive_count_max
-
-    print_item "$(i18n 'ssh.check_log_level')"
-    _ssh_audit_log_level
-
-    print_item "$(i18n 'ssh.check_max_sessions')"
-    _ssh_audit_max_sessions
-
-    print_item "$(i18n 'ssh.check_tcp_keepalive')"
-    _ssh_audit_tcp_keepalive
-
-    print_item "$(i18n 'ssh.check_agent_forwarding')"
-    _ssh_audit_agent_forwarding
-
-    # These alter the security boundary rather than hygiene, so they matter
-    # more than the options above — still low severity, to match the
-    # existing SSH-option category.
-    print_item "$(i18n 'ssh.check_ignore_rhosts')"
-    _ssh_audit_ignore_rhosts
-
-    print_item "$(i18n 'ssh.check_strict_modes')"
-    _ssh_audit_strict_modes
-
-    print_item "$(i18n 'ssh.check_permit_user_env')"
-    _ssh_audit_permit_user_environment
-
-    print_item "$(i18n 'ssh.check_permit_tunnel')"
-    _ssh_audit_permit_tunnel
-
-    print_item "$(i18n 'ssh.check_gateway_ports')"
-    _ssh_audit_gateway_ports
+    _ssh_audit_directives
 
     # Check SSH protocol and algorithms
     print_item "$(i18n 'ssh.check_algorithms')"
@@ -559,173 +518,53 @@ _ssh_audit_login_grace_time() {
     fi
 }
 
-_ssh_audit_x11_forwarding() {
-    local x11=$(_ssh_get_config "X11Forwarding" "no")
+# stem|directive|default|test|expect|pass_id|fail_id|suggestion_key|fix_id
+# test: = compares case-insensitively, <= numerically (a non-number fails).
+# Ids are contract names and stay literal; "-" means the shared suggestion / no fix.
+declare -ga SSH_DIRECTIVE_CHECKS=(
+    "x11_forwarding|X11Forwarding|no|=|no|ssh.x11_forwarding_disabled|ssh.x11_forwarding_enabled|ssh.x11_forwarding_enabled_suggestion|ssh.disable_x11_forwarding"
+    "allow_tcp_forwarding|AllowTcpForwarding|yes|=|no|ssh.allow_tcp_forwarding_disabled|ssh.allow_tcp_forwarding_enabled|-|-"
+    "client_alive|ClientAliveCountMax|3|<=|2|ssh.client_alive_ok|ssh.client_alive_high|-|-"
+    "log_level|LogLevel|INFO|=|VERBOSE|ssh.log_level_ok|ssh.log_level_low|-|-"
+    "max_sessions|MaxSessions|10|<=|4|ssh.max_sessions_ok|ssh.max_sessions_high|-|-"
+    "tcp_keepalive|TCPKeepAlive|yes|=|no|ssh.tcp_keepalive_disabled|ssh.tcp_keepalive_enabled|ssh.tcp_keepalive_enabled_suggestion|-"
+    "agent_forwarding|AllowAgentForwarding|yes|=|no|ssh.agent_forwarding_disabled|ssh.agent_forwarding_enabled|-|-"
+    "ignore_rhosts|IgnoreRhosts|yes|=|yes|ssh.ignore_rhosts_ok|ssh.ignore_rhosts_disabled|-|-"
+    "strict_modes|StrictModes|yes|=|yes|ssh.strict_modes_ok|ssh.strict_modes_disabled|-|-"
+    "permit_user_env|PermitUserEnvironment|no|=|no|ssh.permit_user_env_disabled|ssh.permit_user_env_enabled|-|-"
+    "permit_tunnel|PermitTunnel|no|=|no|ssh.permit_tunnel_disabled|ssh.permit_tunnel_enabled|-|-"
+    "gateway_ports|GatewayPorts|no|=|no|ssh.gateway_ports_disabled|ssh.gateway_ports_enabled|-|-"
+)
 
-    if [[ "${x11,,}" == "no" ]]; then
-        check_emit "ssh.x11_forwarding_disabled" low passed
-        print_ok "$(i18n 'ssh.x11_forwarding_disabled')"
-    else
-        check_emit "ssh.x11_forwarding_enabled" low failed \
-            desc="$(i18n 'ssh.x11_forwarding_enabled_desc')" \
-            suggestion="$(i18n 'ssh.x11_forwarding_enabled_suggestion')" \
-            fix="ssh.disable_x11_forwarding"
-        print_severity "low" "$(i18n 'ssh.x11_forwarding_enabled')"
-    fi
-}
-
-_ssh_audit_allow_tcp_forwarding() {
-    local val=$(_ssh_get_config "AllowTcpForwarding" "yes")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.allow_tcp_forwarding_disabled" low passed \
-            desc="AllowTcpForwarding=$val"
-        print_ok "$(i18n 'ssh.allow_tcp_forwarding_disabled')"
-    else
-        check_emit "ssh.allow_tcp_forwarding_enabled" low failed \
-            desc="$(i18n 'ssh.allow_tcp_forwarding_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=AllowTcpForwarding' 'value=no')"
-        print_severity "low" "$(i18n 'ssh.allow_tcp_forwarding_enabled')"
-    fi
-}
-
-_ssh_audit_client_alive_count_max() {
-    local val=$(_ssh_get_config "ClientAliveCountMax" "3")
-    if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 2 )); then
-        check_emit "ssh.client_alive_ok" low passed \
-            desc="ClientAliveCountMax=$val"
-        print_ok "$(i18n 'ssh.client_alive_ok') ($val)"
-    else
-        check_emit "ssh.client_alive_high" low failed \
-            desc="$(i18n 'ssh.client_alive_high_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=ClientAliveCountMax' 'value=2')"
-        print_severity "low" "$(i18n 'ssh.client_alive_high') ($val)"
-    fi
-}
-
-_ssh_audit_log_level() {
-    local val=$(_ssh_get_config "LogLevel" "INFO")
-    if [[ "${val^^}" == "VERBOSE" ]]; then
-        check_emit "ssh.log_level_ok" low passed \
-            desc="LogLevel=$val"
-        print_ok "$(i18n 'ssh.log_level_ok')"
-    else
-        check_emit "ssh.log_level_low" low failed \
-            desc="$(i18n 'ssh.log_level_low_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=LogLevel' 'value=VERBOSE')"
-        print_severity "low" "$(i18n 'ssh.log_level_low') ($val)"
-    fi
-}
-
-_ssh_audit_max_sessions() {
-    local val=$(_ssh_get_config "MaxSessions" "10")
-    if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 4 )); then
-        check_emit "ssh.max_sessions_ok" low passed \
-            desc="MaxSessions=$val"
-        print_ok "$(i18n 'ssh.max_sessions_ok') ($val)"
-    else
-        check_emit "ssh.max_sessions_high" low failed \
-            desc="$(i18n 'ssh.max_sessions_high_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=MaxSessions' 'value=4')"
-        print_severity "low" "$(i18n 'ssh.max_sessions_high') ($val)"
-    fi
-}
-
-_ssh_audit_tcp_keepalive() {
-    local val=$(_ssh_get_config "TCPKeepAlive" "yes")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.tcp_keepalive_disabled" low passed \
-            desc="TCPKeepAlive=$val"
-        print_ok "$(i18n 'ssh.tcp_keepalive_disabled')"
-    else
-        check_emit "ssh.tcp_keepalive_enabled" low failed \
-            desc="$(i18n 'ssh.tcp_keepalive_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.tcp_keepalive_enabled_suggestion')"
-        print_severity "low" "$(i18n 'ssh.tcp_keepalive_enabled')"
-    fi
-}
-
-_ssh_audit_agent_forwarding() {
-    local val=$(_ssh_get_config "AllowAgentForwarding" "yes")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.agent_forwarding_disabled" low passed \
-            desc="AllowAgentForwarding=$val"
-        print_ok "$(i18n 'ssh.agent_forwarding_disabled')"
-    else
-        check_emit "ssh.agent_forwarding_enabled" low failed \
-            desc="$(i18n 'ssh.agent_forwarding_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=AllowAgentForwarding' 'value=no')"
-        print_severity "low" "$(i18n 'ssh.agent_forwarding_enabled')"
-    fi
-}
-
-_ssh_audit_ignore_rhosts() {
-    local val=$(_ssh_get_config "IgnoreRhosts" "yes")
-    if [[ "${val,,}" == "yes" ]]; then
-        check_emit "ssh.ignore_rhosts_ok" low passed \
-            desc="IgnoreRhosts=$val"
-        print_ok "$(i18n 'ssh.ignore_rhosts_ok')"
-    else
-        check_emit "ssh.ignore_rhosts_disabled" low failed \
-            desc="$(i18n 'ssh.ignore_rhosts_disabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=IgnoreRhosts' 'value=yes')"
-        print_severity "low" "$(i18n 'ssh.ignore_rhosts_disabled')"
-    fi
-}
-
-_ssh_audit_strict_modes() {
-    local val=$(_ssh_get_config "StrictModes" "yes")
-    if [[ "${val,,}" == "yes" ]]; then
-        check_emit "ssh.strict_modes_ok" low passed \
-            desc="StrictModes=$val"
-        print_ok "$(i18n 'ssh.strict_modes_ok')"
-    else
-        check_emit "ssh.strict_modes_disabled" low failed \
-            desc="$(i18n 'ssh.strict_modes_disabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=StrictModes' 'value=yes')"
-        print_severity "low" "$(i18n 'ssh.strict_modes_disabled')"
-    fi
-}
-
-_ssh_audit_permit_user_environment() {
-    local val=$(_ssh_get_config "PermitUserEnvironment" "no")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.permit_user_env_disabled" low passed \
-            desc="PermitUserEnvironment=$val"
-        print_ok "$(i18n 'ssh.permit_user_env_disabled')"
-    else
-        check_emit "ssh.permit_user_env_enabled" low failed \
-            desc="$(i18n 'ssh.permit_user_env_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=PermitUserEnvironment' 'value=no')"
-        print_severity "low" "$(i18n 'ssh.permit_user_env_enabled')"
-    fi
-}
-
-_ssh_audit_permit_tunnel() {
-    local val=$(_ssh_get_config "PermitTunnel" "no")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.permit_tunnel_disabled" low passed \
-            desc="PermitTunnel=$val"
-        print_ok "$(i18n 'ssh.permit_tunnel_disabled')"
-    else
-        check_emit "ssh.permit_tunnel_enabled" low failed \
-            desc="$(i18n 'ssh.permit_tunnel_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=PermitTunnel' 'value=no')"
-        print_severity "low" "$(i18n 'ssh.permit_tunnel_enabled')"
-    fi
-}
-
-_ssh_audit_gateway_ports() {
-    local val=$(_ssh_get_config "GatewayPorts" "no")
-    if [[ "${val,,}" == "no" ]]; then
-        check_emit "ssh.gateway_ports_disabled" low passed \
-            desc="GatewayPorts=$val"
-        print_ok "$(i18n 'ssh.gateway_ports_disabled')"
-    else
-        check_emit "ssh.gateway_ports_enabled" low failed \
-            desc="$(i18n 'ssh.gateway_ports_enabled_desc' "val=$val")" \
-            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=GatewayPorts' 'value=no')"
-        print_severity "low" "$(i18n 'ssh.gateway_ports_enabled')"
-    fi
+# One pass over SSH_DIRECTIVE_CHECKS: the terminal shows the value only for
+# the numeric checks, where the number is the finding.
+_ssh_audit_directives() {
+    local row stem directive default test expect pass_id fail_id sugg fix val ok shown
+    for row in "${SSH_DIRECTIVE_CHECKS[@]}"; do
+        IFS='|' read -r stem directive default test expect pass_id fail_id sugg fix <<< "$row"
+        print_item "$(i18n "ssh.check_${stem}")"
+        val=$(_ssh_get_config "$directive" "$default")
+        ok=0; shown=""
+        case "$test" in
+            '=')  [[ "${val,,}" == "${expect,,}" ]] && ok=1 ;;
+            '<=') shown=" ($val)"; [[ "$val" =~ ^[0-9]+$ ]] && (( val <= expect )) && ok=1 ;;
+        esac
+        if (( ok )); then
+            check_emit "$pass_id" low passed desc="${directive}=${val}"
+            print_ok "$(i18n "$pass_id")$shown"
+        else
+            if [[ "$sugg" == - ]]; then
+                sugg=$(i18n 'ssh.suggest_set_directive' "directive=$directive" "value=$expect")
+            else
+                sugg=$(i18n "$sugg")
+            fi
+            check_emit "$fail_id" low failed \
+                desc="$(i18n "${fail_id}_desc" "val=$val")" \
+                suggestion="$sugg" \
+                fix="${fix/#-/}"
+            print_severity "low" "$(i18n "$fail_id")$shown"
+        fi
+    done
 }
 
 _ssh_audit_algorithms() {
