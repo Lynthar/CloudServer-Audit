@@ -96,9 +96,16 @@ _expected() {
 _assert_golden() {
     run ssh_audit
     [ "$status" -eq 0 ]
-    diff <(printf '%s\n' "${EXPECTED_LINES[@]}") <(printf '%s\n' "$output")
-    diff <(printf '%s\n' "${EXPECTED_CHECKS[@]}") \
-         <(jq -r '.[] | [.id, .module, .severity, .status, .title, .desc, .suggestion, .fix_id] | @tsv' "$STATE_CHECKS_FILE")
+    _assert_same "terminal lines" "$(printf '%s\n' "${EXPECTED_LINES[@]}")" "$output"
+    _assert_same "check records" "$(printf '%s\n' "${EXPECTED_CHECKS[@]}")" \
+        "$(jq -r '.[] | [.id, .module, .severity, .status, .title, .desc, .suggestion, .fix_id] | @tsv' "$STATE_CHECKS_FILE")"
+}
+
+# Plain bash comparison: the rocky and arch CI containers ship without diffutils.
+_assert_same() {
+    [[ "$2" == "$3" ]] && return 0
+    printf '%s differ\n--- expected\n%s\n--- actual\n%s\n' "$1" "$2" "$3" >&2
+    return 1
 }
 
 @test "ssh directives: every check passes on its hardened value, case-insensitively" {
