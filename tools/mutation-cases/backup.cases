@@ -104,8 +104,8 @@ run_case "content/restic-inline-password" 1 \
 # disclaimer restores a green line the operator can disprove, and nothing else
 # gates this family (i18n parity only checks keys exist, bats only which branch ran).
 run_case "report/paths-claim-unqualified" 1 \
-    "        \"\$(i18n 'backup.paths_list' \"paths=\$paths_list\")\" \\" \
-    "        \"\$(i18n 'backup.critical_paths' \"paths=\$paths_list\")\" \\"
+    "        desc=\"\$(i18n 'backup.paths_list' \"paths=\$paths_list\")\"" \
+    "        desc=\"\$(i18n 'backup.critical_paths' \"paths=\$paths_list\")\""
 
 # ---- the dispatcher --------------------------------------------------------
 

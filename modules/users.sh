@@ -839,61 +839,33 @@ _check_sudoers_syntax() {
 users_audit() {
     log_info "Running user security audit"
 
-    local check_json
-
     # 1. Check for UID 0 users (besides root) - CRITICAL
     local uid0_users=$(_find_uid0_users)
     local uid0_count=$(count_lines "$uid0_users")
 
     if [[ -n "$uid0_users" && "$uid0_count" -gt 0 ]]; then
-        check_json=$(create_check_json \
-            "users.uid0_found" \
-            "users" \
-            "high" \
-            "failed" \
-            "$(i18n 'users.uid0_found'): $uid0_count" \
-            "$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.uid0_review')" \
-            "")
+        check_emit "users.uid0_found" high failed \
+            title="$(i18n 'users.uid0_found'): $uid0_count" \
+            desc="$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')" \
+            suggestion="$(i18n 'users.uid0_review')"
     else
-        check_json=$(create_check_json \
-            "users.uid0_ok" \
-            "users" \
-            "info" \
-            "passed" \
-            "$(i18n 'users.uid0_ok')" \
-            "$(i18n 'users.uid0_ok_desc')" \
-            "" \
-            "")
+        check_emit "users.uid0_ok" info passed \
+            desc="$(i18n 'users.uid0_ok_desc')"
     fi
-    state_add_check "$check_json"
 
     # 2. Check for empty password users - CRITICAL
     local empty_pass=$(_find_empty_password_users)
     local empty_count=$(count_lines "$empty_pass")
 
     if [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then
-        check_json=$(create_check_json \
-            "users.empty_password" \
-            "users" \
-            "high" \
-            "failed" \
-            "$(i18n 'users.empty_password'): $empty_count" \
-            "$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.set_password')" \
-            "")
+        check_emit "users.empty_password" high failed \
+            title="$(i18n 'users.empty_password'): $empty_count" \
+            desc="$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')" \
+            suggestion="$(i18n 'users.set_password')"
     else
-        check_json=$(create_check_json \
-            "users.no_empty_password" \
-            "users" \
-            "info" \
-            "passed" \
-            "$(i18n 'users.no_empty_password')" \
-            "$(i18n 'users.no_empty_password_desc')" \
-            "" \
-            "")
+        check_emit "users.no_empty_password" info passed \
+            desc="$(i18n 'users.no_empty_password_desc')"
     fi
-    state_add_check "$check_json"
 
     # 3. Check system users with shells - MEDIUM
     local sys_shells=$(_find_system_users_with_shells)
@@ -907,16 +879,10 @@ users_audit() {
         done <<< "$sys_shells"
         user_list="${user_list%, }"
 
-        check_json=$(create_check_json \
-            "users.system_with_shell" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.system_with_shell'): $sys_shell_count" \
-            "$user_list" \
-            "$(i18n 'users.change_shell')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.system_with_shell" low failed \
+            title="$(i18n 'users.system_with_shell'): $sys_shell_count" \
+            desc="$user_list" \
+            suggestion="$(i18n 'users.change_shell')"
     fi
 
     # sudo_count includes root, so it is never zero. The title must carry the
@@ -937,16 +903,10 @@ users_audit() {
         else
             title="${label}: ${sudo_count} ($(i18n 'users.sudo_non_root' "count=${non_root_count}"))"
         fi
-        check_json=$(create_check_json \
-            "users.sudo_users" \
-            "users" \
-            "info" \
-            "passed" \
-            "$title" \
-            "$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')" \
-            "$(i18n 'users.review_sudo')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.sudo_users" info passed \
+            title="$title" \
+            desc="$(echo "$sudo_users" | tr '\n' ', ' | sed 's/,$//')" \
+            suggestion="$(i18n 'users.review_sudo')"
     fi
 
     # Cloud images ship NOPASSWD for their cloud-init user, so calling every
@@ -970,16 +930,10 @@ users_audit() {
             title_key="users.nopasswd_sudo_cloudinit"
         fi
 
-        check_json=$(create_check_json \
-            "users.nopasswd_sudo" \
-            "users" \
-            "$sev" \
-            "failed" \
-            "$(i18n "$title_key"): $nopasswd_count" \
-            "$nopasswd_list" \
-            "$(i18n 'users.review_nopasswd')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.nopasswd_sudo" "$sev" failed \
+            title="$(i18n "$title_key"): $nopasswd_count" \
+            desc="$nopasswd_list" \
+            suggestion="$(i18n 'users.review_nopasswd')"
     fi
 
     # 5. Check recently created users - INFO/LOW
@@ -997,16 +951,10 @@ users_audit() {
         done <<< "$recent"
         recent_list="${recent_list%, }"
 
-        check_json=$(create_check_json \
-            "users.recent_users" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.recent_users'): $recent_count" \
-            "$recent_list" \
-            "$(i18n 'users.verify_recent')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.recent_users" low failed \
+            title="$(i18n 'users.recent_users'): $recent_count" \
+            desc="$recent_list" \
+            suggestion="$(i18n 'users.verify_recent')"
     fi
 
     # 6. Analyze SSH authorized_keys - MEDIUM
@@ -1023,29 +971,16 @@ users_audit() {
     done <<< "$ssh_keys"
 
     if [[ "$bad_perms" -gt 0 ]]; then
-        check_json=$(create_check_json \
-            "users.ssh_keys_perms" \
-            "users" \
-            "medium" \
-            "failed" \
-            "$(i18n 'users.ssh_keys_perms'): $bad_perms" \
-            "$(i18n 'users.ssh_keys_perms_desc')" \
-            "$(i18n 'users.fix_key_perms')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.ssh_keys_perms" medium failed \
+            title="$(i18n 'users.ssh_keys_perms'): $bad_perms" \
+            desc="$(i18n 'users.ssh_keys_perms_desc')" \
+            suggestion="$(i18n 'users.fix_key_perms')"
     fi
 
     if [[ "$users_with_keys" -gt 0 ]]; then
-        check_json=$(create_check_json \
-            "users.ssh_keys_info" \
-            "users" \
-            "info" \
-            "passed" \
-            "$(i18n 'users.ssh_keys_info'): $users_with_keys" \
-            "$(i18n 'users.ssh_keys_info_desc')" \
-            "" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.ssh_keys_info" info passed \
+            title="$(i18n 'users.ssh_keys_info'): $users_with_keys" \
+            desc="$(i18n 'users.ssh_keys_info_desc')"
     fi
 
     # 7. Check for suspicious usernames - LOW (strict only)
@@ -1060,16 +995,10 @@ users_audit() {
         done <<< "$suspicious"
         sus_list="${sus_list%, }"
 
-        check_json=$(create_check_json \
-            "users.suspicious_names" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.suspicious_names'): $sus_count" \
-            "$sus_list" \
-            "$(i18n 'users.review_names')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.suspicious_names" low failed \
+            title="$(i18n 'users.suspicious_names'): $sus_count" \
+            desc="$sus_list" \
+            suggestion="$(i18n 'users.review_names')"
     fi
 
     # 8. Check for unusual home directories - LOW (strict only)
@@ -1084,16 +1013,10 @@ users_audit() {
         done <<< "$unusual"
         unusual_list="${unusual_list%, }"
 
-        check_json=$(create_check_json \
-            "users.unusual_home" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.unusual_home'): $unusual_count" \
-            "$unusual_list" \
-            "$(i18n 'users.review_home')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.unusual_home" low failed \
+            title="$(i18n 'users.unusual_home'): $unusual_count" \
+            desc="$unusual_list" \
+            suggestion="$(i18n 'users.review_home')"
     fi
 
     # 9. Check password policy in login.defs - MEDIUM
@@ -1108,27 +1031,13 @@ users_audit() {
         done <<< "$policy_issues"
         policy_list="${policy_list%; }"
 
-        check_json=$(create_check_json \
-            "users.password_policy_weak" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.password_policy_weak'): $policy_count issues" \
-            "$policy_list" \
-            "$(i18n 'users.fix_password_policy')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.password_policy_weak" low failed \
+            title="$(i18n 'users.password_policy_weak'): $policy_count issues" \
+            desc="$policy_list" \
+            suggestion="$(i18n 'users.fix_password_policy')"
     else
-        check_json=$(create_check_json \
-            "users.password_policy_ok" \
-            "users" \
-            "info" \
-            "passed" \
-            "$(i18n 'users.password_policy_ok')" \
-            "$(i18n 'users.password_policy_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.password_policy_ok" info passed \
+            desc="$(i18n 'users.password_policy_ok_desc')"
     fi
 
     # 10. Check password quality settings - LOW
@@ -1143,16 +1052,10 @@ users_audit() {
         done <<< "$pwquality_issues"
         pwq_list="${pwq_list%; }"
 
-        check_json=$(create_check_json \
-            "users.pwquality_weak" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.pwquality_weak'): $pwquality_count issues" \
-            "$pwq_list" \
-            "$(i18n 'users.fix_pwquality')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.pwquality_weak" low failed \
+            title="$(i18n 'users.pwquality_weak'): $pwquality_count issues" \
+            desc="$pwq_list" \
+            suggestion="$(i18n 'users.fix_pwquality')"
     fi
 
     # 11. Check bash history security - LOW
@@ -1167,16 +1070,10 @@ users_audit() {
         done <<< "$history_issues"
         hist_list="${hist_list%; }"
 
-        check_json=$(create_check_json \
-            "users.history_insecure" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.history_insecure'): $history_count issues" \
-            "$hist_list" \
-            "$(i18n 'users.fix_history')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.history_insecure" low failed \
+            title="$(i18n 'users.history_insecure'): $history_count issues" \
+            desc="$hist_list" \
+            suggestion="$(i18n 'users.fix_history')"
     fi
 
     # Medium, not high: a duplicate UID 0 — the actual backdoor pattern — is
@@ -1191,16 +1088,9 @@ users_audit() {
             dup_list+="UID=$line; "
         done <<< "$dup_uids"
         dup_list="${dup_list%; }"
-        check_json=$(create_check_json \
-            "users.duplicate_uids" \
-            "users" \
-            "medium" \
-            "failed" \
-            "$(i18n 'users.duplicate_uids')" \
-            "$dup_list" \
-            "$(i18n 'users.review_duplicate_uids')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.duplicate_uids" medium failed \
+            desc="$dup_list" \
+            suggestion="$(i18n 'users.review_duplicate_uids')"
     fi
 
     # 13. Weak password hash method (Lynis AUTH-9229) - MEDIUM
@@ -1213,32 +1103,18 @@ users_audit() {
             hash_list+="$issue; "
         done <<< "$hash_issues"
         hash_list="${hash_list%; }"
-        check_json=$(create_check_json \
-            "users.weak_hash_method" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.weak_hash_method')" \
-            "$hash_list" \
-            "$(i18n 'users.fix_hash_method')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.weak_hash_method" low failed \
+            desc="$hash_list" \
+            suggestion="$(i18n 'users.fix_hash_method')"
     fi
 
     # 14. SHA crypt rounds (Lynis AUTH-9230) - LOW / defense in depth
     local rounds_issue
     rounds_issue=$(_check_hash_rounds)
     if [[ -n "$rounds_issue" ]]; then
-        check_json=$(create_check_json \
-            "users.hash_rounds_low" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.hash_rounds_low')" \
-            "$rounds_issue" \
-            "$(i18n 'users.fix_hash_rounds')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.hash_rounds_low" low failed \
+            desc="$rounds_issue" \
+            suggestion="$(i18n 'users.fix_hash_rounds')"
     fi
 
     # 15. Failed-login logging (Lynis AUTH-9408) - LOW
@@ -1251,16 +1127,9 @@ users_audit() {
             fl_list+="$issue; "
         done <<< "$faillog_issues"
         fl_list="${fl_list%; }"
-        check_json=$(create_check_json \
-            "users.faillog_disabled" \
-            "users" \
-            "low" \
-            "failed" \
-            "$(i18n 'users.faillog_disabled')" \
-            "$fl_list" \
-            "$(i18n 'users.fix_faillog')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.faillog_disabled" low failed \
+            desc="$fl_list" \
+            suggestion="$(i18n 'users.fix_faillog')"
     fi
 
     # Medium: sudo logs and skips a malformed drop-in rather than failing
@@ -1274,16 +1143,9 @@ users_audit() {
             su_list+="$issue; "
         done <<< "$sudoers_issues"
         su_list="${su_list%; }"
-        check_json=$(create_check_json \
-            "users.sudoers_syntax_invalid" \
-            "users" \
-            "medium" \
-            "failed" \
-            "$(i18n 'users.sudoers_syntax_invalid')" \
-            "$su_list" \
-            "$(i18n 'users.fix_sudoers_syntax')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "users.sudoers_syntax_invalid" medium failed \
+            desc="$su_list" \
+            suggestion="$(i18n 'users.fix_sudoers_syntax')"
     fi
 
     return 0

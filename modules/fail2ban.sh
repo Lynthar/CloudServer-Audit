@@ -266,16 +266,10 @@ fail2ban_audit() {
     # Check if fail2ban is installed
     print_item "$(i18n 'fail2ban.check_installed')"
     if ! _f2b_installed; then
-        local check=$(create_check_json \
-            "fail2ban.not_installed" \
-            "fail2ban" \
-            "low" \
-            "failed" \
-            "$(i18n 'fail2ban.not_installed')" \
-            "$(i18n 'fail2ban.not_installed_desc')" \
-            "$(i18n 'fail2ban.fix_install')" \
-            "fail2ban.install")
-        state_add_check "$check"
+        check_emit "fail2ban.not_installed" low failed \
+            desc="$(i18n 'fail2ban.not_installed_desc')" \
+            suggestion="$(i18n 'fail2ban.fix_install')" \
+            fix="fail2ban.install"
         print_severity "low" "$(i18n 'fail2ban.not_installed')"
         return
     fi
@@ -302,41 +296,21 @@ fail2ban_audit() {
 _f2b_audit_service() {
     if _f2b_service_active; then
         if _f2b_service_enabled; then
-            local check=$(create_check_json \
-                "fail2ban.service_active" \
-                "fail2ban" \
-                "low" \
-                "passed" \
-                "$(i18n 'fail2ban.service_active')" \
-                "$(i18n 'fail2ban.service_active_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "fail2ban.service_active" low passed \
+                desc="$(i18n 'fail2ban.service_active_desc')"
             print_ok "$(i18n 'fail2ban.service_active')"
         else
-            local check=$(create_check_json \
-                "fail2ban.service_not_enabled" \
-                "fail2ban" \
-                "low" \
-                "failed" \
-                "$(i18n 'fail2ban.service_not_enabled')" \
-                "$(i18n 'fail2ban.service_not_enabled_desc')" \
-                "$(i18n 'fail2ban.fix_enable')" \
-                "fail2ban.enable_service")
-            state_add_check "$check"
+            check_emit "fail2ban.service_not_enabled" low failed \
+                desc="$(i18n 'fail2ban.service_not_enabled_desc')" \
+                suggestion="$(i18n 'fail2ban.fix_enable')" \
+                fix="fail2ban.enable_service"
             print_severity "low" "$(i18n 'fail2ban.service_not_enabled')"
         fi
     else
-        local check=$(create_check_json \
-            "fail2ban.service_inactive" \
-            "fail2ban" \
-            "low" \
-            "failed" \
-            "$(i18n 'fail2ban.service_inactive')" \
-            "$(i18n 'fail2ban.service_inactive_desc')" \
-            "$(i18n 'fail2ban.fix_enable')" \
-            "fail2ban.enable_service")
-        state_add_check "$check"
+        check_emit "fail2ban.service_inactive" low failed \
+            desc="$(i18n 'fail2ban.service_inactive_desc')" \
+            suggestion="$(i18n 'fail2ban.fix_enable')" \
+            fix="fail2ban.enable_service"
         print_severity "low" "$(i18n 'fail2ban.service_inactive')"
     fi
 }
@@ -350,31 +324,18 @@ _f2b_audit_any_jail() {
     jails=$(_f2b_list_active_jails)
 
     if [[ -z "$jails" ]]; then
-        local check=$(create_check_json \
-            "fail2ban.no_jails_active" \
-            "fail2ban" \
-            "low" \
-            "failed" \
-            "$(i18n 'fail2ban.no_jails_active')" \
-            "$(i18n 'fail2ban.no_jails_active_desc')" \
-            "$(i18n 'fail2ban.fix_enable_jail')" \
-            "fail2ban.enable_ssh_jail")
-        state_add_check "$check"
+        check_emit "fail2ban.no_jails_active" low failed \
+            desc="$(i18n 'fail2ban.no_jails_active_desc')" \
+            suggestion="$(i18n 'fail2ban.fix_enable_jail')" \
+            fix="fail2ban.enable_ssh_jail"
         print_severity "low" "$(i18n 'fail2ban.no_jails_active')"
     else
         local jail_count jail_list
         jail_count=$(echo "$jails" | wc -l)
         jail_list=$(echo "$jails" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
-        local check=$(create_check_json \
-            "fail2ban.jails_active" \
-            "fail2ban" \
-            "low" \
-            "passed" \
-            "$(i18n 'fail2ban.jails_active'): $jail_count" \
-            "$(i18n 'fail2ban.jails_active_desc' "jails=$jail_list")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "fail2ban.jails_active" low passed \
+            title="$(i18n 'fail2ban.jails_active'): $jail_count" \
+            desc="$(i18n 'fail2ban.jails_active_desc' "jails=$jail_list")"
         print_ok "$(i18n 'fail2ban.jails_active'): $jail_list"
     fi
 }
@@ -390,44 +351,24 @@ _f2b_audit_ssh_jail() {
         local maxretry=$(_f2b_get_maxretry)
         local bantime=$(_f2b_get_bantime)
 
-        local check=$(create_check_json \
-            "fail2ban.ssh_jail_enabled" \
-            "fail2ban" \
-            "low" \
-            "passed" \
-            "$(i18n 'fail2ban.ssh_jail_enabled')" \
-            "$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "fail2ban.ssh_jail_enabled" low passed \
+            desc="$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")"
         print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
 
         # Guarded numerically first: a non-numeric token in `[[ -gt ]]` is
         # read as a variable name and aborts the audit under set -u.
         if [[ "$maxretry" =~ ^[0-9]+$ ]] && [[ "$maxretry" -gt 5 ]]; then
-            local check=$(create_check_json \
-                "fail2ban.maxretry_high" \
-                "fail2ban" \
-                "low" \
-                "failed" \
-                "$(i18n 'fail2ban.maxretry_high')" \
-                "$(i18n 'fail2ban.maxretry_high_desc' "value=$maxretry")" \
-                "$(i18n 'fail2ban.maxretry_high_suggestion')" \
-                "fail2ban.configure_ssh_jail")
-            state_add_check "$check"
+            check_emit "fail2ban.maxretry_high" low failed \
+                desc="$(i18n 'fail2ban.maxretry_high_desc' "value=$maxretry")" \
+                suggestion="$(i18n 'fail2ban.maxretry_high_suggestion')" \
+                fix="fail2ban.configure_ssh_jail"
             print_severity "low" "$(i18n 'fail2ban.maxretry_high'): $maxretry"
         fi
     else
-        local check=$(create_check_json \
-            "fail2ban.ssh_jail_disabled" \
-            "fail2ban" \
-            "low" \
-            "failed" \
-            "$(i18n 'fail2ban.ssh_jail_disabled')" \
-            "$(i18n 'fail2ban.ssh_jail_disabled_desc')" \
-            "$(i18n 'fail2ban.fix_enable_ssh_jail')" \
-            "fail2ban.enable_ssh_jail")
-        state_add_check "$check"
+        check_emit "fail2ban.ssh_jail_disabled" low failed \
+            desc="$(i18n 'fail2ban.ssh_jail_disabled_desc')" \
+            suggestion="$(i18n 'fail2ban.fix_enable_ssh_jail')" \
+            fix="fail2ban.enable_ssh_jail"
         print_severity "low" "$(i18n 'fail2ban.ssh_jail_disabled')"
     fi
 }
@@ -438,28 +379,14 @@ _f2b_audit_config() {
     fi
 
     if _f2b_has_custom_config; then
-        local check=$(create_check_json \
-            "fail2ban.custom_config" \
-            "fail2ban" \
-            "low" \
-            "passed" \
-            "$(i18n 'fail2ban.custom_config')" \
-            "$(i18n 'fail2ban.custom_config_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "fail2ban.custom_config" low passed \
+            desc="$(i18n 'fail2ban.custom_config_desc')"
         print_ok "$(i18n 'fail2ban.custom_config')"
     else
-        local check=$(create_check_json \
-            "fail2ban.default_config" \
-            "fail2ban" \
-            "low" \
-            "failed" \
-            "$(i18n 'fail2ban.default_config')" \
-            "$(i18n 'fail2ban.default_config_desc')" \
-            "$(i18n 'fail2ban.default_config_suggestion')" \
-            "fail2ban.configure_ssh_jail")
-        state_add_check "$check"
+        check_emit "fail2ban.default_config" low failed \
+            desc="$(i18n 'fail2ban.default_config_desc')" \
+            suggestion="$(i18n 'fail2ban.default_config_suggestion')" \
+            fix="fail2ban.configure_ssh_jail"
         print_severity "low" "$(i18n 'fail2ban.default_config')"
     fi
 }

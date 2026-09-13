@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Guard against orphan fix_ids: every fix_id a module emits (the 8th argument of
-# create_check_json) must be classified in a FIX_* map, or get_fix_safety returns
+# Guard against orphan fix_ids: every fix_id a module emits (the fix= field of
+# check_emit) must be classified in a FIX_* map, or get_fix_safety returns
 # "unknown", bypassing the alert_only filter and offering a fix that then fails.
 
 setup() {
@@ -17,22 +17,39 @@ _classified_fix_ids() {
         | grep -oE '\["[a-zA-Z0-9_.]+"\]' | tr -d '["]' | sort -u
 }
 
-# The fix_id is the last arg of create_check_json — the only line in the
-# call block that does NOT end in a continuation backslash. Skip empty
-# fix_ids ("") and variable ones ($fix_id, resolved at runtime).
-_emitted_fix_ids() {
-    local m
-    for m in "$REPO"/modules/*.sh; do
-        awk '
-            /create_check_json/ { inblk=1; next }
-            inblk && $0 !~ /\\[ \t]*$/ {
-                inblk=0
+# One line per emitted check, "<id>\t<fix>". Sites: `check_emit "<id>" …` /
+# `_malware_emit_finding "<id>" …` with a `fix="…"` continuation line, and
+# core/state.sh's hand-serialised create_check_json fallback block.
+_emitted_sites() {
+    awk '
+        function flush() { if (id != "") print id "\t" fix; id = ""; fix = "" }
+        /create_check_json/ { flush(); old = 1; n = 0; next }
+        old {
+            n++
+            if (n == 1 && match($0, /"[a-zA-Z0-9_.]+"/)) id = substr($0, RSTART+1, RLENGTH-2)
+            if ($0 !~ /\\[ \t]*$/) {
+                old = 0
                 if (match($0, /"[^"]*"\)/)) {
-                    tok=substr($0, RSTART+1, RLENGTH-3)
-                    if (tok != "" && tok !~ /\$/) print tok
+                    tok = substr($0, RSTART+1, RLENGTH-3)
+                    if (tok != "" && tok !~ /\$/) fix = tok
                 }
-            }' "$m"
-    done | sort -u
+                flush()
+            }
+            next
+        }
+        match($0, /(^|[ \t])(check_emit|_malware_emit_finding) "[a-zA-Z0-9_.]+"/) {
+            flush(); split(substr($0, RSTART, RLENGTH), q, "\""); id = q[2]
+        }
+        id != "" && match($0, /(^|[ \t])fix="[a-zA-Z0-9_.]+"/) {
+            split(substr($0, RSTART, RLENGTH), q, "\""); fix = q[2]
+        }
+        id != "" && $0 !~ /\\[ \t]*$/ { flush() }
+        END { flush() }
+    ' "$@"
+}
+
+_emitted_fix_ids() {
+    _emitted_sites "$REPO"/modules/*.sh | cut -f2 | grep -v '^$' | sort -u
 }
 
 @test "every emitted fix_id is classified in a FIX_* map" {
@@ -65,38 +82,16 @@ _map_keys() {
     ' "$SL" | grep -oE '\["[a-zA-Z0-9_.]+"\]' | tr -d '["]' | sort -u
 }
 
-# fix_ids the modules emit, in either form: as the literal last argument of
-# create_check_json, or assigned to a variable that is then passed. core/ is
-# included because state.sh emits checks too.
+# fix_ids in either form: the literal field of a site, or assigned to a
+# variable that is then passed. core/ is included because engine.sh emits too.
 _emitted_fix_ids_all() {
-    local m
-    for m in "$REPO"/modules/*.sh "$REPO"/core/*.sh; do
-        awk '
-            /create_check_json/ { inblk=1; next }
-            inblk && $0 !~ /\\[ \t]*$/ {
-                inblk=0
-                if (match($0, /"[^"]*"\)/)) {
-                    tok = substr($0, RSTART+1, RLENGTH-3)
-                    if (tok != "" && tok !~ /\$/) print tok
-                }
-            }' "$m"
-    done
+    _emitted_sites "$REPO"/modules/*.sh "$REPO"/core/*.sh | cut -f2 | grep -v '^$'
     grep -rhoE 'fix_id="[a-zA-Z0-9_.]+"' "$REPO"/modules/*.sh "$REPO"/core/*.sh 2>/dev/null \
         | sed 's/fix_id="//; s/"$//'
 }
 
-# check_ids: the FIRST argument of create_check_json, i.e. the line right
-# after the call.
 _emitted_check_ids() {
-    local m
-    for m in "$REPO"/modules/*.sh "$REPO"/core/*.sh; do
-        awk '
-            /create_check_json/ { n=1; next }
-            n==1 {
-                n=0
-                if (match($0, /"[a-zA-Z0-9_.]+"/)) print substr($0, RSTART+1, RLENGTH-2)
-            }' "$m"
-    done
+    _emitted_sites "$REPO"/modules/*.sh "$REPO"/core/*.sh | cut -f1
 }
 
 @test "every selectable fix_id classification is actually reachable" {

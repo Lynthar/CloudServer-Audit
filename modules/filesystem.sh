@@ -791,29 +791,15 @@ _fs_audit_suid() {
 
     if ((count > 0)); then
         local file_list=$(echo "$suid_files" | head -5 | tr '\n' ' ')
-        local check=$(create_check_json \
-            "filesystem.suspicious_suid" \
-            "filesystem" \
-            "medium" \
-            "failed" \
-            "$(i18n 'filesystem.suspicious_suid' "count=$count")" \
-            "$(i18n 'filesystem.suspicious_suid_desc' "list=$file_list")" \
-            "$(i18n 'filesystem.review_suid')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.suspicious_suid" medium failed \
+            title="$(i18n 'filesystem.suspicious_suid' "count=$count")" \
+            desc="$(i18n 'filesystem.suspicious_suid_desc' "list=$file_list")" \
+            suggestion="$(i18n 'filesystem.review_suid')"
         print_severity "medium" "$(i18n 'filesystem.suspicious_suid' "count=$count")"
         log_info "Suspicious SUID files: $suid_files"
     else
-        local check=$(create_check_json \
-            "filesystem.suid_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.suid_ok')" \
-            "$(i18n 'filesystem.suid_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.suid_ok" low passed \
+            desc="$(i18n 'filesystem.suid_ok_desc')"
         print_ok "$(i18n 'filesystem.suid_ok')"
     fi
 }
@@ -825,28 +811,14 @@ _fs_audit_sgid() {
 
     if ((count > 0)); then
         local file_list=$(echo "$sgid_files" | head -5 | tr '\n' ' ')
-        local check=$(create_check_json \
-            "filesystem.suspicious_sgid" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.suspicious_sgid' "count=$count")" \
-            "$(i18n 'filesystem.suspicious_sgid_desc' "list=$file_list")" \
-            "$(i18n 'filesystem.review_sgid')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.suspicious_sgid" low failed \
+            title="$(i18n 'filesystem.suspicious_sgid' "count=$count")" \
+            desc="$(i18n 'filesystem.suspicious_sgid_desc' "list=$file_list")" \
+            suggestion="$(i18n 'filesystem.review_sgid')"
         print_severity "low" "$(i18n 'filesystem.suspicious_sgid' "count=$count")"
     else
-        local check=$(create_check_json \
-            "filesystem.sgid_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.sgid_ok')" \
-            "$(i18n 'filesystem.sgid_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.sgid_ok" low passed \
+            desc="$(i18n 'filesystem.sgid_ok_desc')"
         print_ok "$(i18n 'filesystem.sgid_ok')"
     fi
 }
@@ -863,28 +835,13 @@ _fs_audit_world_writable() {
     if ((count > 0 || dir_count > 0)); then
         local total=$((count + dir_count))
         local items=$(echo -e "$ww_files\n$ww_dirs" | head -5 | tr '\n' ' ')
-        local check=$(create_check_json \
-            "filesystem.world_writable" \
-            "filesystem" \
-            "medium" \
-            "failed" \
-            "$(i18n 'filesystem.world_writable' "count=$total")" \
-            "$(i18n 'filesystem.world_writable_desc' "items=$items")" \
-            "$(i18n 'filesystem.fix_world_writable')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.world_writable" medium failed \
+            title="$(i18n 'filesystem.world_writable' "count=$total")" \
+            desc="$(i18n 'filesystem.world_writable_desc' "items=$items")" \
+            suggestion="$(i18n 'filesystem.fix_world_writable')"
         print_severity "medium" "$(i18n 'filesystem.world_writable' "count=$total")"
     else
-        local check=$(create_check_json \
-            "filesystem.no_world_writable" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.no_world_writable')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.no_world_writable" low passed
         print_ok "$(i18n 'filesystem.no_world_writable')"
     fi
 }
@@ -896,28 +853,13 @@ _fs_audit_no_owner() {
 
     if ((count > 0)); then
         local file_list=$(echo "$no_owner_files" | head -5 | tr '\n' ' ')
-        local check=$(create_check_json \
-            "filesystem.no_owner" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.no_owner' "count=$count")" \
-            "$(i18n 'filesystem.no_owner_desc' "list=$file_list")" \
-            "$(i18n 'filesystem.fix_no_owner')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.no_owner" low failed \
+            title="$(i18n 'filesystem.no_owner' "count=$count")" \
+            desc="$(i18n 'filesystem.no_owner_desc' "list=$file_list")" \
+            suggestion="$(i18n 'filesystem.fix_no_owner')"
         print_severity "low" "$(i18n 'filesystem.no_owner' "count=$count")"
     else
-        local check=$(create_check_json \
-            "filesystem.owner_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.owner_ok')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.owner_ok" low passed
         print_ok "$(i18n 'filesystem.owner_ok')"
     fi
 }
@@ -981,43 +923,24 @@ _fs_audit_sensitive_perms() {
     if (( total > 0 )); then
         if (( ${#high_issues[@]} > 0 )); then
             local issue_list=$(printf '%s\n' "${high_issues[@]}" | head -5 | tr '\n' ' ')
-            local check=$(create_check_json \
-                "filesystem.sensitive_perms_wrong" \
-                "filesystem" \
-                "high" \
-                "failed" \
-                "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")" \
-                "$(i18n 'filesystem.sensitive_perms_wrong_desc' "list=$issue_list")" \
-                "$(i18n 'filesystem.fix_sensitive_perms')" \
-                "filesystem.fix_sensitive_perms")
-            state_add_check "$check"
+            check_emit "filesystem.sensitive_perms_wrong" high failed \
+                title="$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")" \
+                desc="$(i18n 'filesystem.sensitive_perms_wrong_desc' "list=$issue_list")" \
+                suggestion="$(i18n 'filesystem.fix_sensitive_perms')" \
+                fix="filesystem.fix_sensitive_perms"
             print_severity "high" "$(i18n 'filesystem.sensitive_perms_wrong' "count=${#high_issues[@]}")"
         fi
         if (( ${#med_issues[@]} > 0 )); then
             local issue_list_m=$(printf '%s\n' "${med_issues[@]}" | head -5 | tr '\n' ' ')
-            local check_m=$(create_check_json \
-                "filesystem.sensitive_perms_wrong_minor" \
-                "filesystem" \
-                "low" \
-                "failed" \
-                "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")" \
-                "$(i18n 'filesystem.sensitive_perms_wrong_minor_desc' "list=$issue_list_m")" \
-                "$(i18n 'filesystem.fix_sensitive_perms')" \
-                "filesystem.fix_sensitive_perms")
-            state_add_check "$check_m"
+            check_emit "filesystem.sensitive_perms_wrong_minor" low failed \
+                title="$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")" \
+                desc="$(i18n 'filesystem.sensitive_perms_wrong_minor_desc' "list=$issue_list_m")" \
+                suggestion="$(i18n 'filesystem.fix_sensitive_perms')" \
+                fix="filesystem.fix_sensitive_perms"
             print_severity "low" "$(i18n 'filesystem.sensitive_perms_wrong_minor' "count=${#med_issues[@]}")"
         fi
     else
-        local check=$(create_check_json \
-            "filesystem.sensitive_perms_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.sensitive_perms_ok')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.sensitive_perms_ok" low passed
         print_ok "$(i18n 'filesystem.sensitive_perms_ok')"
     fi
 }
@@ -1027,41 +950,19 @@ _fs_audit_tmp_mount() {
     tmp_status=$(_fs_check_tmp_mount)
 
     if [[ "$tmp_status" == "ok" ]]; then
-        local check=$(create_check_json \
-            "filesystem.tmp_mount_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.tmp_mount_ok')" \
-            "$(i18n 'filesystem.tmp_mount_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.tmp_mount_ok" low passed \
+            desc="$(i18n 'filesystem.tmp_mount_ok_desc')"
         print_ok "$(i18n 'filesystem.tmp_mount_ok')"
     elif [[ "$tmp_status" == "not_separate" ]]; then
-        local check=$(create_check_json \
-            "filesystem.tmp_not_separate" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.tmp_not_separate')" \
-            "$(i18n 'filesystem.tmp_not_separate_desc')" \
-            "$(i18n 'filesystem.tmp_not_separate_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.tmp_not_separate" low failed \
+            desc="$(i18n 'filesystem.tmp_not_separate_desc')" \
+            suggestion="$(i18n 'filesystem.tmp_not_separate_suggestion')"
         print_severity "low" "$(i18n 'filesystem.tmp_not_separate')"
     else
         local missing="${tmp_status#missing:}"
-        local check=$(create_check_json \
-            "filesystem.tmp_mount_missing_opts" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.tmp_mount_missing_opts')" \
-            "$(i18n 'filesystem.tmp_mount_missing_opts_desc' "missing=$missing")" \
-            "$(i18n 'filesystem.tmp_mount_missing_opts_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.tmp_mount_missing_opts" low failed \
+            desc="$(i18n 'filesystem.tmp_mount_missing_opts_desc' "missing=$missing")" \
+            suggestion="$(i18n 'filesystem.tmp_mount_missing_opts_suggestion')"
         print_severity "low" "/tmp missing mount options: $missing"
     fi
 }
@@ -1091,73 +992,36 @@ _fs_audit_umask() {
     # OK = world denied (last digit = 7). Captures 027, 077, 007 (the
     # USERGROUPS-rewritten form), and any other strict variant.
     if _fs_umask_is_strict "$effective"; then
-        local check=$(create_check_json \
-            "filesystem.umask_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.umask_ok')" \
-            "$desc" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.umask_ok" low passed \
+            desc="$desc"
         print_ok "$(i18n 'filesystem.umask_ok') ($desc)"
     elif [[ "$effective" == "0022" || "$effective" == "0002" ]]; then
-        local check=$(create_check_json \
-            "filesystem.umask_default" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.umask_default')" \
-            "$(i18n 'filesystem.umask_default_desc' "desc=$desc")" \
-            "$(i18n 'filesystem.umask_default_suggestion')" \
-            "filesystem.fix_umask")
-        state_add_check "$check"
+        check_emit "filesystem.umask_default" low failed \
+            desc="$(i18n 'filesystem.umask_default_desc' "desc=$desc")" \
+            suggestion="$(i18n 'filesystem.umask_default_suggestion')" \
+            fix="filesystem.fix_umask"
         print_severity "low" "$(i18n 'filesystem.umask_default') ($desc)"
     else
-        local check=$(create_check_json \
-            "filesystem.umask_weak" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.umask_weak')" \
-            "$(i18n 'filesystem.umask_weak_desc' "desc=$desc")" \
-            "$(i18n 'filesystem.umask_weak_suggestion')" \
-            "filesystem.fix_umask")
-        state_add_check "$check"
+        check_emit "filesystem.umask_weak" low failed \
+            desc="$(i18n 'filesystem.umask_weak_desc' "desc=$desc")" \
+            suggestion="$(i18n 'filesystem.umask_weak_suggestion')" \
+            fix="filesystem.fix_umask"
         print_severity "low" "Weak umask: $desc"
     fi
 
     # Informational: without pam_umask the login.defs UMASK may never apply
     # at session start. No fix offered — PAM stack edits are not auto-safe.
     if (( pam_umask_on == 0 )); then
-        local pam_check
-        pam_check=$(create_check_json \
-            "filesystem.pam_umask_disabled" \
-            "filesystem" \
-            "info" \
-            "passed" \
-            "$(i18n 'filesystem.pam_umask_disabled')" \
-            "$(i18n 'filesystem.pam_umask_disabled_desc')" \
-            "" \
-            "")
-        state_add_check "$pam_check"
+        check_emit "filesystem.pam_umask_disabled" info passed \
+            desc="$(i18n 'filesystem.pam_umask_disabled_desc')"
     fi
 }
 
 _fs_audit_caps() {
     # Check if getcap is available
     if ! command -v getcap &>/dev/null; then
-        local check=$(create_check_json \
-            "filesystem.caps_unavailable" \
-            "filesystem" \
-            "low" \
-            "info" \
-            "$(i18n 'filesystem.caps_unavailable')" \
-            "$(i18n 'filesystem.caps_unavailable_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.caps_unavailable" low info \
+            desc="$(i18n 'filesystem.caps_unavailable_desc')"
         print_info "getcap not available (install libcap2-bin)"
         return
     fi
@@ -1179,16 +1043,10 @@ _fs_audit_caps() {
         done <<< "$caps_files"
         dangerous_list="${dangerous_list%; }"
 
-        local check=$(create_check_json \
-            "filesystem.dangerous_caps" \
-            "filesystem" \
-            "medium" \
-            "failed" \
-            "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
-            "$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
-            "$(i18n 'filesystem.review_caps')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.dangerous_caps" medium failed \
+            title="$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
+            desc="$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
+            suggestion="$(i18n 'filesystem.review_caps')"
         print_severity "medium" "Files with dangerous capabilities: $dangerous_count"
     elif ((total_count > 0)); then
         local caps_list=""
@@ -1199,28 +1057,13 @@ _fs_audit_caps() {
         done <<< "$caps_files"
         caps_list="${caps_list%; }"
 
-        local check=$(create_check_json \
-            "filesystem.non_standard_caps" \
-            "filesystem" \
-            "low" \
-            "failed" \
-            "$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
-            "$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
-            "$(i18n 'filesystem.non_standard_caps_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.non_standard_caps" low failed \
+            title="$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
+            desc="$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
+            suggestion="$(i18n 'filesystem.non_standard_caps_suggestion')"
         print_severity "low" "Non-standard file capabilities: $total_count"
     else
-        local check=$(create_check_json \
-            "filesystem.caps_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.caps_ok')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.caps_ok" low passed
         print_ok "$(i18n 'filesystem.caps_ok')"
     fi
 }
@@ -1240,28 +1083,14 @@ _fs_audit_cron() {
         done <<< "$suspicious"
         sus_list="${sus_list%; }"
 
-        local check=$(create_check_json \
-            "filesystem.suspicious_cron" \
-            "filesystem" \
-            "medium" \
-            "failed" \
-            "$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
-            "$sus_list" \
-            "$(i18n 'filesystem.suspicious_cron_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.suspicious_cron" medium failed \
+            title="$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
+            desc="$sus_list" \
+            suggestion="$(i18n 'filesystem.suspicious_cron_suggestion')"
         print_severity "medium" "Suspicious cron entries found: $sus_count"
     else
-        local check=$(create_check_json \
-            "filesystem.cron_ok" \
-            "filesystem" \
-            "low" \
-            "passed" \
-            "$(i18n 'filesystem.cron_ok')" \
-            "$(i18n 'filesystem.cron_ok_desc' "user_crontabs=$user_crontabs")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "filesystem.cron_ok" low passed \
+            desc="$(i18n 'filesystem.cron_ok_desc' "user_crontabs=$user_crontabs")"
         print_ok "$(i18n 'filesystem.cron_ok')"
     fi
 }

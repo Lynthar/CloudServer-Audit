@@ -87,28 +87,14 @@ _backup_audit_tools() {
     fi
 
     if ((tools_found == 0)); then
-        local check=$(create_check_json \
-            "backup.no_tools" \
-            "backup" \
-            "low" \
-            "failed" \
-            "$(i18n 'backup.no_tools')" \
-            "$(i18n 'backup.no_tools_desc')" \
-            "$(i18n 'backup.fix_install_tool')" \
-            "backup.generate_templates")
-        state_add_check "$check"
+        check_emit "backup.no_tools" low failed \
+            desc="$(i18n 'backup.no_tools_desc')" \
+            suggestion="$(i18n 'backup.fix_install_tool')" \
+            fix="backup.generate_templates"
         print_severity "low" "$(i18n 'backup.no_tools')"
     else
-        local check=$(create_check_json \
-            "backup.tools_installed" \
-            "backup" \
-            "low" \
-            "passed" \
-            "$(i18n 'backup.tools_count' "count=$tools_found")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "backup.tools_installed" low passed \
+            title="$(i18n 'backup.tools_count' "count=$tools_found")"
     fi
 }
 
@@ -126,28 +112,15 @@ _backup_audit_scheduled() {
     fi
 
     if ((scheduled == 0)); then
-        local check=$(create_check_json \
-            "backup.no_schedule" \
-            "backup" \
-            "low" \
-            "failed" \
-            "$(i18n 'backup.no_scheduled')" \
-            "$(i18n 'backup.no_scheduled_desc')" \
-            "$(i18n 'backup.fix_setup_schedule')" \
-            "backup.generate_templates")
-        state_add_check "$check"
+        check_emit "backup.no_schedule" low failed \
+            title="$(i18n 'backup.no_scheduled')" \
+            desc="$(i18n 'backup.no_scheduled_desc')" \
+            suggestion="$(i18n 'backup.fix_setup_schedule')" \
+            fix="backup.generate_templates"
         print_severity "low" "$(i18n 'backup.no_scheduled')"
     else
-        local check=$(create_check_json \
-            "backup.scheduled" \
-            "backup" \
-            "low" \
-            "passed" \
-            "$(i18n 'backup.schedule_configured')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "backup.scheduled" low passed \
+            title="$(i18n 'backup.schedule_configured')"
     fi
 }
 
@@ -168,16 +141,9 @@ _backup_audit_critical_paths() {
     done
 
     local paths_list="${existing[*]}"
-    local check=$(create_check_json \
-        "backup.critical_paths" \
-        "backup" \
-        "low" \
-        "passed" \
-        "$(i18n 'backup.paths_identified')" \
-        "$(i18n 'backup.paths_list' "paths=$paths_list")" \
-        "" \
-        "")
-    state_add_check "$check"
+    check_emit "backup.critical_paths" low passed \
+        title="$(i18n 'backup.paths_identified')" \
+        desc="$(i18n 'backup.paths_list' "paths=$paths_list")"
     print_ok "$(i18n 'backup.critical_paths' "paths=$paths_list")"
 }
 

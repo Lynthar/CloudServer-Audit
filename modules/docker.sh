@@ -244,30 +244,15 @@ docker_audit() {
         if check_command docker || [[ -n "$runtime" ]]; then
             # Something is there, we just cannot reach it. Reporting "not
             # installed" here is the check claiming it looked when it did not.
-            local check=$(create_check_json \
-                "docker.daemon_unreachable" \
-                "docker" \
-                "low" \
-                "failed" \
-                "$(i18n 'docker.daemon_unreachable')" \
-                "$(i18n 'docker.daemon_unreachable_desc' "found=${runtime:-docker}")" \
-                "$(i18n 'docker.daemon_unreachable_fix')" \
-                "")
-            state_add_check "$check"
+            check_emit "docker.daemon_unreachable" low failed \
+                desc="$(i18n 'docker.daemon_unreachable_desc' "found=${runtime:-docker}")" \
+                suggestion="$(i18n 'docker.daemon_unreachable_fix')"
             print_severity "low" "$(i18n 'docker.daemon_unreachable')"
             return
         fi
 
-        local check=$(create_check_json \
-            "docker.not_installed" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.not_installed')" \
-            "$(i18n 'docker.not_installed_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.not_installed" low passed \
+            desc="$(i18n 'docker.not_installed_desc')"
         print_ok "$(i18n 'docker.not_installed') - Skipping"
         return
     fi
@@ -326,28 +311,14 @@ _docker_audit_exposed_ports() {
 
     if ((count > 0)); then
         local port_list=$(echo "$ports" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.exposed_ports" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.exposed_ports' "count=$count")" \
-            "$(i18n 'docker.exposed_ports_desc' "list=$port_list")" \
-            "$(i18n 'docker.exposed_ports_suggestion')" \
-            "docker.generate_proxy_template")
-        state_add_check "$check"
+        check_emit "docker.exposed_ports" medium failed \
+            title="$(i18n 'docker.exposed_ports' "count=$count")" \
+            desc="$(i18n 'docker.exposed_ports_desc' "list=$port_list")" \
+            suggestion="$(i18n 'docker.exposed_ports_suggestion')" \
+            fix="docker.generate_proxy_template"
         print_severity "medium" "$(i18n 'docker.exposed_ports' "count=$count"): $port_list"
     else
-        local check=$(create_check_json \
-            "docker.no_exposed_ports" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_exposed_ports')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.no_exposed_ports" low passed
         print_ok "$(i18n 'docker.no_exposed_ports')"
     fi
 }
@@ -358,28 +329,13 @@ _docker_audit_privileged() {
 
     if ((count > 0)); then
         local container_list=$(echo "$containers" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.privileged_containers" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.privileged_containers' "count=$count")" \
-            "$(i18n 'docker.privileged_containers_desc' "list=$container_list")" \
-            "$(i18n 'docker.privileged_containers_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.privileged_containers" medium failed \
+            title="$(i18n 'docker.privileged_containers' "count=$count")" \
+            desc="$(i18n 'docker.privileged_containers_desc' "list=$container_list")" \
+            suggestion="$(i18n 'docker.privileged_containers_suggestion')"
         print_severity "medium" "$(i18n 'docker.privileged_containers' "count=$count"): $container_list"
     else
-        local check=$(create_check_json \
-            "docker.no_privileged" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_privileged')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.no_privileged" low passed
         print_ok "$(i18n 'docker.no_privileged')"
     fi
 }
@@ -390,40 +346,19 @@ _docker_audit_root_containers() {
     local total=$(docker ps -q 2>/dev/null | wc -l)
 
     if ((count > 0 && count == total)); then
-        local check=$(create_check_json \
-            "docker.all_root_containers" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.all_root_containers' "count=$count")" \
-            "$(i18n 'docker.all_root_containers_desc')" \
-            "$(i18n 'docker.root_containers_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.all_root_containers" low failed \
+            title="$(i18n 'docker.all_root_containers' "count=$count")" \
+            desc="$(i18n 'docker.all_root_containers_desc')" \
+            suggestion="$(i18n 'docker.root_containers_suggestion')"
         print_severity "low" "All $count containers running as root"
     elif ((count > 0)); then
-        local check=$(create_check_json \
-            "docker.some_root_containers" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.some_root_containers' "count=$count" "total=$total")" \
-            "$(i18n 'docker.some_root_containers_desc')" \
-            "$(i18n 'docker.root_containers_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.some_root_containers" low failed \
+            title="$(i18n 'docker.some_root_containers' "count=$count" "total=$total")" \
+            desc="$(i18n 'docker.some_root_containers_desc')" \
+            suggestion="$(i18n 'docker.root_containers_suggestion')"
         print_severity "low" "$count of $total containers running as root"
     else
-        local check=$(create_check_json \
-            "docker.no_root_containers" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_root_containers')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.no_root_containers" low passed
         print_ok "$(i18n 'docker.no_root_containers')"
     fi
 }
@@ -434,28 +369,13 @@ _docker_audit_capabilities() {
 
     if ((count > 0)); then
         local container_list=$(echo "$containers" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.containers_with_caps" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.added_capabilities' "count=$count")" \
-            "" \
-            "$(i18n 'docker.added_capabilities_desc')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.containers_with_caps" medium failed \
+            title="$(i18n 'docker.added_capabilities' "count=$count")" \
+            suggestion="$(i18n 'docker.added_capabilities_desc')"
         print_severity "medium" "$(i18n 'docker.added_capabilities' "count=$count")"
     else
-        local check=$(create_check_json \
-            "docker.no_extra_caps" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_added_capabilities')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.no_extra_caps" low passed \
+            title="$(i18n 'docker.no_added_capabilities')"
         print_ok "$(i18n 'docker.no_added_capabilities')"
     fi
 }
@@ -465,47 +385,26 @@ _docker_audit_daemon_settings() {
 
     # Check live-restore
     if ! _docker_check_live_restore; then
-        local check=$(create_check_json \
-            "docker.no_live_restore" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.no_live_restore')" \
-            "$(i18n 'docker.no_live_restore_desc')" \
-            "$(i18n 'docker.no_live_restore_suggestion')" \
-            "docker.enable_live_restore")
-        state_add_check "$check"
+        check_emit "docker.no_live_restore" low failed \
+            desc="$(i18n 'docker.no_live_restore_desc')" \
+            suggestion="$(i18n 'docker.no_live_restore_suggestion')" \
+            fix="docker.enable_live_restore"
         print_severity "low" "Docker live-restore not enabled"
         ((issues++)) || true
     fi
 
     # Check no-new-privileges
     if ! _docker_check_no_new_privileges; then
-        local check=$(create_check_json \
-            "docker.no_new_privileges_disabled" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.no_new_privileges_disabled')" \
-            "$(i18n 'docker.no_new_privileges_disabled_desc')" \
-            "$(i18n 'docker.no_new_privileges_disabled_suggestion')" \
-            "docker.enable_no_new_privileges")
-        state_add_check "$check"
+        check_emit "docker.no_new_privileges_disabled" low failed \
+            desc="$(i18n 'docker.no_new_privileges_disabled_desc')" \
+            suggestion="$(i18n 'docker.no_new_privileges_disabled_suggestion')" \
+            fix="docker.enable_no_new_privileges"
         print_severity "low" "Docker no-new-privileges not set as default"
         ((issues++)) || true
     fi
 
     if ((issues == 0)); then
-        local check=$(create_check_json \
-            "docker.daemon_secure" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.daemon_secure')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.daemon_secure" low passed
         print_ok "$(i18n 'docker.daemon_secure')"
     fi
 }
@@ -529,28 +428,14 @@ _docker_audit_sock_perms() {
     # Any non-zero others bit lets outside processes reach the socket.
     # 2 and 6 are the dangerous cases; 4 leaks state without immediate RCE.
     if [[ "$others" =~ ^[2367]$ ]]; then
-        local check=$(create_check_json \
-            "docker.sock_perms_loose" \
-            "docker" \
-            "high" \
-            "failed" \
-            "$(i18n 'docker.sock_perms_loose' "mode=$mode")" \
-            "$(i18n 'docker.sock_perms_loose_desc' "mode=$mode")" \
-            "$(i18n 'docker.sock_perms_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.sock_perms_loose" high failed \
+            title="$(i18n 'docker.sock_perms_loose' "mode=$mode")" \
+            desc="$(i18n 'docker.sock_perms_loose_desc' "mode=$mode")" \
+            suggestion="$(i18n 'docker.sock_perms_fix')"
         print_severity "high" "$(i18n 'docker.sock_perms_loose' "mode=$mode")"
     else
-        local check=$(create_check_json \
-            "docker.sock_perms_ok" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.sock_perms_ok' "mode=$mode")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.sock_perms_ok" low passed \
+            title="$(i18n 'docker.sock_perms_ok' "mode=$mode")"
         print_ok "$(i18n 'docker.sock_perms_ok' "mode=$mode")"
     fi
 }
@@ -570,28 +455,13 @@ _docker_audit_seccomp_unconfined() {
     if ((count > 0)); then
         local list
         list=$(echo "$containers" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.seccomp_unconfined" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.seccomp_unconfined' "count=$count")" \
-            "$(i18n 'docker.seccomp_unconfined_desc' "containers=$list")" \
-            "$(i18n 'docker.seccomp_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.seccomp_unconfined" medium failed \
+            title="$(i18n 'docker.seccomp_unconfined' "count=$count")" \
+            desc="$(i18n 'docker.seccomp_unconfined_desc' "containers=$list")" \
+            suggestion="$(i18n 'docker.seccomp_fix')"
         print_severity "medium" "$(i18n 'docker.seccomp_unconfined' "count=$count"): $list"
     else
-        local check=$(create_check_json \
-            "docker.no_seccomp_unconfined" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_seccomp_unconfined')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.no_seccomp_unconfined" low passed
         print_ok "$(i18n 'docker.no_seccomp_unconfined')"
     fi
 }
@@ -601,28 +471,12 @@ _docker_audit_seccomp_unconfined() {
 # "compiled in and available" from "actually active".
 _docker_audit_userns_remap() {
     if _docker_check_userns; then
-        local check=$(create_check_json \
-            "docker.userns_enabled" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.userns_enabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.userns_enabled" low passed
         print_ok "$(i18n 'docker.userns_enabled')"
     else
-        local check=$(create_check_json \
-            "docker.userns_not_enabled" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.userns_not_enabled')" \
-            "$(i18n 'docker.userns_not_enabled_desc')" \
-            "$(i18n 'docker.userns_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.userns_not_enabled" low failed \
+            desc="$(i18n 'docker.userns_not_enabled_desc')" \
+            suggestion="$(i18n 'docker.userns_fix')"
         print_severity "low" "$(i18n 'docker.userns_not_enabled')"
     fi
 }
@@ -636,26 +490,13 @@ _docker_audit_host_network() {
 
     if (( count > 0 )); then
         local hn_list=$(echo "$hn" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.host_network_used" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.host_network_used' "count=$count")" \
-            "$(i18n 'docker.host_network_used_desc' "list=${hn_list% }")" \
-            "$(i18n 'docker.fix_host_network')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.host_network_used" medium failed \
+            title="$(i18n 'docker.host_network_used' "count=$count")" \
+            desc="$(i18n 'docker.host_network_used_desc' "list=${hn_list% }")" \
+            suggestion="$(i18n 'docker.fix_host_network')"
         print_severity "medium" "$(i18n 'docker.host_network_used' "count=$count")"
     else
-        local check=$(create_check_json \
-            "docker.no_host_network" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_host_network')" \
-            "" "" "")
-        state_add_check "$check"
+        check_emit "docker.no_host_network" low passed
         print_ok "$(i18n 'docker.no_host_network')"
     fi
 }
@@ -664,26 +505,12 @@ _docker_audit_host_network() {
 # this IS the out-of-box default and medium would be noisy on every install.
 _docker_audit_default_bridge_icc() {
     if _docker_check_icc_disabled; then
-        local check=$(create_check_json \
-            "docker.default_bridge_icc_disabled" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.default_bridge_icc_disabled')" \
-            "" "" "")
-        state_add_check "$check"
+        check_emit "docker.default_bridge_icc_disabled" low passed
         print_ok "$(i18n 'docker.default_bridge_icc_disabled')"
     else
-        local check=$(create_check_json \
-            "docker.default_bridge_icc_enabled" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.default_bridge_icc_enabled')" \
-            "$(i18n 'docker.default_bridge_icc_enabled_desc')" \
-            "$(i18n 'docker.fix_default_bridge_icc')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.default_bridge_icc_enabled" low failed \
+            desc="$(i18n 'docker.default_bridge_icc_enabled_desc')" \
+            suggestion="$(i18n 'docker.fix_default_bridge_icc')"
         print_severity "low" "$(i18n 'docker.default_bridge_icc_enabled')"
     fi
 }
@@ -700,26 +527,13 @@ _docker_audit_secrets_in_env() {
         log_info "docker env secret hits: $count container(s) with credential-format env vars"
         # Compress to first 5 lines + total — long lists overflow display.
         local sample; sample=$(echo "$hits" | head -5 | tr '\n' '; ' | sed 's/; $//')
-        local check=$(create_check_json \
-            "docker.secrets_in_env" \
-            "docker" \
-            "medium" \
-            "failed" \
-            "$(i18n 'docker.secrets_in_env' "count=$count")" \
-            "$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
-            "$(i18n 'docker.fix_secrets_in_env')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.secrets_in_env" medium failed \
+            title="$(i18n 'docker.secrets_in_env' "count=$count")" \
+            desc="$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
+            suggestion="$(i18n 'docker.fix_secrets_in_env')"
         print_severity "medium" "$(i18n 'docker.secrets_in_env' "count=$count")"
     else
-        local check=$(create_check_json \
-            "docker.no_env_secrets" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.no_env_secrets')" \
-            "" "" "")
-        state_add_check "$check"
+        check_emit "docker.no_env_secrets" low passed
         print_ok "$(i18n 'docker.no_env_secrets')"
     fi
 }
@@ -732,26 +546,13 @@ _docker_audit_unlimited_memory() {
 
     if (( count > 0 )); then
         local um_list=$(echo "$um" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "docker.unlimited_memory" \
-            "docker" \
-            "low" \
-            "failed" \
-            "$(i18n 'docker.unlimited_memory' "count=$count")" \
-            "$(i18n 'docker.unlimited_memory_desc' "list=${um_list% }")" \
-            "$(i18n 'docker.fix_unlimited_memory')" \
-            "")
-        state_add_check "$check"
+        check_emit "docker.unlimited_memory" low failed \
+            title="$(i18n 'docker.unlimited_memory' "count=$count")" \
+            desc="$(i18n 'docker.unlimited_memory_desc' "list=${um_list% }")" \
+            suggestion="$(i18n 'docker.fix_unlimited_memory')"
         print_severity "low" "$(i18n 'docker.unlimited_memory' "count=$count")"
     else
-        local check=$(create_check_json \
-            "docker.memory_limits_set" \
-            "docker" \
-            "low" \
-            "passed" \
-            "$(i18n 'docker.memory_limits_set')" \
-            "" "" "")
-        state_add_check "$check"
+        check_emit "docker.memory_limits_set" low passed
         print_ok "$(i18n 'docker.memory_limits_set')"
     fi
 }

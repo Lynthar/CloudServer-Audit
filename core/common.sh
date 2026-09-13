@@ -1044,6 +1044,27 @@ create_check_json() {
           "title": $title, "desc": $desc, "suggestion": $suggestion, "fix_id": $fix_id}'
 }
 
+# Emit one check: module is the id prefix, title defaults to i18n "$id", and
+# the record is serialised and written in one step. Trailing args are key=value
+# with keys title desc suggestion fix; an unknown key drops the check with an error.
+check_emit() {
+    local id="$1" severity="$2" status="$3"
+    shift 3
+    local title="" desc="" suggestion="" fix="" kv
+    for kv in "$@"; do
+        case "${kv%%=*}" in
+            title)      title="${kv#*=}" ;;
+            desc)       desc="${kv#*=}" ;;
+            suggestion) suggestion="${kv#*=}" ;;
+            fix)        fix="${kv#*=}" ;;
+            *) log_error "check_emit $id: unknown field '${kv%%=*}'"; return 1 ;;
+        esac
+    done
+    [[ -n "$title" ]] || title=$(i18n "$id")
+    state_add_check "$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \
+        "$title" "$desc" "$suggestion" "$fix")"
+}
+
 # --- User Interaction ---
 
 confirm() {

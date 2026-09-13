@@ -177,16 +177,7 @@ nginx_audit() {
     # Check if Nginx is installed
     print_item "$(i18n 'nginx.check_installed')"
     if ! _nginx_installed; then
-        local check=$(create_check_json \
-            "nginx.not_installed" \
-            "nginx" \
-            "low" \
-            "passed" \
-            "$(i18n 'nginx.not_installed')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.not_installed" low passed
         print_ok "$(i18n 'nginx.not_installed')"
         return
     fi
@@ -207,55 +198,29 @@ _nginx_audit_catchall() {
 
     case "$state" in
         both)
-            local check=$(create_check_json \
-                "nginx.catchall_exists" \
-                "nginx" \
-                "low" \
-                "passed" \
-                "$(i18n 'nginx.catchall_exists')" \
-                "$(i18n 'nginx.catchall_both_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "nginx.catchall_exists" low passed \
+                desc="$(i18n 'nginx.catchall_both_desc')"
             print_ok "$(i18n 'nginx.catchall_exists')"
             ;;
         80only)
-            local check=$(create_check_json \
-                "nginx.catchall_partial_80" \
-                "nginx" \
-                "low" \
-                "failed" \
-                "$(i18n 'nginx.catchall_partial_80')" \
-                "$(i18n 'nginx.catchall_partial_80_desc')" \
-                "$(i18n 'nginx.fix_add_catchall')" \
-                "nginx.add_catchall")
-            state_add_check "$check"
+            check_emit "nginx.catchall_partial_80" low failed \
+                desc="$(i18n 'nginx.catchall_partial_80_desc')" \
+                suggestion="$(i18n 'nginx.fix_add_catchall')" \
+                fix="nginx.add_catchall"
             print_severity "low" "$(i18n 'nginx.catchall_partial_80')"
             ;;
         443only)
-            local check=$(create_check_json \
-                "nginx.catchall_partial_443" \
-                "nginx" \
-                "low" \
-                "failed" \
-                "$(i18n 'nginx.catchall_partial_443')" \
-                "$(i18n 'nginx.catchall_partial_443_desc')" \
-                "$(i18n 'nginx.fix_add_catchall')" \
-                "nginx.add_catchall")
-            state_add_check "$check"
+            check_emit "nginx.catchall_partial_443" low failed \
+                desc="$(i18n 'nginx.catchall_partial_443_desc')" \
+                suggestion="$(i18n 'nginx.fix_add_catchall')" \
+                fix="nginx.add_catchall"
             print_severity "low" "$(i18n 'nginx.catchall_partial_443')"
             ;;
         *)
-            local check=$(create_check_json \
-                "nginx.no_catchall" \
-                "nginx" \
-                "low" \
-                "failed" \
-                "$(i18n 'nginx.no_catchall')" \
-                "$(i18n 'nginx.no_catchall_desc')" \
-                "$(i18n 'nginx.fix_add_catchall')" \
-                "nginx.add_catchall")
-            state_add_check "$check"
+            check_emit "nginx.no_catchall" low failed \
+                desc="$(i18n 'nginx.no_catchall_desc')" \
+                suggestion="$(i18n 'nginx.fix_add_catchall')" \
+                fix="nginx.add_catchall"
             print_severity "low" "$(i18n 'nginx.no_catchall')"
             ;;
     esac
@@ -271,23 +236,15 @@ _nginx_audit_dos_hardening() {
     fi
 
     local issues=()
-    local check
 
     # 1. client_header_timeout — CIS 5.2.1, default 60s, recommended ≤10s.
     local cht_raw cht
     cht_raw=$(_nginx_get_directive_value "$effective" "client_header_timeout" "60s")
     cht=$(_nginx_parse_seconds "$cht_raw")
     if (( cht > 10 )); then
-        check=$(create_check_json \
-            "nginx.client_header_timeout_high" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.client_header_timeout_high')" \
-            "$(i18n 'nginx.client_header_timeout_high_desc' "cht_raw=$cht_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.client_header_timeout_high" low failed \
+            desc="$(i18n 'nginx.client_header_timeout_high_desc' "cht_raw=$cht_raw")" \
+            suggestion="$(i18n 'nginx.fix_dos_timeouts')"
         issues+=("client_header_timeout=$cht_raw")
         print_severity "low" "$(i18n 'nginx.client_header_timeout_high'): $cht_raw"
     fi
@@ -297,16 +254,9 @@ _nginx_audit_dos_hardening() {
     cbt_raw=$(_nginx_get_directive_value "$effective" "client_body_timeout" "60s")
     cbt=$(_nginx_parse_seconds "$cbt_raw")
     if (( cbt > 10 )); then
-        check=$(create_check_json \
-            "nginx.client_body_timeout_high" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.client_body_timeout_high')" \
-            "$(i18n 'nginx.client_body_timeout_high_desc' "cbt_raw=$cbt_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.client_body_timeout_high" low failed \
+            desc="$(i18n 'nginx.client_body_timeout_high_desc' "cbt_raw=$cbt_raw")" \
+            suggestion="$(i18n 'nginx.fix_dos_timeouts')"
         issues+=("client_body_timeout=$cbt_raw")
         print_severity "low" "$(i18n 'nginx.client_body_timeout_high'): $cbt_raw"
     fi
@@ -316,16 +266,9 @@ _nginx_audit_dos_hardening() {
     kt_raw=$(_nginx_get_directive_value "$effective" "keepalive_timeout" "75s")
     kt=$(_nginx_parse_seconds "$kt_raw")
     if (( kt > 30 )); then
-        check=$(create_check_json \
-            "nginx.keepalive_timeout_high" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.keepalive_timeout_high')" \
-            "$(i18n 'nginx.keepalive_timeout_high_desc' "kt_raw=$kt_raw")" \
-            "$(i18n 'nginx.fix_dos_keepalive')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.keepalive_timeout_high" low failed \
+            desc="$(i18n 'nginx.keepalive_timeout_high_desc' "kt_raw=$kt_raw")" \
+            suggestion="$(i18n 'nginx.fix_dos_keepalive')"
         issues+=("keepalive_timeout=$kt_raw")
         print_severity "low" "$(i18n 'nginx.keepalive_timeout_high'): $kt_raw"
     fi
@@ -335,16 +278,9 @@ _nginx_audit_dos_hardening() {
     st_raw=$(_nginx_get_directive_value "$effective" "send_timeout" "60s")
     st=$(_nginx_parse_seconds "$st_raw")
     if (( st > 10 )); then
-        check=$(create_check_json \
-            "nginx.send_timeout_high" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.send_timeout_high')" \
-            "$(i18n 'nginx.send_timeout_high_desc' "st_raw=$st_raw")" \
-            "$(i18n 'nginx.fix_dos_timeouts')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.send_timeout_high" low failed \
+            desc="$(i18n 'nginx.send_timeout_high_desc' "st_raw=$st_raw")" \
+            suggestion="$(i18n 'nginx.fix_dos_timeouts')"
         issues+=("send_timeout=$st_raw")
         print_severity "low" "$(i18n 'nginx.send_timeout_high'): $st_raw"
     fi
@@ -352,16 +288,9 @@ _nginx_audit_dos_hardening() {
     # 5. Rate limiting presence — no severity escalation: many static
     # / internal sites legitimately don't need it. Recorded as low.
     if ! _nginx_has_directive "$effective" "limit_req_zone"; then
-        check=$(create_check_json \
-            "nginx.no_rate_limiting" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.no_rate_limiting')" \
-            "$(i18n 'nginx.no_rate_limiting_desc')" \
-            "$(i18n 'nginx.fix_dos_rate_limit')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.no_rate_limiting" low failed \
+            desc="$(i18n 'nginx.no_rate_limiting_desc')" \
+            suggestion="$(i18n 'nginx.fix_dos_rate_limit')"
         issues+=("no_rate_limiting")
         print_severity "low" "$(i18n 'nginx.no_rate_limiting')"
     fi
@@ -371,32 +300,17 @@ _nginx_audit_dos_hardening() {
     local rtc
     rtc=$(_nginx_get_directive_value "$effective" "reset_timedout_connection" "off")
     if [[ "$rtc" != "on" ]]; then
-        check=$(create_check_json \
-            "nginx.reset_timedout_connection_off" \
-            "nginx" \
-            "low" \
-            "failed" \
-            "$(i18n 'nginx.reset_timedout_connection_off')" \
-            "$(i18n 'nginx.reset_timedout_connection_off_desc')" \
-            "$(i18n 'nginx.fix_dos_reset_timedout')" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.reset_timedout_connection_off" low failed \
+            desc="$(i18n 'nginx.reset_timedout_connection_off_desc')" \
+            suggestion="$(i18n 'nginx.fix_dos_reset_timedout')"
         issues+=("reset_timedout_connection=off")
         print_severity "low" "$(i18n 'nginx.reset_timedout_connection_off')"
     fi
 
     # Positive companion — only when EVERY directive met the threshold.
     if (( ${#issues[@]} == 0 )); then
-        check=$(create_check_json \
-            "nginx.dos_hardening_ok" \
-            "nginx" \
-            "low" \
-            "passed" \
-            "$(i18n 'nginx.dos_hardening_ok')" \
-            "$(i18n 'nginx.dos_hardening_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "nginx.dos_hardening_ok" low passed \
+            desc="$(i18n 'nginx.dos_hardening_ok_desc')"
         print_ok "$(i18n 'nginx.dos_hardening_ok')"
     fi
 }

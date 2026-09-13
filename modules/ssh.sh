@@ -413,28 +413,13 @@ ssh_audit() {
 
 _ssh_audit_password_auth() {
     if _ssh_password_auth_enabled; then
-        local check=$(create_check_json \
-            "ssh.password_auth_enabled" \
-            "ssh" \
-            "high" \
-            "failed" \
-            "$(i18n 'ssh.password_auth_enabled')" \
-            "$(i18n 'ssh.password_auth_enabled_desc')" \
-            "$(i18n 'ssh.fix_disable_password')" \
-            "ssh.disable_password_auth")
-        state_add_check "$check"
+        check_emit "ssh.password_auth_enabled" high failed \
+            desc="$(i18n 'ssh.password_auth_enabled_desc')" \
+            suggestion="$(i18n 'ssh.fix_disable_password')" \
+            fix="ssh.disable_password_auth"
         print_severity "high" "$(i18n 'ssh.password_auth_enabled')"
     else
-        local check=$(create_check_json \
-            "ssh.password_auth_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.password_auth_disabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.password_auth_disabled" low passed
         print_ok "$(i18n 'ssh.password_auth_disabled')"
     fi
 }
@@ -452,56 +437,27 @@ _ssh_audit_root_login() {
             title_key="ssh.root_login_keyonly"
             info="PermitRootLogin=yes; effectively key-only because PasswordAuthentication=no globally"
         fi
-        local check=$(create_check_json \
-            "ssh.root_login_enabled" \
-            "ssh" \
-            "$sev" \
-            "failed" \
-            "$(i18n "$title_key")" \
-            "$info" \
-            "$(i18n 'ssh.fix_disable_root')" \
-            "ssh.disable_root_login")
-        state_add_check "$check"
+        check_emit "ssh.root_login_enabled" "$sev" failed \
+            title="$(i18n "$title_key")" \
+            desc="$info" \
+            suggestion="$(i18n 'ssh.fix_disable_root')" \
+            fix="ssh.disable_root_login"
         print_severity "$sev" "$(i18n "$title_key")"
     else
-        local check=$(create_check_json \
-            "ssh.root_login_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.root_login_disabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.root_login_disabled" low passed
         print_ok "$(i18n 'ssh.root_login_disabled')"
     fi
 }
 
 _ssh_audit_pubkey() {
     if _ssh_pubkey_enabled; then
-        local check=$(create_check_json \
-            "ssh.pubkey_enabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.pubkey_enabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.pubkey_enabled" low passed
         print_ok "$(i18n 'ssh.pubkey_enabled')"
     else
-        local check=$(create_check_json \
-            "ssh.pubkey_disabled" \
-            "ssh" \
-            "medium" \
-            "failed" \
-            "$(i18n 'ssh.pubkey_disabled')" \
-            "$(i18n 'ssh.pubkey_disabled_desc')" \
-            "$(i18n 'ssh.fix_enable_pubkey')" \
-            "ssh.enable_pubkey")
-        state_add_check "$check"
+        check_emit "ssh.pubkey_disabled" medium failed \
+            desc="$(i18n 'ssh.pubkey_disabled_desc')" \
+            suggestion="$(i18n 'ssh.fix_enable_pubkey')" \
+            fix="ssh.enable_pubkey"
         print_severity "medium" "$(i18n 'ssh.pubkey_disabled')"
     fi
 }
@@ -513,90 +469,47 @@ _ssh_audit_admin_user() {
     if [[ -n "$admin_users" ]]; then
         local first_admin
         first_admin=$(echo "$admin_users" | head -1)
-        local check
-        check=$(create_check_json \
-            "ssh.admin_user_exists" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.admin_user_exists' "user=$first_admin")" \
-            "$(i18n 'ssh.admin_user_exists_desc' "admin_users=$admin_users")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.admin_user_exists" low passed \
+            title="$(i18n 'ssh.admin_user_exists' "user=$first_admin")" \
+            desc="$(i18n 'ssh.admin_user_exists_desc' "admin_users=$admin_users")"
         print_ok "$(i18n 'ssh.admin_user_exists' "user=$first_admin")"
 
         # Check if admin has SSH key
         if ! _ssh_user_has_key "$first_admin"; then
-            check=$(create_check_json \
-                "ssh.admin_no_key" \
-                "ssh" \
-                "low" \
-                "failed" \
-                "$(i18n 'ssh.admin_no_key' "user=$first_admin")" \
-                "$(i18n 'ssh.admin_no_key_desc')" \
-                "$(i18n 'ssh.admin_no_key_suggestion' "user=$first_admin")" \
-                "")
-            state_add_check "$check"
+            check_emit "ssh.admin_no_key" low failed \
+                title="$(i18n 'ssh.admin_no_key' "user=$first_admin")" \
+                desc="$(i18n 'ssh.admin_no_key_desc')" \
+                suggestion="$(i18n 'ssh.admin_no_key_suggestion' "user=$first_admin")"
             print_severity "low" "$(i18n 'ssh.admin_no_key' "user=$first_admin")"
         else
             # Check authorized_keys permissions if key exists
             local perm_issues
             perm_issues=$(_ssh_check_authkeys_permissions "$first_admin")
             if [[ -n "$perm_issues" ]]; then
-                check=$(create_check_json \
-                    "ssh.authkeys_permissions" \
-                    "ssh" \
-                    "medium" \
-                    "failed" \
-                    "$(i18n 'ssh.authkeys_permissions')" \
-                    "$perm_issues" \
-                    "$(i18n 'ssh.authkeys_permissions_suggestion')" \
-                    "")
-                state_add_check "$check"
+                check_emit "ssh.authkeys_permissions" medium failed \
+                    desc="$perm_issues" \
+                    suggestion="$(i18n 'ssh.authkeys_permissions_suggestion')"
                 print_severity "medium" "$(i18n 'ssh.authkeys_permissions')"
             fi
         fi
     else
-        local check
-        check=$(create_check_json \
-            "ssh.no_admin_user" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.no_admin_user')" \
-            "$(i18n 'ssh.no_admin_user_desc')" \
-            "$(i18n 'ssh.no_admin_user_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.no_admin_user" low failed \
+            desc="$(i18n 'ssh.no_admin_user_desc')" \
+            suggestion="$(i18n 'ssh.no_admin_user_suggestion')"
         print_severity "low" "$(i18n 'ssh.no_admin_user')"
     fi
 }
 
 _ssh_audit_empty_password() {
     if _ssh_empty_password_allowed; then
-        local check=$(create_check_json \
-            "ssh.empty_password_allowed" \
-            "ssh" \
-            "high" \
-            "failed" \
-            "$(i18n 'ssh.empty_password_allowed')" \
-            "$(i18n 'ssh.empty_password_allowed_desc')" \
-            "$(i18n 'ssh.fix_disable_empty_password')" \
-            "ssh.disable_empty_password")
-        state_add_check "$check"
+        check_emit "ssh.empty_password_allowed" high failed \
+            desc="$(i18n 'ssh.empty_password_allowed_desc')" \
+            suggestion="$(i18n 'ssh.fix_disable_empty_password')" \
+            fix="ssh.disable_empty_password"
         print_severity "high" "$(i18n 'ssh.empty_password_allowed')"
     else
-        local check=$(create_check_json \
-            "ssh.empty_password_denied" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.empty_password_disabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.empty_password_denied" low passed \
+            title="$(i18n 'ssh.empty_password_disabled')"
         print_ok "$(i18n 'ssh.empty_password_disabled')"
     fi
 }
@@ -605,28 +518,14 @@ _ssh_audit_max_auth_tries() {
     local max_auth=$(_ssh_get_config "MaxAuthTries" "6")
 
     if [[ "$max_auth" -le 4 ]]; then
-        local check=$(create_check_json \
-            "ssh.max_auth_tries_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.max_auth_tries_ok')" \
-            "MaxAuthTries=$max_auth" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.max_auth_tries_ok" low passed \
+            desc="MaxAuthTries=$max_auth"
         print_ok "$(i18n 'ssh.max_auth_tries_ok') ($max_auth)"
     else
-        local check=$(create_check_json \
-            "ssh.max_auth_tries_high" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.max_auth_tries_high')" \
-            "$(i18n 'ssh.max_auth_tries_high_desc' "max_auth=$max_auth")" \
-            "$(i18n 'ssh.max_auth_tries_high_suggestion')" \
-            "ssh.set_max_auth_tries")
-        state_add_check "$check"
+        check_emit "ssh.max_auth_tries_high" low failed \
+            desc="$(i18n 'ssh.max_auth_tries_high_desc' "max_auth=$max_auth")" \
+            suggestion="$(i18n 'ssh.max_auth_tries_high_suggestion')" \
+            fix="ssh.set_max_auth_tries"
         print_severity "low" "$(i18n 'ssh.max_auth_tries_high') ($max_auth)"
     fi
 }
@@ -648,28 +547,14 @@ _ssh_audit_login_grace_time() {
     # 1..60; everything else falls through to the too-long branch. The regex
     # guard also stops a non-numeric value aborting the audit under set -u.
     if [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 )); then
-        local check=$(create_check_json \
-            "ssh.login_grace_time_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.login_grace_time_ok')" \
-            "LoginGraceTime=$grace_time" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.login_grace_time_ok" low passed \
+            desc="LoginGraceTime=$grace_time"
         print_ok "$(i18n 'ssh.login_grace_time_ok') ($grace_time)"
     else
-        local check=$(create_check_json \
-            "ssh.login_grace_time_long" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.login_grace_time_long')" \
-            "$(i18n 'ssh.login_grace_time_long_desc' "grace_time=$grace_time")" \
-            "$(i18n 'ssh.login_grace_time_long_suggestion')" \
-            "ssh.set_login_grace_time")
-        state_add_check "$check"
+        check_emit "ssh.login_grace_time_long" low failed \
+            desc="$(i18n 'ssh.login_grace_time_long_desc' "grace_time=$grace_time")" \
+            suggestion="$(i18n 'ssh.login_grace_time_long_suggestion')" \
+            fix="ssh.set_login_grace_time"
         print_severity "low" "$(i18n 'ssh.login_grace_time_long') ($grace_time)"
     fi
 }
@@ -678,28 +563,13 @@ _ssh_audit_x11_forwarding() {
     local x11=$(_ssh_get_config "X11Forwarding" "no")
 
     if [[ "${x11,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.x11_forwarding_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.x11_forwarding_disabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.x11_forwarding_disabled" low passed
         print_ok "$(i18n 'ssh.x11_forwarding_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.x11_forwarding_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.x11_forwarding_enabled')" \
-            "$(i18n 'ssh.x11_forwarding_enabled_desc')" \
-            "$(i18n 'ssh.x11_forwarding_enabled_suggestion')" \
-            "ssh.disable_x11_forwarding")
-        state_add_check "$check"
+        check_emit "ssh.x11_forwarding_enabled" low failed \
+            desc="$(i18n 'ssh.x11_forwarding_enabled_desc')" \
+            suggestion="$(i18n 'ssh.x11_forwarding_enabled_suggestion')" \
+            fix="ssh.disable_x11_forwarding"
         print_severity "low" "$(i18n 'ssh.x11_forwarding_enabled')"
     fi
 }
@@ -707,28 +577,13 @@ _ssh_audit_x11_forwarding() {
 _ssh_audit_allow_tcp_forwarding() {
     local val=$(_ssh_get_config "AllowTcpForwarding" "yes")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.allow_tcp_forwarding_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.allow_tcp_forwarding_disabled')" \
-            "AllowTcpForwarding=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.allow_tcp_forwarding_disabled" low passed \
+            desc="AllowTcpForwarding=$val"
         print_ok "$(i18n 'ssh.allow_tcp_forwarding_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.allow_tcp_forwarding_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.allow_tcp_forwarding_enabled')" \
-            "$(i18n 'ssh.allow_tcp_forwarding_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=AllowTcpForwarding' 'value=no')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.allow_tcp_forwarding_enabled" low failed \
+            desc="$(i18n 'ssh.allow_tcp_forwarding_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=AllowTcpForwarding' 'value=no')"
         print_severity "low" "$(i18n 'ssh.allow_tcp_forwarding_enabled')"
     fi
 }
@@ -736,28 +591,13 @@ _ssh_audit_allow_tcp_forwarding() {
 _ssh_audit_client_alive_count_max() {
     local val=$(_ssh_get_config "ClientAliveCountMax" "3")
     if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 2 )); then
-        local check=$(create_check_json \
-            "ssh.client_alive_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.client_alive_ok')" \
-            "ClientAliveCountMax=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.client_alive_ok" low passed \
+            desc="ClientAliveCountMax=$val"
         print_ok "$(i18n 'ssh.client_alive_ok') ($val)"
     else
-        local check=$(create_check_json \
-            "ssh.client_alive_high" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.client_alive_high')" \
-            "$(i18n 'ssh.client_alive_high_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=ClientAliveCountMax' 'value=2')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.client_alive_high" low failed \
+            desc="$(i18n 'ssh.client_alive_high_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=ClientAliveCountMax' 'value=2')"
         print_severity "low" "$(i18n 'ssh.client_alive_high') ($val)"
     fi
 }
@@ -765,28 +605,13 @@ _ssh_audit_client_alive_count_max() {
 _ssh_audit_log_level() {
     local val=$(_ssh_get_config "LogLevel" "INFO")
     if [[ "${val^^}" == "VERBOSE" ]]; then
-        local check=$(create_check_json \
-            "ssh.log_level_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.log_level_ok')" \
-            "LogLevel=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.log_level_ok" low passed \
+            desc="LogLevel=$val"
         print_ok "$(i18n 'ssh.log_level_ok')"
     else
-        local check=$(create_check_json \
-            "ssh.log_level_low" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.log_level_low')" \
-            "$(i18n 'ssh.log_level_low_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=LogLevel' 'value=VERBOSE')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.log_level_low" low failed \
+            desc="$(i18n 'ssh.log_level_low_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=LogLevel' 'value=VERBOSE')"
         print_severity "low" "$(i18n 'ssh.log_level_low') ($val)"
     fi
 }
@@ -794,28 +619,13 @@ _ssh_audit_log_level() {
 _ssh_audit_max_sessions() {
     local val=$(_ssh_get_config "MaxSessions" "10")
     if [[ "$val" =~ ^[0-9]+$ ]] && (( val <= 4 )); then
-        local check=$(create_check_json \
-            "ssh.max_sessions_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.max_sessions_ok')" \
-            "MaxSessions=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.max_sessions_ok" low passed \
+            desc="MaxSessions=$val"
         print_ok "$(i18n 'ssh.max_sessions_ok') ($val)"
     else
-        local check=$(create_check_json \
-            "ssh.max_sessions_high" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.max_sessions_high')" \
-            "$(i18n 'ssh.max_sessions_high_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=MaxSessions' 'value=4')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.max_sessions_high" low failed \
+            desc="$(i18n 'ssh.max_sessions_high_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=MaxSessions' 'value=4')"
         print_severity "low" "$(i18n 'ssh.max_sessions_high') ($val)"
     fi
 }
@@ -823,28 +633,13 @@ _ssh_audit_max_sessions() {
 _ssh_audit_tcp_keepalive() {
     local val=$(_ssh_get_config "TCPKeepAlive" "yes")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.tcp_keepalive_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.tcp_keepalive_disabled')" \
-            "TCPKeepAlive=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.tcp_keepalive_disabled" low passed \
+            desc="TCPKeepAlive=$val"
         print_ok "$(i18n 'ssh.tcp_keepalive_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.tcp_keepalive_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.tcp_keepalive_enabled')" \
-            "$(i18n 'ssh.tcp_keepalive_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.tcp_keepalive_enabled_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.tcp_keepalive_enabled" low failed \
+            desc="$(i18n 'ssh.tcp_keepalive_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.tcp_keepalive_enabled_suggestion')"
         print_severity "low" "$(i18n 'ssh.tcp_keepalive_enabled')"
     fi
 }
@@ -852,28 +647,13 @@ _ssh_audit_tcp_keepalive() {
 _ssh_audit_agent_forwarding() {
     local val=$(_ssh_get_config "AllowAgentForwarding" "yes")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.agent_forwarding_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.agent_forwarding_disabled')" \
-            "AllowAgentForwarding=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.agent_forwarding_disabled" low passed \
+            desc="AllowAgentForwarding=$val"
         print_ok "$(i18n 'ssh.agent_forwarding_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.agent_forwarding_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.agent_forwarding_enabled')" \
-            "$(i18n 'ssh.agent_forwarding_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=AllowAgentForwarding' 'value=no')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.agent_forwarding_enabled" low failed \
+            desc="$(i18n 'ssh.agent_forwarding_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=AllowAgentForwarding' 'value=no')"
         print_severity "low" "$(i18n 'ssh.agent_forwarding_enabled')"
     fi
 }
@@ -881,28 +661,13 @@ _ssh_audit_agent_forwarding() {
 _ssh_audit_ignore_rhosts() {
     local val=$(_ssh_get_config "IgnoreRhosts" "yes")
     if [[ "${val,,}" == "yes" ]]; then
-        local check=$(create_check_json \
-            "ssh.ignore_rhosts_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.ignore_rhosts_ok')" \
-            "IgnoreRhosts=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.ignore_rhosts_ok" low passed \
+            desc="IgnoreRhosts=$val"
         print_ok "$(i18n 'ssh.ignore_rhosts_ok')"
     else
-        local check=$(create_check_json \
-            "ssh.ignore_rhosts_disabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.ignore_rhosts_disabled')" \
-            "$(i18n 'ssh.ignore_rhosts_disabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=IgnoreRhosts' 'value=yes')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.ignore_rhosts_disabled" low failed \
+            desc="$(i18n 'ssh.ignore_rhosts_disabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=IgnoreRhosts' 'value=yes')"
         print_severity "low" "$(i18n 'ssh.ignore_rhosts_disabled')"
     fi
 }
@@ -910,28 +675,13 @@ _ssh_audit_ignore_rhosts() {
 _ssh_audit_strict_modes() {
     local val=$(_ssh_get_config "StrictModes" "yes")
     if [[ "${val,,}" == "yes" ]]; then
-        local check=$(create_check_json \
-            "ssh.strict_modes_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.strict_modes_ok')" \
-            "StrictModes=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.strict_modes_ok" low passed \
+            desc="StrictModes=$val"
         print_ok "$(i18n 'ssh.strict_modes_ok')"
     else
-        local check=$(create_check_json \
-            "ssh.strict_modes_disabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.strict_modes_disabled')" \
-            "$(i18n 'ssh.strict_modes_disabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=StrictModes' 'value=yes')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.strict_modes_disabled" low failed \
+            desc="$(i18n 'ssh.strict_modes_disabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=StrictModes' 'value=yes')"
         print_severity "low" "$(i18n 'ssh.strict_modes_disabled')"
     fi
 }
@@ -939,28 +689,13 @@ _ssh_audit_strict_modes() {
 _ssh_audit_permit_user_environment() {
     local val=$(_ssh_get_config "PermitUserEnvironment" "no")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.permit_user_env_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.permit_user_env_disabled')" \
-            "PermitUserEnvironment=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.permit_user_env_disabled" low passed \
+            desc="PermitUserEnvironment=$val"
         print_ok "$(i18n 'ssh.permit_user_env_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.permit_user_env_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.permit_user_env_enabled')" \
-            "$(i18n 'ssh.permit_user_env_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=PermitUserEnvironment' 'value=no')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.permit_user_env_enabled" low failed \
+            desc="$(i18n 'ssh.permit_user_env_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=PermitUserEnvironment' 'value=no')"
         print_severity "low" "$(i18n 'ssh.permit_user_env_enabled')"
     fi
 }
@@ -968,28 +703,13 @@ _ssh_audit_permit_user_environment() {
 _ssh_audit_permit_tunnel() {
     local val=$(_ssh_get_config "PermitTunnel" "no")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.permit_tunnel_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.permit_tunnel_disabled')" \
-            "PermitTunnel=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.permit_tunnel_disabled" low passed \
+            desc="PermitTunnel=$val"
         print_ok "$(i18n 'ssh.permit_tunnel_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.permit_tunnel_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.permit_tunnel_enabled')" \
-            "$(i18n 'ssh.permit_tunnel_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=PermitTunnel' 'value=no')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.permit_tunnel_enabled" low failed \
+            desc="$(i18n 'ssh.permit_tunnel_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=PermitTunnel' 'value=no')"
         print_severity "low" "$(i18n 'ssh.permit_tunnel_enabled')"
     fi
 }
@@ -997,28 +717,13 @@ _ssh_audit_permit_tunnel() {
 _ssh_audit_gateway_ports() {
     local val=$(_ssh_get_config "GatewayPorts" "no")
     if [[ "${val,,}" == "no" ]]; then
-        local check=$(create_check_json \
-            "ssh.gateway_ports_disabled" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.gateway_ports_disabled')" \
-            "GatewayPorts=$val" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.gateway_ports_disabled" low passed \
+            desc="GatewayPorts=$val"
         print_ok "$(i18n 'ssh.gateway_ports_disabled')"
     else
-        local check=$(create_check_json \
-            "ssh.gateway_ports_enabled" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.gateway_ports_enabled')" \
-            "$(i18n 'ssh.gateway_ports_enabled_desc' "val=$val")" \
-            "$(i18n 'ssh.suggest_set_directive' 'directive=GatewayPorts' 'value=no')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.gateway_ports_enabled" low failed \
+            desc="$(i18n 'ssh.gateway_ports_enabled_desc' "val=$val")" \
+            suggestion="$(i18n 'ssh.suggest_set_directive' 'directive=GatewayPorts' 'value=no')"
         print_severity "low" "$(i18n 'ssh.gateway_ports_enabled')"
     fi
 }
@@ -1068,28 +773,14 @@ _ssh_audit_algorithms() {
 
     if [[ ${#issues[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s ' "${issues[@]}")
-        local check=$(create_check_json \
-            "ssh.weak_algorithms" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.weak_algorithms')" \
-            "$(i18n 'ssh.weak_algorithms_desc' "list=$issue_list")" \
-            "$(i18n 'ssh.fix_algorithms')" \
-            "ssh.harden_algorithms")
-        state_add_check "$check"
+        check_emit "ssh.weak_algorithms" low failed \
+            desc="$(i18n 'ssh.weak_algorithms_desc' "list=$issue_list")" \
+            suggestion="$(i18n 'ssh.fix_algorithms')" \
+            fix="ssh.harden_algorithms"
         print_severity "low" "$(i18n 'ssh.weak_algorithms'): ${#issues[@]} found"
     else
-        local check=$(create_check_json \
-            "ssh.algorithms_ok" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.algorithms_ok')" \
-            "$(i18n 'ssh.algorithms_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.algorithms_ok" low passed \
+            desc="$(i18n 'ssh.algorithms_ok_desc')"
         print_ok "$(i18n 'ssh.algorithms_ok')"
     fi
 }
@@ -1097,29 +788,14 @@ _ssh_audit_algorithms() {
 _ssh_audit_access_control() {
     if _ssh_has_access_control; then
         local control_info=$(_ssh_get_access_control_info)
-        local check=$(create_check_json \
-            "ssh.access_control_configured" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.access_control_configured')" \
-            "$control_info" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.access_control_configured" low passed \
+            desc="$control_info"
         print_ok "$(i18n 'ssh.access_control_configured')"
     else
         # This is a recommendation, not critical
-        local check=$(create_check_json \
-            "ssh.no_access_control" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.no_access_control')" \
-            "$(i18n 'ssh.no_access_control_desc')" \
-            "$(i18n 'ssh.fix_access_control')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.no_access_control" low failed \
+            desc="$(i18n 'ssh.no_access_control_desc')" \
+            suggestion="$(i18n 'ssh.fix_access_control')"
         print_severity "low" "$(i18n 'ssh.no_access_control')"
     fi
 }
@@ -1129,28 +805,13 @@ _ssh_audit_port() {
 
     if [[ "$ssh_port" == "22" ]]; then
         # Default port - recommend changing for security through obscurity
-        local check=$(create_check_json \
-            "ssh.default_port" \
-            "ssh" \
-            "low" \
-            "failed" \
-            "$(i18n 'ssh.default_port')" \
-            "$(i18n 'ssh.default_port_desc')" \
-            "$(i18n 'ssh.default_port_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.default_port" low failed \
+            desc="$(i18n 'ssh.default_port_desc')" \
+            suggestion="$(i18n 'ssh.default_port_suggestion')"
         print_severity "low" "SSH using default port 22 (consider changing)"
     else
-        local check=$(create_check_json \
-            "ssh.custom_port" \
-            "ssh" \
-            "low" \
-            "passed" \
-            "$(i18n 'ssh.custom_port')" \
-            "$(i18n 'ssh.custom_port_desc' "ssh_port=$ssh_port")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ssh.custom_port" low passed \
+            desc="$(i18n 'ssh.custom_port_desc' "ssh_port=$ssh_port")"
         print_ok "$(i18n 'ssh.custom_port') ($ssh_port)"
     fi
 }

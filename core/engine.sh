@@ -348,15 +348,10 @@ audit_module() {
             # Recorded, not hidden: without this, "module crashed" and
             # "module found nothing wrong" produce identical reports.
             _module_record_failure "$module" "audit"
-            state_add_check "$(create_check_json \
-                "_internal.module_failed" \
-                "_internal" \
-                "low" \
-                "failed" \
-                "$(i18n 'error.module_failed' "module=$module")" \
-                "$(i18n 'error.module_failed_desc' "module=$module" "rc=$audit_result")" \
-                "$(i18n 'error.module_failed_fix')" \
-                "")"
+            check_emit "_internal.module_failed" low failed \
+                title="$(i18n 'error.module_failed' "module=$module")" \
+                desc="$(i18n 'error.module_failed_desc' "module=$module" "rc=$audit_result")" \
+                suggestion="$(i18n 'error.module_failed_fix')"
         fi
 
         return 0  # Module audit completed (even if with warnings)
@@ -372,16 +367,9 @@ _record_unavailable_modules() {
     for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
         if [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]]; then
             local mod_title=$(i18n "${module}.title")
-            local check=$(create_check_json \
-                "${module}.not_installed" \
-                "${module}" \
-                "low" \
-                "passed" \
-                "$(i18n "${module}.not_installed")" \
-                "$(i18n 'common.skipping') - $(i18n 'common.not_installed')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "${module}.not_installed" low passed \
+                title="$(i18n "${module}.not_installed")" \
+                desc="$(i18n 'common.skipping') - $(i18n 'common.not_installed')"
         fi
     done
 }
@@ -449,15 +437,10 @@ _run_audit_pass() {
     # incompleteness record is emitted here, after state_init (emitting at
     # load time would be wiped by the next pass's reset).
     for module in "${!VPSSEC_MODULE_LOAD_FAILED[@]}"; do
-        state_add_check "$(create_check_json \
-            "_internal.module_failed" \
-            "_internal" \
-            "low" \
-            "failed" \
-            "$(i18n 'error.module_failed' "module=$module")" \
-            "$(i18n 'error.module_failed_load_desc' "module=$module")" \
-            "$(i18n 'error.module_failed_fix')" \
-            "")"
+        check_emit "_internal.module_failed" low failed \
+            title="$(i18n 'error.module_failed' "module=$module")" \
+            desc="$(i18n 'error.module_failed_load_desc' "module=$module")" \
+            suggestion="$(i18n 'error.module_failed_fix')"
     done
 
     # Clear progress line

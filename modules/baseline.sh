@@ -271,28 +271,13 @@ _baseline_audit_insecure_services() {
         local list; list=$(printf '%s ' "${found[@]}")
         local remove_hint
         remove_hint=$(pkg_remove_hint '<name>' || i18n 'baseline.pkg_remove_manual')
-        local check=$(create_check_json \
-            "baseline.insecure_services_active" \
-            "baseline" \
-            "high" \
-            "failed" \
-            "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}")" \
-            "$(i18n 'baseline.insecure_services_active_desc' "list=${list% }")" \
-            "$(i18n 'baseline.insecure_services_active_suggestion' "remove_hint=$remove_hint")" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.insecure_services_active" high failed \
+            title="$(i18n 'baseline.insecure_services_active' "count=${#found[@]}")" \
+            desc="$(i18n 'baseline.insecure_services_active_desc' "list=${list% }")" \
+            suggestion="$(i18n 'baseline.insecure_services_active_suggestion' "remove_hint=$remove_hint")"
         print_severity "high" "$(i18n 'baseline.insecure_services_active' "count=${#found[@]}")"
     else
-        local check=$(create_check_json \
-            "baseline.insecure_services_clean" \
-            "baseline" \
-            "low" \
-            "passed" \
-            "$(i18n 'baseline.insecure_services_clean')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.insecure_services_clean" low passed
         print_ok "$(i18n 'baseline.insecure_services_clean')"
     fi
 }
@@ -321,16 +306,8 @@ _baseline_audit_integrity() {
     fi
 
     if [[ -n "$found" ]]; then
-        local check=$(create_check_json \
-            "baseline.integrity_installed" \
-            "baseline" \
-            "low" \
-            "passed" \
-            "$(i18n 'baseline.integrity_installed' "tool=$found")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.integrity_installed" low passed \
+            title="$(i18n 'baseline.integrity_installed' "tool=$found")"
         print_ok "$(i18n 'baseline.integrity_installed' "tool=$found")"
     else
         # Name a command only where one exists. AIDE is not in Arch's own
@@ -343,16 +320,9 @@ _baseline_audit_integrity() {
         else
             integrity_hint=$(i18n 'baseline.integrity_missing_suggestion_generic')
         fi
-        local check=$(create_check_json \
-            "baseline.integrity_missing" \
-            "baseline" \
-            "low" \
-            "failed" \
-            "$(i18n 'baseline.integrity_missing')" \
-            "$(i18n 'baseline.integrity_missing_desc')" \
-            "$integrity_hint" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.integrity_missing" low failed \
+            desc="$(i18n 'baseline.integrity_missing_desc')" \
+            suggestion="$integrity_hint"
         print_severity "low" "$(i18n 'baseline.integrity_missing')"
     fi
 }
@@ -393,44 +363,24 @@ _baseline_audit_selinux() {
     local denials=$(_baseline_selinux_denials_count)
 
     if [[ "$status" == "enforcing" ]]; then
-        local check=$(create_check_json \
-            "baseline.selinux_enforcing" \
-            "baseline" \
-            "low" \
-            "passed" \
-            "$(i18n 'baseline.selinux_enforcing')" \
-            "$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials}")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.selinux_enforcing" low passed \
+            desc="$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials}")"
         print_ok "$(i18n 'baseline.selinux_enforcing') (policy: ${policy:-targeted})"
 
         # Check for excessive denials
         if [[ "$denials" != "unknown" ]] && [[ "$denials" -gt 50 ]]; then
-            local check=$(create_check_json \
-                "baseline.selinux_many_denials" \
-                "baseline" \
-                "low" \
-                "failed" \
-                "$(i18n 'baseline.selinux_many_denials' "count=$denials")" \
-                "$(i18n 'baseline.selinux_many_denials_desc')" \
-                "$(i18n 'baseline.selinux_many_denials_suggestion')" \
-                "")
-            state_add_check "$check"
+            check_emit "baseline.selinux_many_denials" low failed \
+                title="$(i18n 'baseline.selinux_many_denials' "count=$denials")" \
+                desc="$(i18n 'baseline.selinux_many_denials_desc')" \
+                suggestion="$(i18n 'baseline.selinux_many_denials_suggestion')"
             print_severity "low" "$(i18n 'baseline.selinux_many_denials' "count=$denials")"
         fi
 
     elif [[ "$status" == "permissive" ]]; then
-        local check=$(create_check_json \
-            "baseline.selinux_permissive" \
-            "baseline" \
-            "low" \
-            "failed" \
-            "$(i18n 'baseline.selinux_permissive')" \
-            "$(i18n 'baseline.selinux_permissive_desc')" \
-            "$(i18n 'baseline.selinux_permissive_suggestion')" \
-            "baseline.selinux_set_enforcing")
-        state_add_check "$check"
+        check_emit "baseline.selinux_permissive" low failed \
+            desc="$(i18n 'baseline.selinux_permissive_desc')" \
+            suggestion="$(i18n 'baseline.selinux_permissive_suggestion')" \
+            fix="baseline.selinux_set_enforcing"
         print_severity "low" "$(i18n 'baseline.selinux_permissive')"
 
         # Check if configured as disabled (will be disabled on reboot)
@@ -443,16 +393,9 @@ _baseline_audit_selinux() {
 _baseline_audit_selinux_disabled() {
     local config=$(_baseline_selinux_get_config)
 
-    local check=$(create_check_json \
-        "baseline.selinux_disabled" \
-        "baseline" \
-        "low" \
-        "failed" \
-        "$(i18n 'baseline.selinux_disabled')" \
-        "$(i18n 'baseline.selinux_disabled_desc' "config=${config}")" \
-        "$(i18n 'baseline.selinux_disabled_suggestion')" \
-        "")
-    state_add_check "$check"
+    check_emit "baseline.selinux_disabled" low failed \
+        desc="$(i18n 'baseline.selinux_disabled_desc' "config=${config}")" \
+        suggestion="$(i18n 'baseline.selinux_disabled_suggestion')"
     print_severity "low" "$(i18n 'baseline.selinux_disabled')"
 }
 
@@ -468,30 +411,16 @@ _baseline_audit_apparmor() {
         local enforced=$(echo "$status" | cut -d: -f2)
         local complain=$(echo "$status" | cut -d: -f3)
 
-        local check=$(create_check_json \
-            "baseline.apparmor_enabled" \
-            "baseline" \
-            "low" \
-            "passed" \
-            "$(i18n 'baseline.apparmor_enabled')" \
-            "$(i18n 'baseline.apparmor_enabled_desc' "enforced=${enforced}" "complain=${complain}")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.apparmor_enabled" low passed \
+            desc="$(i18n 'baseline.apparmor_enabled_desc' "enforced=${enforced}" "complain=${complain}")"
         print_ok "$(i18n 'baseline.apparmor_enabled') (enforcing: ${enforced}, complain: ${complain})"
 
         # Check if too many profiles in complain mode
         if [[ "$complain" -gt "$enforced" ]] && [[ "$complain" -gt 5 ]]; then
-            local check=$(create_check_json \
-                "baseline.apparmor_many_complain" \
-                "baseline" \
-                "low" \
-                "failed" \
-                "$(i18n 'baseline.apparmor_many_complain' "count=$complain")" \
-                "$(i18n 'baseline.apparmor_many_complain_desc')" \
-                "$(i18n 'baseline.apparmor_many_complain_suggestion')" \
-                "")
-            state_add_check "$check"
+            check_emit "baseline.apparmor_many_complain" low failed \
+                title="$(i18n 'baseline.apparmor_many_complain' "count=$complain")" \
+                desc="$(i18n 'baseline.apparmor_many_complain_desc')" \
+                suggestion="$(i18n 'baseline.apparmor_many_complain_suggestion')"
             print_severity "low" "$(i18n 'baseline.apparmor_many_complain' "count=$complain")"
         fi
     fi
@@ -510,45 +439,26 @@ _baseline_audit_apparmor_disabled_profiles() {
 
     local list
     list=$(echo "$disabled" | tr '\n' ' ' | sed 's/ $//')
-    local check
-    check=$(create_check_json \
-        "baseline.apparmor_profiles_disabled" \
-        "baseline" \
-        "low" \
-        "failed" \
-        "$(i18n 'baseline.apparmor_profiles_disabled' "count=$disabled_count")" \
-        "$(i18n 'baseline.apparmor_profiles_disabled_desc' "list=$list")" \
-        "$(i18n 'baseline.apparmor_profiles_disabled_fix' "dir=$BASELINE_APPARMOR_DISABLE_DIR")" \
-        "")
-    state_add_check "$check"
+    check_emit "baseline.apparmor_profiles_disabled" low failed \
+        title="$(i18n 'baseline.apparmor_profiles_disabled' "count=$disabled_count")" \
+        desc="$(i18n 'baseline.apparmor_profiles_disabled_desc' "list=$list")" \
+        suggestion="$(i18n 'baseline.apparmor_profiles_disabled_fix' "dir=$BASELINE_APPARMOR_DISABLE_DIR")"
     print_severity "low" "$(i18n 'baseline.apparmor_profiles_disabled' "count=$disabled_count")"
 }
 
 _baseline_audit_apparmor_disabled() {
-    local check=$(create_check_json \
-        "baseline.apparmor_disabled" \
-        "baseline" \
-        "low" \
-        "failed" \
-        "$(i18n 'baseline.apparmor_disabled')" \
-        "$(i18n 'baseline.apparmor_disabled_desc')" \
-        "$(i18n 'baseline.fix_enable_apparmor')" \
-        "baseline.enable_apparmor")
-    state_add_check "$check"
+    check_emit "baseline.apparmor_disabled" low failed \
+        desc="$(i18n 'baseline.apparmor_disabled_desc')" \
+        suggestion="$(i18n 'baseline.fix_enable_apparmor')" \
+        fix="baseline.enable_apparmor"
     print_severity "low" "$(i18n 'baseline.apparmor_disabled')"
 }
 
 _baseline_audit_no_mac() {
-    local check=$(create_check_json \
-        "baseline.no_mac_system" \
-        "baseline" \
-        "low" \
-        "failed" \
-        "$(i18n 'baseline.no_mac_system')" \
-        "$(i18n 'baseline.no_mac_system_desc')" \
-        "$(i18n 'baseline.no_mac_system_suggestion')" \
-        "baseline.enable_apparmor")
-    state_add_check "$check"
+    check_emit "baseline.no_mac_system" low failed \
+        desc="$(i18n 'baseline.no_mac_system_desc')" \
+        suggestion="$(i18n 'baseline.no_mac_system_suggestion')" \
+        fix="baseline.enable_apparmor"
     print_severity "low" "$(i18n 'baseline.no_mac_system')"
 }
 
@@ -557,28 +467,14 @@ _baseline_audit_unused_services() {
     local count=$(echo "$unused" | wc -w)
 
     if ((count > 0)); then
-        local check=$(create_check_json \
-            "baseline.unused_services" \
-            "baseline" \
-            "low" \
-            "failed" \
-            "$(i18n 'baseline.unused_services' "count=$count")" \
-            "$(i18n 'baseline.unused_services_desc' "services=$unused")" \
-            "$(i18n 'baseline.review_unused_services')" \
-            "baseline.disable_unused")
-        state_add_check "$check"
+        check_emit "baseline.unused_services" low failed \
+            title="$(i18n 'baseline.unused_services' "count=$count")" \
+            desc="$(i18n 'baseline.unused_services_desc' "services=$unused")" \
+            suggestion="$(i18n 'baseline.review_unused_services')" \
+            fix="baseline.disable_unused"
         print_severity "low" "$(i18n 'baseline.unused_services' "count=$count"): $unused"
     else
-        local check=$(create_check_json \
-            "baseline.no_unused_services" \
-            "baseline" \
-            "low" \
-            "passed" \
-            "$(i18n 'baseline.no_unused_services')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "baseline.no_unused_services" low passed
         print_ok "$(i18n 'baseline.no_unused_services')"
     fi
 }

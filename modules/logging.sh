@@ -143,28 +143,14 @@ logging_audit() {
 _logging_audit_journald() {
     if _logging_journald_persistent; then
         local max_size=$(_logging_journald_max_size)
-        local check=$(create_check_json \
-            "logging.journald_persistent" \
-            "logging" \
-            "low" \
-            "passed" \
-            "$(i18n 'logging.journald_persistent')" \
-            "$(i18n 'logging.journald_max_size' "size=$max_size")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.journald_persistent" low passed \
+            desc="$(i18n 'logging.journald_max_size' "size=$max_size")"
         print_ok "$(i18n 'logging.journald_persistent') ($(i18n 'logging.journald_max_size' "size=$max_size"))"
     else
-        local check=$(create_check_json \
-            "logging.journald_volatile" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.journald_volatile')" \
-            "$(i18n 'logging.journald_volatile_desc')" \
-            "$(i18n 'logging.fix_enable_persistent')" \
-            "logging.enable_persistent_journal")
-        state_add_check "$check"
+        check_emit "logging.journald_volatile" low failed \
+            desc="$(i18n 'logging.journald_volatile_desc')" \
+            suggestion="$(i18n 'logging.fix_enable_persistent')" \
+            fix="logging.enable_persistent_journal"
         print_severity "low" "$(i18n 'logging.journald_volatile')"
     fi
 }
@@ -191,41 +177,21 @@ _logging_audit_logrotate() {
         done
 
         if [[ ${#missing[@]} -eq 0 ]]; then
-            local check=$(create_check_json \
-                "logging.logrotate_ok" \
-                "logging" \
-                "low" \
-                "passed" \
-                "$(i18n 'logging.logrotate_ok')" \
-                "" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "logging.logrotate_ok" low passed
             print_ok "$(i18n 'logging.logrotate_ok')"
         else
-            local check=$(create_check_json \
-                "logging.logrotate_missing" \
-                "logging" \
-                "low" \
-                "failed" \
-                "$(i18n 'logging.logrotate_some_missing' "logs=${missing[*]}")" \
-                "$(i18n 'logging.logrotate_missing_desc')" \
-                "$(i18n 'logging.fix_configure_logrotate')" \
-                "")
-            state_add_check "$check"
+            check_emit "logging.logrotate_missing" low failed \
+                title="$(i18n 'logging.logrotate_some_missing' "logs=${missing[*]}")" \
+                desc="$(i18n 'logging.logrotate_missing_desc')" \
+                suggestion="$(i18n 'logging.fix_configure_logrotate')"
             print_severity "low" "$(i18n 'logging.logrotate_some_missing' "logs=${missing[*]}")"
         fi
     else
-        local check=$(create_check_json \
-            "logging.logrotate_not_configured" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.logrotate_missing')" \
-            "$(i18n 'logging.logrotate_missing_desc')" \
-            "$(i18n 'logging.fix_configure_logrotate')" \
-            "logging.setup_logrotate")
-        state_add_check "$check"
+        check_emit "logging.logrotate_not_configured" low failed \
+            title="$(i18n 'logging.logrotate_missing')" \
+            desc="$(i18n 'logging.logrotate_missing_desc')" \
+            suggestion="$(i18n 'logging.fix_configure_logrotate')" \
+            fix="logging.setup_logrotate"
         print_severity "low" "$(i18n 'logging.logrotate_missing')"
     fi
 }
@@ -234,54 +200,29 @@ _logging_audit_auditd() {
     if _logging_check_audit_installed; then
         if systemctl is-active --quiet auditd; then
             if _logging_check_audit_rules; then
-                local check=$(create_check_json \
-                    "logging.auditd_configured" \
-                    "logging" \
-                    "low" \
-                    "passed" \
-                    "$(i18n 'logging.auditd_running')" \
-                    "" \
-                    "" \
-                    "")
-                state_add_check "$check"
+                check_emit "logging.auditd_configured" low passed \
+                    title="$(i18n 'logging.auditd_running')"
                 print_ok "$(i18n 'logging.auditd_running')"
             else
-                local check=$(create_check_json \
-                    "logging.auditd_no_rules" \
-                    "logging" \
-                    "low" \
-                    "failed" \
-                    "$(i18n 'logging.auditd_no_rules')" \
-                    "$(i18n 'logging.auditd_no_rules_desc')" \
-                    "$(i18n 'logging.fix_configure_auditd')" \
-                    "logging.setup_audit_rules")
-                state_add_check "$check"
+                check_emit "logging.auditd_no_rules" low failed \
+                    desc="$(i18n 'logging.auditd_no_rules_desc')" \
+                    suggestion="$(i18n 'logging.fix_configure_auditd')" \
+                    fix="logging.setup_audit_rules"
                 print_severity "low" "$(i18n 'logging.auditd_no_rules')"
             fi
         else
-            local check=$(create_check_json \
-                "logging.auditd_inactive" \
-                "logging" \
-                "low" \
-                "failed" \
-                "$(i18n 'logging.auditd_not_running')" \
-                "$(i18n 'logging.auditd_not_running_desc')" \
-                "$(i18n 'logging.fix_enable_auditd')" \
-                "logging.enable_auditd")
-            state_add_check "$check"
+            check_emit "logging.auditd_inactive" low failed \
+                title="$(i18n 'logging.auditd_not_running')" \
+                desc="$(i18n 'logging.auditd_not_running_desc')" \
+                suggestion="$(i18n 'logging.fix_enable_auditd')" \
+                fix="logging.enable_auditd"
             print_severity "low" "$(i18n 'logging.auditd_not_running')"
         fi
     else
-        local check=$(create_check_json \
-            "logging.auditd_not_installed" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.auditd_not_installed')" \
-            "$(i18n 'logging.auditd_not_running_desc')" \
-            "$(i18n 'logging.fix_install_auditd')" \
-            "logging.install_auditd")
-        state_add_check "$check"
+        check_emit "logging.auditd_not_installed" low failed \
+            desc="$(i18n 'logging.auditd_not_running_desc')" \
+            suggestion="$(i18n 'logging.fix_install_auditd')" \
+            fix="logging.install_auditd"
         print_severity "low" "$(i18n 'logging.auditd_not_installed')"
     fi
 }
@@ -291,55 +232,26 @@ _logging_audit_ssh_logs() {
     # was read and found quiet. Emitted failed + info, like update.check_failed.
     local failed_logins
     if ! failed_logins=$(_logging_get_failed_logins); then
-        local check=$(create_check_json \
-            "logging.journal_unreadable" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.journal_unreadable')" \
-            "$(i18n 'logging.journal_unreadable_desc')" \
-            "$(i18n 'logging.journal_unreadable_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.journal_unreadable" low failed \
+            desc="$(i18n 'logging.journal_unreadable_desc')" \
+            suggestion="$(i18n 'logging.journal_unreadable_fix')"
         print_severity "low" "$(i18n 'logging.journal_unreadable')"
         return 0
     fi
 
     if ((failed_logins > 100)); then
-        local check=$(create_check_json \
-            "logging.ssh_many_failures" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.ssh_logs_warning')" \
-            "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.ssh_many_failures" low failed \
+            title="$(i18n 'logging.ssh_logs_warning')" \
+            desc="$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")"
         print_severity "low" "$(i18n 'logging.ssh_logs_high' "count=$failed_logins")"
     elif ((failed_logins > 20)); then
-        local check=$(create_check_json \
-            "logging.ssh_some_failures" \
-            "logging" \
-            "low" \
-            "failed" \
-            "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")" \
-            "$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.ssh_some_failures" low failed \
+            title="$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")" \
+            desc="$(i18n 'logging.ssh_logs_warning_desc' "count=$failed_logins")"
         print_severity "low" "$(i18n 'logging.ssh_logs_moderate' "count=$failed_logins")"
     else
-        local check=$(create_check_json \
-            "logging.ssh_logs_ok" \
-            "logging" \
-            "low" \
-            "passed" \
-            "$(i18n 'logging.ssh_logs_normal' "count=$failed_logins")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.ssh_logs_ok" low passed \
+            title="$(i18n 'logging.ssh_logs_normal' "count=$failed_logins")"
         print_ok "$(i18n 'logging.ssh_logs_normal' "count=$failed_logins")"
     fi
 }
@@ -355,28 +267,11 @@ _logging_audit_sudo_logs() {
 
     # Just informational - sudo logging should be working
     if ((sudo_events > 0)); then
-        local check=$(create_check_json \
-            "logging.sudo_logging_ok" \
-            "logging" \
-            "low" \
-            "passed" \
-            "$(i18n 'logging.sudo_logs_active' "count=$sudo_events")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.sudo_logging_ok" low passed \
+            title="$(i18n 'logging.sudo_logs_active' "count=$sudo_events")"
         print_ok "$(i18n 'logging.sudo_logs_active' "count=$sudo_events")"
     else
-        local check=$(create_check_json \
-            "logging.sudo_no_events" \
-            "logging" \
-            "low" \
-            "passed" \
-            "$(i18n 'logging.sudo_no_events')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "logging.sudo_no_events" low passed
         print_ok "$(i18n 'logging.sudo_no_events')"
     fi
 }

@@ -89,28 +89,13 @@ _sched_audit_at_jobs() {
     if [[ -n "$jobs" ]]; then
         local count
         count=$(echo "$jobs" | wc -l)
-        local check=$(create_check_json \
-            "scheduling.at_jobs_present" \
-            "scheduling" \
-            "low" \
-            "failed" \
-            "$(i18n 'scheduling.at_jobs_present' "count=$count")" \
-            "$(i18n 'scheduling.at_jobs_present_desc' "list=$(echo "$jobs" | tr '\n' ' ')")" \
-            "$(i18n 'scheduling.at_jobs_present_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "scheduling.at_jobs_present" low failed \
+            title="$(i18n 'scheduling.at_jobs_present' "count=$count")" \
+            desc="$(i18n 'scheduling.at_jobs_present_desc' "list=$(echo "$jobs" | tr '\n' ' ')")" \
+            suggestion="$(i18n 'scheduling.at_jobs_present_suggestion')"
         print_severity "low" "$(i18n 'scheduling.at_jobs_present' "count=$count")"
     else
-        local check=$(create_check_json \
-            "scheduling.no_at_jobs" \
-            "scheduling" \
-            "low" \
-            "passed" \
-            "$(i18n 'scheduling.no_at_jobs')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "scheduling.no_at_jobs" low passed
         print_ok "$(i18n 'scheduling.no_at_jobs')"
     fi
 }
@@ -126,29 +111,14 @@ _sched_audit_cron_anomalies() {
         sample=$(echo "$hits" | head -3 | tr '\n' ';' | sed 's|;$||')
         local count
         count=$(echo "$hits" | wc -l)
-        local check=$(create_check_json \
-            "scheduling.cron_fetches_internet" \
-            "scheduling" \
-            "low" \
-            "failed" \
-            "$(i18n 'scheduling.cron_fetches_internet' "count=$count")" \
-            "$(i18n 'scheduling.cron_fetches_internet_desc' "sample=${sample}")" \
-            "$(i18n 'scheduling.cron_fetches_internet_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "scheduling.cron_fetches_internet" low failed \
+            title="$(i18n 'scheduling.cron_fetches_internet' "count=$count")" \
+            desc="$(i18n 'scheduling.cron_fetches_internet_desc' "sample=${sample}")" \
+            suggestion="$(i18n 'scheduling.cron_fetches_internet_suggestion')"
         log_info "Cron internet-fetch entries: $hits"
         print_severity "low" "$(i18n 'scheduling.cron_fetches_internet' "count=$count")"
     else
-        local check=$(create_check_json \
-            "scheduling.cron_clean" \
-            "scheduling" \
-            "low" \
-            "passed" \
-            "$(i18n 'scheduling.cron_clean')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "scheduling.cron_clean" low passed
         print_ok "$(i18n 'scheduling.cron_clean')"
     fi
 }

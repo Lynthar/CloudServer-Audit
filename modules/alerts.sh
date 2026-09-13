@@ -71,41 +71,22 @@ _alerts_audit_config() {
             local webhook_status="no" email_status="no"
             [[ -n "$webhook" ]] && webhook_status="yes"
             [[ -n "$email" ]] && email_status="yes"
-            local check=$(create_check_json \
-                "alerts.configured" \
-                "alerts" \
-                "low" \
-                "passed" \
-                "$(i18n 'alerts.configured')" \
-                "$(i18n 'alerts.config_status' "webhook=$webhook_status" "email=$email_status")" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "alerts.configured" low passed \
+                desc="$(i18n 'alerts.config_status' "webhook=$webhook_status" "email=$email_status")"
             print_ok "$(i18n 'alerts.configured')"
         else
-            local check=$(create_check_json \
-                "alerts.not_configured" \
-                "alerts" \
-                "low" \
-                "failed" \
-                "$(i18n 'alerts.not_configured')" \
-                "$(i18n 'alerts.no_webhook_email')" \
-                "$(i18n 'alerts.fix_configure')" \
-                "alerts.setup_config")
-            state_add_check "$check"
+            check_emit "alerts.not_configured" low failed \
+                desc="$(i18n 'alerts.no_webhook_email')" \
+                suggestion="$(i18n 'alerts.fix_configure')" \
+                fix="alerts.setup_config"
             print_severity "low" "$(i18n 'alerts.not_configured')"
         fi
     else
-        local check=$(create_check_json \
-            "alerts.no_config" \
-            "alerts" \
-            "low" \
-            "failed" \
-            "$(i18n 'alerts.config_not_found')" \
-            "$(i18n 'alerts.config_not_found_desc')" \
-            "$(i18n 'alerts.fix_setup')" \
-            "alerts.setup_config")
-        state_add_check "$check"
+        check_emit "alerts.no_config" low failed \
+            title="$(i18n 'alerts.config_not_found')" \
+            desc="$(i18n 'alerts.config_not_found_desc')" \
+            suggestion="$(i18n 'alerts.fix_setup')" \
+            fix="alerts.setup_config"
         print_severity "low" "$(i18n 'alerts.config_not_found')"
     fi
 }
@@ -123,28 +104,14 @@ _alerts_audit_capabilities() {
 
     if [[ ${#capabilities[@]} -gt 0 ]]; then
         local caps_list="${capabilities[*]}"
-        local check=$(create_check_json \
-            "alerts.capabilities_ok" \
-            "alerts" \
-            "low" \
-            "passed" \
-            "$(i18n 'alerts.capabilities_available')" \
-            "$(i18n 'alerts.capabilities_list' "types=$caps_list")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "alerts.capabilities_ok" low passed \
+            title="$(i18n 'alerts.capabilities_available')" \
+            desc="$(i18n 'alerts.capabilities_list' "types=$caps_list")"
         print_ok "$(i18n 'alerts.capabilities' "types=$caps_list")"
     else
-        local check=$(create_check_json \
-            "alerts.no_capabilities" \
-            "alerts" \
-            "low" \
-            "failed" \
-            "$(i18n 'alerts.no_capabilities')" \
-            "$(i18n 'alerts.no_capabilities_desc')" \
-            "$(i18n 'alerts.fix_install_curl')" \
-            "")
-        state_add_check "$check"
+        check_emit "alerts.no_capabilities" low failed \
+            desc="$(i18n 'alerts.no_capabilities_desc')" \
+            suggestion="$(i18n 'alerts.fix_install_curl')"
         print_severity "low" "$(i18n 'alerts.no_capabilities')"
     fi
 }

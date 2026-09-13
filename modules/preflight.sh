@@ -35,28 +35,13 @@ _preflight_check_os() {
     local codename=$(detect_os_codename)
 
     if is_supported_os; then
-        local check=$(create_check_json \
-            "preflight.os_supported" \
-            "preflight" \
-            "low" \
-            "passed" \
-            "$(i18n 'preflight.os_supported')" \
-            "${os} ${version} (${codename})" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.os_supported" low passed \
+            desc="${os} ${version} (${codename})"
         print_ok "$(i18n 'preflight.os_supported'): ${os} ${version}"
     else
-        local check=$(create_check_json \
-            "preflight.os_unsupported" \
-            "preflight" \
-            "low" \
-            "failed" \
-            "$(i18n 'preflight.os_unsupported')" \
-            "${os} ${version} - $(i18n 'preflight.os_unsupported')" \
-            "$(i18n 'preflight.os_unsupported_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.os_unsupported" low failed \
+            desc="${os} ${version} - $(i18n 'preflight.os_unsupported')" \
+            suggestion="$(i18n 'preflight.os_unsupported_suggestion')"
         print_warn "$(i18n 'preflight.os_unsupported'): ${os} ${version}"
     fi
 }
@@ -91,28 +76,12 @@ _preflight_check_network() {
     fi
 
     if [[ "$network_ok" == "1" ]]; then
-        local check=$(create_check_json \
-            "preflight.network_ok" \
-            "preflight" \
-            "low" \
-            "passed" \
-            "$(i18n 'preflight.network_ok')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.network_ok" low passed
         print_ok "$(i18n 'preflight.network_ok')"
     else
-        local check=$(create_check_json \
-            "preflight.network_fail" \
-            "preflight" \
-            "low" \
-            "failed" \
-            "$(i18n 'preflight.network_fail')" \
-            "$(i18n 'preflight.network_fail_desc')" \
-            "$(i18n 'preflight.network_fail_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.network_fail" low failed \
+            desc="$(i18n 'preflight.network_fail_desc')" \
+            suggestion="$(i18n 'preflight.network_fail_suggestion')"
         print_warn "$(i18n 'preflight.network_fail')"
     fi
 }
@@ -138,28 +107,14 @@ _preflight_check_deps() {
         if ! dep_hint=$(pkg_install_hint $dep_pkgs); then
             dep_hint=$(i18n 'preflight.install_deps' "deps=$dep_pkgs")
         fi
-        local check=$(create_check_json \
-            "preflight.deps_missing" \
-            "preflight" \
-            "low" \
-            "failed" \
-            "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
-            "$(i18n 'preflight.deps_missing_desc' "missing_required=${missing_required[*]}")" \
-            "$dep_hint" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.deps_missing" low failed \
+            title="$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
+            desc="$(i18n 'preflight.deps_missing_desc' "missing_required=${missing_required[*]}")" \
+            suggestion="$dep_hint"
         print_error "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")"
     else
-        local check=$(create_check_json \
-            "preflight.deps_ok" \
-            "preflight" \
-            "low" \
-            "passed" \
-            "$(i18n 'common.required_deps')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "preflight.deps_ok" low passed \
+            title="$(i18n 'common.required_deps')"
         print_ok "$(i18n 'common.required_deps')"
     fi
 
@@ -188,16 +143,8 @@ _preflight_check_ports() {
 
     # Context only. Dangerous-port exposure is audited authoritatively by
     # networking.exposed_dangerous_ports, which is wildcard-aware.
-    local check=$(create_check_json \
-        "preflight.ports_ok" \
-        "preflight" \
-        "low" \
-        "passed" \
-        "$(i18n 'preflight.listening_ports' "count=$port_count")" \
-        "" \
-        "" \
-        "")
-    state_add_check "$check"
+    check_emit "preflight.ports_ok" low passed \
+        title="$(i18n 'preflight.listening_ports' "count=$port_count")"
     print_ok "$(i18n 'preflight.listening_ports' "count=$port_count")"
 
     # Log all ports for reference

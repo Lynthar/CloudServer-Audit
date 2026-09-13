@@ -129,16 +129,7 @@ cloudflared_audit() {
     # Check if Cloudflared is installed
     print_item "$(i18n 'cloudflared.check_installed')"
     if ! _cloudflared_installed; then
-        local check=$(create_check_json \
-            "cloudflared.not_installed" \
-            "cloudflared" \
-            "low" \
-            "passed" \
-            "$(i18n 'cloudflared.not_installed')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.not_installed" low passed
         print_ok "$(i18n 'cloudflared.not_installed')"
         return
     fi
@@ -159,56 +150,31 @@ cloudflared_audit() {
 
 _cloudflared_audit_service() {
     if _cloudflared_service_active; then
-        local check=$(create_check_json \
-            "cloudflared.service_active" \
-            "cloudflared" \
-            "low" \
-            "passed" \
-            "$(i18n 'cloudflared.service_active')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.service_active" low passed
         print_ok "$(i18n 'cloudflared.service_active')"
     elif _cloudflared_tunnel_running; then
-        local check=$(create_check_json \
-            "cloudflared.tunnel_running" \
-            "cloudflared" \
-            "low" \
-            "passed" \
-            "$(i18n 'cloudflared.tunnel_running_manual')" \
-            "$(i18n 'cloudflared.tunnel_not_systemd')" \
-            "$(i18n 'cloudflared.fix_setup_service')" \
-            "cloudflared.setup_service")
-        state_add_check "$check"
+        check_emit "cloudflared.tunnel_running" low passed \
+            title="$(i18n 'cloudflared.tunnel_running_manual')" \
+            desc="$(i18n 'cloudflared.tunnel_not_systemd')" \
+            suggestion="$(i18n 'cloudflared.fix_setup_service')" \
+            fix="cloudflared.setup_service"
         print_ok "$(i18n 'cloudflared.tunnel_running_manual')"
     else
-        local check=$(create_check_json \
-            "cloudflared.service_inactive" \
-            "cloudflared" \
-            "low" \
-            "failed" \
-            "$(i18n 'cloudflared.service_not_running')" \
-            "$(i18n 'cloudflared.no_tunnel_detected')" \
-            "$(i18n 'cloudflared.fix_start_service')" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.service_inactive" low failed \
+            title="$(i18n 'cloudflared.service_not_running')" \
+            desc="$(i18n 'cloudflared.no_tunnel_detected')" \
+            suggestion="$(i18n 'cloudflared.fix_start_service')"
         print_severity "low" "$(i18n 'cloudflared.service_not_running')"
     fi
 }
 
 _cloudflared_audit_config() {
     if ! _cloudflared_has_config; then
-        local check=$(create_check_json \
-            "cloudflared.no_config" \
-            "cloudflared" \
-            "low" \
-            "failed" \
-            "$(i18n 'cloudflared.config_not_found')" \
-            "$(i18n 'cloudflared.config_not_found_desc')" \
-            "$(i18n 'cloudflared.fix_create_config')" \
-            "cloudflared.generate_config")
-        state_add_check "$check"
+        check_emit "cloudflared.no_config" low failed \
+            title="$(i18n 'cloudflared.config_not_found')" \
+            desc="$(i18n 'cloudflared.config_not_found_desc')" \
+            suggestion="$(i18n 'cloudflared.fix_create_config')" \
+            fix="cloudflared.generate_config"
         print_severity "low" "$(i18n 'cloudflared.config_not_found')"
         return
     fi
@@ -221,28 +187,14 @@ _cloudflared_audit_config() {
         local issues=$(_cloudflared_check_ingress_security "$config")
 
         if [[ -n "$issues" ]]; then
-            local check=$(create_check_json \
-                "cloudflared.config_issues" \
-                "cloudflared" \
-                "low" \
-                "failed" \
-                "$(i18n 'cloudflared.config_has_issues')" \
-                "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
-                "$(i18n 'cloudflared.fix_review_config')" \
-                "cloudflared.generate_config")
-            state_add_check "$check"
+            check_emit "cloudflared.config_issues" low failed \
+                title="$(i18n 'cloudflared.config_has_issues')" \
+                desc="$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
+                suggestion="$(i18n 'cloudflared.fix_review_config')" \
+                fix="cloudflared.generate_config"
             print_severity "low" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
         else
-            local check=$(create_check_json \
-                "cloudflared.config_ok" \
-                "cloudflared" \
-                "low" \
-                "passed" \
-                "$(i18n 'cloudflared.config_ok')" \
-                "" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "cloudflared.config_ok" low passed
             print_ok "$(i18n 'cloudflared.config_ok')"
         fi
     fi
@@ -257,41 +209,18 @@ _cloudflared_audit_tunnels() {
         # Enumeration failed (typically: ~/.cloudflared/cert.pem missing →
         # API auth unavailable). Local tunnels via systemd remain unaffected,
         # so this is informational, not a security failure.
-        local check=$(create_check_json \
-            "cloudflared.tunnel_list_unavailable" \
-            "cloudflared" \
-            "info" \
-            "passed" \
-            "$(i18n 'cloudflared.tunnel_list_unavailable')" \
-            "$(i18n 'cloudflared.tunnel_list_unavailable_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.tunnel_list_unavailable" info passed \
+            desc="$(i18n 'cloudflared.tunnel_list_unavailable_desc')"
         print_msg "$(i18n 'cloudflared.tunnel_list_unavailable')"
     elif [[ -n "$tunnels" ]]; then
         local tunnel_count=$(echo "$tunnels" | wc -l)
-        local check=$(create_check_json \
-            "cloudflared.tunnels_configured" \
-            "cloudflared" \
-            "low" \
-            "passed" \
-            "$(i18n 'cloudflared.tunnels_count' "count=$tunnel_count")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.tunnels_configured" low passed \
+            title="$(i18n 'cloudflared.tunnels_count' "count=$tunnel_count")"
         print_ok "$(i18n 'cloudflared.tunnels_count' "count=$tunnel_count")"
     else
-        local check=$(create_check_json \
-            "cloudflared.no_tunnels" \
-            "cloudflared" \
-            "low" \
-            "failed" \
-            "$(i18n 'cloudflared.no_tunnels')" \
-            "$(i18n 'cloudflared.no_tunnels_desc')" \
-            "$(i18n 'cloudflared.fix_create_tunnel')" \
-            "")
-        state_add_check "$check"
+        check_emit "cloudflared.no_tunnels" low failed \
+            desc="$(i18n 'cloudflared.no_tunnels_desc')" \
+            suggestion="$(i18n 'cloudflared.fix_create_tunnel')"
         print_severity "low" "$(i18n 'cloudflared.no_tunnels')"
     fi
 }

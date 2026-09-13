@@ -73,16 +73,10 @@ _timezone_check_current() {
     IFS='|' read -r current_tz tz_source <<< "$(_timezone_current)"
 
     if [[ -z "$current_tz" ]]; then
-        local check=$(create_check_json \
-            "timezone.not_configured" \
-            "timezone" \
-            "low" \
-            "failed" \
-            "$(i18n 'timezone.not_configured')" \
-            "$(i18n 'timezone.not_configured_desc')" \
-            "$(i18n 'timezone.fix_set_timezone')" \
-            "timezone.set_timezone")
-        state_add_check "$check"
+        check_emit "timezone.not_configured" low failed \
+            desc="$(i18n 'timezone.not_configured_desc')" \
+            suggestion="$(i18n 'timezone.fix_set_timezone')" \
+            fix="timezone.set_timezone"
         print_warn "$(i18n 'timezone.not_configured')"
         return
     fi
@@ -90,28 +84,18 @@ _timezone_check_current() {
     # Check if using UTC (common for cloud VPS but may not be desired)
     # Always provide fix_id to allow user to change timezone in guide mode
     if [[ "$current_tz" == "UTC" || "$current_tz" == "Etc/UTC" ]]; then
-        local check=$(create_check_json \
-            "timezone.using_utc" \
-            "timezone" \
-            "low" \
-            "passed" \
-            "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available')" \
-            "$(i18n 'timezone.fix_set_timezone')" \
-            "timezone.set_timezone")
-        state_add_check "$check"
+        check_emit "timezone.using_utc" low passed \
+            title="$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
+            desc="$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available')" \
+            suggestion="$(i18n 'timezone.fix_set_timezone')" \
+            fix="timezone.set_timezone"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     else
-        local check=$(create_check_json \
-            "timezone.configured" \
-            "timezone" \
-            "low" \
-            "passed" \
-            "$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            "$(i18n 'timezone.change_available')" \
-            "$(i18n 'timezone.fix_set_timezone')" \
-            "timezone.set_timezone")
-        state_add_check "$check"
+        check_emit "timezone.configured" low passed \
+            title="$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
+            desc="$(i18n 'timezone.change_available')" \
+            suggestion="$(i18n 'timezone.fix_set_timezone')" \
+            fix="timezone.set_timezone"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     fi
 
@@ -185,40 +169,19 @@ _timezone_check_ntp() {
     fi
 
     if [[ "$is_synced" == "1" ]]; then
-        local check=$(create_check_json \
-            "timezone.ntp_synced" \
-            "timezone" \
-            "low" \
-            "passed" \
-            "$(i18n 'timezone.ntp_synced' "service=$ntp_service")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "timezone.ntp_synced" low passed \
+            title="$(i18n 'timezone.ntp_synced' "service=$ntp_service")"
         print_ok "$(i18n 'timezone.ntp_synced' "service=$ntp_service")"
     elif [[ "$ntp_status" == "active_not_synced" ]]; then
-        local check=$(create_check_json \
-            "timezone.ntp_not_synced" \
-            "timezone" \
-            "low" \
-            "failed" \
-            "$(i18n 'timezone.ntp_not_synced')" \
-            "$(i18n 'timezone.ntp_not_synced_desc' "service=$ntp_service")" \
-            "$(i18n 'timezone.fix_check_ntp')" \
-            "")
-        state_add_check "$check"
+        check_emit "timezone.ntp_not_synced" low failed \
+            desc="$(i18n 'timezone.ntp_not_synced_desc' "service=$ntp_service")" \
+            suggestion="$(i18n 'timezone.fix_check_ntp')"
         print_warn "$(i18n 'timezone.ntp_not_synced')"
     else
-        local check=$(create_check_json \
-            "timezone.ntp_disabled" \
-            "timezone" \
-            "low" \
-            "failed" \
-            "$(i18n 'timezone.ntp_disabled')" \
-            "$(i18n 'timezone.ntp_disabled_desc')" \
-            "$(i18n 'timezone.fix_enable_ntp')" \
-            "timezone.enable_ntp")
-        state_add_check "$check"
+        check_emit "timezone.ntp_disabled" low failed \
+            desc="$(i18n 'timezone.ntp_disabled_desc')" \
+            suggestion="$(i18n 'timezone.fix_enable_ntp')" \
+            fix="timezone.enable_ntp"
         print_warn "$(i18n 'timezone.ntp_disabled')"
     fi
 
@@ -235,16 +198,10 @@ _timezone_check_drift() {
     rtc_in_local=$(timedatectl show --property=LocalRTC --value 2>/dev/null)
     if [[ "$rtc_in_local" == "yes" ]]; then
         # RTC in local time is generally not recommended for servers.
-        local check=$(create_check_json \
-            "timezone.rtc_local" \
-            "timezone" \
-            "low" \
-            "failed" \
-            "$(i18n 'timezone.rtc_local')" \
-            "$(i18n 'timezone.rtc_local_desc')" \
-            "$(i18n 'timezone.fix_rtc_utc')" \
-            "timezone.set_rtc_utc")
-        state_add_check "$check"
+        check_emit "timezone.rtc_local" low failed \
+            desc="$(i18n 'timezone.rtc_local_desc')" \
+            suggestion="$(i18n 'timezone.fix_rtc_utc')" \
+            fix="timezone.set_rtc_utc"
         print_warn "$(i18n 'timezone.rtc_local')"
     fi
 }
@@ -265,29 +222,18 @@ _timezone_check_locale() {
 
     # Check if locale is set to something reasonable
     if [[ "$current_locale" == "C" || "$current_locale" == "POSIX" || -z "$current_locale" ]]; then
-        local check=$(create_check_json \
-            "timezone.locale_not_set" \
-            "timezone" \
-            "low" \
-            "failed" \
-            "$(i18n 'timezone.locale_not_set')" \
-            "$(i18n 'timezone.locale_not_set_desc')" \
-            "$(i18n 'timezone.fix_set_locale')" \
-            "timezone.set_locale")
-        state_add_check "$check"
+        check_emit "timezone.locale_not_set" low failed \
+            desc="$(i18n 'timezone.locale_not_set_desc')" \
+            suggestion="$(i18n 'timezone.fix_set_locale')" \
+            fix="timezone.set_locale"
         print_warn "$(i18n 'timezone.locale_not_set')"
     else
         # Provide fix_id to allow user to change locale in guide mode
-        local check=$(create_check_json \
-            "timezone.locale_ok" \
-            "timezone" \
-            "low" \
-            "passed" \
-            "$(i18n 'timezone.locale_ok' "locale=$current_locale")" \
-            "$(i18n 'timezone.change_available')" \
-            "$(i18n 'timezone.fix_set_locale')" \
-            "timezone.set_locale")
-        state_add_check "$check"
+        check_emit "timezone.locale_ok" low passed \
+            title="$(i18n 'timezone.locale_ok' "locale=$current_locale")" \
+            desc="$(i18n 'timezone.change_available')" \
+            suggestion="$(i18n 'timezone.fix_set_locale')" \
+            fix="timezone.set_locale"
         print_ok "$(i18n 'timezone.locale_ok' "locale=$current_locale")"
     fi
 

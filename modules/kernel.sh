@@ -402,16 +402,9 @@ kernel_audit() {
     container_type=$(_kernel_is_container)
     if [[ -n "$container_type" ]]; then
         print_item "$(i18n 'kernel.check_container')"
-        local check=$(create_check_json \
-            "kernel.container_detected" \
-            "kernel" \
-            "low" \
-            "info" \
-            "$(i18n 'kernel.container_detected' "type=$container_type")" \
-            "$(i18n 'kernel.container_limitations')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.container_detected" low info \
+            title="$(i18n 'kernel.container_detected' "type=$container_type")" \
+            desc="$(i18n 'kernel.container_limitations')"
         print_info "$(i18n 'kernel.container_detected' "type=$container_type")"
         print_info "$(i18n 'kernel.container_limitations')"
     fi
@@ -467,28 +460,14 @@ _kernel_audit_unused_protocols() {
 
     if (( ${#unblocked[@]} > 0 )); then
         local list="${unblocked[*]}"
-        local check=$(create_check_json \
-            "kernel.unused_protocols_unblocked" \
-            "kernel" \
-            "low" \
-            "failed" \
-            "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")" \
-            "$(i18n 'kernel.unused_protocols_unblocked_desc' "list=$list")" \
-            "$(i18n 'kernel.unused_protocols_unblocked_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.unused_protocols_unblocked" low failed \
+            title="$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")" \
+            desc="$(i18n 'kernel.unused_protocols_unblocked_desc' "list=$list")" \
+            suggestion="$(i18n 'kernel.unused_protocols_unblocked_suggestion')"
         print_severity "low" "$(i18n 'kernel.unused_protocols_unblocked' "count=${#unblocked[@]}")"
     else
-        local check=$(create_check_json \
-            "kernel.unused_protocols_blocked" \
-            "kernel" \
-            "low" \
-            "passed" \
-            "$(i18n 'kernel.unused_protocols_blocked')" \
-            "$(i18n 'kernel.unused_protocols_blocked_desc' "protocols=${protocols[*]}")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.unused_protocols_blocked" low passed \
+            desc="$(i18n 'kernel.unused_protocols_blocked_desc' "protocols=${protocols[*]}")"
         print_ok "$(i18n 'kernel.unused_protocols_blocked')"
     fi
 }
@@ -498,16 +477,8 @@ _kernel_audit_unused_protocols() {
 _kernel_audit_ipv6() {
     # Check if IPv6 is enabled
     if ! _kernel_ipv6_enabled; then
-        local check=$(create_check_json \
-            "kernel.ipv6_disabled" \
-            "kernel" \
-            "low" \
-            "passed" \
-            "$(i18n 'kernel.ipv6_disabled')" \
-            "$(i18n 'kernel.ipv6_disabled_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.ipv6_disabled" low passed \
+            desc="$(i18n 'kernel.ipv6_disabled_desc')"
         print_ok "$(i18n 'kernel.ipv6_disabled')"
         return
     fi
@@ -524,28 +495,15 @@ _kernel_audit_ipv6() {
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
         if [[ "$issue_count" -gt 0 ]]; then
-            local check=$(create_check_json \
-                "kernel.ipv6_insecure" \
-                "kernel" \
-                "low" \
-                "failed" \
-                "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
-                "$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=$ipv6_issues")" \
-                "$(i18n 'kernel.fix_ipv6')" \
-                "kernel.harden_ipv6")
-            state_add_check "$check"
+            check_emit "kernel.ipv6_insecure" low failed \
+                title="$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
+                desc="$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=$ipv6_issues")" \
+                suggestion="$(i18n 'kernel.fix_ipv6')" \
+                fix="kernel.harden_ipv6"
             print_severity "low" "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")"
         else
-            local check=$(create_check_json \
-                "kernel.ipv6_secure" \
-                "kernel" \
-                "low" \
-                "passed" \
-                "$(i18n 'kernel.ipv6_secure')" \
-                "$(i18n 'kernel.ipv6_secure_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "kernel.ipv6_secure" low passed \
+                desc="$(i18n 'kernel.ipv6_secure_desc')"
             print_ok "$(i18n 'kernel.ipv6_secure')"
         fi
     else
@@ -553,28 +511,14 @@ _kernel_audit_ipv6() {
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
         if [[ "$issue_count" -gt 2 ]]; then
-            local check=$(create_check_json \
-                "kernel.ipv6_unused_insecure" \
-                "kernel" \
-                "low" \
-                "failed" \
-                "$(i18n 'kernel.ipv6_unused_insecure')" \
-                "$(i18n 'kernel.ipv6_unused_insecure_desc')" \
-                "$(i18n 'kernel.ipv6_unused_insecure_suggestion')" \
-                "kernel.harden_ipv6")
-            state_add_check "$check"
+            check_emit "kernel.ipv6_unused_insecure" low failed \
+                desc="$(i18n 'kernel.ipv6_unused_insecure_desc')" \
+                suggestion="$(i18n 'kernel.ipv6_unused_insecure_suggestion')" \
+                fix="kernel.harden_ipv6"
             print_severity "low" "$(i18n 'kernel.ipv6_unused_insecure')"
         else
-            local check=$(create_check_json \
-                "kernel.ipv6_enabled_unused" \
-                "kernel" \
-                "low" \
-                "passed" \
-                "$(i18n 'kernel.ipv6_enabled_unused')" \
-                "$(i18n 'kernel.ipv6_enabled_unused_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "kernel.ipv6_enabled_unused" low passed \
+                desc="$(i18n 'kernel.ipv6_enabled_unused_desc')"
             print_ok "$(i18n 'kernel.ipv6_enabled_unused')"
         fi
     fi
@@ -583,29 +527,14 @@ _kernel_audit_ipv6() {
     if [[ "$ipv6_in_use" == "yes" ]]; then
         case "$ipv6_fw" in
             ufw_ipv6_disabled|ip6tables_empty|nftables_ipv6_missing)
-                local check=$(create_check_json \
-                    "kernel.ipv6_firewall_missing" \
-                    "kernel" \
-                    "medium" \
-                    "failed" \
-                    "$(i18n 'kernel.ipv6_firewall_missing')" \
-                    "$(i18n 'kernel.ipv6_firewall_missing_desc')" \
-                    "$(i18n 'kernel.ipv6_firewall_missing_suggestion')" \
-                    "")
-                state_add_check "$check"
+                check_emit "kernel.ipv6_firewall_missing" medium failed \
+                    desc="$(i18n 'kernel.ipv6_firewall_missing_desc')" \
+                    suggestion="$(i18n 'kernel.ipv6_firewall_missing_suggestion')"
                 print_severity "medium" "$(i18n 'kernel.ipv6_firewall_missing')"
                 ;;
             ufw_ipv6_enabled|ip6tables_configured|nftables_ipv6_configured)
-                local check=$(create_check_json \
-                    "kernel.ipv6_firewall_ok" \
-                    "kernel" \
-                    "low" \
-                    "passed" \
-                    "$(i18n 'kernel.ipv6_firewall_ok')" \
-                    "$(i18n 'kernel.ipv6_firewall_ok_desc')" \
-                    "" \
-                    "")
-                state_add_check "$check"
+                check_emit "kernel.ipv6_firewall_ok" low passed \
+                    desc="$(i18n 'kernel.ipv6_firewall_ok_desc')"
                 print_ok "$(i18n 'kernel.ipv6_firewall_ok')"
                 ;;
         esac
@@ -618,55 +547,27 @@ _kernel_audit_aslr() {
 
     case "$aslr_status" in
         full)
-            local check=$(create_check_json \
-                "kernel.aslr_full" \
-                "kernel" \
-                "low" \
-                "passed" \
-                "$(i18n 'kernel.aslr_enabled')" \
-                "$(i18n 'kernel.aslr_full_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "kernel.aslr_full" low passed \
+                title="$(i18n 'kernel.aslr_enabled')" \
+                desc="$(i18n 'kernel.aslr_full_desc')"
             print_ok "$(i18n 'kernel.aslr_enabled') (full)"
             ;;
         partial)
-            local check=$(create_check_json \
-                "kernel.aslr_partial" \
-                "kernel" \
-                "low" \
-                "failed" \
-                "$(i18n 'kernel.aslr_partial')" \
-                "$(i18n 'kernel.aslr_partial_desc')" \
-                "$(i18n 'kernel.fix_aslr')" \
-                "kernel.enable_aslr")
-            state_add_check "$check"
+            check_emit "kernel.aslr_partial" low failed \
+                desc="$(i18n 'kernel.aslr_partial_desc')" \
+                suggestion="$(i18n 'kernel.fix_aslr')" \
+                fix="kernel.enable_aslr"
             print_severity "low" "$(i18n 'kernel.aslr_partial')"
             ;;
         disabled)
-            local check=$(create_check_json \
-                "kernel.aslr_disabled" \
-                "kernel" \
-                "medium" \
-                "failed" \
-                "$(i18n 'kernel.aslr_disabled')" \
-                "$(i18n 'kernel.aslr_disabled_desc')" \
-                "$(i18n 'kernel.fix_aslr')" \
-                "kernel.enable_aslr")
-            state_add_check "$check"
+            check_emit "kernel.aslr_disabled" medium failed \
+                desc="$(i18n 'kernel.aslr_disabled_desc')" \
+                suggestion="$(i18n 'kernel.fix_aslr')" \
+                fix="kernel.enable_aslr"
             print_severity "medium" "$(i18n 'kernel.aslr_disabled')"
             ;;
         *)
-            local check=$(create_check_json \
-                "kernel.aslr_unknown" \
-                "kernel" \
-                "low" \
-                "failed" \
-                "$(i18n 'kernel.aslr_unknown')" \
-                "" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "kernel.aslr_unknown" low failed
             print_severity "low" "Cannot determine ASLR status"
             ;;
     esac
@@ -740,16 +641,11 @@ _kernel_audit_network_params() {
     # `desc` MUST list EVERY offending parameter, never a truncated head.
     if [[ ${#issues_high[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
-        local check=$(create_check_json \
-            "kernel.network_params_high" \
-            "kernel" \
-            "medium" \
-            "failed" \
-            "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")" \
-            "$(i18n 'kernel.network_params_high_desc' "list=$issue_list")" \
-            "$(i18n 'kernel.fix_network_params')" \
-            "kernel.harden_network")
-        state_add_check "$check"
+        check_emit "kernel.network_params_high" medium failed \
+            title="$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")" \
+            desc="$(i18n 'kernel.network_params_high_desc' "list=$issue_list")" \
+            suggestion="$(i18n 'kernel.fix_network_params')" \
+            fix="kernel.harden_network"
         print_severity "medium" "$(i18n 'kernel.network_params_insecure' "count=${#issues_high[@]}")"
     fi
 
@@ -759,16 +655,11 @@ _kernel_audit_network_params() {
     local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
     if [[ ${#issues_weak[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_weak[@]}" | tr '\n' '; ')
-        local check=$(create_check_json \
-            "kernel.network_params_medium" \
-            "kernel" \
-            "low" \
-            "failed" \
-            "$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")" \
-            "$(i18n 'kernel.network_params_medium_desc' "list=$issue_list")" \
-            "$(i18n 'kernel.fix_network_params')" \
-            "kernel.harden_network")
-        state_add_check "$check"
+        check_emit "kernel.network_params_medium" low failed \
+            title="$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")" \
+            desc="$(i18n 'kernel.network_params_medium_desc' "list=$issue_list")" \
+            suggestion="$(i18n 'kernel.fix_network_params')" \
+            fix="kernel.harden_network"
         print_severity "low" "$(i18n 'kernel.network_params_weak' "count=${#issues_weak[@]}")"
     fi
 
@@ -777,29 +668,13 @@ _kernel_audit_network_params() {
         # /proc/sys we could not ask. failed + info, unscored, same pattern
         # as update.check_failed.
         if (( passed == 0 )); then
-            local check=$(create_check_json \
-                "kernel.network_params_unreadable" \
-                "kernel" \
-                "low" \
-                "failed" \
-                "$(i18n 'kernel.network_params_unreadable')" \
-                "$(i18n 'kernel.network_params_unreadable_desc')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "kernel.network_params_unreadable" low failed \
+                desc="$(i18n 'kernel.network_params_unreadable_desc')"
             print_severity "low" "$(i18n 'kernel.network_params_unreadable')"
             return 0
         fi
-        local check=$(create_check_json \
-            "kernel.network_params_ok" \
-            "kernel" \
-            "low" \
-            "passed" \
-            "$(i18n 'kernel.network_params_ok')" \
-            "$(i18n 'kernel.network_params_ok_desc' "passed=$passed")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.network_params_ok" low passed \
+            desc="$(i18n 'kernel.network_params_ok_desc' "passed=$passed")"
         print_ok "$(i18n 'kernel.network_params_ok')"
     fi
 }
@@ -857,16 +732,11 @@ _kernel_audit_kernel_params() {
     # this branch is dormant; kept for forward-compat if a high param is added.)
     if [[ ${#issues_high[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_high[@]}" | tr '\n' '; ')
-        local check=$(create_check_json \
-            "kernel.kernel_params_high" \
-            "kernel" \
-            "medium" \
-            "failed" \
-            "$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")" \
-            "$(i18n 'kernel.kernel_params_high_desc' "list=$issue_list")" \
-            "$(i18n 'kernel.fix_kernel_params')" \
-            "kernel.harden_kernel")
-        state_add_check "$check"
+        check_emit "kernel.kernel_params_high" medium failed \
+            title="$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")" \
+            desc="$(i18n 'kernel.kernel_params_high_desc' "list=$issue_list")" \
+            suggestion="$(i18n 'kernel.fix_kernel_params')" \
+            fix="kernel.harden_kernel"
         print_severity "medium" "Critical kernel hardening issues: ${#issues_high[@]}"
     fi
 
@@ -876,16 +746,11 @@ _kernel_audit_kernel_params() {
     local issues_weak=("${issues_medium[@]}" "${issues_low[@]}")
     if [[ ${#issues_weak[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s\n' "${issues_weak[@]}" | tr '\n' '; ')
-        local check=$(create_check_json \
-            "kernel.kernel_params_weak" \
-            "kernel" \
-            "low" \
-            "failed" \
-            "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")" \
-            "$(i18n 'kernel.kernel_params_weak_desc' "list=$issue_list")" \
-            "$(i18n 'kernel.fix_kernel_params')" \
-            "kernel.harden_kernel")
-        state_add_check "$check"
+        check_emit "kernel.kernel_params_weak" low failed \
+            title="$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")" \
+            desc="$(i18n 'kernel.kernel_params_weak_desc' "list=$issue_list")" \
+            suggestion="$(i18n 'kernel.fix_kernel_params')" \
+            fix="kernel.harden_kernel"
         print_severity "low" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")"
     fi
 
@@ -896,16 +761,8 @@ _kernel_audit_kernel_params() {
     fi
 
     if [[ $total_issues -eq 0 ]]; then
-        local check=$(create_check_json \
-            "kernel.kernel_params_ok" \
-            "kernel" \
-            "low" \
-            "passed" \
-            "$(i18n 'kernel.kernel_params_ok')" \
-            "$(i18n 'kernel.kernel_params_ok_desc' "passed=$passed")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.kernel_params_ok" low passed \
+            desc="$(i18n 'kernel.kernel_params_ok_desc' "passed=$passed")"
         print_ok "$(i18n 'kernel.kernel_params_ok')"
     fi
 }
@@ -915,28 +772,15 @@ _kernel_audit_core_dump() {
     issues=$(_kernel_check_core_dump)
 
     if [[ -z "$issues" ]]; then
-        local check=$(create_check_json \
-            "kernel.core_dump_ok" \
-            "kernel" \
-            "low" \
-            "passed" \
-            "$(i18n 'kernel.core_dump_disabled')" \
-            "$(i18n 'kernel.core_dump_ok_desc')" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "kernel.core_dump_ok" low passed \
+            title="$(i18n 'kernel.core_dump_disabled')" \
+            desc="$(i18n 'kernel.core_dump_ok_desc')"
         print_ok "$(i18n 'kernel.core_dump_disabled')"
     else
-        local check=$(create_check_json \
-            "kernel.core_dump_enabled" \
-            "kernel" \
-            "low" \
-            "failed" \
-            "$(i18n 'kernel.core_dump_enabled')" \
-            "$(i18n 'kernel.core_dump_enabled_desc' "issues=$issues")" \
-            "$(i18n 'kernel.fix_core_dump')" \
-            "kernel.disable_core_dump")
-        state_add_check "$check"
+        check_emit "kernel.core_dump_enabled" low failed \
+            desc="$(i18n 'kernel.core_dump_enabled_desc' "issues=$issues")" \
+            suggestion="$(i18n 'kernel.fix_core_dump')" \
+            fix="kernel.disable_core_dump"
         print_severity "low" "$(i18n 'kernel.core_dump_enabled')"
     fi
 }

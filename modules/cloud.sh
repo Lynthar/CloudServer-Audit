@@ -626,7 +626,6 @@ _cloud_audit_imds() {
     command -v curl >/dev/null 2>&1 || return 0
 
     local provider; provider=$(vpssec_cloud_provider)
-    local check
 
     # 1. AWS-specific: IMDSv1 still open?
     if [[ "$provider" == "aws" ]]; then
@@ -637,26 +636,12 @@ _cloud_audit_imds() {
             --max-time 1 --connect-timeout 1 2>/dev/null)
 
         if [[ "$v1_status" == "200" ]]; then
-            check=$(create_check_json \
-                "cloud.imds_v1_enabled" \
-                "cloud" \
-                "medium" \
-                "failed" \
-                "$(i18n 'cloud.imds_v1_enabled')" \
-                "$(i18n 'cloud.imds_v1_enabled_desc')" \
-                "$(i18n 'cloud.fix_imds_v1')" \
-                "")
-            state_add_check "$check"
+            check_emit "cloud.imds_v1_enabled" medium failed \
+                desc="$(i18n 'cloud.imds_v1_enabled_desc')" \
+                suggestion="$(i18n 'cloud.fix_imds_v1')"
             print_severity "medium" "$(i18n 'cloud.imds_v1_enabled')"
         elif [[ "$v1_status" == "401" && -n "$v2_token" ]]; then
-            check=$(create_check_json \
-                "cloud.imds_v2_only" \
-                "cloud" \
-                "info" \
-                "passed" \
-                "$(i18n 'cloud.imds_v2_only')" \
-                "" "" "")
-            state_add_check "$check"
+            check_emit "cloud.imds_v2_only" info passed
             print_ok "$(i18n 'cloud.imds_v2_only')"
         fi
     fi
@@ -668,26 +653,12 @@ _cloud_audit_imds() {
         [[ "$ali_status" != "200" ]] && ali_status=$(_cloud_imds_curl_status "http://169.254.169.254/latest/meta-data/")
 
         if [[ "$ali_status" == "200" ]]; then
-            check=$(create_check_json \
-                "cloud.imds_alibaba_normal_mode" \
-                "cloud" \
-                "medium" \
-                "failed" \
-                "$(i18n 'cloud.imds_alibaba_normal_mode')" \
-                "$(i18n 'cloud.imds_alibaba_normal_mode_desc')" \
-                "$(i18n 'cloud.fix_imds_alibaba')" \
-                "")
-            state_add_check "$check"
+            check_emit "cloud.imds_alibaba_normal_mode" medium failed \
+                desc="$(i18n 'cloud.imds_alibaba_normal_mode_desc')" \
+                suggestion="$(i18n 'cloud.fix_imds_alibaba')"
             print_severity "medium" "$(i18n 'cloud.imds_alibaba_normal_mode')"
         elif [[ "$ali_status" == "403" || "$ali_status" == "401" ]]; then
-            check=$(create_check_json \
-                "cloud.imds_alibaba_hardened" \
-                "cloud" \
-                "info" \
-                "passed" \
-                "$(i18n 'cloud.imds_alibaba_hardened')" \
-                "" "" "")
-            state_add_check "$check"
+            check_emit "cloud.imds_alibaba_hardened" info passed
             print_ok "$(i18n 'cloud.imds_alibaba_hardened')"
         fi
     fi
@@ -700,26 +671,12 @@ _cloud_audit_imds() {
         if [[ -n "$hits" ]]; then
             # NEVER log user_data body — only kinds + counts.
             log_info "user-data secret hits (kinds): $hits"
-            check=$(create_check_json \
-                "cloud.user_data_leaked_secrets" \
-                "cloud" \
-                "high" \
-                "failed" \
-                "$(i18n 'cloud.user_data_leaked_secrets')" \
-                "$(i18n 'cloud.user_data_leaked_secrets_desc' "hits=$hits")" \
-                "$(i18n 'cloud.fix_user_data_secrets')" \
-                "")
-            state_add_check "$check"
+            check_emit "cloud.user_data_leaked_secrets" high failed \
+                desc="$(i18n 'cloud.user_data_leaked_secrets_desc' "hits=$hits")" \
+                suggestion="$(i18n 'cloud.fix_user_data_secrets')"
             print_severity "high" "$(i18n 'cloud.user_data_leaked_secrets'): $hits"
         else
-            check=$(create_check_json \
-                "cloud.user_data_clean" \
-                "cloud" \
-                "info" \
-                "passed" \
-                "$(i18n 'cloud.user_data_clean')" \
-                "" "" "")
-            state_add_check "$check"
+            check_emit "cloud.user_data_clean" info passed
             print_ok "$(i18n 'cloud.user_data_clean')"
         fi
     fi
@@ -728,26 +685,12 @@ _cloud_audit_imds() {
     # Skip in containers (no view of host nftables).
     if ! _cloud_imds_in_container; then
         if _cloud_imds_firewall_restricted; then
-            check=$(create_check_json \
-                "cloud.imds_restricted" \
-                "cloud" \
-                "info" \
-                "passed" \
-                "$(i18n 'cloud.imds_restricted')" \
-                "" "" "")
-            state_add_check "$check"
+            check_emit "cloud.imds_restricted" info passed
             print_ok "$(i18n 'cloud.imds_restricted')"
         else
-            check=$(create_check_json \
-                "cloud.imds_unrestricted" \
-                "cloud" \
-                "low" \
-                "failed" \
-                "$(i18n 'cloud.imds_unrestricted')" \
-                "$(i18n 'cloud.imds_unrestricted_desc')" \
-                "$(i18n 'cloud.fix_imds_firewall')" \
-                "")
-            state_add_check "$check"
+            check_emit "cloud.imds_unrestricted" low failed \
+                desc="$(i18n 'cloud.imds_unrestricted_desc')" \
+                suggestion="$(i18n 'cloud.fix_imds_firewall')"
             print_severity "low" "$(i18n 'cloud.imds_unrestricted')"
         fi
     fi
@@ -763,29 +706,14 @@ cloud_audit() {
     local provider=$(vpssec_cloud_provider)
     local provider_name=$(_get_provider_name "$provider")
 
-    local check_json
     if [[ "$provider" != "unknown" ]]; then
-        check_json=$(create_check_json \
-            "cloud.provider_detected" \
-            "cloud" \
-            "info" \
-            "passed" \
-            "$(i18n 'cloud.provider_detected'): $provider_name" \
-            "$(i18n 'cloud.provider_info')" \
-            "" \
-            "")
+        check_emit "cloud.provider_detected" info passed \
+            title="$(i18n 'cloud.provider_detected'): $provider_name" \
+            desc="$(i18n 'cloud.provider_info')"
     else
-        check_json=$(create_check_json \
-            "cloud.provider_unknown" \
-            "cloud" \
-            "info" \
-            "passed" \
-            "$(i18n 'cloud.provider_unknown')" \
-            "$(i18n 'cloud.provider_unknown_desc')" \
-            "" \
-            "")
+        check_emit "cloud.provider_unknown" info passed \
+            desc="$(i18n 'cloud.provider_unknown_desc')"
     fi
-    state_add_check "$check_json"
 
     # 2. Find known cloud agents
     local known_agents=$(_find_known_agents)
@@ -807,27 +735,14 @@ cloud_audit() {
         # with a test that can observe the severity actually moving.
         local severity="low"
 
-        check_json=$(create_check_json \
-            "cloud.agents_found" \
-            "cloud" \
-            "$severity" \
-            "failed" \
-            "$(i18n 'cloud.agents_found'): $agent_count" \
-            "$agent_list" \
-            "$(i18n 'cloud.review_agents')" \
-            "")
+        check_emit "cloud.agents_found" "$severity" failed \
+            title="$(i18n 'cloud.agents_found'): $agent_count" \
+            desc="$agent_list" \
+            suggestion="$(i18n 'cloud.review_agents')"
     else
-        check_json=$(create_check_json \
-            "cloud.no_known_agents" \
-            "cloud" \
-            "info" \
-            "passed" \
-            "$(i18n 'cloud.no_known_agents')" \
-            "$(i18n 'cloud.no_known_agents_desc')" \
-            "" \
-            "")
+        check_emit "cloud.no_known_agents" info passed \
+            desc="$(i18n 'cloud.no_known_agents_desc')"
     fi
-    state_add_check "$check_json"
 
     # 3. Find suspicious agent-like processes (strict level only)
     local suspicious=$(_find_suspicious_agents)
@@ -841,16 +756,10 @@ cloud_audit() {
         done <<< "$suspicious"
         proc_list="${proc_list%, }"
 
-        check_json=$(create_check_json \
-            "cloud.suspicious_agents" \
-            "cloud" \
-            "low" \
-            "failed" \
-            "$(i18n 'cloud.suspicious_agents'): $suspicious_count" \
-            "$proc_list" \
-            "$(i18n 'cloud.review_suspicious')" \
-            "")
-        state_add_check "$check_json"
+        check_emit "cloud.suspicious_agents" low failed \
+            title="$(i18n 'cloud.suspicious_agents'): $suspicious_count" \
+            desc="$proc_list" \
+            suggestion="$(i18n 'cloud.review_suspicious')"
     fi
 
     # 4. IMDS posture audit (tier1 + tier2 only; silent on independent VPS).

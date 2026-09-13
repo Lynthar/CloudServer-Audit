@@ -207,44 +207,22 @@ ufw_audit() {
 
     case "$active_fw" in
         ufw)
-            local check=$(create_check_json \
-                "ufw.firewall_active" \
-                "ufw" \
-                "low" \
-                "passed" \
-                "$(i18n 'ufw.firewall_active' "type=UFW")" \
-                "" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "ufw.firewall_active" low passed \
+                title="$(i18n 'ufw.firewall_active' "type=UFW")"
             print_ok "$(i18n 'ufw.firewall_active' "type=UFW")"
             ;;
         firewalld)
-            local check=$(create_check_json \
-                "ufw.firewall_active" \
-                "ufw" \
-                "low" \
-                "passed" \
-                "$(i18n 'ufw.firewall_active' "type=firewalld")" \
-                "$(i18n 'ufw.other_firewall_note')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "ufw.firewall_active" low passed \
+                title="$(i18n 'ufw.firewall_active' "type=firewalld")" \
+                desc="$(i18n 'ufw.other_firewall_note')"
             print_ok "$(i18n 'ufw.firewall_active' "type=firewalld")"
             # Skip UFW-specific checks
             return
             ;;
         nftables)
-            local check=$(create_check_json \
-                "ufw.firewall_active" \
-                "ufw" \
-                "low" \
-                "passed" \
-                "$(i18n 'ufw.firewall_active' "type=nftables")" \
-                "$(i18n 'ufw.other_firewall_note')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "ufw.firewall_active" low passed \
+                title="$(i18n 'ufw.firewall_active' "type=nftables")" \
+                desc="$(i18n 'ufw.other_firewall_note')"
             print_ok "$(i18n 'ufw.firewall_active' "type=nftables")"
             # Lynis FIRE-4540 cross-check: "firewall active" via kernel
             # module is necessary but not sufficient — an empty ruleset
@@ -253,16 +231,9 @@ ufw_audit() {
             return
             ;;
         iptables)
-            local check=$(create_check_json \
-                "ufw.firewall_active" \
-                "ufw" \
-                "low" \
-                "passed" \
-                "$(i18n 'ufw.firewall_active' "type=iptables")" \
-                "$(i18n 'ufw.other_firewall_note')" \
-                "" \
-                "")
-            state_add_check "$check"
+            check_emit "ufw.firewall_active" low passed \
+                title="$(i18n 'ufw.firewall_active' "type=iptables")" \
+                desc="$(i18n 'ufw.other_firewall_note')"
             print_ok "$(i18n 'ufw.firewall_active' "type=iptables")"
             # Lynis FIRE-4512 cross-check (same rationale as nftables above).
             _ufw_audit_ruleset_empty "iptables"
@@ -283,16 +254,10 @@ ufw_audit() {
                 else
                     nf_suggestion=$(i18n 'ufw.fix_enable_firewall')
                 fi
-                local check=$(create_check_json \
-                    "ufw.no_firewall" \
-                    "ufw" \
-                    "medium" \
-                    "failed" \
-                    "$(i18n 'ufw.no_firewall')" \
-                    "$(i18n 'ufw.no_firewall_desc')" \
-                    "$nf_suggestion" \
-                    "ufw.install")
-                state_add_check "$check"
+                check_emit "ufw.no_firewall" medium failed \
+                    desc="$(i18n 'ufw.no_firewall_desc')" \
+                    suggestion="$nf_suggestion" \
+                    fix="ufw.install"
                 print_severity "medium" "$(i18n 'ufw.no_firewall')"
             fi
             # Continue to check if UFW is installed but not enabled
@@ -306,16 +271,10 @@ ufw_audit() {
         # the probe above already emitted ufw.no_firewall if nothing is
         # active, so recommending UFW here would be redundant and wrong.
         if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
-            local check=$(create_check_json \
-                "ufw.not_installed" \
-                "ufw" \
-                "low" \
-                "failed" \
-                "$(i18n 'ufw.not_installed')" \
-                "$(i18n 'ufw.not_installed_desc')" \
-                "$(i18n 'ufw.fix_install')" \
-                "ufw.install")
-            state_add_check "$check"
+            check_emit "ufw.not_installed" low failed \
+                desc="$(i18n 'ufw.not_installed_desc')" \
+                suggestion="$(i18n 'ufw.fix_install')" \
+                fix="ufw.install"
             print_severity "low" "$(i18n 'ufw.not_installed')"
         fi
         return
@@ -395,43 +354,22 @@ _ufw_audit_ruleset_empty() {
         return 0
     fi
 
-    local check=$(create_check_json \
-        "ufw.firewall_empty" \
-        "ufw" \
-        "medium" \
-        "failed" \
-        "$(i18n 'ufw.firewall_empty' "type=$backend")" \
-        "$(i18n 'ufw.firewall_empty_desc' "backend=$backend")" \
-        "$(i18n 'ufw.fix_firewall_empty')" \
-        "")
-    state_add_check "$check"
+    check_emit "ufw.firewall_empty" medium failed \
+        title="$(i18n 'ufw.firewall_empty' "type=$backend")" \
+        desc="$(i18n 'ufw.firewall_empty_desc' "backend=$backend")" \
+        suggestion="$(i18n 'ufw.fix_firewall_empty')"
     print_severity "medium" "$(i18n 'ufw.firewall_empty' "type=$backend")"
 }
 
 _ufw_audit_enabled() {
     if _ufw_enabled; then
-        local check=$(create_check_json \
-            "ufw.enabled" \
-            "ufw" \
-            "low" \
-            "passed" \
-            "$(i18n 'ufw.enabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.enabled" low passed
         print_ok "$(i18n 'ufw.enabled')"
     else
-        local check=$(create_check_json \
-            "ufw.disabled" \
-            "ufw" \
-            "medium" \
-            "failed" \
-            "$(i18n 'ufw.disabled')" \
-            "$(i18n 'ufw.disabled_desc')" \
-            "$(i18n 'ufw.fix_enable')" \
-            "ufw.enable")
-        state_add_check "$check"
+        check_emit "ufw.disabled" medium failed \
+            desc="$(i18n 'ufw.disabled_desc')" \
+            suggestion="$(i18n 'ufw.fix_enable')" \
+            fix="ufw.enable"
         print_severity "medium" "$(i18n 'ufw.disabled')"
     fi
 }
@@ -440,28 +378,16 @@ _ufw_audit_default_policy() {
     local incoming=$(_ufw_get_default_incoming)
 
     if [[ "${incoming,,}" == "deny" || "${incoming,,}" == "reject" ]]; then
-        local check=$(create_check_json \
-            "ufw.default_deny" \
-            "ufw" \
-            "low" \
-            "passed" \
-            "$(i18n 'ufw.default_incoming_deny')" \
-            "$(i18n 'ufw.default_deny_desc' "incoming=$incoming")" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.default_deny" low passed \
+            title="$(i18n 'ufw.default_incoming_deny')" \
+            desc="$(i18n 'ufw.default_deny_desc' "incoming=$incoming")"
         print_ok "$(i18n 'ufw.default_incoming_deny')"
     elif [[ "${incoming,,}" == "allow" ]]; then
-        local check=$(create_check_json \
-            "ufw.default_accept" \
-            "ufw" \
-            "medium" \
-            "failed" \
-            "$(i18n 'ufw.default_incoming_accept')" \
-            "$(i18n 'ufw.default_accept_desc')" \
-            "$(i18n 'ufw.fix_default_deny')" \
-            "ufw.set_default_deny")
-        state_add_check "$check"
+        check_emit "ufw.default_accept" medium failed \
+            title="$(i18n 'ufw.default_incoming_accept')" \
+            desc="$(i18n 'ufw.default_accept_desc')" \
+            suggestion="$(i18n 'ufw.fix_default_deny')" \
+            fix="ufw.set_default_deny"
         print_severity "medium" "$(i18n 'ufw.default_incoming_accept')"
     fi
 }
@@ -470,28 +396,14 @@ _ufw_audit_ssh_rule() {
     local ssh_port=$(get_ssh_port)
 
     if _ufw_ssh_allowed; then
-        local check=$(create_check_json \
-            "ufw.ssh_allowed" \
-            "ufw" \
-            "low" \
-            "passed" \
-            "$(i18n 'ufw.ssh_rule_exists' "port=$ssh_port")" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.ssh_allowed" low passed \
+            title="$(i18n 'ufw.ssh_rule_exists' "port=$ssh_port")"
         print_ok "$(i18n 'ufw.ssh_rule_exists' "port=$ssh_port")"
     else
-        local check=$(create_check_json \
-            "ufw.no_ssh_rule" \
-            "ufw" \
-            "low" \
-            "failed" \
-            "$(i18n 'ufw.no_ssh_rule')" \
-            "$(i18n 'ufw.no_ssh_rule_desc' "ssh_port=$ssh_port")" \
-            "$(i18n 'ufw.fix_allow_ssh')" \
-            "ufw.allow_ssh")
-        state_add_check "$check"
+        check_emit "ufw.no_ssh_rule" low failed \
+            desc="$(i18n 'ufw.no_ssh_rule_desc' "ssh_port=$ssh_port")" \
+            suggestion="$(i18n 'ufw.fix_allow_ssh')" \
+            fix="ufw.allow_ssh"
         print_severity "low" "$(i18n 'ufw.no_ssh_rule')"
     fi
 }
@@ -501,44 +413,19 @@ _ufw_audit_ipv6_consistency() {
     ipv6_setting=$(_ufw_get_ipv6_setting)
 
     if [[ "$ipv6_setting" == "yes" ]]; then
-        local check=$(create_check_json \
-            "ufw.ipv6_managed" \
-            "ufw" \
-            "low" \
-            "passed" \
-            "$(i18n 'ufw.ipv6_managed')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.ipv6_managed" low passed
         print_ok "$(i18n 'ufw.ipv6_managed')"
         return
     fi
 
     # IPV6=no — check whether the host actually has v6 connectivity.
     if _host_has_global_ipv6; then
-        local check=$(create_check_json \
-            "ufw.ipv6_bypass" \
-            "ufw" \
-            "medium" \
-            "failed" \
-            "$(i18n 'ufw.ipv6_bypass')" \
-            "$(i18n 'ufw.ipv6_bypass_desc')" \
-            "$(i18n 'ufw.fix_enable_ipv6')" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.ipv6_bypass" medium failed \
+            desc="$(i18n 'ufw.ipv6_bypass_desc')" \
+            suggestion="$(i18n 'ufw.fix_enable_ipv6')"
         print_severity "medium" "$(i18n 'ufw.ipv6_bypass')"
     else
-        local check=$(create_check_json \
-            "ufw.ipv6_no_traffic" \
-            "ufw" \
-            "info" \
-            "passed" \
-            "$(i18n 'ufw.ipv6_no_traffic')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.ipv6_no_traffic" info passed
     fi
 }
 
@@ -561,28 +448,14 @@ _ufw_audit_permissive_rules() {
             severity="high"
         fi
 
-        local check=$(create_check_json \
-            "ufw.permissive_rules" \
-            "ufw" \
-            "$severity" \
-            "failed" \
-            "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")" \
-            "$issue_list" \
-            "$(i18n 'ufw.fix_restrict_rules')" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.permissive_rules" "$severity" failed \
+            title="$(i18n 'ufw.permissive_rules_found' "count=$issue_count")" \
+            desc="$issue_list" \
+            suggestion="$(i18n 'ufw.fix_restrict_rules')"
         print_severity "$severity" "$(i18n 'ufw.permissive_rules_found' "count=$issue_count")"
     else
-        local check=$(create_check_json \
-            "ufw.rules_ok" \
-            "ufw" \
-            "low" \
-            "passed" \
-            "$(i18n 'ufw.no_permissive_rules')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "ufw.rules_ok" low passed \
+            title="$(i18n 'ufw.no_permissive_rules')"
         print_ok "$(i18n 'ufw.no_permissive_rules')"
     fi
 }

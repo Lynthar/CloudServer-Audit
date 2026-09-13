@@ -293,31 +293,19 @@ _net_audit_listeners() {
 
     if (( ${#dangerous[@]} > 0 )); then
         local list; list=$(printf '%s ' "${dangerous[@]}")
-        local check=$(create_check_json \
-            "networking.exposed_dangerous_ports" \
-            "networking" \
-            "high" \
-            "failed" \
-            "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}")" \
-            "$(i18n 'networking.exposed_dangerous_ports_desc' "list=${list% }")" \
-            "$(i18n 'networking.exposed_dangerous_ports_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "networking.exposed_dangerous_ports" high failed \
+            title="$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}")" \
+            desc="$(i18n 'networking.exposed_dangerous_ports_desc' "list=${list% }")" \
+            suggestion="$(i18n 'networking.exposed_dangerous_ports_suggestion')"
         print_severity "high" "$(i18n 'networking.exposed_dangerous_ports' "count=${#dangerous[@]}")"
     fi
 
     if (( ${#exposed[@]} > 0 )); then
         local list; list=$(printf '%s ' "${exposed[@]}")
-        local check=$(create_check_json \
-            "networking.public_listeners_present" \
-            "networking" \
-            "medium" \
-            "failed" \
-            "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}")" \
-            "$(i18n 'networking.public_listeners_present_desc' "list=${list% }")" \
-            "$(i18n 'networking.public_listeners_present_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "networking.public_listeners_present" medium failed \
+            title="$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}")" \
+            desc="$(i18n 'networking.public_listeners_present_desc' "list=${list% }")" \
+            suggestion="$(i18n 'networking.public_listeners_present_suggestion')"
         print_severity "medium" "$(i18n 'networking.public_listeners_present' "count=${#exposed[@]}")"
     fi
 
@@ -328,16 +316,8 @@ _net_audit_listeners() {
         else
             title=$(i18n 'networking.listeners_ok')
         fi
-        local check=$(create_check_json \
-            "networking.listeners_ok" \
-            "networking" \
-            "low" \
-            "passed" \
-            "$title" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "networking.listeners_ok" low passed \
+            title="$title"
         print_ok "$title"
     fi
 }
@@ -349,28 +329,12 @@ _net_audit_promisc() {
 
     if [[ -n "$promisc" ]]; then
         local list; list=$(echo "$promisc" | tr '\n' ' ')
-        local check=$(create_check_json \
-            "networking.promiscuous_interface" \
-            "networking" \
-            "medium" \
-            "failed" \
-            "$(i18n 'networking.promiscuous_interface')" \
-            "$(i18n 'networking.promiscuous_interface_desc' "list=${list% }")" \
-            "$(i18n 'networking.promiscuous_interface_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "networking.promiscuous_interface" medium failed \
+            desc="$(i18n 'networking.promiscuous_interface_desc' "list=${list% }")" \
+            suggestion="$(i18n 'networking.promiscuous_interface_suggestion')"
         print_severity "medium" "$(i18n 'networking.promiscuous_interface')"
     else
-        local check=$(create_check_json \
-            "networking.no_promisc" \
-            "networking" \
-            "low" \
-            "passed" \
-            "$(i18n 'networking.no_promisc')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "networking.no_promisc" low passed
         print_ok "$(i18n 'networking.no_promisc')"
     fi
 }

@@ -129,43 +129,20 @@ _update_audit_apt_lock() {
     pkg_manager_locked || lock_rc=$?
 
     if (( lock_rc == 0 )); then
-        local check=$(create_check_json \
-            "update.apt_locked" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.apt_locked')" \
-            "$(i18n 'update.apt_locked_desc')" \
-            "$(i18n 'update.apt_locked_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "update.apt_locked" low failed \
+            desc="$(i18n 'update.apt_locked_desc')" \
+            suggestion="$(i18n 'update.apt_locked_suggestion')"
         print_severity "low" "$(i18n 'update.apt_locked')"
     elif (( lock_rc == 2 )); then
         # failed + info, and both halves are deliberate: a passed check
         # renders as a one-line tick nobody expands, and putting a number on
         # a non-observation is how a host earns a free pass.
-        local check=$(create_check_json \
-            "update.lock_state_unknown" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.lock_state_unknown')" \
-            "$(i18n 'update.lock_state_unknown_desc')" \
-            "$(i18n 'update.lock_state_unknown_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "update.lock_state_unknown" low failed \
+            desc="$(i18n 'update.lock_state_unknown_desc')" \
+            suggestion="$(i18n 'update.lock_state_unknown_fix')"
         print_severity "low" "$(i18n 'update.lock_state_unknown')"
     else
-        local check=$(create_check_json \
-            "update.apt_available" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.apt_available')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "update.apt_available" low passed
         print_ok "$(i18n 'update.apt_available')"
     fi
 }
@@ -177,31 +154,15 @@ _update_audit_available() {
     local update_count security_count sec_shown
     if ! update_count=$(pkg_update_count) || \
        ! security_count=$(pkg_security_update_count); then
-        local check=$(create_check_json \
-            "update.check_failed" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.check_failed')" \
-            "$(i18n 'update.check_failed_desc')" \
-            "$(i18n 'update.check_failed_fix')" \
-            "")
-        state_add_check "$check"
+        check_emit "update.check_failed" low failed \
+            desc="$(i18n 'update.check_failed_desc')" \
+            suggestion="$(i18n 'update.check_failed_fix')"
         print_severity "low" "$(i18n 'update.check_failed')"
         return 0
     fi
 
     if ((update_count == 0)); then
-        local check=$(create_check_json \
-            "update.no_updates" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.no_updates')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "update.no_updates" low passed
         print_ok "$(i18n 'update.no_updates')"
     else
         # low for routine packages, medium once security updates are pending,
@@ -226,16 +187,11 @@ _update_audit_available() {
             fi
         fi
 
-        local check=$(create_check_json \
-            "update.updates_available" \
-            "update" \
-            "$severity" \
-            "failed" \
-            "$(i18n 'update.updates_available' "count=$update_count")" \
-            "$sec_desc" \
-            "$(i18n 'update.updates_available_suggestion')" \
-            "$fix_id")
-        state_add_check "$check"
+        check_emit "update.updates_available" "$severity" failed \
+            title="$(i18n 'update.updates_available' "count=$update_count")" \
+            desc="$sec_desc" \
+            suggestion="$(i18n 'update.updates_available_suggestion')" \
+            fix="$fix_id"
 
         if ((security_count > 0)); then
             print_severity "$severity" "$(i18n 'update.security_updates' "count=$sec_shown")"
@@ -254,46 +210,23 @@ _update_audit_unattended() {
     # Arch (rolling) has no native auto-update mechanism — that's normal, not a
     # finding. Mark passed so it doesn't penalise the score.
     if [[ "$status" == "unsupported" ]]; then
-        local check=$(create_check_json \
-            "update.unattended_unsupported" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.unattended_unsupported')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "update.unattended_unsupported" low passed
         print_ok "$(i18n 'update.unattended_unsupported')"
         return
     fi
 
     if ! auto_update_installed; then
-        local check=$(create_check_json \
-            "update.unattended_not_installed" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.unattended_disabled')" \
-            "$(i18n 'update.unattended_not_installed_desc')" \
-            "$(i18n 'update.fix_install_unattended')" \
-            "update.install_unattended")
-        state_add_check "$check"
+        check_emit "update.unattended_not_installed" low failed \
+            title="$(i18n 'update.unattended_disabled')" \
+            desc="$(i18n 'update.unattended_not_installed_desc')" \
+            suggestion="$(i18n 'update.fix_install_unattended')" \
+            fix="update.install_unattended"
         print_severity "low" "$(i18n 'update.unattended_disabled')"
         return
     fi
 
     if [[ "$status" == "ok" ]]; then
-        local check=$(create_check_json \
-            "update.unattended_enabled" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.unattended_enabled')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "update.unattended_enabled" low passed
         print_ok "$(i18n 'update.unattended_enabled')"
     else
         local reason_desc
@@ -308,16 +241,10 @@ _update_audit_unattended() {
                 reason_desc="auto-update mechanism installed but not effective" ;;
         esac
 
-        local check=$(create_check_json \
-            "update.unattended_disabled" \
-            "update" \
-            "low" \
-            "failed" \
-            "$(i18n 'update.unattended_disabled')" \
-            "$reason_desc" \
-            "$(i18n 'update.fix_install_unattended')" \
-            "update.enable_unattended")
-        state_add_check "$check"
+        check_emit "update.unattended_disabled" low failed \
+            desc="$reason_desc" \
+            suggestion="$(i18n 'update.fix_install_unattended')" \
+            fix="update.enable_unattended"
         print_severity "low" "$(i18n 'update.unattended_disabled')"
     fi
 }
@@ -331,28 +258,12 @@ _update_audit_reboot() {
             pkg_list="${pkg_list%, }"
         fi
 
-        local check=$(create_check_json \
-            "update.reboot_required" \
-            "update" \
-            "medium" \
-            "failed" \
-            "$(i18n 'update.reboot_required')" \
-            "$(i18n 'update.reboot_required_desc' "list=$pkg_list")" \
-            "$(i18n 'update.reboot_required_suggestion')" \
-            "")
-        state_add_check "$check"
+        check_emit "update.reboot_required" medium failed \
+            desc="$(i18n 'update.reboot_required_desc' "list=$pkg_list")" \
+            suggestion="$(i18n 'update.reboot_required_suggestion')"
         print_severity "medium" "$(i18n 'update.reboot_required')"
     else
-        local check=$(create_check_json \
-            "update.no_reboot" \
-            "update" \
-            "low" \
-            "passed" \
-            "$(i18n 'update.no_reboot')" \
-            "" \
-            "" \
-            "")
-        state_add_check "$check"
+        check_emit "update.no_reboot" low passed
         print_ok "$(i18n 'update.no_reboot')"
     fi
 }
