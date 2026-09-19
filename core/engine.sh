@@ -876,6 +876,12 @@ guide_mode() {
     local fix_count=$(echo "$fixes" | jq 'length')
 
     if ((fix_count == 0)); then
+        # A named fix on a clean host is a refusal: "complete" would claim
+        # the operator's request was carried out.
+        if [[ -n "${VPSSEC_FIX_IDS:-}" ]]; then
+            print_error "$(i18n 'guide.fix_not_offered' "id=${VPSSEC_FIX_IDS%%,*}")"
+            return 1
+        fi
         # Show full report same as audit mode
         report_generate_all
         print_ok "$(i18n 'common.safe') - $(i18n 'guide.complete')"
@@ -890,7 +896,19 @@ guide_mode() {
     print_subheader "$(i18n 'guide.select_fixes')"
 
     local selected_fixes=""
-    if tui_available; then
+    if [[ -n "${VPSSEC_FIX_IDS:-}" ]]; then
+        # --fix names the plan outright: every id must be one this audit
+        # offers, or the run stops here rather than planning nothing.
+        local offered wanted
+        offered=$(echo "$fixes" | jq -r '.[].fix_id')
+        for wanted in ${VPSSEC_FIX_IDS//,/ }; do
+            if ! grep -qxF -- "$wanted" <<<"$offered"; then
+                print_error "$(i18n 'guide.fix_not_offered' "id=$wanted")"
+                return 1
+            fi
+            selected_fixes+="$wanted "
+        done
+    elif tui_available; then
         # TUI mode
         declare -a fix_array
         while read -r fix; do

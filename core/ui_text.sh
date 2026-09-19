@@ -151,6 +151,9 @@ ui_review_plan() {
 }
 
 ui_confirm_execute() {
+    # --yes covers this prompt: the plan was just printed, and a risky fix
+    # still gets its own confirm_critical, which --yes never satisfies.
+    [[ "${VPSSEC_YES:-0}" == "1" ]] && return 0
     if tui_available; then
         tui_confirm_execute
     else

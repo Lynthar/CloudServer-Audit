@@ -1011,6 +1011,7 @@ vpssec [mode] [options]
 | `--lang=LANG` | 语言（`zh_CN` 默认，`en_US`） |
 | `--include=MODS` | 只运行指定模块（逗号分隔） |
 | `--exclude=MODS` | 排除指定模块 |
+| `--fix=IDS` | 只对 `guide`：不出菜单，直接执行逗号分隔的修复 ID；本次审计没给出的 ID 一律拒绝并退出 1 |
 | `--yes` | 自动确认非关键提示（**critical_confirm 仍然必须手动确认**） |
 | `--json-only` | 只输出 JSON（CI/CD 用） |
 | `--no-color` | 关闭彩色输出 |

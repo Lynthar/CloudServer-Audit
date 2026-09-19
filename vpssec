@@ -44,6 +44,7 @@ $(i18n 'cli.options')
   $(i18n 'cli.opt_debug')
   $(i18n 'cli.opt_include')
   $(i18n 'cli.opt_exclude')
+  $(i18n 'cli.opt_fix')
   $(i18n 'cli.opt_help')
   $(i18n 'cli.opt_version')
 
@@ -52,6 +53,7 @@ $(i18n 'cli.examples')
   vpssec audit --json-only         # $(i18n 'cli.ex_json')
   vpssec audit --include=ssh,ufw   # $(i18n 'cli.ex_include')
   vpssec guide                     # $(i18n 'cli.ex_guide')
+  vpssec guide --fix=ssh.enable_pubkey --yes   # $(i18n 'cli.ex_fix')
   vpssec rollback                  # $(i18n 'cli.ex_rollback')
 
 EOF
@@ -129,6 +131,12 @@ parse_args() {
             --exclude=*)
                 VPSSEC_EXCLUDE="${1#*=}"
                 export VPSSEC_EXCLUDE
+                shift
+                ;;
+            --fix=*)
+                # guide only: the fixes to apply, by id, instead of the menu.
+                VPSSEC_FIX_IDS="${1#*=}"
+                export VPSSEC_FIX_IDS
                 shift
                 ;;
             --debug)

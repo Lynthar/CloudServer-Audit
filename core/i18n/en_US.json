@@ -65,6 +65,7 @@
     "opt_debug": "--debug          Verbose logging to logs/vpssec.log",
     "opt_include": "--include=MODS   Run only specified modules",
     "opt_exclude": "--exclude=MODS   Exclude specified modules",
+    "opt_fix": "--fix=IDS        guide: apply only these fix ids, no menu",
     "opt_help": "--help           Show help message",
     "opt_version": "--version        Show version info",
     "examples": "Examples:",
@@ -72,6 +73,7 @@
     "ex_json": "Output JSON only",
     "ex_include": "Only SSH and UFW modules",
     "ex_guide": "Interactive hardening",
+    "ex_fix": "Apply one named fix without the menu",
     "ex_rollback": "Rollback last changes"
   },
   "runner": {
@@ -1280,6 +1282,7 @@
     "resume_already_done": "All fixes from the saved plan are already complete.",
     "resume_executing": "Resuming: {count} fix(es) remaining out of {total}",
     "resume_complete_hint": "Run 'vpssec audit' to see the updated state.",
+    "fix_not_offered": "This audit does not offer the fix {id} — nothing was run",
     "plan_empty": "Selection resolved to zero executable fixes — nothing was run. The UI handed over IDs the planner does not recognize; please report this."
   },
   "fix": {

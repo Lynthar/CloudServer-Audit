@@ -171,3 +171,70 @@ _checklist_tags_only() {
         "$VPSSEC_REPORTS/summary.sarif"
     [[ "$output" == *crashmod* ]]
 }
+
+# ---- guide_mode --fix: the plan named on the command line --------------------
+
+# Everything after the audit is stubbed; the audit itself is the fixture
+# state above, so the only thing under test is how --fix resolves against it.
+_guide_fix_harness() {
+    is_debian_based() { return 0; }
+    _run_audit_pass() { :; }
+    report_print_details() { :; }
+    report_print_summary() { :; }
+    report_generate_all() { :; }
+    tui_select_fixes() { echo "SELECTOR-RAN"; }
+    text_select_fixes() { echo "SELECTOR-RAN"; }
+    execute_plan() {
+        echo "EXEC $(state_load_plan | jq -r '.fixes[].fix_id' | tr '\n' ' ')"
+        return 0
+    }
+}
+
+@test "guide_mode --fix: an id this audit does not offer is refused before any plan" {
+    _guide_fix_harness
+    export VPSSEC_FIX_IDS="mod.not_offered" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mod.not_offered"* ]]
+    _vpssec_refute grep -q "EXEC" <<<"$output"
+    # Refused up front, not by falling through to an empty plan.
+    _vpssec_refute grep -qF "$(i18n 'guide.plan_empty')" <<<"$output"
+}
+
+@test "guide_mode --fix: an id spelled like an option is refused, not handed to grep" {
+    _guide_fix_harness
+    export VPSSEC_FIX_IDS="--help,mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--help"* ]]
+    _vpssec_refute grep -q "EXEC" <<<"$output"
+}
+
+@test "guide_mode --fix: named ids are planned in order, no selector, and run" {
+    _guide_fix_harness
+    export VPSSEC_FIX_IDS="mod.other_fix,mod.shared_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EXEC mod.other_fix mod.shared_fix "* ]]
+    _vpssec_refute grep -q "SELECTOR-RAN" <<<"$output"
+}
+
+@test "guide_mode --fix on a host with nothing to fix is a refusal, not 'complete'" {
+    _guide_fix_harness
+    get_available_fixes() { echo '[]'; }
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mod.other_fix"* ]]
+}
+
+@test "ui_confirm_execute: --yes answers the execute prompt, otherwise the prompt decides" {
+    tui_available() { return 1; }
+    text_yesno() { return 1; }
+    export VPSSEC_YES=1
+    run ui_confirm_execute
+    [ "$status" -eq 0 ]
+    export VPSSEC_YES=0
+    run ui_confirm_execute
+    [ "$status" -eq 1 ]
+}

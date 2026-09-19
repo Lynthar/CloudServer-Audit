@@ -54,6 +54,7 @@ sudo vpssec audit
 sudo vpssec audit --include=ssh,ufw,networking   # 只跑这几个模块
 sudo vpssec audit --json-only                    # 给 CI 用：stdout 只出 JSON
 sudo vpssec guide                                # 交互式走一遍修复
+sudo vpssec guide --fix=ssh.enable_pubkey --yes  # 不出菜单，只执行指定修复
 sudo vpssec rollback                             # 撤销上次运行改过的东西
 ```
 

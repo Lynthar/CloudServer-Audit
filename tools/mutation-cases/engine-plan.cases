@@ -39,3 +39,23 @@ run_case "guide/unsupported-exits-zero" 1 \
 run_case "modfail/record-removed" 1 \
     "            _module_record_failure \"\$module\" \"audit\"" \
     "            :"
+
+# ---- guide_mode --fix: named ids are checked against what the audit offers --
+
+# Accept any named id: an unoffered id reaches the planner, resolves to
+# nothing, and the refusal that names it is never printed.
+run_case "guide/fix-unoffered-accepted" 1 \
+    "            if ! grep -qxF -- \"\$wanted\" <<<\"\$offered\"; then" \
+    "            if false; then"
+
+# On a host with nothing to fix, forget the named id: --fix reports
+# "complete" (exit 0) for a fix that was never applied.
+run_case "guide/fix-on-clean-host-completes" 1 \
+    "        if [[ -n \"\${VPSSEC_FIX_IDS:-}\" ]]; then" \
+    "        if false; then"
+
+# Ignore --fix and show the menu anyway: a non-interactive run stalls on
+# the selector, or cancels, instead of planning what it was told.
+run_case "guide/fix-ignored-menu-shown" 1 \
+    "    if [[ -n \"\${VPSSEC_FIX_IDS:-}\" ]]; then" \
+    "    if false; then"

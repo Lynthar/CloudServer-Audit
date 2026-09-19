@@ -59,6 +59,7 @@ sudo vpssec audit
 sudo vpssec audit --include=ssh,ufw,networking   # just these modules
 sudo vpssec audit --json-only                    # for CI: only JSON on stdout
 sudo vpssec guide                                # walk through the fixes
+sudo vpssec guide --fix=ssh.enable_pubkey --yes  # one named fix, no menu
 sudo vpssec rollback                             # undo what the last run changed
 ```
 

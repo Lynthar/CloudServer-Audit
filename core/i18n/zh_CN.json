@@ -65,6 +65,7 @@
     "opt_debug": "--debug          详细日志输出到 logs/vpssec.log",
     "opt_include": "--include=MODS   仅运行指定模块",
     "opt_exclude": "--exclude=MODS   排除指定模块",
+    "opt_fix": "--fix=IDS        guide：只执行这些修复 ID，不出菜单",
     "opt_help": "--help           显示帮助信息",
     "opt_version": "--version        显示版本信息",
     "examples": "示例：",
@@ -72,6 +73,7 @@
     "ex_json": "仅输出 JSON",
     "ex_include": "只跑 SSH 与 UFW 模块",
     "ex_guide": "交互式加固",
+    "ex_fix": "不出菜单，执行指定的一条修复",
     "ex_rollback": "回滚上一次改动"
   },
   "runner": {
@@ -1280,6 +1282,7 @@
     "resume_already_done": "保存计划中的所有修复均已完成。",
     "resume_executing": "正在续跑：剩余 {count} 项 (共 {total} 项)",
     "resume_complete_hint": "运行 'vpssec audit' 查看更新后的状态。",
+    "fix_not_offered": "本次审计没有给出修复 {id}——没有执行任何操作",
     "plan_empty": "所选项目未解析出任何可执行的修复——没有执行任何操作。这通常意味着界面传给计划器的 ID 无法识别，请反馈此问题。"
   },
   "fix": {

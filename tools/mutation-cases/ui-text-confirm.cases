@@ -1,0 +1,10 @@
+# Mutation cases: tests/test_guide_plan_contract.bats against core/ui_text.sh.
+# mutate-suite: core/ui_text.sh tests/test_guide_plan_contract.bats
+#
+# The execute prompt under --yes.
+
+# Drop the --yes shortcut: a non-interactive guide run fails (or blocks) on
+# the execute prompt, and `guide --fix … --yes` can never run its plan.
+run_case "confirm/yes-ignored" 1 \
+    "    [[ \"\${VPSSEC_YES:-0}\" == \"1\" ]] && return 0" \
+    "    :"
