@@ -1,0 +1,32 @@
+# Plant: /etc/shadow world-readable (644).
+# Expect: filesystem.sensitive_perms_wrong → filesystem.fix_sensitive_perms → sensitive_perms_ok.
+# Rollback re-applies the mode recorded in .vpssec_modes, so 644 comes back and
+# the finding returns: the mode manifest, not the file copy, is what carries this.
+TEST_DESC="/etc/shadow 644: filesystem.fix_sensitive_perms converges, rollback restores 644"
+EXPECT_ID="filesystem.sensitive_perms_wrong"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+MODULE="filesystem"
+FIX_ID="filesystem.fix_sensitive_perms"
+EXPECT_FIXED_ID="filesystem.sensitive_perms_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="filesystem.sensitive_perms_wrong"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_ORIG=""
+
+precheck() {
+    [[ -f /etc/shadow ]]
+}
+
+mutate() {
+    _ORIG=$(stat -c '%a' /etc/shadow)
+    chmod 644 /etc/shadow
+    return 0
+}
+
+restore() {
+    chmod "${_ORIG:-640}" /etc/shadow
+    return 0
+}

@@ -1,0 +1,39 @@
+# Plant: fs.suid_dumpable=2 at runtime, no core limit in limits.conf.
+# Expect: kernel.core_dump_enabled → kernel.disable_core_dump → kernel.core_dump_ok.
+# Rollback restores limits.conf without the "* hard core 0" line the fix appended,
+# and that alone re-fails the audit even though the runtime sysctl stays 0.
+TEST_DESC="suid_dumpable=2: kernel.disable_core_dump converges, rollback restores limits.conf"
+EXPECT_ID="kernel.core_dump_enabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="kernel"
+FIX_ID="kernel.disable_core_dump"
+EXPECT_FIXED_ID="kernel.core_dump_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="kernel.core_dump_enabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_PARAM="fs.suid_dumpable"
+_LIMITS="/etc/security/limits.conf"
+_SAVED="/tmp/vpssec-mutation-limits.conf"
+_ORIG=""
+
+precheck() {
+    [[ -w /proc/sys/fs/suid_dumpable && -f "$_LIMITS" ]]
+}
+
+mutate() {
+    _ORIG=$(sysctl -n "$_PARAM" 2>/dev/null || echo "")
+    cp -p "$_LIMITS" "$_SAVED" || return 1
+    sed -i -E '/^\*[[:space:]]+(soft|hard)[[:space:]]+core[[:space:]]+0/d' "$_LIMITS"
+    sysctl -w "${_PARAM}=2" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    sysctl -w "${_PARAM}=${_ORIG:-0}" >/dev/null 2>&1
+    cp -p "$_SAVED" "$_LIMITS" && rm -f "$_SAVED"
+    rm -f /etc/sysctl.d/99-vpssec-hardening.conf /etc/systemd/coredump.conf.d/99-vpssec.conf
+    return 0
+}

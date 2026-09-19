@@ -1242,23 +1242,41 @@ sudo bash tests/mutation/run.sh -k 020    # 按编号过滤
 检测命中 → 还原。restore 是 best-effort，因此**只在可丢弃的 VM
 或容器上运行**。
 
-#### 这套 harness 是手动工具，不接 CI
+带 `FIX_ID` 的 case（`1xx-*-fix.case`）在检出之后还走两段：用真正的
+CLI `vpssec guide --fix=<id> --yes` 执行修复 → 重新审计，断言
+`EXPECT_FIXED_ID` 变成 `EXPECT_FIXED_STATUS`；再 `vpssec rollback` 回滚
+这次的备份会话 → 重新审计，断言 `EXPECT_ROLLBACK_ID` /
+`EXPECT_ROLLBACK_STATUS` 与回滚的退出码。每条断言读的都是审计的
+结论，不是修复函数的退出码。回滚那段没有默认期望：文件类修复回滚后
+必须重新变红，只改运行时（sysctl、ufw 规则）或装包的修复回滚后照旧
+是绿的——case 自己写明它属于哪一种，这张「回滚不覆盖什么」的清单
+因此是跑出来的。
 
-它需要 root、需要真实改写 `/etc`、需要一次性主机，所以刻意不挂在
-GitHub Actions 上。代价是没人替你盯着它——因此**改动模块的检测逻辑
-或严重度分级后，请手动跑一遍并对照下面的基线**。
+#### 在一次性容器里跑，CI 也这么跑
 
-**期望基线（Debian 12 容器，装有 openssh-server / ufw / fail2ban / cron / at）：**
+```bash
+bash tests/mutation/run-in-container.sh        # 自己起容器、拷树、跑全部 case
+bash tests/mutation/run-in-container.sh ssh    # 参数原样透传给 run.sh
+```
+
+`tests/mutation/Dockerfile` 是那台一次性主机：Debian 12 + systemd 当
+PID 1（修复要 enable / reload 服务）+ openssh-server + nginx；logrotate /
+ufw / fail2ban 故意不预装，对应的 `*.install` 修复要从「没装」起步。
+GitHub Actions 的 `mutation-integration` job 跑的就是这一条命令。
+
+**期望基线（上面那个镜像）：**
 
 ```
-Total: 22  Passed: 18  Failed: 0  Errored: 0  Skipped: 4
+Total: 37  Passed: 29  Failed: 0  Errored: 0  Skipped: 8
 ```
 
 判据是 **`Failed` 与 `Errored` 都为 0**，且 `Passed + Skipped == Total`。
 `Skipped` 的具体数量取决于宿主装了什么、跑的是哪个内核：缺 docker /
-nginx 时对应 case 的 `precheck` 返回假；`022-filesystem-grub-perms`
+at 时对应 case 的 `precheck` 返回假；`022-filesystem-grub-perms`
 在没有 GRUB 的容器里跳过；`030-kernel-core-setuid-ok` 在没有
-`kernel.core_setuid_ok` 的内核上跳过。这些都是正常的。
+`kernel.core_setuid_ok` 的内核上跳过；`050-fail2ban-no-jails` 要 fail2ban
+已经在跑。这些都是正常的。`070-nginx-client-header-timeout` 报一条
+severity 漂移的 WARN（case 写 medium、代码发 low），检出仍算通过。
 
 ### 卸载脚本验证
 

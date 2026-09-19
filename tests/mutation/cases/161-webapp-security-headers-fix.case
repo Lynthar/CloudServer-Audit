@@ -1,0 +1,34 @@
+# Plant: no conf.d/security-headers.conf, so the merged nginx config carries
+# none of the four headers.
+# Expect: webapp.nginx_security_headers → webapp.nginx_security_headers → nginx_security_headers_ok.
+# The fix creates the drop-in (recorded as fix-created); rollback deletes it and
+# reloads nginx, so the headers are missing again.
+TEST_DESC="no security-headers drop-in: webapp.nginx_security_headers converges, rollback deletes it"
+EXPECT_ID="webapp.nginx_security_headers"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="webapp"
+FIX_ID="webapp.nginx_security_headers"
+EXPECT_FIXED_ID="webapp.nginx_security_headers_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="webapp.nginx_security_headers"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DROPIN="/etc/nginx/conf.d/security-headers.conf"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null
+}
+
+mutate() {
+    rm -f "$_DROPIN"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}

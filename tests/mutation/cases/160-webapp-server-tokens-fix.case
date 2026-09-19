@@ -1,0 +1,36 @@
+# Plant: nginx.conf without an active `server_tokens off` (Debian ships it
+# commented out; the sed makes that true regardless of what the host had).
+# Expect: webapp.nginx_server_tokens → webapp.nginx_server_tokens → nginx_server_tokens_ok.
+# The fix edits nginx.conf in place after backing it up; rollback restores the
+# file and reloads nginx, so the version leak is reported again.
+TEST_DESC="server_tokens commented out: webapp.nginx_server_tokens converges, rollback restores nginx.conf"
+EXPECT_ID="webapp.nginx_server_tokens"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="webapp"
+FIX_ID="webapp.nginx_server_tokens"
+EXPECT_FIXED_ID="webapp.nginx_server_tokens_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="webapp.nginx_server_tokens"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_CONF="/etc/nginx/nginx.conf"
+_SAVED="/tmp/vpssec-mutation-nginx.conf"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null
+}
+
+mutate() {
+    cp -p "$_CONF" "$_SAVED" || return 1
+    sed -i -E 's/^([[:space:]]*)server_tokens[[:space:]]/\1# server_tokens /' "$_CONF"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    cp -p "$_SAVED" "$_CONF" && rm -f "$_SAVED"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}

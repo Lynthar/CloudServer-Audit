@@ -164,3 +164,15 @@ jobs:
           done
 
           exit "$fail"
+
+  mutation-integration:
+    # The one job that runs vpssec against a real /etc: plant a defect, expect
+    # the audit to report it, apply the fix through `guide --fix`, roll it back
+    # through `rollback`, asserting the audit's verdict after each step.
+    name: real /etc — mutate, audit, fix, rollback
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Run the mutation cases in a throwaway systemd container
+        run: bash tests/mutation/run-in-container.sh

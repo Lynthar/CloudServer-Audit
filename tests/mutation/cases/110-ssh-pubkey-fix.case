@@ -1,0 +1,47 @@
+# Plant: PubkeyAuthentication no in a 99- drop-in. sshd keeps the FIRST value it reads, and the
+# fix writes 00-vpssec-hardening.conf, so the fix wins only while its file exists.
+# Expect: ssh.pubkey_disabled → ssh.enable_pubkey → ssh.pubkey_enabled; rollback deletes the drop-in the
+# fix created (recorded in .vpssec_created), so the plant rules again and the
+# finding returns — a file-level rollback that the audit can see.
+TEST_DESC="PubkeyAuthentication=no: ssh.enable_pubkey converges, rollback re-exposes it"
+EXPECT_ID="ssh.pubkey_disabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+MODULE="ssh"
+FIX_ID="ssh.enable_pubkey"
+EXPECT_FIXED_ID="ssh.pubkey_enabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="ssh.pubkey_disabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DROPIN="/etc/ssh/sshd_config.d/99-vpssec-mutation-test.conf"
+_HARDENING="/etc/ssh/sshd_config.d/00-vpssec-hardening.conf"
+_HAD_HARDENING=0
+_SERVICE=""
+_pick_service() {
+    if systemctl list-unit-files ssh.service &>/dev/null; then _SERVICE="ssh"
+    elif systemctl list-unit-files sshd.service &>/dev/null; then _SERVICE="sshd"
+    fi
+}
+
+precheck() {
+    command -v sshd >/dev/null 2>&1 && [[ -d /etc/ssh/sshd_config.d ]]
+}
+
+mutate() {
+    _pick_service
+    [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
+    printf 'PubkeyAuthentication no\n' > "$_DROPIN"
+    chmod 644 "$_DROPIN"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    # Only the fix could have created it; a pre-existing operator file stays.
+    (( _HAD_HARDENING == 0 )) && rm -f "$_HARDENING"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}

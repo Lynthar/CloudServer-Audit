@@ -1,0 +1,38 @@
+# Plant: no /var/log/journal and no Storage=persistent anywhere.
+# Expect: logging.journald_volatile → logging.enable_persistent_journal → journald_persistent.
+# Rollback deletes the fix-created drop-in (rc 0), but the audit also accepts a
+# bare /var/log/journal directory, which the fix made and rollback does not
+# remove — so the check stays passed. The directory is the boundary here.
+TEST_DESC="volatile journal: logging.enable_persistent_journal converges; rollback keeps the journal dir"
+EXPECT_ID="logging.journald_volatile"
+EXPECT_STATUS="failed"
+MODULE="logging"
+FIX_ID="logging.enable_persistent_journal"
+EXPECT_FIXED_ID="logging.journald_persistent"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="logging.journald_persistent"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=0
+
+_JOURNAL_DIR="/var/log/journal"
+_DROPIN="/etc/systemd/journald.conf.d/99-vpssec.conf"
+_HAD_DIR=0
+
+precheck() {
+    systemctl is-active --quiet systemd-journald 2>/dev/null \
+        && ! grep -qsE '^Storage=persistent' /etc/systemd/journald.conf \
+        && ! grep -rqsE '^Storage=persistent' /etc/systemd/journald.conf.d
+}
+
+mutate() {
+    [[ -d "$_JOURNAL_DIR" ]] && _HAD_DIR=1
+    rm -rf "$_JOURNAL_DIR"
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    (( _HAD_DIR == 0 )) && rm -rf "$_JOURNAL_DIR"
+    systemctl restart systemd-journald >/dev/null 2>&1
+    return 0
+}

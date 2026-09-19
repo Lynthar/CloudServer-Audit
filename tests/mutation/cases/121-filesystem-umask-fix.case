@@ -1,0 +1,36 @@
+# Plant: UMASK 022 in /etc/login.defs (the Debian default, restated so the case
+# does not depend on what the image shipped).
+# Expect: filesystem.umask_default → filesystem.fix_umask → umask_ok; rollback puts
+# the backed-up login.defs back, so the default umask is reported again.
+TEST_DESC="UMASK 022: filesystem.fix_umask converges, rollback restores login.defs"
+EXPECT_ID="filesystem.umask_default"
+EXPECT_STATUS="failed"
+MODULE="filesystem"
+FIX_ID="filesystem.fix_umask"
+EXPECT_FIXED_ID="filesystem.umask_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="filesystem.umask_default"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_LOGIN_DEFS="/etc/login.defs"
+_SAVED="/tmp/vpssec-mutation-login.defs"
+
+precheck() {
+    [[ -f "$_LOGIN_DEFS" ]]
+}
+
+mutate() {
+    cp -p "$_LOGIN_DEFS" "$_SAVED" || return 1
+    if grep -qE '^UMASK' "$_LOGIN_DEFS"; then
+        sed -i 's/^UMASK.*/UMASK\t\t022/' "$_LOGIN_DEFS"
+    else
+        printf 'UMASK\t\t022\n' >> "$_LOGIN_DEFS"
+    fi
+    return 0
+}
+
+restore() {
+    cp -p "$_SAVED" "$_LOGIN_DEFS" && rm -f "$_SAVED"
+    return 0
+}

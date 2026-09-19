@@ -1,0 +1,30 @@
+# Plant: nothing — the case applies where ufw is absent (the mutation host
+# image ships without it) on a Debian-family host, the only place the check
+# offers ufw.install.
+# Expect: ufw.not_installed → ufw.install → the id is gone from the report
+# (what follows is ufw.disabled, a different finding with a CONFIRM fix).
+# A package install is outside rollback: nothing is backed up, `vpssec
+# rollback` restores nothing (rc 1), and the id stays absent.
+TEST_DESC="ufw absent: ufw.install converges; a package install is outside rollback"
+EXPECT_ID="ufw.not_installed"
+EXPECT_STATUS="failed"
+MODULE="ufw"
+FIX_ID="ufw.install"
+EXPECT_FIXED_ID="ufw.not_installed"
+EXPECT_FIXED_STATUS="absent"
+EXPECT_ROLLBACK_ID="ufw.not_installed"
+EXPECT_ROLLBACK_STATUS="absent"
+EXPECT_ROLLBACK_RC=1
+
+precheck() {
+    ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    return 0
+}
+
+restore() {
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq ufw >/dev/null 2>&1
+    return 0
+}
