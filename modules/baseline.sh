@@ -494,9 +494,6 @@ baseline_fix() {
         baseline.selinux_set_enforcing)
             _baseline_fix_selinux_enforcing
             ;;
-        baseline.selinux_enable)
-            _baseline_fix_selinux_enable
-            ;;
         *)
             log_error "Unknown baseline fix: $fix_id"
             return 1
@@ -551,20 +548,6 @@ _baseline_fix_selinux_enforcing() {
 
     print_ok "$(i18n 'baseline.selinux_config_updated')"
     return 0
-}
-
-_baseline_fix_selinux_enable() {
-    print_warn "$(i18n 'baseline.selinux_enable_manual')"
-    echo ""
-    echo "$(i18n 'baseline.selinux_enable_steps'):"
-    echo "  1. Edit /etc/selinux/config"
-    echo "  2. Set SELINUX=enforcing (or permissive for testing)"
-    echo "  3. Set SELINUXTYPE=targeted"
-    echo "  4. Reboot the system"
-    echo ""
-    echo "$(i18n 'common.warning'): Enabling SELinux requires a system reboot"
-    echo "$(i18n 'baseline.selinux_relabel_warning')"
-    return 1  # Manual intervention required
 }
 
 _baseline_fix_enable_apparmor() {

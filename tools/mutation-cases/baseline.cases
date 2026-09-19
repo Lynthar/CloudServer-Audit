@@ -58,16 +58,6 @@ run_case "selinux/write-failure-unchecked" 1 \
     '    if ! write_file_atomic "$BASELINE_SELINUX_CONFIG" "$staged"; then' \
     '    if ! write_file_atomic "$BASELINE_SELINUX_CONFIG" "$staged" && false; then'
 
-# ---- baseline.selinux_enable (advice only) ---------------------------
-
-run_case "selinux-enable/reports-success" 1 \
-    '    return 1  # Manual intervention required' \
-    '    return 0'
-
-run_case "selinux-enable/steps-not-printed" 1 \
-    '    echo "  2. Set SELINUX=enforcing (or permissive for testing)"' \
-    '    :'
-
 # ---- baseline.enable_apparmor ----------------------------------------
 
 run_case "apparmor/install-not-attempted" 1 \

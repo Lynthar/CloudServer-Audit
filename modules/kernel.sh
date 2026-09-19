@@ -806,9 +806,6 @@ kernel_fix() {
         kernel.disable_core_dump)
             _kernel_fix_core_dump
             ;;
-        kernel.harden_all)
-            _kernel_fix_all
-            ;;
         *)
             log_error "Unknown kernel fix: $fix_id"
             return 1
@@ -1124,19 +1121,6 @@ ProcessSizeMax=0'
     return 1
 }
 
-# Run every hardening step and fail if ANY failed — returning only the last
-# step's status records a failed pass as complete. Each step still runs after
-# an earlier failure; they are independent.
-_kernel_fix_all() {
-    local rc=0
-
-    _kernel_fix_aslr || rc=1
-    _kernel_fix_network_params || rc=1
-    _kernel_fix_kernel_params || rc=1
-    _kernel_fix_core_dump || rc=1
-
-    return "$rc"
-}
 
 # Persist one sysctl. Each call rewrites the whole drop-in so the header
 # appears once and an existing entry is replaced rather than duplicated.

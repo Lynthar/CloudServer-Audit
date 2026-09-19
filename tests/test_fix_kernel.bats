@@ -376,19 +376,6 @@ SH
 # Dispatch
 # ==============================================================================
 
-@test "harden_all: a failing step is not masked by a later successful one" {
-    # execute_plan records the fix as complete on a zero exit, so returning
-    # only the last step's status marked a half-hardened host as done.
-    _host_static_ipv6
-    _kernel_fix_aslr() { return 1; }
-    _kernel_fix_network_params() { return 0; }
-    _kernel_fix_kernel_params() { return 0; }
-    _kernel_fix_core_dump() { return 0; }
-
-    run _kernel_fix_all
-    [ "$status" -eq 1 ]
-}
-
 @test "kernel_fix: an unknown fix id fails instead of silently doing nothing" {
     run kernel_fix "kernel.not_a_real_fix"
     [ "$status" -eq 1 ]

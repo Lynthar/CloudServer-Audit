@@ -28,10 +28,6 @@ run_case "coredump/limits-not-idempotent" 1 \
     '        if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then' \
     '        if true; then'
 
-run_case "harden_all/failure-masked" 1 \
-    '    return "$rc"' \
-    '    return 0'
-
 run_case "dropin/header-filter-removed" 1 \
     '        existing=$(grep -vE '"'"'^[[:space:]]*(#|$)'"'"' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \' \
     '        existing=$(cat "$VPSSEC_SYSCTL_CONF" 2>/dev/null \'

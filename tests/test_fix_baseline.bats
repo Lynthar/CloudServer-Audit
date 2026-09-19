@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# Coverage for baseline's four fixes: two of them enforce a MAC system and one
-# stops services the operator may be relying on. All four are reachable from
-# guide mode (three FIX_CONFIRM, one alert-only).
+# Coverage for baseline's three fixes: two of them enforce a MAC system and one
+# stops services the operator may be relying on. All three are FIX_CONFIRM and
+# reachable from guide mode.
 
 load helpers.bash
 
@@ -196,27 +196,6 @@ _config_mode() {
     [ "$status" -eq 1 ]
     grep -q 'Could not write' <<<"$output"
     grep -qx 'SELINUX=permissive' "$etc/selinux/config"
-}
-
-# ==============================================================================
-# baseline.selinux_enable  (FIX_ALERT_ONLY — advice, deliberately inert)
-# ==============================================================================
-
-@test "selinux enable: the fix reports a manual step rather than success" {
-    run _baseline_fix_selinux_enable
-    [ "$status" -eq 1 ]
-}
-
-@test "selinux enable: the operator is told the steps and the reboot" {
-    # This one cannot act: enabling SELinux needs a relabel and a reboot. The
-    # printed steps are the entire deliverable, so they are what to pin.
-    VPSSEC_QUIET_SCAN=0
-
-    run _baseline_fix_selinux_enable
-    [ "$status" -eq 1 ]
-    grep -q 'SELINUX=enforcing' <<<"$output"
-    grep -q 'SELINUXTYPE=targeted' <<<"$output"
-    grep -qi 'reboot' <<<"$output"
 }
 
 # ==============================================================================
@@ -508,13 +487,14 @@ SH
 }
 
 @test "baseline_fix: a known fix id reaches its implementation" {
-    # selinux_enable is the inert one, so routing can be proven without
-    # touching the filesystem or any service.
+    # selinux_set_enforcing refuses before touching anything when setenforce
+    # is absent, so routing can be proven without a filesystem side effect.
     VPSSEC_QUIET_SCAN=0
+    _vpssec_absent_command setenforce
 
-    run baseline_fix "baseline.selinux_enable"
+    run baseline_fix "baseline.selinux_set_enforcing"
     [ "$status" -eq 1 ]
-    grep -qi 'reboot' <<<"$output"
+    grep -q 'setenforce command not found' <<<"$output"
 }
 
 @test "selinux: a backup that cannot be taken aborts before the config rewrite" {
