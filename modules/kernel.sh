@@ -337,17 +337,18 @@ _kernel_ipv6_firewall_check() {
         fi
     # Check if ip6tables has rules
     elif check_command ip6tables; then
-        local rule_count
-        # grep -c already emits a single integer, so the previous
-        # `| head -1` was dead; kept the defensive regex strip below
-        # for robustness.
-        rule_count=$(ip6tables -L -n 2>/dev/null | grep -cv "^Chain\|^target\|^$" || true)
-        rule_count="${rule_count//[^0-9]/}"
-        [[ -z "$rule_count" ]] && rule_count=0
-        if [[ "$rule_count" -gt 0 ]]; then
-            result="ip6tables_configured"
+        # A listing that fails (no ip6_tables module, restricted container)
+        # is not an empty ruleset: answer unreadable, not "firewall missing".
+        local ip6_rules rule_count
+        if ip6_rules=$(ip6tables -L -n 2>/dev/null); then
+            rule_count=$(grep -cv "^Chain\|^target\|^$" <<<"$ip6_rules" || true)
+            if (( rule_count > 0 )); then
+                result="ip6tables_configured"
+            else
+                result="ip6tables_empty"
+            fi
         else
-            result="ip6tables_empty"
+            result="ip6tables_unreadable"
         fi
     # Check nftables
     elif check_command nft; then
@@ -536,6 +537,11 @@ _kernel_audit_ipv6() {
                 check_emit "kernel.ipv6_firewall_ok" low passed \
                     desc="$(i18n 'kernel.ipv6_firewall_ok_desc')"
                 print_ok "$(i18n 'kernel.ipv6_firewall_ok')"
+                ;;
+            ip6tables_unreadable)
+                check_emit "kernel.ipv6_firewall_unreadable" low failed \
+                    desc="$(i18n 'kernel.ipv6_firewall_unreadable_desc')"
+                print_severity "low" "$(i18n 'kernel.ipv6_firewall_unreadable')"
                 ;;
         esac
     fi

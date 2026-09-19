@@ -290,3 +290,33 @@ _call_at() {
     run ufw_fix "ufw.not_a_real_fix"
     [ "$status" -eq 1 ]
 }
+
+@test "enable: a rescue rule that cannot be added is reported, not announced as done" {
+    _operator_at 203.0.113.9
+    # Same as _ufw_working, except the `allow from <ip>` form is refused.
+    _vpssec_stub_script ufw <<SH
+rules="$ufw_rules"
+state="$ufw_state"
+case "\$1" in
+    allow)
+        [[ "\$2" == from ]] && exit 1
+        printf '%s ALLOW  Anywhere\n' "\$2" >> "\$rules"
+        ;;
+    enable)  printf 'active\n' > "\$state" ;;
+    status)  printf 'Status: %s\n' "\$(cat "\$state")"; cat "\$rules" ;;
+    delete|default) ;;
+esac
+exit 0
+SH
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    confirm_critical() { return 0; }
+
+    run _ufw_fix_enable
+    # The port rules landed, so the firewall still comes up.
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called ufw 'enable'
+    grep -q 'Could not add the rescue rule' <<<"$output"
+    _vpssec_refute grep -q 'temporarily whitelisted' <<<"$output"
+    _vpssec_refute grep -q 'Kept the rescue rule' <<<"$output"
+}

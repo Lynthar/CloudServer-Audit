@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_query_failure_honesty.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_query_failure_honesty.bats
+#
+# A host-ingress ruleset that cannot be listed is unreadable, not empty (iptables)
+# and not silence (nft). Occurrence 1 is the nft branch, 2 the iptables branch.
+
+run_case "ufw/nft-listing-failure-silent" 1 \
+    "                || { _ufw_ruleset_unreadable \"\$backend\"; return 0; }" \
+    "                || return 0"
+
+run_case "ufw/iptables-listing-failure-reads-empty" 2 \
+    "                || { _ufw_ruleset_unreadable \"\$backend\"; return 0; }" \
+    "                || return 0"

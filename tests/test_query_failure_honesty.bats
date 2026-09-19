@@ -163,3 +163,75 @@ setup() {
     # Nothing restored, one skip -> rc 1 and the "0 restored" error path.
     [ "$status" -eq 1 ]
 }
+
+# ---- update: auto-update state ------------------------------------------
+
+@test "update: an unreadable auto-update state is reported as unknown, not disabled" {
+    source "$(_vpssec_repo_root)/modules/update.sh"
+    auto_update_status() { echo "unknown"; return 1; }
+    auto_update_installed() { return 0; }
+
+    _update_audit_unattended
+
+    run jq -r '.[] | select(.id == "update.unattended_state_unknown") | .status' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed" ]
+    run jq -r '.[] | select(.id == "update.unattended_disabled" or .id == "update.unattended_enabled") | .id' \
+        "$VPSSEC_STATE/checks.json"
+    [ -z "$output" ]
+}
+
+# ---- kernel: IPv6 firewall ----------------------------------------------
+
+@test "kernel: an ip6tables listing that fails is unreadable, not an empty ruleset" {
+    source "$(_vpssec_repo_root)/modules/kernel.sh"
+    _vpssec_absent_command ufw
+    _vpssec_stub ip6tables 1
+
+    run _kernel_ipv6_firewall_check
+    [ "$output" = "ip6tables_unreadable" ]
+}
+
+@test "kernel: an unreadable IPv6 firewall emits ipv6_firewall_unreadable, not missing" {
+    source "$(_vpssec_repo_root)/modules/kernel.sh"
+    _kernel_ipv6_enabled() { return 0; }
+    _kernel_ipv6_in_use() { return 0; }
+    _kernel_ipv6_get_stats() { echo ""; }
+    _kernel_ipv6_check_security() { echo ""; }
+    _kernel_ipv6_firewall_check() { echo "ip6tables_unreadable"; }
+
+    run _kernel_audit_ipv6
+
+    run jq -r '.[] | select(.id == "kernel.ipv6_firewall_unreadable") | .status' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed" ]
+    run jq -r '.[] | select(.id == "kernel.ipv6_firewall_missing" or .id == "kernel.ipv6_firewall_ok") | .id' \
+        "$VPSSEC_STATE/checks.json"
+    [ -z "$output" ]
+}
+
+# ---- ufw: host ingress ruleset ------------------------------------------
+
+@test "ufw: an iptables listing that fails is unreadable, not an empty ruleset" {
+    source "$(_vpssec_repo_root)/modules/ufw.sh"
+    _vpssec_stub iptables 1
+
+    _ufw_audit_ruleset_empty iptables
+
+    run jq -r '.[] | select(.id == "ufw.ruleset_unreadable") | .status' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed" ]
+    run jq -r '.[] | select(.id == "ufw.firewall_empty") | .id' "$VPSSEC_STATE/checks.json"
+    [ -z "$output" ]
+}
+
+@test "ufw: an nft listing that fails is unreadable, not silence" {
+    source "$(_vpssec_repo_root)/modules/ufw.sh"
+    _vpssec_stub nft 1
+
+    _ufw_audit_ruleset_empty nftables
+
+    run jq -r '.[] | select(.id == "ufw.ruleset_unreadable") | .status' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed" ]
+}

@@ -242,3 +242,24 @@ _make_backup_session() {
     out=$(backup_file "$host/etc/c.conf")
     [[ "$out" =~ /backups/[0-9]{8}_[0-9]{6}/ ]]
 }
+
+# ---- Reloading after a restore ---------------------------------------
+
+@test "rollback reload: an active service that fails to reload is reported" {
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    _vpssec_stub_script systemctl <<'SH'
+case "$*" in
+    *is-active*" ssh")   exit 0 ;;
+    *is-active*" nginx") exit 3 ;;
+    "reload ssh")        exit 1 ;;
+esac
+exit 0
+SH
+
+    run _rollback_reload_services
+    grep -q 'ssh is running but did not reload' <<<"$output"
+    _vpssec_stub_called systemctl 'reload ssh'
+    _vpssec_refute _vpssec_stub_called systemctl 'reload nginx'
+}

@@ -8,3 +8,16 @@
 run_case "kernel/unreadable-branch-dead" 1 \
     "        if (( passed == 0 )); then" \
     "        if (( passed < 0 )); then"
+
+# A failed ip6tables listing must read as unreadable, not as an empty ruleset
+# — the latter is a medium "IPv6 firewall missing" finding on a host that
+# could not be asked.
+run_case "kernel/ip6tables-failure-reads-empty" 1 \
+    "            result=\"ip6tables_unreadable\"" \
+    "            result=\"ip6tables_empty\""
+
+# The audit arm for the unreadable answer must exist: without it the case
+# falls through and nothing is emitted, which the suite's emit test refutes.
+run_case "kernel/ipv6-firewall-unreadable-arm-dead" 1 \
+    "            ip6tables_unreadable)" \
+    "            ip6tables_never_this_value)"

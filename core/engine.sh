@@ -1123,13 +1123,25 @@ rollback_mode() {
         print_warn "$(i18n 'backup.restored_partial')"
     fi
 
-    # Reload affected services
     print_info "Reloading services..."
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl reload ssh 2>/dev/null || true
-    systemctl reload nginx 2>/dev/null || true
+    _rollback_reload_services
 
     return "$restore_rc"
+}
+
+# Reload the daemons whose config a restore may have replaced. Only running
+# services are reloaded, and a reload that fails is said out loud: the file
+# is back on disk while the daemon still runs the config just rolled back.
+_rollback_reload_services() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    systemctl daemon-reload 2>/dev/null || log_warn "rollback: systemctl daemon-reload failed"
+    local svc
+    for svc in ssh nginx; do
+        systemctl is-active --quiet "$svc" 2>/dev/null || continue
+        if ! systemctl reload "$svc" 2>/dev/null; then
+            print_warn "$(i18n 'backup.reload_failed' "service=$svc")"
+        fi
+    done
 }
 
 # --- Status Mode ---

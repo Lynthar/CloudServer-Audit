@@ -10,3 +10,9 @@
 run_case "update/error-branch-removed" 1 \
     "    if ! update_count=\$(pkg_update_count) || \\" \
     "    if false || \\"
+
+# An "unknown" auto-update state must not fall through to "disabled" (with a
+# fix on offer): killing the guard drops the state_unknown emission.
+run_case "update/unknown-state-folded-into-disabled" 1 \
+    "    if [[ \"\$status\" == \"unknown\" ]]; then" \
+    "    if false; then"

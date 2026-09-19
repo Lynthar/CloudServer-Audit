@@ -306,9 +306,19 @@ ufw_audit() {
     fi
 }
 
+# A ruleset that cannot be listed is not an empty one: say so instead of
+# reporting a missing firewall (or, for nft, saying nothing at all).
+_ufw_ruleset_unreadable() {
+    local backend="$1"
+    check_emit "ufw.ruleset_unreadable" low failed \
+        title="$(i18n 'ufw.ruleset_unreadable' "backend=$backend")" \
+        desc="$(i18n 'ufw.ruleset_unreadable_desc' "backend=$backend")"
+    print_severity "low" "$(i18n 'ufw.ruleset_unreadable' "backend=$backend")"
+}
+
 # Does the backend enforce HOST INGRESS filtering? Signal is the INPUT HOOK
 # only: a count across all chains calls any container host firewalled.
-# Fail-safe — any parse or query failure returns WITHOUT flagging.
+# A parse failure returns WITHOUT flagging; a listing that fails is unreadable.
 _ufw_audit_ruleset_empty() {
     local backend="$1"
     local ingress_rules=0
@@ -318,7 +328,8 @@ _ufw_audit_ruleset_empty() {
         nftables)
             command -v nft >/dev/null 2>&1 || return 0
             local nft_out
-            nft_out=$(nft --stateless list ruleset 2>/dev/null) || return 0
+            nft_out=$(nft --stateless list ruleset 2>/dev/null) \
+                || { _ufw_ruleset_unreadable "$backend"; return 0; }
             [[ -z "$nft_out" ]] && return 0
             # Count rules only inside chains hooked to `input`. The close
             # test needs a LONE `}` so an inline anonymous set does not end
@@ -337,12 +348,14 @@ _ufw_audit_ruleset_empty() {
             ;;
         iptables)
             command -v iptables >/dev/null 2>&1 || return 0
-            local pol
-            pol=$(iptables -S INPUT 2>/dev/null | awk '/^-P INPUT /{print $3; exit}')
+            local ipt_input pol
+            ipt_input=$(iptables -S INPUT 2>/dev/null) \
+                || { _ufw_ruleset_unreadable "$backend"; return 0; }
+            pol=$(awk '/^-P INPUT /{print $3; exit}' <<<"$ipt_input")
             [[ "$pol" == "DROP" || "$pol" == "REJECT" ]] && default_drop=1
             # Count INPUT-chain rules only (host ingress); a jump to a
             # custom chain counts as a rule, so split firewalls still pass.
-            ingress_rules=$(iptables -S INPUT 2>/dev/null | grep -cEv '^(-P|-N|$)' || true)
+            ingress_rules=$(grep -cEv '^(-P|-N|$)' <<<"$ipt_input" || true)
             ;;
         *)
             return 0
@@ -513,10 +526,15 @@ _ufw_fix_enable() {
         fi
     done < <(get_ssh_ports)
 
-    # If we have current connection IP, whitelist it as a rescue rule
+    # Second safety net behind the port rules above. Its failure does not
+    # abort, but claiming the rule exists when it does not would mislead.
     if [[ -n "$current_ip" ]]; then
-        print_info "$(i18n 'ufw.current_ip_whitelisted' "ip=$current_ip")"
-        ufw allow from "$current_ip" comment "Current session (vpssec rescue)" 2>/dev/null || true
+        if ufw allow from "$current_ip" comment "Current session (vpssec rescue)" 2>/dev/null; then
+            print_info "$(i18n 'ufw.current_ip_whitelisted' "ip=$current_ip")"
+        else
+            print_warn "$(i18n 'ufw.rescue_rule_failed' "ip=$current_ip")"
+            current_ip=""
+        fi
     fi
 
     # Critical confirmation

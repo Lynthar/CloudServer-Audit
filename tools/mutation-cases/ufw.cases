@@ -59,3 +59,9 @@ run_case "install/failure-swallowed" 1 \
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_error "Unknown UFW fix: $fix_id"' \
     '            return 0'
+
+# A rescue rule that failed must not be announced as whitelisted: the operator
+# confirms the enable on the strength of that line.
+run_case "enable/rescue-failure-announced-as-done" 1 \
+    "            print_warn \"\$(i18n 'ufw.rescue_rule_failed' \"ip=\$current_ip\")\"" \
+    "            print_info \"\$(i18n 'ufw.current_ip_whitelisted' \"ip=\$current_ip\")\""

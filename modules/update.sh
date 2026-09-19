@@ -225,6 +225,13 @@ _update_audit_unattended() {
         return
     fi
 
+    if [[ "$status" == "unknown" ]]; then
+        check_emit "update.unattended_state_unknown" low failed \
+            desc="$(i18n 'update.unattended_state_unknown_desc')"
+        print_severity "low" "$(i18n 'update.unattended_state_unknown')"
+        return
+    fi
+
     if [[ "$status" == "ok" ]]; then
         check_emit "update.unattended_enabled" low passed
         print_ok "$(i18n 'update.unattended_enabled')"
