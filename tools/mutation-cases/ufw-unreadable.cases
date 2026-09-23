@@ -11,3 +11,7 @@ run_case "ufw/nft-listing-failure-silent" 1 \
 run_case "ufw/iptables-listing-failure-reads-empty" 2 \
     "                || { _ufw_ruleset_unreadable \"\$backend\"; return 0; }" \
     "                || return 0"
+
+run_case "ufw/unknown-backend-reads-none" 1 \
+    "        active_fw=\$(fw_backend) || active_fw=\"unknown\"" \
+    "        active_fw=\$(fw_backend) || active_fw=\"none\""

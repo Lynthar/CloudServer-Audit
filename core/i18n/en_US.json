@@ -284,6 +284,8 @@
     "firewall_empty_desc": "{backend} is active but the host ingress (input) chain has no rules and no default drop/reject policy; host services are unfiltered. Container runtimes add forwarding/NAT rules that do not protect the host.",
     "ruleset_unreadable": "{backend} ruleset could not be read",
     "ruleset_unreadable_desc": "{backend} is the active backend but listing its ruleset failed, so nothing is claimed about the host ingress chain; run the listing by hand to see why.",
+    "firewall_unknown": "Active firewall could not be determined",
+    "firewall_unknown_desc": "A firewall status query (ufw status, nft list tables or iptables -L -n) failed and no active backend was found, so nothing is claimed about whether this host filters traffic; run those commands by hand to see why.",
     "title": "UFW Firewall",
     "desc": "Configure and manage UFW firewall rules",
     "check_installed": "Checking UFW installation status",

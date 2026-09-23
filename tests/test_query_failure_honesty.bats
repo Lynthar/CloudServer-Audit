@@ -235,3 +235,58 @@ setup() {
         "$VPSSEC_STATE/checks.json"
     [ "$output" = "failed" ]
 }
+
+# ---- ufw: which firewall is active --------------------------------------
+
+# Every probe answers: UFW installed but inactive, no nft tables, iptables per $1.
+_fw_probes_answer() {
+    source "$(_vpssec_repo_root)/core/distro.sh"
+    source "$(_vpssec_repo_root)/modules/ufw.sh"
+    _vpssec_stub ufw 0 "Status: inactive"
+    _vpssec_stub systemctl 3
+    _vpssec_stub nft 0
+    _vpssec_stub_script iptables <<<"$1"
+}
+
+@test "ufw: a firewall query that fails is unknown, not no firewall" {
+    _fw_probes_answer 'echo "iptables: Permission denied" >&2; exit 2'
+
+    run fw_backend
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+
+    run ufw_audit
+    [ "$status" -eq 0 ]
+    run jq -r '[.[] | "\(.id) \(.status)"] | join(",")' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "ufw.firewall_unknown failed" ]
+    [ -z "${CHECK_SCORE_CATEGORY[ufw.firewall_unknown]-}" ]
+}
+
+@test "ufw: any one failed status query with nothing found is unknown" {
+    local tool
+    for tool in ufw nft iptables; do
+        _fw_probes_answer 'exit 0'
+        _vpssec_stub "$tool" 1
+        run fw_backend
+        [ "$status" -eq 1 ] || { echo "$tool: rc=$status output=$output"; false; }
+        [ -z "$output" ]
+    done
+}
+
+@test "ufw: every probe answering with nothing active is still none" {
+    _fw_probes_answer 'printf "%s\n" "Chain INPUT (policy ACCEPT)"'
+
+    run fw_backend
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
+@test "ufw: a backend found by a later probe wins over an earlier failed query" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub ufw 1
+    _vpssec_stub nft 0 "table inet filter"
+
+    run fw_backend
+    [ "$status" -eq 0 ]
+    [ "$output" = "nftables" ]
+}

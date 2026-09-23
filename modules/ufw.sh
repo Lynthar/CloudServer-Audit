@@ -200,7 +200,7 @@ ufw_audit() {
     print_item "$(i18n 'ufw.check_firewall_status')"
     local active_fw
     if declare -f fw_backend >/dev/null 2>&1; then
-        active_fw=$(fw_backend)
+        active_fw=$(fw_backend) || active_fw="unknown"
     else
         active_fw=$(_detect_firewall)
     fi
@@ -261,6 +261,13 @@ ufw_audit() {
                 print_severity "medium" "$(i18n 'ufw.no_firewall')"
             fi
             # Continue to check if UFW is installed but not enabled
+            ;;
+        unknown)
+            # A status query failed: nothing is claimed, UFW's own state included.
+            check_emit "ufw.firewall_unknown" low failed \
+                desc="$(i18n 'ufw.firewall_unknown_desc')"
+            print_severity "low" "$(i18n 'ufw.firewall_unknown')"
+            return
             ;;
     esac
 

@@ -284,6 +284,8 @@
     "firewall_empty_desc": "{backend} 处于活动状态，但主机入站（input）链没有规则也没有默认 drop/reject 策略；主机服务未被过滤。容器运行时添加的转发/NAT 规则并不保护主机本身",
     "ruleset_unreadable": "无法读取 {backend} 规则集",
     "ruleset_unreadable_desc": "{backend} 是当前后端，但列出规则集失败，因此不对主机入站链做任何判定；请手动执行列出命令查看原因。",
+    "firewall_unknown": "无法确定当前防火墙",
+    "firewall_unknown_desc": "防火墙状态查询（ufw status、nft list tables 或 iptables -L -n）失败，且未找到活动后端，因此不判定本机是否过滤流量；请手动执行这些命令查看原因。",
     "title": "UFW 防火墙",
     "desc": "配置和管理 UFW 防火墙规则",
     "check_installed": "检查 UFW 安装状态",

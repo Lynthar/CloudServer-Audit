@@ -524,29 +524,41 @@ distro_integrity_package() {
 
 # --- Firewall primitives (read-only) ---
 
-# Active firewall backend: ufw|firewalld|nftables|iptables|none — same probe
-# order as ufw.sh's _detect_firewall (which this is meant to replace). Probes
-# are standard across distros; each is guarded with `command -v`.
+# Active firewall backend: ufw|firewalld|nftables|iptables|none, first match in
+# that order. "none" needs every installed tool to have answered: when a query
+# fails and no backend was found, returns 1 and prints nothing.
 fw_backend() {
+    local out failed=0
     # LC_ALL=C: ufw gettext-translates "Status: active" under a non-C locale
     # (e.g. zh_CN "状态： 激活"); without it an active UFW is misdetected and
     # the probe falls through to "nftables" (ufw's chains make nft non-empty).
-    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
-        echo "ufw"
-    elif systemctl is-active --quiet firewalld 2>/dev/null; then
-        echo "firewalld"
-    elif command -v nft >/dev/null 2>&1 && [[ "$(nft list tables 2>/dev/null | wc -l)" -gt 0 ]]; then
-        echo "nftables"
-    elif command -v iptables >/dev/null 2>&1 && (( "$(iptables -L -n 2>/dev/null | grep -cE '^(ACCEPT|DROP|REJECT)' || true)" > 3 )); then
-        echo "iptables"
-    else
-        echo "none"
+    if command -v ufw >/dev/null 2>&1; then
+        if out=$(LC_ALL=C ufw status 2>/dev/null); then
+            grep -q "Status: active" <<<"$out" && { echo "ufw"; return 0; }
+        else
+            failed=1
+        fi
     fi
-}
-
-# True iff a firewall backend is active.
-fw_is_enabled() {
-    [[ "$(fw_backend)" != "none" ]]
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        echo "firewalld"; return 0
+    fi
+    if command -v nft >/dev/null 2>&1; then
+        if out=$(nft list tables 2>/dev/null); then
+            [[ -n "$out" ]] && { echo "nftables"; return 0; }
+        else
+            failed=1
+        fi
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        if out=$(iptables -L -n 2>/dev/null); then
+            (( $(grep -cE '^(ACCEPT|DROP|REJECT)' <<<"$out" || true) > 3 )) \
+                && { echo "iptables"; return 0; }
+        else
+            failed=1
+        fi
+    fi
+    (( failed == 0 )) || return 1
+    echo "none"
 }
 
 # --- Path / config-location primitives ---

@@ -1,0 +1,9 @@
+# Mutation cases: tests/test_check_emit.bats against modules/scheduling.sh.
+# mutate-suite: modules/scheduling.sh tests/test_check_emit.bats
+#
+# A misspelt field on the call's own line: check_emit drops that check at run
+# time, so the static key scan has to read the first line, not only continuations.
+
+run_case "fields/first-line-typo" 1 \
+    '        check_emit "scheduling.cron_fetches_internet" low failed \' \
+    '        check_emit "scheduling.cron_fetches_internet" low failed dsec="typo" \'

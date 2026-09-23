@@ -48,17 +48,46 @@ _recorded() {
     [ ! -e "$STATE_CHECKS_FILE" ]
 }
 
-# Static views of the call sites: `check_emit "<id>" …` or
-# `_malware_emit_finding "<id>" …` with fields on continuation lines, and the
-# rows of ssh.sh's SSH_DIRECTIVE_CHECKS table, whose ids are never titled.
+# Every `check_emit` / `_malware_emit_finding` command, continuation lines
+# joined and split into words the way the shell would (quotes and $(...) kept
+# whole). Prints "CALL:file:line", then "file:line:key" per field argument.
 _emit_field_keys() {
     awk '
-        match($0, /(^|[ \t])(check_emit|_malware_emit_finding) "[a-zA-Z0-9_.]+"/) { inblk = 1 }
-        inblk && match($0, /^[ \t]+[a-z_]+=/) {
-            k = substr($0, RSTART, RLENGTH); gsub(/[ \t=]/, "", k)
-            print FILENAME ":" FNR ":" k
+        function pop() { st = substr(st, 1, length(st) - 1) }
+        function scan(s, at,    i, c, top, word, nw, w, k) {
+            st = ""; word = ""; nw = 0
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1); top = substr(st, length(st))
+                if (top == "S") { if (c == "\047") pop(); word = word c; continue }
+                if (c == "\\") { word = word substr(s, i, 2); i++; continue }
+                if (top == "D") {
+                    if (c == "\"") pop()
+                    else if (c == "$" && substr(s, i + 1, 1) == "(") { st = st "C"; c = "$("; i++ }
+                    word = word c; continue
+                }
+                if (top == "" && (c == " " || c == "\t")) { if (word != "") w[++nw] = word; word = ""; continue }
+                if (top == "" && (c ~ /[;&|)]/ || (c == "#" && word == ""))) break
+                if (c == "\"") st = st "D"
+                else if (c == "\047") st = st "S"
+                else if (c == "(") st = st "C"
+                else if (c == ")") pop()
+                word = word c
+            }
+            if (word != "") w[++nw] = word
+            print "CALL:" at
+            for (k = 5; k <= nw; k++) {
+                if (match(w[k], /^[A-Za-z_][A-Za-z0-9_]*=/)) print at ":" substr(w[k], 1, RLENGTH - 1)
+                else print at ":?" w[k]
+            }
         }
-        inblk && $0 !~ /\\[ \t]*$/ { inblk = 0 }
+        FNR == 1 { buf = "" }
+        buf != "" { buf = buf " " $0 }
+        buf == "" && $0 !~ /^[ \t]*#/ && match($0, /(^|[ \t;&|(])(check_emit|_malware_emit_finding)[ \t]/) {
+            if (substr($0, RSTART, 1) ~ /[ \t;&|(]/) RSTART++
+            buf = substr($0, RSTART); at = FILENAME ":" FNR
+        }
+        buf != "" && buf ~ /\\[ \t]*$/ { sub(/\\[ \t]*$/, "", buf); next }
+        buf != "" { scan(buf, at); buf = "" }
     ' "$@"
 }
 
@@ -80,12 +109,51 @@ _untitled_check_ids() {
 @test "every check_emit field key is one of title desc suggestion fix" {
     local bad
     bad=$(_emit_field_keys "$REPO"/modules/*.sh "$REPO"/core/*.sh \
-        | grep -vE ':(title|desc|suggestion|fix)$' || true)
+        | grep -v '^CALL:' | grep -vE ':(title|desc|suggestion|fix)$' || true)
     if [[ -n "$bad" ]]; then
         echo "Unknown check_emit field — the check would be dropped at runtime:"
         echo "$bad"
         false
     fi
+}
+
+@test "the field-key scan sees every line that calls check_emit" {
+    # A call shape the scan does not recognise is a call whose keys go unchecked.
+    local mentions calls missed
+    mentions=$(grep -nE '(check_emit|_malware_emit_finding)' "$REPO"/modules/*.sh "$REPO"/core/*.sh \
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
+        | grep -vE ':(check_emit|_malware_emit_finding)\(\) \{' \
+        | grep -vF 'log_error "check_emit $id:' | cut -d: -f1,2 | sort)
+    calls=$(_emit_field_keys "$REPO"/modules/*.sh "$REPO"/core/*.sh \
+        | sed -n 's/^CALL://p' | sort)
+    [ "$(wc -l <<<"$calls")" -gt 300 ]
+    missed=$(comm -23 <(printf '%s\n' "$mentions") <(printf '%s\n' "$calls"))
+    if [[ -n "$missed" ]]; then
+        echo "check_emit mentioned but not scanned for field keys:"
+        echo "$missed"
+        false
+    fi
+}
+
+@test "the field-key scan reads the first line and variable ids" {
+    # Keys on the call's own line, and calls whose id is not a literal.
+    local src="$BATS_TEST_TMPDIR/emit.sh"
+    cat >"$src" <<'SH'
+    check_emit "a.b" low failed dsec="typo" \
+        suggestion="$(i18n 'x' "n=$n")"
+    check_emit "$id" low passed desc="${k}=${v}" || true
+    check_emit "${m}.c" low passed "$extra"
+SH
+    run _emit_field_keys "$src"
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "CALL:$src:1" ]
+    [ "${lines[1]}" = "$src:1:dsec" ]
+    [ "${lines[2]}" = "$src:1:suggestion" ]
+    [ "${lines[3]}" = "CALL:$src:3" ]
+    [ "${lines[4]}" = "$src:3:desc" ]
+    [ "${lines[5]}" = "CALL:$src:4" ]
+    [ "${lines[6]}" = "$src:4:?\"\$extra\"" ]
+    [ "${#lines[@]}" -eq 7 ]
 }
 
 @test "every check emitted without a title has an en_US key for its id" {

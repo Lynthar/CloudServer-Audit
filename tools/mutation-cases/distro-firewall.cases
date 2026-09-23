@@ -1,0 +1,21 @@
+# Mutation cases: tests/test_query_failure_honesty.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_query_failure_honesty.bats
+#
+# fw_backend answers "none" only when every installed tool answered. Occurrences
+# of `failed=1` are the ufw, nft and iptables probes, in that order.
+
+run_case "firewall/ufw-failure-ignored" 1 \
+    '            failed=1' \
+    '            :'
+
+run_case "firewall/nft-failure-ignored" 2 \
+    '            failed=1' \
+    '            :'
+
+run_case "firewall/iptables-failure-ignored" 3 \
+    '            failed=1' \
+    '            :'
+
+run_case "firewall/failure-still-reads-none" 1 \
+    '    (( failed == 0 )) || return 1' \
+    '    :'
