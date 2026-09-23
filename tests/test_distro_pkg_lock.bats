@@ -99,8 +99,14 @@ _release_lock() {
 # ---- _pkg_lock_held, branch logic ------------------------------------
 
 @test "lock_held: a lock file that does not exist is free, not unknown" {
+    # No lsof, so only the existence check can answer free: with lsof on the
+    # host a missing file also reads free through the fallback and hides it.
+    _vpssec_absent_command lsof
+    _vpssec_stub lsof 0
+
     run _pkg_lock_held "$etc/no-such-lock"
     [ "$output" = "free" ]
+    _vpssec_refute _vpssec_stub_called lsof
 }
 
 @test "lock_held: /proc/locks with no matching entry is free" {
