@@ -44,7 +44,7 @@ Anything that changes the system needs the locally installed form.
 Environment variables go on the `bash` side of the pipe:
 
 ```bash
-curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.3.1 bash
+curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.4.0 bash
 ```
 
 Beyond what a stock server install already has (bash, coreutils, systemd, `ss`

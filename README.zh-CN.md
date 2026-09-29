@@ -39,7 +39,7 @@ sudo vpssec audit
 环境变量要写在管道的 `bash` 那一侧：
 
 ```bash
-curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.3.1 bash
+curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.4.0 bash
 ```
 
 服务器自带的那些（bash、coreutils、systemd、iproute2 里的 `ss`）之外，只额外需要
