@@ -39,8 +39,8 @@ setup() {
     local fn
     for fn in _ssh_audit_password_auth _ssh_audit_root_login _ssh_audit_pubkey \
               _ssh_audit_admin_user _ssh_audit_empty_password _ssh_audit_max_auth_tries \
-              _ssh_audit_login_grace_time _ssh_audit_algorithms _ssh_audit_access_control \
-              _ssh_audit_port; do
+              _ssh_audit_login_grace_time _ssh_audit_match_overrides _ssh_audit_algorithms \
+              _ssh_audit_access_control _ssh_audit_port; do
         eval "$fn() { :; }"
     done
 }

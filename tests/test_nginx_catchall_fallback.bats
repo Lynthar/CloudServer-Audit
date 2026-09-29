@@ -11,9 +11,8 @@ setup() {
     source "$(_vpssec_repo_root)/modules/nginx.sh"
     # Steer the module at a scratch dir.
     NGINX_CONF_DIR="$BATS_TEST_TMPDIR/nginx"
-    NGINX_SITES_AVAILABLE="$NGINX_CONF_DIR/sites-available"
     NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
-    mkdir -p "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
+    mkdir -p "$NGINX_SITES_ENABLED"
 
     # Force the fallback branch: _nginx_catchall_state takes it when `nginx -T`
     # exits non-zero or prints nothing. It must be a STUB of the same name —

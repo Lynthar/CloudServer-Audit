@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# Coverage for nginx.add_catchall. The sites-enabled symlink must NOT be
-# registered for rollback: backup_restore skips a created symlink and counts it
-# as skipped, so the link survives AND the rollback's status goes 0 -> 2.
+# Coverage for nginx.add_catchall. The catchall is a regular file in
+# sites-enabled: rollback deletes the files a fix created but never a link, so a
+# link into sites-available would be left dangling and fail nginx -t.
 
 load helpers.bash
 
@@ -15,26 +15,24 @@ setup() {
 
     etc=$(_vpssec_fake_etc)
     NGINX_CONF_DIR="$etc/nginx"
-    NGINX_SITES_AVAILABLE="$NGINX_CONF_DIR/sites-available"
     NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
-    NGINX_CATCHALL_CONF="$NGINX_SITES_AVAILABLE/99-catchall.conf"
-    NGINX_CATCHALL_LINK="$NGINX_SITES_ENABLED/99-catchall.conf"
+    NGINX_CATCHALL_CONF="$NGINX_SITES_ENABLED/99-catchall.conf"
     NGINX_SSL_DIR="$NGINX_CONF_DIR/ssl"
     NGINX_CATCHALL_CERT="$NGINX_SSL_DIR/default.crt"
     NGINX_CATCHALL_KEY="$NGINX_SSL_DIR/default.key"
-    mkdir -p "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
+    mkdir -p "$NGINX_SITES_ENABLED"
 
     _vpssec_stub systemctl
     _nginx_openssl_works
-    _nginx_effective_reflects_link
+    _nginx_effective_reads_sites_enabled
 }
 
 # ---- stubs -----------------------------------------------------------------
 
-# The stub reads sites-enabled, not sites-available: a config staged but not
-# linked must not show up. The baseline vhost keeps the dump non-empty, or
-# _nginx_catchall_state falls back to the tree and reports a catchall not live.
-_nginx_effective_reflects_link() {
+# The stub reads sites-enabled, as Debian's nginx.conf does. The baseline vhost
+# keeps the dump non-empty, or _nginx_catchall_state falls back to the tree and
+# reports a catchall that is not live.
+_nginx_effective_reads_sites_enabled() {
     _vpssec_stub_script nginx <<SH
 case "\$*" in
     *-T*)
@@ -47,10 +45,10 @@ exit 0
 SH
 }
 
-# A host whose nginx.conf includes only conf.d/ — the link exists but nginx
+# A host whose nginx.conf includes only conf.d/ — the file exists but nginx
 # never reads it, so the catchall is not in force however cleanly the config
 # parsed and the reload succeeded.
-_nginx_effective_ignores_link() {
+_nginx_effective_ignores_sites_enabled() {
     _vpssec_stub_script nginx <<'SH'
 case "$*" in
     *-T*)
@@ -130,31 +128,20 @@ SH
     [ ! -f "$NGINX_CATCHALL_KEY" ]
 }
 
-@test "catchall: the symlink is not registered, so the rollback reports 0 and not partial" {
-    # backup_restore skips a created path that is a symlink (symlink-escape
-    # safety) and counts it as skipped, so registering the link would leave it
-    # in place anyway AND turn the rollback's 0 into a partial 2.
+@test "catchall: after a rollback nothing is left in sites-enabled to fail nginx -t" {
+    # The old layout linked sites-enabled to a sites-available file; rollback
+    # deleted the file and left the link dangling, and nginx then refused to
+    # start. A regular file is deleted outright.
     _vpssec_begin_backup_session
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 0 ]
-    [ -L "$NGINX_CATCHALL_LINK" ]
-    _vpssec_refute grep -qxF "$NGINX_CATCHALL_LINK" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+    [ -f "$NGINX_CATCHALL_CONF" ]
+    _vpssec_refute test -L "$NGINX_CATCHALL_CONF"
 
     run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
     [ "$status" -eq 0 ]
-}
-
-@test "catchall: the way to undo the symlink is printed and logged" {
-    # A rollback restores files, not links, so this line is the only way back.
-    # It is logged as well as printed because a printed line scrolls away and
-    # this one may be wanted days later.
-    VPSSEC_QUIET_SCAN=0
-
-    run _nginx_fix_add_catchall
-    [ "$status" -eq 0 ]
-    grep -qF "rm -f $NGINX_CATCHALL_LINK" <<<"$output"
-    grep -qF "rm -f $NGINX_CATCHALL_LINK" "$_log_file"
+    [ -z "$(ls -A "$NGINX_SITES_ENABLED")" ]
 }
 
 @test "catchall: an operator's existing config is snapshotted before it is overwritten" {
@@ -208,8 +195,8 @@ SH
     # and the mktemp inside write_file_atomic, so the real guard chain refuses
     # without mocking it. Not a '..' path: backup_file aborts before the write.
     VPSSEC_QUIET_SCAN=0
-    : > "$NGINX_SITES_AVAILABLE/notadir"
-    NGINX_CATCHALL_CONF="$NGINX_SITES_AVAILABLE/notadir/99-catchall.conf"
+    : > "$NGINX_SITES_ENABLED/notadir"
+    NGINX_CATCHALL_CONF="$NGINX_SITES_ENABLED/notadir/99-catchall.conf"
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
@@ -263,18 +250,6 @@ SH
     grep -q 'Could not create the certificate directory' <<<"$output"
 }
 
-@test "catchall: a symlink that cannot be created is reported" {
-    # Stubbed rather than provoked with a real filesystem state: the tests run
-    # as root, so a read-only sites-enabled would not stop `ln`, and a directory
-    # at the link path makes `ln` succeed by putting the link inside it.
-    VPSSEC_QUIET_SCAN=0
-    _vpssec_stub ln 1
-
-    run _nginx_fix_add_catchall
-    [ "$status" -eq 1 ]
-    grep -q 'creating the symlink' <<<"$output"
-}
-
 @test "catchall: an existing certificate is left alone" {
     mkdir -p "$NGINX_SSL_DIR"
     printf 'operator cert\n' > "$NGINX_CATCHALL_CERT"
@@ -293,11 +268,7 @@ SH
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
-    [ ! -f "$NGINX_CATCHALL_CONF" ]
-    # -L, not -e. -e follows the link, and the cleanup deletes the config the
-    # link points at, so a surviving link is DANGLING and `[ ! -e link ]` is true
-    # whether or not the removal happened.
-    [ ! -L "$NGINX_CATCHALL_LINK" ]
+    [ ! -e "$NGINX_CATCHALL_CONF" ]
 }
 
 @test "catchall: nginx's own diagnostic reaches the operator" {
@@ -313,16 +284,33 @@ SH
     grep -q 'sites-enabled/default:22' <<<"$output"
 }
 
-@test "catchall: a pre-existing dangling symlink counts as pre-existing" {
-    # Same -e trap one level up: the fix decides what its cleanup may delete by
-    # asking whether the link was already there, and with -e a dangling link
-    # reads as absent, so the cleanup would remove a link this run did not create.
-    ln -s "$NGINX_SITES_AVAILABLE/gone.conf" "$NGINX_CATCHALL_LINK"
+@test "catchall: a dangling link an older version left is replaced by the file" {
+    # What a rollback of the symlink layout left behind. The write replaces it,
+    # the file is registered as created, and a rollback then removes it too.
+    ln -s "$NGINX_CONF_DIR/sites-available/99-catchall.conf" "$NGINX_CATCHALL_CONF"
+    _vpssec_begin_backup_session
+
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    [ -f "$NGINX_CATCHALL_CONF" ]
+    _vpssec_refute test -L "$NGINX_CATCHALL_CONF"
+    grep -qxF "$NGINX_CATCHALL_CONF" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$status" -eq 0 ]
+    [ -z "$(ls -A "$NGINX_SITES_ENABLED")" ]
+}
+
+@test "catchall: a dangling link is not kept as an operator's file when nginx rejects the config" {
+    # It only ever failed nginx -t, so it is not restored on the failure path;
+    # keeping the staged file instead would leave nginx -t failing.
+    ln -s "$NGINX_CONF_DIR/sites-available/99-catchall.conf" "$NGINX_CATCHALL_CONF"
     _nginx_test_rejects
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
-    [ -L "$NGINX_CATCHALL_LINK" ]
+    [ ! -e "$NGINX_CATCHALL_CONF" ]
+    [ ! -L "$NGINX_CATCHALL_CONF" ]
 }
 
 @test "catchall: a rejected config does not delete an operator's pre-existing file" {
@@ -355,7 +343,7 @@ SH
     # Neither says this host now has a catchall — a nginx.conf that includes only
     # conf.d/ leaves the answer exactly where it was.
     VPSSEC_QUIET_SCAN=0
-    _nginx_effective_ignores_link
+    _nginx_effective_ignores_sites_enabled
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
@@ -384,7 +372,7 @@ SH
 @test "catchall: the happy path returns 0 with the catchall live on both ports" {
     run _nginx_fix_add_catchall
     [ "$status" -eq 0 ]
-    [ -L "$NGINX_CATCHALL_LINK" ]
+    [ -f "$NGINX_CATCHALL_CONF" ]
     run _nginx_catchall_state
     [ "$output" = "both" ]
 }

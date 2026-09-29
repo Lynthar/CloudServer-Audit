@@ -1,0 +1,37 @@
+# Plant: root login off for everyone, then back on for any address inside a
+# Match block in a drop-in — the shape the global verdict cannot see.
+# Expect: ssh.match_overrides naming the directive and its Match criteria,
+# while the global verdict stays whatever the host had.
+TEST_DESC="a Match Address block re-enabling root login is reported as an override"
+EXPECT_ID="ssh.match_overrides"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+EXPECT_DESC_CONTAINS="PermitRootLogin (Match Address 0.0.0.0/0)"
+MODULE="ssh"
+
+_DROPIN="/etc/ssh/sshd_config.d/99-vpssec-mutation-test.conf"
+_SERVICE=""
+_pick_service() {
+    if systemctl list-unit-files ssh.service &>/dev/null; then _SERVICE="ssh"
+    elif systemctl list-unit-files sshd.service &>/dev/null; then _SERVICE="sshd"
+    fi
+}
+
+precheck() {
+    command -v sshd >/dev/null 2>&1 && [[ -d /etc/ssh/sshd_config.d ]]
+}
+
+mutate() {
+    _pick_service
+    printf 'Match Address 0.0.0.0/0\n    PermitRootLogin yes\n' > "$_DROPIN"
+    chmod 644 "$_DROPIN"
+    sshd -t >/dev/null 2>&1 || { rm -f "$_DROPIN"; return 1; }
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}

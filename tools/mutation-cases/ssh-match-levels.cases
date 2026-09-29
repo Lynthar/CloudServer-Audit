@@ -1,0 +1,7 @@
+# Mutation cases: tests/test_ssh_match_overrides.bats against core/security_levels.sh.
+# mutate-suite: core/security_levels.sh tests/test_ssh_match_overrides.bats
+
+# The finding starts moving the score — the ruling was report-only.
+run_case "ssh-match-levels/scored" 1 \
+    '    ["ssh.match_overrides"]="info"' \
+    '    ["ssh.match_overrides"]="required"'

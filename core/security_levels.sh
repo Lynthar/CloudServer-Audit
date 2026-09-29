@@ -360,6 +360,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ssh.login_grace_time_long"]="info"
     ["ssh.x11_forwarding_disabled"]="info"
     ["ssh.x11_forwarding_enabled"]="info"
+    # Where the verdicts above stop applying; not a verdict itself.
+    ["ssh.match_overrides"]="info"
     ["ssh.weak_algorithms"]="optional"
     ["ssh.algorithms_ok"]="optional"
     # SSH-7408 additional hardening (Lynis cross-check) - info only

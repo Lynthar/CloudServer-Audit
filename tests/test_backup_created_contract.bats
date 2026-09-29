@@ -124,7 +124,7 @@ _setup_docker() {
 }
 
 # ==============================================================================
-# nginx — openssl writes the products, and one of them is a symlink
+# nginx — openssl writes two of the products
 # ==============================================================================
 
 @test "nginx: the generated certificate and key are both tracked" {
@@ -158,18 +158,44 @@ SH
     _vpssec_assert_created_contract "$etc" "$snap"
 }
 
-@test "nginx: a sites-enabled symlink is NOT tracked" {
-    # backup_restore refuses to delete a tracked path that is a symlink and counts
-    # it as skipped, turning a complete rollback into an exit-2 "partially
-    # restored". Symlinks get a printed undo command; they never reach the manifest.
+@test "nginx: the catchall is written as a tracked file, not a link" {
+    # A link into sites-available is what a rollback left dangling: it deletes
+    # the tracked file and never touches the link, and nginx -t then fails.
     _load_module nginx
-    local link="$etc/nginx/sites-enabled/vpssec-catchall.conf"
-    mkdir -p "$(dirname "$link")" "$etc/nginx/sites-available"
-    printf 'server{}\n' > "$etc/nginx/sites-available/vpssec-catchall.conf"
+    NGINX_CONF_DIR="$etc/nginx"
+    NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
+    NGINX_CATCHALL_CONF="$NGINX_SITES_ENABLED/99-catchall.conf"
+    NGINX_SSL_DIR="$NGINX_CONF_DIR/ssl"
+    NGINX_CATCHALL_CERT="$NGINX_SSL_DIR/default.crt"
+    NGINX_CATCHALL_KEY="$NGINX_SSL_DIR/default.key"
+    mkdir -p "$NGINX_SITES_ENABLED"
+    _vpssec_stub systemctl
+    _vpssec_stub_script openssl <<'SH'
+out=""; key=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -out) out="$2"; shift ;;
+        -keyout) key="$2"; shift ;;
+    esac
+    shift
+done
+[ -n "$out" ] && printf 'cert\n' > "$out"
+[ -n "$key" ] && printf 'key\n' > "$key"
+exit 0
+SH
+    _vpssec_stub_script nginx <<SH
+case "\$*" in
+    *-T*) cat "$NGINX_SITES_ENABLED"/*.conf; exit 0 ;;
+esac
+exit 0
+SH
     snap=$(_vpssec_tree_snapshot "$etc")
 
-    ln -sf "$etc/nginx/sites-available/vpssec-catchall.conf" "$link"
+    run _nginx_fix_add_catchall
 
+    [ "$status" -eq 0 ]
+    [ -f "$NGINX_CATCHALL_CONF" ]
+    _vpssec_refute test -L "$NGINX_CATCHALL_CONF"
     _vpssec_assert_created_contract "$etc" "$snap"
 }
 
@@ -203,6 +229,21 @@ SH
     [[ "$output" == *"created but not tracked"* ]]
 }
 
+@test "the contract assertion accepts a new symlink only while it stays untracked" {
+    # A tracked link is skipped by the rollback, which then reports partial.
+    snap=$(_vpssec_tree_snapshot "$etc")
+    mkdir -p "$etc/somewhere"
+    ln -s "$etc/elsewhere.conf" "$etc/somewhere/link.conf"
+
+    run _vpssec_assert_created_contract "$etc" "$snap"
+    [ "$status" -eq 0 ]
+
+    echo "$etc/somewhere/link.conf" >> "$(_manifest)"
+    run _vpssec_assert_created_contract "$etc" "$snap"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"symlink must not be tracked"* ]]
+}
+
 # ==============================================================================
 # the enumerable half
 # ==============================================================================
@@ -224,7 +265,7 @@ _CREATES_FILES=(
     logging.enable_persistent_journal   # journald.conf.d drop-in
     logging.setup_audit_rules           # rules.d/99-vpssec.rules
     logging.setup_logrotate             # logrotate.conf when absent
-    nginx.add_catchall                  # conf + cert + key (+ an untracked symlink)
+    nginx.add_catchall                  # conf + cert + key
     ssh.disable_empty_password          # all eight go through
     ssh.disable_password_auth           #   _ssh_write_hardening_config,
     ssh.disable_root_login              #   which creates the 00- drop-in

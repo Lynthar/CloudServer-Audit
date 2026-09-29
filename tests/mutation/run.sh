@@ -14,7 +14,9 @@
 #      confirmation on a pseudo-terminal), re-audits and asserts
 #      EXPECT_ROLLBACK_ID / EXPECT_ROLLBACK_STATUS and the rollback's
 #      exit code EXPECT_ROLLBACK_RC — what rollback really undoes is the
-#      case's claim, not the driver's assumption
+#      case's claim, not the driver's assumption — and, when the case
+#      defines postrollback(), that it returns 0 (e.g. `nginx -t`: the
+#      audit cannot see a config the service would refuse to load)
 #   7. runs restore() to revert the planted defect
 #
 # IMPORTANT: run only on a disposable VM or container. Restore is
@@ -113,7 +115,7 @@ run_case() {
 
     # Reset per-case state — case files set these, but a missing
     # field in case N must not leak from case N-1.
-    unset -f mutate restore precheck 2>/dev/null || true
+    unset -f mutate restore precheck postrollback 2>/dev/null || true
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
           EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC 2>/dev/null || true
@@ -308,6 +310,11 @@ run_fix_and_rollback() {
     else
         echo "  $(color red '[FAIL]') after rollback: $EXPECT_ROLLBACK_ID expected $EXPECT_ROLLBACK_STATUS, got '$(report_check "$EXPECT_ROLLBACK_ID")'"
         results+=("FAIL  | $case_name | rollback left $EXPECT_ROLLBACK_ID not $EXPECT_ROLLBACK_STATUS")
+        return 1
+    fi
+    if declare -f postrollback >/dev/null && ! postrollback; then
+        echo "  $(color red '[FAIL]') after rollback: the case's postrollback() check failed"
+        results+=("FAIL  | $case_name | postrollback check failed")
         return 1
     fi
     return 0

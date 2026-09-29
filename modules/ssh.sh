@@ -389,6 +389,7 @@ ssh_audit() {
     _ssh_audit_login_grace_time
 
     _ssh_audit_directives
+    _ssh_audit_match_overrides
 
     # Check SSH protocol and algorithms
     print_item "$(i18n 'ssh.check_algorithms')"
@@ -610,6 +611,69 @@ _ssh_audit_directives() {
             print_severity "low" "$(i18n "$fail_id")$shown"
         fi
     done
+}
+
+# Every file sshd reads for its config: $1 (default SSH_CONFIG) and, recursively,
+# what its Include lines name. Relative patterns resolve under the config's
+# directory, as sshd resolves them.
+_ssh_config_files() {
+    local file="${1:-$SSH_CONFIG}" depth="${2:-0}" base line pat f
+    [[ -r "$file" ]] && (( depth <= 8 )) || return 0
+    echo "$file"
+    base=$(dirname "$SSH_CONFIG")
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*[Ii][Nn][Cc][Ll][Uu][Dd][Ee]([[:space:]]+|[[:space:]]*=[[:space:]]*)(.+)$ ]] || continue
+        # read -a splits the patterns without globbing them against the cwd.
+        local pats=()
+        read -ra pats <<< "${BASH_REMATCH[2]%%#*}"
+        for pat in "${pats[@]}"; do
+            [[ "$pat" == /* ]] || pat="$base/$pat"
+            for f in $pat; do
+                [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))
+            done
+        done
+    done < "$file"
+}
+
+# "Directive<TAB>criteria" for each directive this audit judges that a Match
+# block sets. The audit reads the value an ordinary user gets (_ssh_get_config),
+# so these are the connections whose value it did not see.
+_ssh_match_overrides() {
+    local judged="PasswordAuthentication PermitRootLogin PubkeyAuthentication PermitEmptyPasswords MaxAuthTries AllowUsers AllowGroups DenyUsers DenyGroups"
+    local row directive
+    for row in "${SSH_DIRECTIVE_CHECKS[@]}"; do
+        IFS='|' read -r _ directive _ <<< "$row"
+        judged+=" $directive"
+    done
+    local f
+    while IFS= read -r f; do
+        JUDGED="$judged" awk '
+            BEGIN { n = split(ENVIRON["JUDGED"], a, " "); for (i = 1; i <= n; i++) want[tolower(a[i])] = a[i] }
+            { line = $0; sub(/#.*/, "", line) }
+            match(line, /^[[:space:]]*[A-Za-z0-9]+/) {
+                kw = tolower(substr(line, RSTART, RLENGTH)); gsub(/[[:space:]]/, "", kw)
+                if (kw == "match") {
+                    crit = line
+                    sub(/^[[:space:]]*[A-Za-z]+[[:space:]=]*/, "", crit); sub(/[[:space:]]+$/, "", crit)
+                    inmatch = (tolower(crit) != "all")
+                    next
+                }
+                if (inmatch && (kw in want)) print want[kw] "\t" crit
+            }' "$f"
+    done < <(_ssh_config_files) | awk '!seen[$0]++'
+}
+
+# One finding for every Match override of a judged directive. Not scored: the
+# pass/fail verdicts above stand for ordinary users, and this says where they stop.
+_ssh_audit_match_overrides() {
+    local overrides list
+    overrides=$(_ssh_match_overrides)
+    [[ -n "$overrides" ]] || return 0
+    list=$(awk -F'\t' '{ printf "%s%s (Match %s)", (NR > 1 ? "; " : ""), $1, $2 }' <<< "$overrides")
+    check_emit "ssh.match_overrides" low failed \
+        desc="$(i18n 'ssh.match_overrides_desc' "list=$list")" \
+        suggestion="$(i18n 'ssh.match_overrides_suggestion')"
+    print_severity "low" "$(i18n 'ssh.match_overrides'): $list"
 }
 
 # Space-separated "cipher:x" / "mac:x" / "kex:x" for each weak algorithm sshd

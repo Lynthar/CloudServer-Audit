@@ -6,12 +6,10 @@
 # --- Nginx Paths ---
 
 NGINX_CONF_DIR="/etc/nginx"
-NGINX_SITES_AVAILABLE="${NGINX_CONF_DIR}/sites-available"
 NGINX_SITES_ENABLED="${NGINX_CONF_DIR}/sites-enabled"
-NGINX_CATCHALL_CONF="${NGINX_SITES_AVAILABLE}/99-catchall.conf"
-# The symlink under sites-enabled is what makes the catchall live; it used to
-# be spelled out at its two use sites instead of named here.
-NGINX_CATCHALL_LINK="${NGINX_SITES_ENABLED}/99-catchall.conf"
+# A regular file, never a link into sites-available: rollback deletes the files
+# a fix created but not links, and a link left pointing at nothing fails nginx -t.
+NGINX_CATCHALL_CONF="${NGINX_SITES_ENABLED}/99-catchall.conf"
 NGINX_SSL_DIR="${NGINX_CONF_DIR}/ssl"
 NGINX_CATCHALL_CERT="${NGINX_SSL_DIR}/default.crt"
 NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/default.key"
@@ -367,9 +365,9 @@ EOF
 _nginx_fix_add_catchall() {
     print_info "$(i18n 'nginx.creating_catchall')"
 
-    # Checked FIRST, before anything is written: a sites-available config
-    # nothing links to is never read, so every later step would succeed while
-    # the catchall is not live. Refuse, and print the include line instead.
+    # Checked FIRST, before anything is written: without it every later step
+    # would succeed while nothing reads the catchall. Refuse, and print the
+    # include line instead.
     if [[ ! -d "$NGINX_SITES_ENABLED" ]]; then
         print_error "$(i18n 'nginx.sites_enabled_missing' "dir=$NGINX_SITES_ENABLED")"
         print_info "$(i18n 'nginx.sites_enabled_hint' "dir=$NGINX_SITES_ENABLED")"
@@ -377,12 +375,11 @@ _nginx_fix_add_catchall() {
         return 1
     fi
 
-    # These decide what the validation-failure path may delete. -L, not -e,
-    # for the link: -e follows it and answers about the TARGET, so a dangling
-    # link reads as absent and would then be deleted.
-    local conf_existed=0 link_existed=0
+    # Decides what the validation-failure path may delete. A dangling link here
+    # (what an older version's rollback left) counts as absent: the write
+    # replaces it, and all it ever did was fail nginx -t.
+    local conf_existed=0
     [[ -e "$NGINX_CATCHALL_CONF" ]] && conf_existed=1
-    [[ -L "$NGINX_CATCHALL_LINK" || -e "$NGINX_CATCHALL_LINK" ]] && link_existed=1
 
     # UNCONDITIONAL: recording an absent path in .vpssec_created is the only
     # thing that lets a rollback delete what this fix creates, and on a first
@@ -399,17 +396,6 @@ _nginx_fix_add_catchall() {
         return 1
     fi
 
-    # The symlink is deliberately NOT registered for rollback: a created path
-    # that is a symlink counts as skipped and drags a complete rollback to
-    # "partial". Print and log the undo command instead.
-    if ! ln -sfn "$NGINX_CATCHALL_CONF" "$NGINX_CATCHALL_LINK" 2>/dev/null; then
-        print_error "$(i18n 'nginx.symlink_failed' "link=$NGINX_CATCHALL_LINK")"
-        return 1
-    fi
-    local revert="rm -f $NGINX_CATCHALL_LINK"
-    print_info "$(i18n 'nginx.symlink_revert_hint' "cmd=$revert")"
-    log_info "nginx.add_catchall revert command: $revert"
-
     # On failure, undo only what THIS invocation staged: deleting
     # unconditionally costs an operator their own pre-existing file. Anything
     # that pre-existed is left for `vpssec rollback`, which has the snapshot.
@@ -420,7 +406,6 @@ _nginx_fix_add_catchall() {
         # the COMMON outcome, and "configuration test failed" alone names
         # neither the file nor the line the operator must decide about.
         [[ -n "$test_output" ]] && print_info "$(i18n 'nginx.nginx_test_output' "msg=$test_output")"
-        (( link_existed )) || rm -f "$NGINX_CATCHALL_LINK"
         if (( conf_existed )); then
             print_warn "$(i18n 'nginx.catchall_conf_kept' "file=$NGINX_CATCHALL_CONF")"
         else

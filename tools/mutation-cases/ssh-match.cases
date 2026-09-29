@@ -1,0 +1,47 @@
+# Mutation cases: tests/test_ssh_match_overrides.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_match_overrides.bats
+
+# The check is no longer part of the audit.
+run_case "ssh-match/not-in-audit" 1 \
+    '    _ssh_audit_match_overrides' \
+    '    :'
+
+# A relative Include is resolved against the cwd, not the config's directory.
+run_case "ssh-match/relative-include-unresolved" 1 \
+    '            [[ "$pat" == /* ]] || pat="$base/$pat"' \
+    '            :'
+
+# Included files are listed but never read, so drop-ins go unseen.
+run_case "ssh-match/include-not-followed" 1 \
+    '                [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))' \
+    '                :'
+
+# The twelve table directives are left out of the judged set.
+run_case "ssh-match/table-directives-ignored" 1 \
+    '        judged+=" $directive"' \
+    '        :'
+
+# A commented-out directive inside a Match block is reported.
+run_case "ssh-match/comments-kept" 1 \
+    '            { line = $0; sub(/#.*/, "", line) }' \
+    '            { line = $0 }'
+
+# Keywords with digits (X11Forwarding) are cut short and never match.
+run_case "ssh-match/keyword-digits-dropped" 1 \
+    '            match(line, /^[[:space:]]*[A-Za-z0-9]+/) {' \
+    '            match(line, /^[[:space:]]*[A-Za-z]+/) {'
+
+# `Match all` no longer ends the override region.
+run_case "ssh-match/match-all-still-overrides" 1 \
+    '                    inmatch = (tolower(crit) != "all")' \
+    '                    inmatch = 1'
+
+# The same override named twice (one file included twice) is listed twice.
+run_case "ssh-match/duplicates-kept" 1 \
+    "    done < <(_ssh_config_files) | awk '!seen[\$0]++'" \
+    '    done < <(_ssh_config_files) | cat'
+
+# With nothing to report, a finding with an empty list is emitted anyway.
+run_case "ssh-match/empty-finding" 1 \
+    '    [[ -n "$overrides" ]] || return 0' \
+    '    :'

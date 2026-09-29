@@ -1,0 +1,46 @@
+# Plant: the stock default site moved out of sites-enabled. It already claims
+# default_server on :80, and the fix does not edit another site's config, so with
+# it in place nginx -t rejects the catchall by design.
+# Expect: nginx.no_catchall → nginx.add_catchall → nginx.catchall_exists.
+# Rollback deletes the catchall and the certificate and key it generated (rc 0),
+# and postrollback checks nginx still accepts its config — the audit cannot see
+# that, because it falls back to scanning files when nginx -T fails.
+TEST_DESC="no catchall: nginx.add_catchall converges; rollback removes it and nginx -t still passes"
+EXPECT_ID="nginx.no_catchall"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="nginx"
+FIX_ID="nginx.add_catchall"
+EXPECT_FIXED_ID="nginx.catchall_exists"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="nginx.no_catchall"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DEFAULT="/etc/nginx/sites-enabled/default"
+_SAVED="/tmp/vpssec-mutation-default-site"
+_CATCHALL="/etc/nginx/sites-enabled/99-catchall.conf"
+_SSL="/etc/nginx/ssl"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null \
+        && [[ -e "$_DEFAULT" ]] && [[ ! -e "$_CATCHALL" && ! -L "$_CATCHALL" ]] \
+        && [[ ! -e "$_SSL/default.crt" ]]
+}
+
+mutate() {
+    mv "$_DEFAULT" "$_SAVED" || return 1
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1
+}
+
+postrollback() {
+    nginx -t >/dev/null 2>&1
+}
+
+restore() {
+    rm -f "$_CATCHALL" "$_SSL/default.crt" "$_SSL/default.key"
+    rmdir "$_SSL" 2>/dev/null
+    [[ -e "$_SAVED" || -L "$_SAVED" ]] && mv "$_SAVED" "$_DEFAULT"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}
