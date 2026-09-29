@@ -29,9 +29,9 @@ _ssh_get_config() {
     local default="$2"
     local value=""
 
-    # sshd -T resolves Match, Include and every override rule. The -C spec
-    # is critical: without it Match is evaluated against the CURRENT user,
-    # so a `Match User root` override becomes the reported base value.
+    # -C applies the Match blocks an ordinary user gets (User *, Host *);
+    # without it sshd -T applies none. addr=none never matches Match Address,
+    # and a block naming one specific user is not applied either.
     if command -v sshd &>/dev/null; then
         local key_lower="${key,,}"
         value=$(sshd -T -C user=doesnotexist,host=none,addr=none 2>/dev/null \
@@ -107,6 +107,39 @@ _ssh_pubkey_enabled() {
 _ssh_empty_password_allowed() {
     local value=$(_ssh_get_config "PermitEmptyPasswords" "no")
     [[ "${value,,}" == "yes" ]]
+}
+
+_ssh_empty_password_denied() {
+    ! _ssh_empty_password_allowed
+}
+
+_ssh_password_auth_disabled() {
+    ! _ssh_password_auth_enabled
+}
+
+_ssh_root_login_disabled() {
+    ! _ssh_root_login_enabled
+}
+
+# Pass conditions of the MaxAuthTries (<= 4) and LoginGraceTime (1..60 s; 0 is
+# unlimited) checks. $1 is the value already read; omitted, sshd is asked.
+_ssh_max_auth_tries_ok() {
+    local v="${1-$(_ssh_get_config "MaxAuthTries" "6")}"
+    [[ "$v" =~ ^[0-9]+$ ]] && (( v <= 4 ))
+}
+
+_ssh_login_grace_time_ok() {
+    local v="${1-$(_ssh_get_config "LoginGraceTime" "120")}"
+    local seconds="$v"
+    if [[ "$v" =~ ^[0-9]+m$ ]]; then
+        seconds=$((${v%m} * 60))
+    elif [[ "$v" =~ ^[0-9]+h$ ]]; then
+        seconds=$((${v%h} * 3600))
+    elif [[ "$v" =~ ^[0-9]+s$ ]]; then
+        seconds="${v%s}"
+    fi
+    # The regex guard also stops a non-numeric value aborting under set -u.
+    [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 ))
 }
 
 # Non-root sudo users. Feeds the safety gate in disable_root_login, where an
@@ -476,7 +509,7 @@ _ssh_audit_empty_password() {
 _ssh_audit_max_auth_tries() {
     local max_auth=$(_ssh_get_config "MaxAuthTries" "6")
 
-    if [[ "$max_auth" -le 4 ]]; then
+    if _ssh_max_auth_tries_ok "$max_auth"; then
         check_emit "ssh.max_auth_tries_ok" low passed \
             desc="MaxAuthTries=$max_auth"
         print_ok "$(i18n 'ssh.max_auth_tries_ok') ($max_auth)"
@@ -492,20 +525,7 @@ _ssh_audit_max_auth_tries() {
 _ssh_audit_login_grace_time() {
     local grace_time=$(_ssh_get_config "LoginGraceTime" "120")
 
-    # Handle time suffixes (s, m, h)
-    local seconds="$grace_time"
-    if [[ "$grace_time" =~ ^[0-9]+m$ ]]; then
-        seconds=$((${grace_time%m} * 60))
-    elif [[ "$grace_time" =~ ^[0-9]+h$ ]]; then
-        seconds=$((${grace_time%h} * 3600))
-    elif [[ "$grace_time" =~ ^[0-9]+s$ ]]; then
-        seconds="${grace_time%s}"
-    fi
-
-    # 0 means UNLIMITED, which is a weakness, not a pass. The safe range is
-    # 1..60; everything else falls through to the too-long branch. The regex
-    # guard also stops a non-numeric value aborting the audit under set -u.
-    if [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 )); then
+    if _ssh_login_grace_time_ok "$grace_time"; then
         check_emit "ssh.login_grace_time_ok" low passed \
             desc="LoginGraceTime=$grace_time"
         print_ok "$(i18n 'ssh.login_grace_time_ok') ($grace_time)"
@@ -536,6 +556,33 @@ declare -ga SSH_DIRECTIVE_CHECKS=(
     "gateway_ports|GatewayPorts|no|=|no|ssh.gateway_ports_disabled|ssh.gateway_ports_enabled|-|-"
 )
 
+# A row's test on value $3: '=' compares with $2 case-insensitively, '<='
+# numerically (a non-number fails).
+_ssh_directive_test() {
+    local test="$1" expect="$2" val="$3"
+    case "$test" in
+        '=')  [[ "${val,,}" == "${expect,,}" ]] ;;
+        '<=') [[ "$val" =~ ^[0-9]+$ ]] && (( val <= expect )) ;;
+        *)    return 1 ;;
+    esac
+}
+
+# Pass condition of the row named $1, asking sshd for the value.
+_ssh_directive_ok() {
+    local row stem directive default test expect
+    for row in "${SSH_DIRECTIVE_CHECKS[@]}"; do
+        IFS='|' read -r stem directive default test expect _ <<< "$row"
+        [[ "$stem" == "$1" ]] || continue
+        _ssh_directive_test "$test" "$expect" "$(_ssh_get_config "$directive" "$default")"
+        return
+    done
+    return 1
+}
+
+_ssh_x11_forwarding_disabled() {
+    _ssh_directive_ok x11_forwarding
+}
+
 # One pass over SSH_DIRECTIVE_CHECKS: the terminal shows the value only for
 # the numeric checks, where the number is the finding.
 _ssh_audit_directives() {
@@ -545,10 +592,8 @@ _ssh_audit_directives() {
         print_item "$(i18n "ssh.check_${stem}")"
         val=$(_ssh_get_config "$directive" "$default")
         ok=0; shown=""
-        case "$test" in
-            '=')  [[ "${val,,}" == "${expect,,}" ]] && ok=1 ;;
-            '<=') shown=" ($val)"; [[ "$val" =~ ^[0-9]+$ ]] && (( val <= expect )) && ok=1 ;;
-        esac
+        [[ "$test" == '<=' ]] && shown=" ($val)"
+        _ssh_directive_test "$test" "$expect" "$val" && ok=1
         if (( ok )); then
             check_emit "$pass_id" low passed desc="${directive}=${val}"
             print_ok "$(i18n "$pass_id")$shown"
@@ -567,7 +612,9 @@ _ssh_audit_directives() {
     done
 }
 
-_ssh_audit_algorithms() {
+# Space-separated "cipher:x" / "mac:x" / "kex:x" for each weak algorithm sshd
+# offers; empty is the pass condition of the algorithms check.
+_ssh_weak_algorithms() {
     local issues=()
 
     # Check for weak ciphers using sshd -T
@@ -609,6 +656,17 @@ _ssh_audit_algorithms() {
             fi
         done
     fi
+
+    echo "${issues[*]}"
+}
+
+_ssh_algorithms_ok() {
+    [[ -z "$(_ssh_weak_algorithms)" ]]
+}
+
+_ssh_audit_algorithms() {
+    local issues=()
+    read -ra issues <<< "$(_ssh_weak_algorithms)"
 
     if [[ ${#issues[@]} -gt 0 ]]; then
         local issue_list=$(printf '%s ' "${issues[@]}")
@@ -935,19 +993,21 @@ _ssh_migrate_legacy_dropin() {
     fi
 }
 
-# Assert sshd's EFFECTIVE value via the fully-merged `sshd -T` — the real
-# guard against the precedence trap, where a wrong file order or a Match
-# override would otherwise read as success. Compared case-insensitively.
+# Assert the value the audit will read, through its own getter — the guard
+# against the precedence trap, where a wrong file order or a Match override
+# would otherwise read as success. Compared case-insensitively.
 _ssh_verify_effective() {
-    local key="${1,,}"
-    local expected="${2,,}"
-    # Capture then awk-over-herestring, not `sshd -T | awk ...exit`: the early
-    # awk exit SIGPIPEs sshd and, under pipefail+set -e in a subshell, would
-    # abort before returning (same trap as _ssh_effective_authorizedkeysfiles).
-    local sshd_dump effective
-    sshd_dump=$(sshd -T 2>/dev/null || true)
-    effective=$(awk -v k="$key" 'tolower($1)==k{print tolower($2); exit}' <<<"$sshd_dump")
-    [[ "$effective" == "$expected" ]]
+    local effective
+    effective=$(_ssh_get_config "$1" "")
+    [[ "${effective,,}" == "${2,,}" ]]
+}
+
+# The global value of $1 with no Match block applied (plain `sshd -T` applies
+# none). Only tells a Match override apart from a lost merge.
+_ssh_global_value() {
+    local dump
+    dump=$(sshd -T 2>/dev/null) || return 1
+    awk -v k="${1,,}" 'tolower($1)==k{sub(/^[^ ]+ /, ""); print; exit}' <<<"$dump"
 }
 
 # Write SSH hardening config
@@ -1047,7 +1107,13 @@ _ssh_reload_safe() {
             while [[ $# -ge 2 ]]; do
                 _k="$1"; _v="$2"; shift 2
                 if ! _ssh_verify_effective "$_k" "$_v"; then
-                    print_error "$(i18n 'ssh.effective_mismatch' "key=$_k" "value=$_v")"
+                    local _global
+                    _global=$(_ssh_global_value "$_k") || _global=""
+                    if [[ "${_global,,}" == "${_v,,}" ]]; then
+                        print_error "$(i18n 'ssh.effective_match_override' "key=$_k" "value=$_v")"
+                    else
+                        print_error "$(i18n 'ssh.effective_mismatch' "key=$_k" "value=$_v")"
+                    fi
                     _ssh_rollback_dropin
                     return 1
                 fi

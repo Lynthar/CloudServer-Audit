@@ -115,6 +115,11 @@ _baseline_selinux_get_status() {
     esac
 }
 
+# Pass condition of the SELinux check once SELinux is in use.
+_baseline_selinux_enforcing() {
+    [[ "$(_baseline_selinux_get_status)" == "enforcing" ]]
+}
+
 _baseline_selinux_get_config() {
     # Get configured mode from config file
     if [[ -f "$BASELINE_SELINUX_CONFIG" ]]; then
@@ -205,6 +210,11 @@ _baseline_get_unused_services() {
     done
 
     echo "${unused[*]}"
+}
+
+# Pass condition of the unused-services check.
+_baseline_no_unused_services() {
+    [[ -z "$(_baseline_get_unused_services)" ]]
 }
 
 # --- Baseline Audit ---
@@ -563,17 +573,10 @@ _baseline_fix_enable_apparmor() {
     fi
 
     # Neither status is decisive alone: a unit can be enabled and still refuse
-    # to start. The postcondition below is what the return value rests on.
+    # to start. FIX_VERIFY's _baseline_apparmor_enabled decides the outcome.
     systemctl enable apparmor || log_warn "systemctl enable apparmor failed"
     systemctl start apparmor || log_warn "systemctl start apparmor failed"
-
-    if _baseline_apparmor_enabled; then
-        print_ok "$(i18n 'baseline.apparmor_enabled_success')"
-        return 0
-    else
-        print_error "$(i18n 'baseline.apparmor_enable_failed')"
-        return 1
-    fi
+    return 0
 }
 
 _baseline_fix_disable_unused() {

@@ -8,7 +8,8 @@
 #   4. asserts the expected check_id appears with the expected status
 #   5. when the case names FIX_ID, runs `vpssec guide --fix=<id> --yes`
 #      through the real CLI, re-audits and asserts EXPECT_FIXED_ID has
-#      EXPECT_FIXED_STATUS ("absent" = the id must not appear at all)
+#      EXPECT_FIXED_STATUS ("absent" = the id must not appear at all),
+#      and that guide itself exited 0 on the host it converged
 #   6. then runs `vpssec rollback <that session>` (answering its
 #      confirmation on a pseudo-terminal), re-audits and asserts
 #      EXPECT_ROLLBACK_ID / EXPECT_ROLLBACK_STATUS and the rollback's
@@ -40,7 +41,7 @@ for arg in "$@"; do
     case "$arg" in
         -k|--filter) shift; PATTERN="${1:-}";;
         -h|--help)
-            sed -n 's/^# \?//;1,/^$/p' "$0"
+            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) PATTERN="$arg";;
@@ -240,8 +241,9 @@ run_case() {
 }
 
 # Stage 2 (fix → re-audit) and stage 3 (rollback → re-audit); returns 1 on the
-# first failed assertion. Every assertion reads the audit's verdict, never the
-# fix's exit status: a fix that returns 0 while the audit still flags the host is the defect.
+# first failed assertion. The audit's verdict decides convergence, and guide's
+# exit status must agree with it: a failure on a converged host is a FIX_VERIFY
+# predicate stricter than the check it stands in for.
 run_fix_and_rollback() {
     local case_name="$1"
 
@@ -267,6 +269,12 @@ run_fix_and_rollback() {
         echo "  $(color red '[FAIL]') after $FIX_ID: $EXPECT_FIXED_ID expected $EXPECT_FIXED_STATUS, got '$(report_check "$EXPECT_FIXED_ID")' (guide rc=$guide_rc)"
         tail -n 15 "$STAGE_LOG" | sed 's/^/         | /'
         results+=("FAIL  | $case_name | $FIX_ID did not converge: $EXPECT_FIXED_ID not $EXPECT_FIXED_STATUS")
+        return 1
+    fi
+    if (( guide_rc != 0 )); then
+        echo "  $(color red '[FAIL]') $EXPECT_FIXED_ID converged, but guide --fix=$FIX_ID exited $guide_rc"
+        tail -n 15 "$STAGE_LOG" | sed 's/^/         | /'
+        results+=("FAIL  | $case_name | converged, yet guide rc $guide_rc")
         return 1
     fi
 

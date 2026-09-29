@@ -84,11 +84,14 @@ run_case "apparmor/start-skipped-after-failed-enable" 1 \
     '    systemctl start apparmor || log_warn "systemctl start apparmor failed"' \
     '    systemctl enable apparmor && systemctl start apparmor || log_warn "failed"'
 
-# Occurrence 2, not 1: _baseline_apparmor_get_status opens with the same line
-# verbatim, and anchored at #1 this lands in that audit helper instead.
-run_case "apparmor/postcondition-removed" 2 \
-    '    if _baseline_apparmor_enabled; then' \
-    '    if true; then'
+# The predicate FIX_VERIFY asks (and the audit's status helper): aa-status says.
+run_case "apparmor/predicate-always-enabled" 1 \
+    '        aa-status --enabled 2>/dev/null' \
+    '        true'
+
+run_case "unused/predicate-always-clean" 1 \
+    '    [[ -z "$(_baseline_get_unused_services)" ]]' \
+    '    true'
 
 # ---- baseline.disable_unused -----------------------------------------
 

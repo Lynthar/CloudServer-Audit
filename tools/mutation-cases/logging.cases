@@ -15,17 +15,26 @@ run_case "journal/backup-guarded-again" 1 \
     '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \
     '    [[ -f "$JOURNALD_DROPIN" ]] && { backup_file "$JOURNALD_DROPIN" >/dev/null || return 1; }'
 
-run_case "journal/postcondition-removed" 2 \
-    '    if _logging_journald_persistent; then' \
+run_case "journal/dir-not-created" 1 \
+    '    if ! mkdir -p "$JOURNAL_DIR"; then' \
+    '    if false; then'
+
+run_case "journal/dir-failure-ignored" 1 \
+    '    if ! mkdir -p "$JOURNAL_DIR"; then' \
+    '    if ! mkdir -p "$JOURNAL_DIR" && false; then'
+
+# The rule the flush replaced: FIX_SAFE may not restart a service.
+run_case "journal/restart-reintroduced" 1 \
+    '    if journalctl --flush 2>/dev/null; then' \
+    '    if systemctl restart systemd-journald; then'
+
+run_case "journal/no-flush" 1 \
+    '    if journalctl --flush 2>/dev/null; then' \
     '    if true; then'
 
-run_case "journal/dir-not-created" 1 \
-    '    mkdir -p "$JOURNAL_DIR"' \
-    '    :'
-
-run_case "journal/no-restart" 1 \
-    '    systemctl restart systemd-journald' \
-    '    :'
+run_case "journal/unreachable-journald-fails-fix" 1 \
+    '        print_warn "$(i18n '"'"'logging.journald_flush_failed'"'"')"' \
+    '        return 1'
 
 run_case "rules/backup-skipped" 1 \
     '    backup_file "$AUDIT_RULES_FILE" >/dev/null || return 1' \
@@ -43,13 +52,18 @@ run_case "rules/pending-branch-removed" 1 \
     '    elif _logging_check_audit_rules; then' \
     '    elif false; then'
 
-run_case "auditd/postcondition-removed" 1 \
-    '    if systemctl is-active --quiet auditd; then' \
-    '    if true; then'
+# The predicate FIX_VERIFY asks after the fix; the audit asks it too.
+run_case "auditd/predicate-always-active" 1 \
+    '    systemctl is-active --quiet auditd' \
+    '    true'
 
 run_case "auditd/never-started" 1 \
-    '    systemctl start auditd' \
-    '    :'
+    '    if systemctl enable auditd && systemctl start auditd; then' \
+    '    if systemctl enable auditd; then'
+
+run_case "auditd/start-failure-swallowed" 1 \
+    '    if systemctl enable auditd && systemctl start auditd; then' \
+    '    if true; then'
 
 run_case "install/failure-swallowed" 1 \
     '    if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then' \

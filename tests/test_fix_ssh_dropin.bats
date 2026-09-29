@@ -7,6 +7,7 @@ load helpers.bash
 
 setup() {
     _vpssec_load
+    i18n_load en_US
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/ssh.sh"
 
@@ -27,12 +28,13 @@ setup() {
 }
 
 # One sshd stub for every invocation shape, driven by files so a test can change
-# its mind mid-run: sshd-t-f.rc is `sshd -t -f <file>` (drop-in alone), sshd-t.rc
-# is `sshd -t` (full merged context), sshd-T.out is what `sshd -T` prints.
+# its mind mid-run: sshd-t-f.rc is `sshd -t -f <file>`, sshd-t.rc `sshd -t`,
+# sshd-T.out what `sshd -T` prints, sshd-TC.out (if any) what `sshd -T -C` does.
 _stub_sshd() {
     _vpssec_stub_script sshd <<'SH'
 d="${VPSSEC_TEST_SSHD_DIR:-/nonexistent}"
 case "$*" in
+    *"-T -C"*) if [[ -f "$d/sshd-TC.out" ]]; then cat "$d/sshd-TC.out"; else cat "$d/sshd-T.out" 2>/dev/null; fi; exit 0 ;;
     *-T*)      cat "$d/sshd-T.out" 2>/dev/null; exit 0 ;;
     *"-t -f"*) exit "$(cat "$d/sshd-t-f.rc" 2>/dev/null || echo 0)" ;;
     *-t*)      exit "$(cat "$d/sshd-t.rc" 2>/dev/null || echo 0)" ;;
@@ -44,6 +46,8 @@ SH
 _sshd_dropin_check() { echo "$1" > "$BATS_TEST_TMPDIR/sshd-t-f.rc"; }
 _sshd_fullcontext_check() { echo "$1" > "$BATS_TEST_TMPDIR/sshd-t.rc"; }
 _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
+# What an ordinary user gets once Match blocks apply (sshd -T -C).
+_sshd_matched() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-TC.out"; }
 
 # ---- _ssh_write_hardening_config -------------------------------------
 
@@ -157,15 +161,29 @@ _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
     [ ! -e "$SSH_HARDENING_DROPIN" ]
 }
 
-@test "ssh reload: an unanswerable sshd -T fails closed" {
-    # No dump at all (sshd gone, or refusing to print). "Could not confirm"
-    # must not be read as "confirmed".
+@test "ssh reload: a Match block that overrides the new value fails and is named" {
+    # The global value took, but ordinary users still get `yes` from a Match
+    # block. The audit reads with -C and flags it, so the fix may not pass.
     _vpssec_begin_backup_session
     _ssh_write_hardening_config "PasswordAuthentication no"
-    _sshd_effective ""
+    _sshd_effective "passwordauthentication no"
+    _sshd_matched "passwordauthentication yes"
 
     run _ssh_reload_safe PasswordAuthentication no
     [ "$status" -eq 1 ]
+    [[ "$output" == *"Match block overrides it"* ]]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "ssh reload: a lost merge is not blamed on a Match block" {
+    _vpssec_begin_backup_session
+    _ssh_write_hardening_config "PasswordAuthentication no"
+    _sshd_effective "passwordauthentication yes"
+
+    run _ssh_reload_safe PasswordAuthentication no
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"read before vpssec's wins"* ]]
+    [[ "$output" != *"Match block"* ]]
 }
 
 @test "ssh reload: full-context validation failure rolls back" {
@@ -198,6 +216,14 @@ _sshd_effective() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-T.out"; }
 @test "ssh verify: a different value is a mismatch" {
     _sshd_effective "permitrootlogin yes"
     run _ssh_verify_effective PermitRootLogin no
+    [ "$status" -ne 0 ]
+}
+
+@test "ssh verify: reads what the audit reads, Match blocks applied" {
+    # Plain `sshd -T` applies no Match block; the audit's -C spec does.
+    _sshd_effective "passwordauthentication no"
+    _sshd_matched "passwordauthentication yes"
+    run _ssh_verify_effective PasswordAuthentication no
     [ "$status" -ne 0 ]
 }
 

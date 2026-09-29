@@ -1213,7 +1213,9 @@ mymodule_fix() {
 
 4. 在 `core/security_levels.sh` 给每个 `fix_id` 分类（`FIX_SAFE` /
    `FIX_CONFIRM` / `FIX_RISKY` / `FIX_ALERT_ONLY`），以及给每个
-   `check_id` 加 `CHECK_SCORE_CATEGORY` 条目。
+   `check_id` 加 `CHECK_SCORE_CATEGORY` 条目。`FIX_SAFE` 里的 fix
+   （`FIX_TEMPLATE_ONLY` 除外）还要在 `FIX_VERIFY` 登记审计判定通过的
+   那个函数，修复跑完由引擎再问一次；漏登记 `bats` 会报红。
 
 `module-contract` CI job 会验证每个 `VPSSEC_MODULE_ORDER` 里的名字
 都对应 `modules/<name>.sh`，并且导出了 `<name>_audit()` 和 `<name>_fix()`。

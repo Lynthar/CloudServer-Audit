@@ -82,6 +82,10 @@ _logging_check_audit_installed() {
     check_command auditd && check_command auditctl
 }
 
+_logging_auditd_active() {
+    systemctl is-active --quiet auditd
+}
+
 _logging_check_audit_rules() {
     if [[ -d "$AUDIT_RULES_D" ]]; then
         local rule_count=$(find "$AUDIT_RULES_D" -name "*.rules" -type f 2>/dev/null | wc -l)
@@ -198,7 +202,7 @@ _logging_audit_logrotate() {
 
 _logging_audit_auditd() {
     if _logging_check_audit_installed; then
-        if systemctl is-active --quiet auditd; then
+        if _logging_auditd_active; then
             if _logging_check_audit_rules; then
                 check_emit "logging.auditd_configured" low passed \
                     title="$(i18n 'logging.auditd_running')"
@@ -307,8 +311,12 @@ logging_fix() {
 _logging_fix_enable_persistent_journal() {
     print_info "$(i18n 'logging.enabling_persistent')"
 
-    # Create journal directory
-    mkdir -p "$JOURNAL_DIR"
+    # Under the default Storage=auto, this directory alone makes the journal
+    # persistent; the drop-in pins it for hosts that set something else.
+    if ! mkdir -p "$JOURNAL_DIR"; then
+        print_error "$(i18n 'logging.persistent_failed')"
+        return 1
+    fi
     systemd-tmpfiles --create --prefix "$JOURNAL_DIR"
 
     # backup_file is UNCONDITIONAL: it also records an absent path as
@@ -316,24 +324,26 @@ _logging_fix_enable_persistent_journal() {
     # drop-in. Never guard it on the file already existing.
     mkdir -p "$JOURNALD_CONF_D"
     backup_file "$JOURNALD_DROPIN" >/dev/null || return 1
-    write_file_atomic "$JOURNALD_DROPIN" '# vpssec journald configuration
+    if ! write_file_atomic "$JOURNALD_DROPIN" '# vpssec journald configuration
 [Journal]
 Storage=persistent
 Compress=yes
 SystemMaxUse=500M
 SystemMaxFileSize=50M
-MaxRetentionSec=1month'
-
-    # Restart journald
-    systemctl restart systemd-journald
-
-    if _logging_journald_persistent; then
-        print_ok "$(i18n 'logging.persistent_enabled')"
-        return 0
-    else
+MaxRetentionSec=1month'; then
         print_error "$(i18n 'logging.persistent_failed')"
         return 1
     fi
+
+    # Flush, never restart: a FIX_SAFE fix may not restart a service. The
+    # drop-in itself is read at journald's next start.
+    if journalctl --flush 2>/dev/null; then
+        print_ok "$(i18n 'logging.persistent_enabled')"
+    else
+        print_warn "$(i18n 'logging.journald_flush_failed')"
+    fi
+    print_info "$(i18n 'logging.journald_limits_next_start' "file=$JOURNALD_DROPIN")"
+    return 0
 }
 
 _logging_fix_setup_logrotate() {
@@ -395,16 +405,12 @@ _logging_fix_install_auditd() {
 _logging_fix_enable_auditd() {
     print_info "$(i18n 'logging.enabling_auditd')"
 
-    systemctl enable auditd
-    systemctl start auditd
-
-    if systemctl is-active --quiet auditd; then
+    if systemctl enable auditd && systemctl start auditd; then
         print_ok "$(i18n 'logging.auditd_service_enabled')"
         return 0
-    else
-        print_error "$(i18n 'logging.auditd_start_failed')"
-        return 1
     fi
+    print_error "$(i18n 'logging.auditd_start_failed')"
+    return 1
 }
 
 _logging_fix_setup_audit_rules() {

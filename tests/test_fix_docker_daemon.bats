@@ -95,7 +95,7 @@ SH
 # ---- the fix's postcondition ----------------------------------------
 
 _completed_fixes() {
-    jq -r '.completed_fixes[]?.fix_id // .completed_fixes[]? // empty' \
+    jq -r '.completed_fixes[]?.id // empty' \
         "$VPSSEC_STATE/ok.json" 2>/dev/null
 }
 

@@ -156,3 +156,17 @@ _assert_same() {
         [ -n "${CHECK_SCORE_CATEGORY[$fail_id]:-}" ]
     done
 }
+
+@test "ssh directives: each row's predicate agrees with the audit for the same value" {
+    # _ssh_directive_ok is what FIX_VERIFY asks after a fix; it must pass
+    # exactly where the loop emits the pass id.
+    local row stem directive pass_in fail_in rest
+    for row in "${SSH_GOLD[@]}"; do
+        IFS='|' read -r stem directive _ _ pass_in fail_in rest <<< "$row"
+        SSH_STUB[$directive]="$pass_in"
+        _ssh_directive_ok "$stem" || { echo "$stem: $pass_in should pass"; false; }
+        SSH_STUB[$directive]="$fail_in"
+        _vpssec_refute _ssh_directive_ok "$stem"
+    done
+    _vpssec_refute _ssh_directive_ok no_such_row
+}

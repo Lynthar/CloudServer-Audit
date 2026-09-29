@@ -1,0 +1,11 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/timezone.sh.
+# mutate-suite: modules/timezone.sh tests/test_fix_verify_predicates.bats
+
+# The ruling: enabled is enough. Demanding sync fails every fix run at once.
+run_case "ntp-enabled/requires-sync" 1 \
+    '    [[ "$ntp_status" != "unknown" ]]' \
+    '    [[ "$ntp_status" == "synced" ]]'
+
+run_case "configured/empty-timezone-passes" 1 \
+    '    [[ -n "$tz" ]]' \
+    '    true'

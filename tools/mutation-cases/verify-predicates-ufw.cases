@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_fix_verify_predicates.bats
+
+# Occurrence 2: #1 is _detect_firewall. Dropping the guard puts no_ssh_rule back
+# on every host whose UFW is installed but inactive.
+run_case "rule-checks/run-while-inactive" 2 \
+    '    if _ufw_enabled; then' \
+    '    if true; then'
+
+run_case "default-deny/reject-not-accepted" 1 \
+    '    [[ "${incoming,,}" == "deny" || "${incoming,,}" == "reject" ]]' \
+    '    [[ "${incoming,,}" == "deny" ]]'

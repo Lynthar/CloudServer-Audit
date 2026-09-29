@@ -21,7 +21,7 @@ _install_fake_fix() {
 }
 
 _completed_fixes() {
-    jq -r '.completed_fixes[]?.fix_id // .completed_fixes[]? // empty' \
+    jq -r '.completed_fixes[]?.id // empty' \
         "$VPSSEC_STATE/ok.json" 2>/dev/null
 }
 
@@ -66,15 +66,19 @@ _completed_fixes() {
 @test "an ordinary fix that succeeds IS still recorded as complete" {
     # The other direction. Without this, suppressing every completion record
     # would pass every test above.
+    # Every non-template fix has a FIX_VERIFY predicate; a passing stand-in
+    # replaces the module's so only the engine's own path is under test.
     _install_fake_fix ufw 0
-    run execute_fix ufw.allow_ssh true
+    _ufw_default_deny() { return 0; }
+    run execute_fix ufw.set_default_deny true
     [ "$status" -eq 0 ]
-    grep -q 'ufw.allow_ssh' <<<"$(_completed_fixes)"
+    grep -q 'ufw.set_default_deny' <<<"$(_completed_fixes)"
 }
 
 @test "an ordinary fix does not print a manual-step notice" {
     _install_fake_fix ufw 0
-    run execute_fix ufw.allow_ssh true
+    _ufw_default_deny() { return 0; }
+    run execute_fix ufw.set_default_deny true
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q 'does not resolve the finding' <<<"$output"
 }

@@ -66,6 +66,13 @@ _timezone_current() {
     printf '%s|%s\n' "$tz" "$src"
 }
 
+# Pass condition of the timezone check: some timezone is configured.
+_timezone_configured() {
+    local tz
+    IFS='|' read -r tz _ <<< "$(_timezone_current)"
+    [[ -n "$tz" ]]
+}
+
 # Check current timezone setting
 _timezone_check_current() {
     local current_tz=""
@@ -102,11 +109,11 @@ _timezone_check_current() {
     log_info "Timezone: $current_tz (source: $tz_source)"
 }
 
-# Check NTP synchronization
-_timezone_check_ntp() {
+# Echoes "<status> <service>". status: synced, active (running but no sync
+# query, openntpd), active_not_synced, or unknown when no NTP daemon runs.
+_timezone_ntp_state() {
     local ntp_status="unknown"
     local ntp_service=""
-    local is_synced=0
 
     # Check timedatectl for systemd-timesyncd
     if command -v timedatectl &>/dev/null; then
@@ -116,7 +123,6 @@ _timezone_check_ntp() {
         if [[ "$ntp_active" == "yes" ]]; then
             ntp_service="systemd-timesyncd"
             if [[ "$ntp_synced" == "yes" ]]; then
-                is_synced=1
                 ntp_status="synced"
             else
                 ntp_status="active_not_synced"
@@ -133,7 +139,6 @@ _timezone_check_ntp() {
         if chronyc tracking &>/dev/null; then
             local leap=$(chronyc tracking 2>/dev/null | grep -i "Leap status" | grep -i "Normal")
             if [[ -n "$leap" ]]; then
-                is_synced=1
                 ntp_status="synced"
             else
                 ntp_status="active_not_synced"
@@ -154,7 +159,6 @@ _timezone_check_ntp() {
           systemctl is-active ntpd &>/dev/null ); then
         ntp_service="ntpd"
         if ntpq -p &>/dev/null 2>&1; then
-            is_synced=1
             ntp_status="synced"
         else
             ntp_status="active_not_synced"
@@ -164,11 +168,26 @@ _timezone_check_ntp() {
     # Check for openntpd
     if [[ "$ntp_status" == "unknown" ]] && systemctl is-active openntpd &>/dev/null; then
         ntp_service="openntpd"
-        is_synced=1  # OpenNTPD doesn't have easy sync check
         ntp_status="active"
     fi
 
-    if [[ "$is_synced" == "1" ]]; then
+    echo "$ntp_status $ntp_service"
+}
+
+# Pass condition of timezone.enable_ntp: some NTP daemon is on. Synced is
+# NOT required — sync takes minutes, so a re-check right after would fail.
+_timezone_ntp_enabled() {
+    local ntp_status
+    read -r ntp_status _ <<<"$(_timezone_ntp_state)"
+    [[ "$ntp_status" != "unknown" ]]
+}
+
+# Check NTP synchronization
+_timezone_check_ntp() {
+    local ntp_status ntp_service
+    read -r ntp_status ntp_service <<<"$(_timezone_ntp_state)"
+
+    if [[ "$ntp_status" == "synced" || "$ntp_status" == "active" ]]; then
         check_emit "timezone.ntp_synced" low passed \
             title="$(i18n 'timezone.ntp_synced' "service=$ntp_service")"
         print_ok "$(i18n 'timezone.ntp_synced' "service=$ntp_service")"
@@ -188,15 +207,18 @@ _timezone_check_ntp() {
     log_info "NTP status: $ntp_status (service: $ntp_service)"
 }
 
+# Pass condition of the RTC check. Without timedatectl there is nothing to
+# ask and the audit reports nothing, so that passes too.
+_timezone_rtc_utc() {
+    command -v timedatectl &>/dev/null || return 0
+    [[ "$(timedatectl show --property=LocalRTC --value 2>/dev/null)" != "yes" ]]
+}
+
 # Check that the hardware clock is kept in UTC. Clock correctness itself is
 # covered locally by _timezone_check_ntp — do not add a network time probe;
 # a read-only audit should not phone a third-party endpoint.
 _timezone_check_drift() {
-    command -v timedatectl &>/dev/null || return 0
-
-    local rtc_in_local
-    rtc_in_local=$(timedatectl show --property=LocalRTC --value 2>/dev/null)
-    if [[ "$rtc_in_local" == "yes" ]]; then
+    if ! _timezone_rtc_utc; then
         # RTC in local time is generally not recommended for servers.
         check_emit "timezone.rtc_local" low failed \
             desc="$(i18n 'timezone.rtc_local_desc')" \
@@ -206,22 +228,28 @@ _timezone_check_drift() {
     fi
 }
 
-# Check locale settings
-_timezone_check_locale() {
+# The system LANG from localectl, else this process's LANG, else C.
+_timezone_current_locale() {
     local current_locale=""
-    local locale_ok=1
-
-    # Get current locale
     if command -v localectl &>/dev/null; then
         current_locale=$(localectl status 2>/dev/null | grep "System Locale" | sed 's/.*LANG=//' | cut -d' ' -f1)
     fi
+    echo "${current_locale:-${LANG:-C}}"
+}
 
-    if [[ -z "$current_locale" ]]; then
-        current_locale="${LANG:-C}"
-    fi
+# Pass condition of the locale check: anything but C / POSIX / empty.
+_timezone_locale_set() {
+    local current_locale
+    current_locale=$(_timezone_current_locale)
+    [[ "$current_locale" != "C" && "$current_locale" != "POSIX" && -n "$current_locale" ]]
+}
 
-    # Check if locale is set to something reasonable
-    if [[ "$current_locale" == "C" || "$current_locale" == "POSIX" || -z "$current_locale" ]]; then
+# Check locale settings
+_timezone_check_locale() {
+    local current_locale
+    current_locale=$(_timezone_current_locale)
+
+    if ! _timezone_locale_set; then
         check_emit "timezone.locale_not_set" low failed \
             desc="$(i18n 'timezone.locale_not_set_desc')" \
             suggestion="$(i18n 'timezone.fix_set_locale')" \
@@ -362,17 +390,8 @@ _timezone_fix_enable_ntp() {
     # Check if systemd-timesyncd is available
     if command -v timedatectl &>/dev/null; then
         if timedatectl set-ntp true; then
-            # Wait a moment for sync
-            sleep 2
-
-            local synced=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null)
-            if [[ "$synced" == "yes" ]]; then
-                print_ok "$(i18n 'timezone.ntp_enabled')"
-                return 0
-            else
-                print_ok "$(i18n 'timezone.ntp_enabled_waiting')"
-                return 0
-            fi
+            print_ok "$(i18n 'timezone.ntp_enabled')"
+            return 0
         fi
     fi
 
@@ -414,13 +433,8 @@ _timezone_fix_set_locale() {
     # NEVER override an already-valid locale: this fix is FIX_SAFE and is
     # offered on the passing check too, so forcing en_US.UTF-8 would silently
     # change the operator's language. Only a genuinely unset locale is set.
-    local current_locale=""
-    if command -v localectl &>/dev/null; then
-        current_locale=$(localectl status 2>/dev/null | grep "System Locale" | sed 's/.*LANG=//' | cut -d' ' -f1)
-    fi
-    [[ -z "$current_locale" ]] && current_locale="${LANG:-C}"
-    if [[ "$current_locale" != "C" && "$current_locale" != "POSIX" && -n "$current_locale" ]]; then
-        print_ok "$(i18n 'timezone.locale_already_set' "locale=$current_locale")"
+    if _timezone_locale_set; then
+        print_ok "$(i18n 'timezone.locale_already_set' "locale=$(_timezone_current_locale)")"
         return 0
     fi
 

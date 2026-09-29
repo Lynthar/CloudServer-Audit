@@ -65,6 +65,13 @@ _ufw_get_default_incoming() {
     LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(incoming\))'
 }
 
+# Pass condition of the default-policy check: incoming deny or reject. $1 is
+# the policy already read; omitted, ufw is asked.
+_ufw_default_deny() {
+    local incoming="${1-$(_ufw_get_default_incoming)}"
+    [[ "${incoming,,}" == "deny" || "${incoming,,}" == "reject" ]]
+}
+
 # Get UFW default outgoing policy
 _ufw_get_default_outgoing() {
     LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(outgoing\))'
@@ -296,12 +303,13 @@ ufw_audit() {
     print_item "$(i18n 'ufw.check_default_policy')"
     _ufw_audit_default_policy
 
-    # Check SSH rule
-    print_item "$(i18n 'ufw.check_ssh_rule')"
-    _ufw_audit_ssh_rule
-
-    # Check for permissive rules (only if UFW is enabled)
+    # Rule checks only while UFW is enabled: an inactive `ufw status` lists no
+    # rules at all. ufw.disabled carries that host, and ufw.enable allows every
+    # sshd port before it enables, so no rule finding is lost.
     if _ufw_enabled; then
+        print_item "$(i18n 'ufw.check_ssh_rule')"
+        _ufw_audit_ssh_rule
+
         print_item "$(i18n 'ufw.check_permissive_rules')"
         _ufw_audit_permissive_rules
 
@@ -397,7 +405,7 @@ _ufw_audit_enabled() {
 _ufw_audit_default_policy() {
     local incoming=$(_ufw_get_default_incoming)
 
-    if [[ "${incoming,,}" == "deny" || "${incoming,,}" == "reject" ]]; then
+    if _ufw_default_deny "$incoming"; then
         check_emit "ufw.default_deny" low passed \
             title="$(i18n 'ufw.default_incoming_deny')" \
             desc="$(i18n 'ufw.default_deny_desc' "incoming=$incoming")"

@@ -98,9 +98,9 @@ run_case "postcondition/failure-leaves-dropin-live" 2 \
     '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
     '        :'
 
-# Occurrence 4 of six: #1 audit, #2 enable_service's postcondition, #3
-# configure's reload branch, #4 the guard under test, #5/#6 the unban helpers.
-run_case "postcondition/rolls-back-even-when-service-down" 4 \
+# Occurrence 3 of five: #1 enable_service's postcondition, #2 configure's
+# reload branch, #3 the guard under test, #4/#5 the unban helpers.
+run_case "postcondition/rolls-back-even-when-service-down" 3 \
     '    if _f2b_service_active; then' \
     '    if true; then'
 
@@ -192,7 +192,7 @@ run_case "service/start-not-called" 1 \
     '    systemctl start fail2ban 2>/dev/null' \
     '    :'
 
-run_case "service/postcondition-always-succeeds" 2 \
+run_case "service/postcondition-always-succeeds" 1 \
     '    if _f2b_service_active; then' \
     '    if true; then'
 

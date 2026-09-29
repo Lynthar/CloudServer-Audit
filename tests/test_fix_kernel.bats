@@ -259,6 +259,28 @@ SH
     _dropin_has "net.ipv4.ip_forward" "0"
 }
 
+@test "harden_network: a param the ip_forward write resets is written back" {
+    # The kernel resets per-interface settings to host defaults when
+    # ip_forward changes; accept_redirects was fine before and 1 after.
+    _host_static_ipv6
+    _vpssec_stub_script sysctl <<SH
+store="$sysctl_store"
+case "\$1" in
+    -n) cat "\$store/\$2" 2>/dev/null ;;
+    -w) printf '%s\n' "\${2#*=}" > "\$store/\${2%%=*}"
+        [[ "\$2" == net.ipv4.ip_forward=* ]] && echo 1 > "\$store/net.ipv4.conf.all.accept_redirects" ;;
+esac
+exit 0
+SH
+    _sysctl_seed "net.ipv4.ip_forward" "1"
+    _sysctl_seed "net.ipv4.conf.all.accept_redirects" "0"
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    [ "$(cat "$sysctl_store/net.ipv4.conf.all.accept_redirects")" = "0" ]
+    _dropin_has "net.ipv4.conf.all.accept_redirects" "0"
+}
+
 @test "harden_network: loose rp_filter is preserved on a forwarding host" {
     # rp_filter=2 is the correct setting on a router; forcing it back to
     # strict mode drops asymmetric-return traffic. The audit already makes

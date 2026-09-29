@@ -332,6 +332,18 @@ _webapp_nginx_security_headers() {
     printf '%s\n' "${missing_headers[@]}"
 }
 
+# Pass conditions of the two checks above. The cache is dropped first: a
+# re-check after a fix must see the new config, not an audit-time dump.
+_webapp_nginx_server_tokens_ok() {
+    _WEBAPP_NGINX_DUMP_CACHED=0
+    [[ -z "$(_webapp_nginx_server_tokens)" ]]
+}
+
+_webapp_nginx_security_headers_ok() {
+    _WEBAPP_NGINX_DUMP_CACHED=0
+    [[ -z "$(_webapp_nginx_security_headers)" ]]
+}
+
 # HSTS must be an UNCOMMENTED add_header directive: a bare grep accepts the
 # commented template this module's own fix writes. Whether `always` is
 # present is surfaced too — without it the header is omitted on errors.

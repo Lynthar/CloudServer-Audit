@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against core/security_levels.sh.
+# mutate-suite: core/security_levels.sh tests/test_fix_verify_predicates.bats
+#
+# The FIX_VERIFY entries whose suite drives a host where the fix's own check and
+# the audit disagree; the other SAFE entries are pinned by the enumeration test.
+
+run_case "verify-map/f2b-enable-checks-active-only" 1 \
+    '    ["fail2ban.enable_service"]="_f2b_service_ready"' \
+    '    ["fail2ban.enable_service"]="_f2b_service_active"'
+
+run_case "verify-map/server-tokens-hollowed" 1 \
+    '    ["webapp.nginx_server_tokens"]="_webapp_nginx_server_tokens_ok"' \
+    '    ["webapp.nginx_server_tokens"]=""'

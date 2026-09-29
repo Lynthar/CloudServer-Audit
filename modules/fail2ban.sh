@@ -33,6 +33,11 @@ _f2b_service_enabled() {
     systemctl is-enabled --quiet fail2ban 2>/dev/null
 }
 
+# Running now AND at the next boot: the pass condition of _f2b_audit_service.
+_f2b_service_ready() {
+    _f2b_service_active && _f2b_service_enabled
+}
+
 # Detect the correct SSH auth log path
 # Returns: log path suitable for fail2ban
 _f2b_detect_ssh_logpath() {
@@ -124,6 +129,19 @@ _f2b_ssh_jail_enabled() {
     # Check if sshd jail is active
     fail2ban-client status sshd &>/dev/null || \
     fail2ban-client status ssh &>/dev/null
+}
+
+# Pass condition of fail2ban.maxretry_high: at most 5. $1 is the value already
+# read; omitted, fail2ban is asked. A non-numeric value is not judged.
+_f2b_maxretry_ok() {
+    local v="${1-$(_f2b_get_maxretry)}"
+    ! { [[ "$v" =~ ^[0-9]+$ ]] && (( v > 5 )); }
+}
+
+# Every check that offers configure_ssh_jail passes: the SSH jail is up with
+# maxretry at most 5, from configuration someone wrote (default_config).
+_f2b_ssh_jail_configured() {
+    _f2b_ssh_jail_enabled && _f2b_maxretry_ok && _f2b_has_custom_config
 }
 
 # Currently-active jails, whitespace-separated. Empty means the service is up
@@ -294,18 +312,16 @@ fail2ban_audit() {
 }
 
 _f2b_audit_service() {
-    if _f2b_service_active; then
-        if _f2b_service_enabled; then
-            check_emit "fail2ban.service_active" low passed \
-                desc="$(i18n 'fail2ban.service_active_desc')"
-            print_ok "$(i18n 'fail2ban.service_active')"
-        else
-            check_emit "fail2ban.service_not_enabled" low failed \
-                desc="$(i18n 'fail2ban.service_not_enabled_desc')" \
-                suggestion="$(i18n 'fail2ban.fix_enable')" \
-                fix="fail2ban.enable_service"
-            print_severity "low" "$(i18n 'fail2ban.service_not_enabled')"
-        fi
+    if _f2b_service_ready; then
+        check_emit "fail2ban.service_active" low passed \
+            desc="$(i18n 'fail2ban.service_active_desc')"
+        print_ok "$(i18n 'fail2ban.service_active')"
+    elif _f2b_service_active; then
+        check_emit "fail2ban.service_not_enabled" low failed \
+            desc="$(i18n 'fail2ban.service_not_enabled_desc')" \
+            suggestion="$(i18n 'fail2ban.fix_enable')" \
+            fix="fail2ban.enable_service"
+        print_severity "low" "$(i18n 'fail2ban.service_not_enabled')"
     else
         check_emit "fail2ban.service_inactive" low failed \
             desc="$(i18n 'fail2ban.service_inactive_desc')" \
@@ -355,9 +371,7 @@ _f2b_audit_ssh_jail() {
             desc="$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")"
         print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
 
-        # Guarded numerically first: a non-numeric token in `[[ -gt ]]` is
-        # read as a variable name and aborts the audit under set -u.
-        if [[ "$maxretry" =~ ^[0-9]+$ ]] && [[ "$maxretry" -gt 5 ]]; then
+        if ! _f2b_maxretry_ok "$maxretry"; then
             check_emit "fail2ban.maxretry_high" low failed \
                 desc="$(i18n 'fail2ban.maxretry_high_desc' "value=$maxretry")" \
                 suggestion="$(i18n 'fail2ban.maxretry_high_suggestion')" \

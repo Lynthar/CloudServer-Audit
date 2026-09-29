@@ -366,18 +366,12 @@ _cloudflared_fix_setup_service() {
     if cloudflared service install 2>/dev/null; then
         print_ok "$(i18n 'cloudflared.service_installed')"
 
-        # Enable and start
-        systemctl enable cloudflared
-        systemctl start cloudflared
-
-        if _cloudflared_service_active; then
-            print_ok "$(i18n 'cloudflared.service_now_active')"
+        if systemctl enable cloudflared && systemctl start cloudflared; then
             return 0
-        else
-            print_error "$(i18n 'cloudflared.service_start_failed')"
-            print_info "$(i18n 'cloudflared.check_logs')"
-            return 1
         fi
+        print_error "$(i18n 'cloudflared.service_start_failed')"
+        print_info "$(i18n 'cloudflared.check_logs')"
+        return 1
     else
         print_error "$(i18n 'cloudflared.service_install_failed')"
         return 1

@@ -56,9 +56,8 @@ declare -gA FIX_SAFE=(
     ["cloudflared.generate_config"]="true"
     ["cloudflared.setup_service"]="true"
     ["backup.generate_templates"]="true"
-    ["alerts.setup_config"]="true"
-    # No alerts.generate_templates: no check emits it as a fix_id. Template
-    # generation is a step inside alerts.setup_config.
+    # alerts.setup_config is CONFIRM: it asks for a webhook and an email on a
+    # tty. No alerts.generate_templates: no check emits it as a fix_id.
 
     # set_timezone stays CONFIRM: it prompts, and it is offered on passing
     # checks too, so auto-applying would stall a select-all run.
@@ -114,6 +113,8 @@ declare -gA FIX_CONFIRM=(
     # Interactive: prompts for a timezone, and is offered on hosts whose
     # timezone is already correct so the operator can change it on purpose.
     ["timezone.set_timezone"]="Prompts for a new system timezone; log timestamps and cron schedules shift with it"
+    # Interactive for the same reason: asks for a webhook URL and an email.
+    ["alerts.setup_config"]="Asks for a webhook URL and an email address, then writes the alert config and monitor scripts"
 
     # Modifies web server config
     ["nginx.add_catchall"]="Modifies Nginx configuration"
@@ -277,6 +278,55 @@ declare -gA FIX_VERIFY=(
     # no-new-privileges is satisfied by daemon.json alone.
     ["docker.enable_live_restore"]="_docker_check_live_restore"
     ["docker.enable_no_new_privileges"]="_docker_check_no_new_privileges"
+
+    # Every fix outside FIX_TEMPLATE_ONLY is here. The predicate is the pass
+    # condition of the audit function that offers the fix, never a copy of it.
+    ["fail2ban.install"]="_f2b_installed"
+    ["fail2ban.enable_service"]="_f2b_service_ready"
+    ["logging.enable_persistent_journal"]="_logging_journald_persistent"
+    ["logging.setup_logrotate"]="_logging_check_logrotate"
+    ["logging.install_auditd"]="_logging_check_audit_installed"
+    ["logging.enable_auditd"]="_logging_auditd_active"
+    ["logging.setup_audit_rules"]="_logging_check_audit_rules"
+    ["kernel.enable_aslr"]="_kernel_aslr_full"
+    ["kernel.disable_core_dump"]="_kernel_core_dump_restricted"
+    ["filesystem.fix_sensitive_perms"]="_fs_sensitive_perms_ok"
+    ["filesystem.fix_umask"]="_fs_umask_ok"
+    ["ssh.enable_pubkey"]="_ssh_pubkey_enabled"
+    ["ssh.disable_empty_password"]="_ssh_empty_password_denied"
+    ["ssh.set_max_auth_tries"]="_ssh_max_auth_tries_ok"
+    ["ssh.set_login_grace_time"]="_ssh_login_grace_time_ok"
+    ["ssh.disable_x11_forwarding"]="_ssh_x11_forwarding_disabled"
+    ["ufw.install"]="_ufw_installed"
+    ["ufw.allow_ssh"]="_ufw_ssh_allowed"
+    ["cloudflared.setup_service"]="_cloudflared_service_active"
+    # Enabled, not synced: sync takes minutes, a re-check runs at once.
+    ["timezone.enable_ntp"]="_timezone_ntp_enabled"
+    ["timezone.set_rtc_utc"]="_timezone_rtc_utc"
+    ["timezone.set_locale"]="_timezone_locale_set"
+    ["webapp.nginx_server_tokens"]="_webapp_nginx_server_tokens_ok"
+    ["webapp.nginx_security_headers"]="_webapp_nginx_security_headers_ok"
+
+    ["update.install_unattended"]="_update_unattended_enabled"
+    ["update.enable_unattended"]="_update_unattended_enabled"
+    # Reach, not the check: it applies security updates only, so the other
+    # pending ones keep update.updates_available open by design.
+    ["update.apply_security"]="_update_no_security_pending"
+    ["baseline.selinux_set_enforcing"]="_baseline_selinux_enforcing"
+    ["baseline.enable_apparmor"]="_baseline_apparmor_enabled"
+    ["baseline.disable_unused"]="_baseline_no_unused_services"
+    ["kernel.harden_network"]="_kernel_network_params_ok"
+    ["kernel.harden_kernel"]="_kernel_kernel_params_ok"
+    ["kernel.harden_ipv6"]="_kernel_ipv6_secure"
+    ["nginx.add_catchall"]="_nginx_has_catchall"
+    ["ssh.harden_algorithms"]="_ssh_algorithms_ok"
+    ["ssh.disable_password_auth"]="_ssh_password_auth_disabled"
+    ["ssh.disable_root_login"]="_ssh_root_login_disabled"
+    ["fail2ban.enable_ssh_jail"]="_f2b_ssh_jail_enabled"
+    ["fail2ban.configure_ssh_jail"]="_f2b_ssh_jail_configured"
+    ["timezone.set_timezone"]="_timezone_configured"
+    ["ufw.enable"]="_ufw_enabled"
+    ["ufw.set_default_deny"]="_ufw_default_deny"
 )
 
 # Same ${MAP[$key]:-} discipline as get_fix_safety below: under set -u a

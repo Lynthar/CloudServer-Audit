@@ -20,7 +20,7 @@ _install_fake_fix() {
 }
 
 _completed_fixes() {
-    jq -r '.completed_fixes[]?.fix_id // .completed_fixes[]? // empty' \
+    jq -r '.completed_fixes[]?.id // empty' \
         "$VPSSEC_STATE/ok.json" 2>/dev/null
 }
 
@@ -64,8 +64,10 @@ _completed_fixes() {
 }
 
 @test "an undeclared fix is untouched by the mechanism" {
+    # Every real non-template fix is declared now, so the test undeclares one.
     _install_fake_fix ufw 0
     _fake_verify_fail() { return 1; }
+    unset 'FIX_VERIFY[ufw.enable]'
     FIX_VERIFY["ufw.some_other_fix"]="_fake_verify_fail"
 
     run execute_fix ufw.enable true
@@ -80,4 +82,26 @@ _completed_fixes() {
 
     run execute_fix ufw.enable true
     [ "$status" -eq 1 ]
+}
+
+@test "every declared predicate is defined once its module is loaded" {
+    # The engine fails a fix whose predicate is missing, so a misspelt name
+    # would turn that fix into a permanent failure on every host.
+    local id fn module missing=""
+    local -A loaded=()
+    for id in "${!FIX_VERIFY[@]}"; do
+        module="${id%%.*}"
+        if [[ -z "${loaded[$module]:-}" ]]; then
+            # shellcheck source=/dev/null
+            source "$(_vpssec_repo_root)/modules/${module}.sh"
+            loaded[$module]=1
+        fi
+        fn="${FIX_VERIFY[$id]}"
+        declare -f "$fn" >/dev/null || missing+="$id=$fn "
+    done
+
+    if [[ -n "$missing" ]]; then
+        echo "FIX_VERIFY names an undefined function: $missing"
+        false
+    fi
 }

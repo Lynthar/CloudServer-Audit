@@ -1,0 +1,15 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/fail2ban.sh.
+# mutate-suite: modules/fail2ban.sh tests/test_fix_verify_predicates.bats
+
+run_case "service-ready/enabled-not-required" 1 \
+    '    _f2b_service_active && _f2b_service_enabled' \
+    '    _f2b_service_active'
+
+run_case "maxretry/bound-loosened" 1 \
+    '    ! { [[ "$v" =~ ^[0-9]+$ ]] && (( v > 5 )); }' \
+    '    ! { [[ "$v" =~ ^[0-9]+$ ]] && (( v > 10 )); }'
+
+# configure_ssh_jail also answers default_config: vpssec's own drop-in counts.
+run_case "configured/custom-config-not-required" 1 \
+    '    _f2b_ssh_jail_enabled && _f2b_maxretry_ok && _f2b_has_custom_config' \
+    '    _f2b_ssh_jail_enabled && _f2b_maxretry_ok'

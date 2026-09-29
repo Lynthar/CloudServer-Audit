@@ -256,6 +256,22 @@ _emitted_check_ids() {
     fi
 }
 
+@test "every fix that can resolve its finding declares a FIX_VERIFY predicate" {
+    # Without a predicate a fix's exit status is its own word, and guide
+    # records a completion the next audit may contradict.
+    local missing
+    missing=$(comm -23 \
+        <(comm -23 <({ _map_keys FIX_SAFE; _map_keys FIX_CONFIRM; _map_keys FIX_RISKY; } | sort -u) \
+                   <(_map_keys FIX_TEMPLATE_ONLY)) \
+        <(_map_keys FIX_VERIFY))
+
+    if [[ -n "$missing" ]]; then
+        echo "Fix with no FIX_VERIFY predicate:"
+        echo "  $missing"
+        false
+    fi
+}
+
 @test "FIX_VERIFY and FIX_TEMPLATE_ONLY are disjoint" {
     local overlap
     overlap=$(comm -12 <(_map_keys FIX_VERIFY | sort -u)                        <(_map_keys FIX_TEMPLATE_ONLY | sort -u))

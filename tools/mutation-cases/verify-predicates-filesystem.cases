@@ -1,0 +1,11 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/filesystem.sh.
+# mutate-suite: modules/filesystem.sh tests/test_fix_verify_predicates.bats
+
+# Under errexit the bare assignment stops the lister at the first wrong file.
+run_case "perm-issues/stops-at-first" 1 \
+    '    result=$(_fs_check_sensitive_file "$2" "$3") && return 0' \
+    '    result=$(_fs_check_sensitive_file "$2" "$3")'
+
+run_case "perm-issues/sudoers-dropin-demoted" 1 \
+    '        [[ -f "$_drop" ]] && _fs_sensitive_perm_issue high "$_drop" 440' \
+    '        [[ -f "$_drop" ]] && _fs_sensitive_perm_issue med "$_drop" 440'

@@ -1,0 +1,23 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_fix_verify_predicates.bats
+
+run_case "max-auth/bound-exclusive" 1 \
+    '    [[ "$v" =~ ^[0-9]+$ ]] && (( v <= 4 ))' \
+    '    [[ "$v" =~ ^[0-9]+$ ]] && (( v < 4 ))'
+
+run_case "max-auth/non-number-passes" 1 \
+    '    [[ "$v" =~ ^[0-9]+$ ]] && (( v <= 4 ))' \
+    '    (( v <= 4 ))'
+
+# 0 is unlimited.
+run_case "grace/zero-passes" 1 \
+    '    [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 ))' \
+    '    [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds <= 60 ))'
+
+run_case "grace/minutes-read-as-seconds" 1 \
+    '        seconds=$((${v%m} * 60))' \
+    '        seconds="${v%m}"'
+
+run_case "algorithms/predicate-always-clean" 1 \
+    '    [[ -z "$(_ssh_weak_algorithms)" ]]' \
+    '    true'

@@ -200,6 +200,11 @@ _kernel_check_aslr() {
     esac
 }
 
+# The pass condition of _kernel_audit_aslr.
+_kernel_aslr_full() {
+    [[ "$(_kernel_check_aslr)" == "full" ]]
+}
+
 # True when something here legitimately needs IP forwarding: container
 # runtimes, VM hosts, mesh-VPN subnet routers, Kubernetes nodes. Mesh VPNs
 # matter — they are the most common ip_forward=1 source on a cloud VPS.
@@ -295,9 +300,10 @@ _kernel_ipv6_check_security() {
 
     # 1. Check if IPv6 is enabled but not secured
     if _kernel_ipv6_enabled; then
-        # Check Router Advertisements (MITM vector)
+        # Router Advertisements are a MITM vector, except on an RA/SLAAC host
+        # where accept_ra=1 is what keeps the default route (as for net.*).
         local accept_ra=$(_kernel_get_sysctl "net.ipv6.conf.all.accept_ra")
-        if [[ "$accept_ra" == "1" ]]; then
+        if [[ "$accept_ra" == "1" ]] && ! _kernel_ipv6_uses_ra; then
             issues+=("accept_ra_enabled")
         fi
 
@@ -321,6 +327,25 @@ _kernel_ipv6_check_security() {
     fi
 
     echo "${issues[*]}"
+}
+
+# How many IPv6 issues pass: none on a host that uses IPv6, up to two on one
+# that has it enabled but idle. $1 is yes/no (in use), $2 the issue count.
+_kernel_ipv6_issues_ok() {
+    if [[ "$1" == "yes" ]]; then
+        (( $2 == 0 ))
+    else
+        (( $2 <= 2 ))
+    fi
+}
+
+# Pass condition of _kernel_audit_ipv6 (IPv6 disabled passes outright).
+_kernel_ipv6_secure() {
+    _kernel_ipv6_enabled || return 0
+    local in_use count
+    in_use=$(_kernel_ipv6_in_use && echo "yes" || echo "no")
+    count=$(wc -w <<< "$(_kernel_ipv6_check_security)")
+    _kernel_ipv6_issues_ok "$in_use" "$count"
 }
 
 # Check for dual-stack firewall consistency
@@ -391,6 +416,11 @@ _kernel_check_core_dump() {
     fi
 
     echo "${issues[*]}"
+}
+
+# The pass condition of _kernel_audit_core_dump: nothing left unrestricted.
+_kernel_core_dump_restricted() {
+    [[ -z "$(_kernel_check_core_dump)" ]]
 }
 
 # --- Kernel Audit ---
@@ -495,7 +525,7 @@ _kernel_audit_ipv6() {
         # IPv6 is actively used
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
-        if [[ "$issue_count" -gt 0 ]]; then
+        if ! _kernel_ipv6_issues_ok yes "$issue_count"; then
             check_emit "kernel.ipv6_insecure" low failed \
                 title="$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
                 desc="$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=$ipv6_issues")" \
@@ -511,7 +541,7 @@ _kernel_audit_ipv6() {
         # IPv6 enabled but not actively used
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
-        if [[ "$issue_count" -gt 2 ]]; then
+        if ! _kernel_ipv6_issues_ok no "$issue_count"; then
             check_emit "kernel.ipv6_unused_insecure" low failed \
                 desc="$(i18n 'kernel.ipv6_unused_insecure_desc')" \
                 suggestion="$(i18n 'kernel.ipv6_unused_insecure_suggestion')" \
@@ -579,33 +609,26 @@ _kernel_audit_aslr() {
     esac
 }
 
-_kernel_audit_network_params() {
-    local issues_high=()
-    local issues_medium=()
-    local issues_low=()
-    local passed=0
+# The two param scopes. The audits and the fixes both scan through these, so
+# a param is never audited in one scope and fixed in another.
+KERNEL_NET_SCOPE='^net\.'
+KERNEL_SYS_SCOPE='^(kernel\.|fs\.|dev\.)'
 
-    # On a SLAAC host accept_ra=1 / autoconf=1 are the CORRECT values, so
-    # skip them rather than raise a finding the fix must never act on.
-    local host_uses_ra=false
-    _kernel_ipv6_uses_ra && host_uses_ra=true
-
+# One line per KERNEL_SECURITY_PARAMS entry in scope $1 (a regex), after the
+# forwarding-host and RA-host exceptions: "ok - <param>", "bad <severity>
+# <param> <expected> <actual>", "na - <param>" (unreadable) or "ra - <param>".
+_kernel_param_scan() {
+    local scope="$1" entry param rest expected severity actual rc host_uses_ra=""
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
-        local param="${entry%%:*}"
-        local rest="${entry#*:}"
-        local expected="${rest%%:*}"
+        param="${entry%%:*}"
+        rest="${entry#*:}"
+        expected="${rest%%:*}"
         rest="${rest#*:}"
-        local severity="${rest%%:*}"
-        local desc="${rest#*:}"
+        severity="${rest%%:*}"
+        [[ "$param" =~ $scope ]] || continue
 
-        # Skip non-network params here
-        if [[ ! "$param" =~ ^net\. ]]; then
-            continue
-        fi
-
-        # Special handling for ip_forward
+        # IP forwarding is needed for Docker/LXC/Tailscale/WG/k3s/...
         if [[ "$param" == "net.ipv4.ip_forward" ]] && _kernel_ip_forward_needed; then
-            # IP forwarding is needed for Docker/LXC/Tailscale/WG/k3s/...
             continue
         fi
 
@@ -613,32 +636,67 @@ _kernel_audit_network_params() {
         # drops the asymmetric-return packets those workloads produce.
         # rp_filter=0 is still flagged: it permits spoofed source addresses.
         if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
-           && _kernel_ip_forward_needed; then
-            local rp_val
-            rp_val=$(_kernel_get_sysctl "$param" 2>/dev/null)
-            [[ "$rp_val" == "2" ]] && continue
-        fi
-
-        # On RA/SLAAC hosts the RA-dependent params are correct as-is.
-        if [[ "$host_uses_ra" == "true" ]] && _kernel_param_is_ra_dependent "$param"; then
+           && _kernel_ip_forward_needed \
+           && [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]]; then
             continue
         fi
 
-        local actual
-        actual=$(_kernel_check_param "$param" "$expected")
-        local result=$?
-
-        if [[ $result -eq 0 ]]; then
-            ((passed++))
-        elif [[ $result -eq 1 ]]; then
-            case "$severity" in
-                high)   issues_high+=("$param=$actual (expected $expected)") ;;
-                medium) issues_medium+=("$param=$actual") ;;
-                low)    issues_low+=("$param=$actual") ;;
-            esac
+        # On a SLAAC host accept_ra=1 / autoconf=1 are the CORRECT values:
+        # disabling them drops the IPv6 default route, so no fix may act on them.
+        if _kernel_param_is_ra_dependent "$param"; then
+            if [[ -z "$host_uses_ra" ]]; then
+                host_uses_ra=no
+                _kernel_ipv6_uses_ra && host_uses_ra=yes
+            fi
+            if [[ "$host_uses_ra" == "yes" ]]; then
+                echo "ra - $param"
+                continue
+            fi
         fi
-        # result=2 means parameter unavailable, skip
+
+        rc=0
+        actual=$(_kernel_check_param "$param" "$expected") || rc=$?
+        case "$rc" in
+            0) echo "ok - $param" ;;
+            1) echo "bad $severity $param $expected $actual" ;;
+            *) echo "na - $param" ;;
+        esac
     done
+    return 0
+}
+
+# Pass conditions of the two param checks. The network one also needs one
+# param read: reading none is network_params_unreadable, not a pass.
+_kernel_network_params_ok() {
+    local scan
+    scan=$(_kernel_param_scan "$KERNEL_NET_SCOPE")
+    ! grep -q '^bad ' <<<"$scan" && grep -q '^ok ' <<<"$scan"
+}
+
+_kernel_kernel_params_ok() {
+    ! grep -q '^bad ' <<<"$(_kernel_param_scan "$KERNEL_SYS_SCOPE")"
+}
+
+_kernel_audit_network_params() {
+    local issues_high=()
+    local issues_medium=()
+    local issues_low=()
+    local passed=0
+    local scan kind sev param expected actual
+
+    scan=$(_kernel_param_scan "$KERNEL_NET_SCOPE")
+    while read -r kind sev param expected actual; do
+        case "$kind" in
+            ok) passed=$((passed + 1)) ;;
+            bad)
+                case "$sev" in
+                    high)   issues_high+=("$param=$actual (expected $expected)") ;;
+                    medium) issues_medium+=("$param=$actual") ;;
+                    low)    issues_low+=("$param=$actual") ;;
+                esac
+                ;;
+        esac
+    done <<<"$scan"
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
@@ -691,6 +749,7 @@ _kernel_audit_kernel_params() {
     local issues_low=()
     local unavailable=()
     local passed=0
+    local scan kind sev param expected actual
 
     # Check if we're in a container
     local in_container=false
@@ -698,38 +757,21 @@ _kernel_audit_kernel_params() {
         in_container=true
     fi
 
-    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
-        local param="${entry%%:*}"
-        local rest="${entry#*:}"
-        local expected="${rest%%:*}"
-        rest="${rest#*:}"
-        local severity="${rest%%:*}"
-        local desc="${rest#*:}"
-
-        # kernel.* / fs.* / dev.* only. dev.* must stay in this list: the
-        # fix side routes on the same prefixes, and a mismatch means the
-        # param is audited but never fixed.
-        if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
-            continue
-        fi
-
-        local actual
-        actual=$(_kernel_check_param "$param" "$expected")
-        local result=$?
-
-        if [[ $result -eq 0 ]]; then
-            ((passed++))
-        elif [[ $result -eq 2 ]]; then
-            # Parameter unavailable (common in containers)
-            unavailable+=("$param")
-        elif [[ $result -eq 1 ]]; then
-            case "$severity" in
-                high)   issues_high+=("$param=$actual (expected $expected)") ;;
-                medium) issues_medium+=("$param=$actual") ;;
-                low)    issues_low+=("$param=$actual") ;;
-            esac
-        fi
-    done
+    # Unavailable params are common in containers; they are logged, not scored.
+    scan=$(_kernel_param_scan "$KERNEL_SYS_SCOPE")
+    while read -r kind sev param expected actual; do
+        case "$kind" in
+            ok) passed=$((passed + 1)) ;;
+            na) unavailable+=("$param") ;;
+            bad)
+                case "$sev" in
+                    high)   issues_high+=("$param=$actual (expected $expected)") ;;
+                    medium) issues_medium+=("$param=$actual") ;;
+                    low)    issues_low+=("$param=$actual") ;;
+                esac
+                ;;
+        esac
+    done <<<"$scan"
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
@@ -921,8 +963,7 @@ _kernel_fix_ipv6() {
 _kernel_fix_aslr() {
     print_info "$(i18n 'kernel.enabling_aslr')"
 
-    # Apply immediately (the audit-predicate postcondition below verifies
-    # the runtime value, so the write itself may be fire-and-forget).
+    # Fire-and-forget: FIX_VERIFY re-reads the runtime value afterwards.
     sysctl -w kernel.randomize_va_space=2 2>/dev/null || true
 
     # A failed persist is a failed fix: a runtime-only success reverts to
@@ -932,89 +973,48 @@ _kernel_fix_aslr() {
         return 1
     fi
     _kernel_reload_sysctl_dropin
-
-    if [[ "$(_kernel_check_aslr)" == "full" ]]; then
-        print_ok "$(i18n 'kernel.aslr_enabled')"
-        return 0
-    else
-        print_error "$(i18n 'kernel.aslr_enable_failed')"
-        return 1
-    fi
+    return 0
 }
 
 _kernel_fix_network_params() {
     print_info "$(i18n 'kernel.hardening_network')"
 
-    local params_to_set=()
+    # Exactly the params the audit flags: same scan, same exceptions. Two passes,
+    # because writing ip_forward resets every per-interface setting to its host
+    # default — a param that was fine before can be wrong after the first pass.
+    local params_to_set=() ra_skipped=false kind param expected setting value pass
+    local applied=0 apply_failed=0
+    for pass in 1 2; do
+        params_to_set=()
+        while read -r kind _ param expected _; do
+            case "$kind" in
+                bad) params_to_set+=("$param=${expected%%|*}") ;;
+                ra)  ra_skipped=true ;;
+            esac
+        done <<<"$(_kernel_param_scan "$KERNEL_NET_SCOPE")"
+        (( ${#params_to_set[@]} > 0 )) || break
 
-    # Same RA guard as _kernel_fix_ipv6: disabling accept_ra or autoconf on
-    # a SLAAC host drops IPv6 connectivity.
-    local host_uses_ra=false
-    _kernel_ipv6_uses_ra && host_uses_ra=true
-    local ra_skipped=false
-
-    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
-        local param="${entry%%:*}"
-        local rest="${entry#*:}"
-        local expected="${rest%%:*}"
-
-        # Only network params
-        if [[ ! "$param" =~ ^net\. ]]; then
-            continue
-        fi
-
-        # Special handling for ip_forward
-        if [[ "$param" == "net.ipv4.ip_forward" ]] && _kernel_ip_forward_needed; then
-            continue
-        fi
-
-        # Mirrors the audit's rp_filter exception. Without it, harden_network
-        # triggered for some other parameter breaks exactly the config the
-        # audit deliberately accepted.
-        if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
-           && _kernel_ip_forward_needed; then
-            local rp_val
-            rp_val=$(_kernel_get_sysctl "$param" 2>/dev/null)
-            [[ "$rp_val" == "2" ]] && continue
-        fi
-
-        # Skip RA-dependent params on SLAAC hosts (see top of function).
-        if [[ "$host_uses_ra" == "true" ]] && _kernel_param_is_ra_dependent "$param"; then
-            ra_skipped=true
-            continue
-        fi
-
-        local actual
-        actual=$(_kernel_check_param "$param" "$expected")
-        # `expected` may be a |-set (e.g. sysrq 0|176); set the canonical
-        # (first) value, never the literal "0|176".
-        if [[ $? -eq 1 ]]; then
-            params_to_set+=("$param=${expected%%|*}")
-        fi
+        # Counted, never assumed: fix bodies run with errexit off, so a bare
+        # failing write would fall through into "hardened N".
+        for setting in "${params_to_set[@]}"; do
+            param="${setting%%=*}"
+            value="${setting#*=}"
+            if sysctl -w "$param=$value" 2>/dev/null && \
+               _kernel_write_sysctl "$param" "$value"; then
+                ((applied++)) || true
+            else
+                ((apply_failed++)) || true
+            fi
+        done
+        (( apply_failed == 0 )) || break
     done
 
     [[ "$ra_skipped" == "true" ]] && print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
 
-    if [[ ${#params_to_set[@]} -eq 0 ]]; then
+    if (( applied == 0 && apply_failed == 0 )); then
         print_ok "$(i18n 'kernel.network_already_hardened')"
         return 0
     fi
-
-    # Count what actually landed. Fix bodies run with errexit off, so bare
-    # failing writes fall through and the summary below would report
-    # "hardened N" for writes that all bounced.
-    local applied=0 apply_failed=0
-    for setting in "${params_to_set[@]}"; do
-        local param="${setting%%=*}"
-        local value="${setting#*=}"
-
-        if sysctl -w "$param=$value" 2>/dev/null && \
-           _kernel_write_sysctl "$param" "$value"; then
-            ((applied++)) || true
-        else
-            ((apply_failed++)) || true
-        fi
-    done
 
     ((applied > 0)) && _kernel_reload_sysctl_dropin
 
@@ -1029,26 +1029,10 @@ _kernel_fix_network_params() {
 _kernel_fix_kernel_params() {
     print_info "$(i18n 'kernel.hardening_kernel')"
 
-    local params_to_set=()
-
-    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
-        local param="${entry%%:*}"
-        local rest="${entry#*:}"
-        local expected="${rest%%:*}"
-
-        # Must match the audit scope in _kernel_audit_kernel_params exactly,
-        # or a param is audited but silently skipped by the fix.
-        if [[ ! "$param" =~ ^(kernel\.|fs\.|dev\.) ]]; then
-            continue
-        fi
-
-        local actual
-        actual=$(_kernel_check_param "$param" "$expected")
-        # Set the canonical (first) value of a |-set (e.g. sysrq 0|176 → 0).
-        if [[ $? -eq 1 ]]; then
-            params_to_set+=("$param=${expected%%|*}")
-        fi
-    done
+    local params_to_set=() kind param expected
+    while read -r kind _ param expected _; do
+        [[ "$kind" == "bad" ]] && params_to_set+=("$param=${expected%%|*}")
+    done <<<"$(_kernel_param_scan "$KERNEL_SYS_SCOPE")"
 
     if [[ ${#params_to_set[@]} -eq 0 ]]; then
         print_ok "$(i18n 'kernel.kernel_already_hardened')"

@@ -6,8 +6,9 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/distro.sh core/state.sh
+    _vpssec_load core/distro.sh core/state.sh core/security_levels.sh core/engine.sh core/report.sh
     i18n_load en_US
+    state_init
     export TMPDIR="$BATS_TEST_TMPDIR"
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/update.sh"
@@ -197,11 +198,11 @@ SH
 }
 
 @test "enable: a host the audit still calls ineffective is not a success" {
-    # The postcondition is auto_update_status — the same question the audit
-    # asks, so the fix cannot report success on a finding that stays open.
+    # FIX_VERIFY asks auto_update_status — the same question the audit asks,
+    # so the fix cannot be recorded on a finding that stays open.
     _apt_config_periodic_off
 
-    run _update_fix_enable_unattended
+    run execute_fix update.enable_unattended true
     [ "$status" -eq 1 ]
 }
 
@@ -211,7 +212,7 @@ SH
 exit 0
 SH
 
-    run _update_fix_enable_unattended
+    run execute_fix update.enable_unattended true
     [ "$status" -eq 1 ]
 }
 
@@ -237,9 +238,18 @@ SH
 @test "install: a configure step that fails is propagated" {
     # install_unattended returns enable_unattended's status; a green install
     # with a red configure must not read as success.
-    _apt_config_periodic_off
+    : > "$etc/apt/notadir"
+    UPDATE_AUTO_UPGRADES_CONF="$etc/apt/notadir/20auto-upgrades"
 
     run _update_fix_install_unattended
+    [ "$status" -eq 1 ]
+}
+
+@test "install: a configure that did not take effect is not recorded" {
+    # It answers the same unattended check as enable, so the same predicate.
+    _apt_config_periodic_off
+
+    run execute_fix update.install_unattended true
     [ "$status" -eq 1 ]
 }
 
@@ -321,6 +331,27 @@ SH
     _apt_config_effective
     run _update_unattended_enabled
     [ "$status" -eq 0 ]
+}
+
+@test "predicate: apply_security is done once no security update is pending" {
+    # Its reach is security updates only; other pending ones stay reported.
+    pkg_security_update_count() { echo 3; }
+    run _update_no_security_pending
+    [ "$status" -eq 1 ]
+
+    pkg_security_update_count() { echo 0; }
+    run _update_no_security_pending
+    [ "$status" -eq 0 ]
+
+    # A negative count means the host has no security channel at all.
+    pkg_security_update_count() { echo -1; }
+    run _update_no_security_pending
+    [ "$status" -eq 0 ]
+
+    # A query that failed has not shown that nothing is pending.
+    pkg_security_update_count() { return 1; }
+    run _update_no_security_pending
+    [ "$status" -eq 1 ]
 }
 
 @test "predicate: installed-ness is also the audit's question" {

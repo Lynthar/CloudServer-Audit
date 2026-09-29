@@ -6,7 +6,9 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh core/report.sh
+    i18n_load en_US
+    state_init
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/logging.sh"
 
@@ -25,6 +27,7 @@ setup() {
     mkdir -p "$etc/systemd"
 
     _vpssec_stub systemd-tmpfiles
+    _journald_flushes
     _service_starts_cleanly
     _auditd_accepts_rules
 }
@@ -40,6 +43,23 @@ case "\$*" in
     *"start "*)     touch "$BATS_TEST_TMPDIR/svc-up" ;;
     *is-active*)    [[ -f "$BATS_TEST_TMPDIR/svc-up" ]] || exit 3 ;;
 esac
+exit 0
+SH
+}
+
+# journalctl --flush that notes whether the drop-in was already on disk when
+# journald was asked to move the runtime journal.
+_journald_flushes() {
+    _vpssec_stub_script journalctl <<SH
+[[ -f "$JOURNALD_DROPIN" ]] && touch "$BATS_TEST_TMPDIR/flushed-after-dropin"
+exit 0
+SH
+}
+
+# systemd refuses the start outright.
+_service_start_refused() {
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$*" == *"start "* ]] && exit 1
 exit 0
 SH
 }
@@ -124,13 +144,32 @@ _block_path_under() {
     grep -qxF "SystemMaxUse=42M" "${VPSSEC_BACKUP_SESSION}${JOURNALD_DROPIN}"
 }
 
-@test "journal: journald is restarted only after the drop-in is in place" {
-    # Restarting first would apply the old configuration and report success
-    # against a file the daemon has not read.
+@test "journal: journald is flushed after the drop-in is in place, never restarted" {
+    # FIX_SAFE may not restart a service; the flush moves the runtime journal
+    # to disk without one.
     run _logging_fix_enable_persistent_journal
     [ "$status" -eq 0 ]
-    _vpssec_stub_called systemctl 'restart systemd-journald'
-    [ -f "$JOURNALD_DROPIN" ]
+    [ -f "$BATS_TEST_TMPDIR/flushed-after-dropin" ]
+    _vpssec_refute _vpssec_stub_called systemctl 'restart'
+}
+
+@test "journal: a journal directory that cannot be created fails the fix" {
+    # The drop-in alone is read only at journald's next start; the directory
+    # is what makes the journal persistent now.
+    _block_path_under "$etc/blocked"
+    JOURNAL_DIR="$etc/blocked/journal"
+
+    run _logging_fix_enable_persistent_journal
+    [ "$status" -eq 1 ]
+}
+
+@test "journal: a journald that cannot be reached still leaves the fix done" {
+    # The directory and the drop-in are in place; the journal moves to disk at
+    # journald's next start, and the audit already reads the host as persistent.
+    _vpssec_stub journalctl 1
+
+    run execute_fix logging.enable_persistent_journal true
+    [ "$status" -eq 0 ]
 }
 
 @test "journal: failure is reported when nothing could be written" {
@@ -225,8 +264,17 @@ _block_path_under() {
     _vpssec_stub_called systemctl 'start auditd'
 }
 
-@test "enable auditd: a service that never comes up is reported as failure" {
+@test "enable auditd: a service that never comes up is not recorded complete" {
+    # systemctl answered 0 and the fix believed it; the audit asks is-active.
     _service_never_starts
+
+    run execute_fix logging.enable_auditd true
+    [ "$status" -eq 1 ]
+    _vpssec_refute grep -q 'logging.enable_auditd' "$VPSSEC_STATE/ok.json"
+}
+
+@test "enable auditd: a start systemd refuses fails the fix itself" {
+    _service_start_refused
 
     run _logging_fix_enable_auditd
     [ "$status" -eq 1 ]
@@ -266,7 +314,7 @@ _block_path_under() {
     # is what that check measures; the service has its own check and fix_id.
     # Failing here would mark a correctly installed package as a failed fix.
     _vpssec_stub apt-get
-    _service_never_starts
+    _service_start_refused
 
     run _logging_fix_install_auditd
     [ "$status" -eq 0 ]

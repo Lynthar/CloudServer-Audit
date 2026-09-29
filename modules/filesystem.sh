@@ -518,6 +518,16 @@ _fs_compute_effective_umask() {
     fi
 }
 
+# The umask the audit judges: login.defs UMASK after the USERGROUPS_ENAB rewrite.
+_fs_umask_effective() {
+    _fs_compute_effective_umask "$(_fs_check_umask)" "$(_fs_get_usergroups_enab)"
+}
+
+# The pass condition of _fs_audit_umask.
+_fs_umask_ok() {
+    _fs_umask_is_strict "$(_fs_umask_effective)"
+}
+
 # Is pam_umask enabled in /etc/pam.d/common-session*? It is what makes the
 # login.defs UMASK take effect at session start; without it only shell rc
 # files influence umask.
@@ -864,41 +874,43 @@ _fs_audit_no_owner() {
     fi
 }
 
-_fs_audit_sensitive_perms() {
-    # Two buckets, one finding each, so the score reflects real exposure:
-    # HIGH for direct priv-esc / credential-leak primitives (shadow, sudoers,
-    # SSH host keys), MEDIUM for read-only exposure (passwd, group, configs).
-    local high_issues=()
-    local med_issues=()
+# HIGH for direct priv-esc / credential-leak primitives (shadow, sudoers,
+# SSH host keys); every other sensitive file is MEDIUM (read-only exposure).
+_fs_is_critical_perm_path() {
+    case "$1" in
+        # The rotated backups hold the SAME hashes as the live files,
+        # so weak perms there are an equivalent leak primitive.
+        /etc/shadow|/etc/shadow-|/etc/gshadow|/etc/gshadow-|/etc/sudoers) return 0 ;;
+        /etc/sudoers.d/*) return 0 ;;
+        /etc/ssh/ssh_host_*_key) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
-    _fs_is_critical_perm_path() {
-        case "$1" in
-            # The rotated backups hold the SAME hashes as the live files,
-            # so weak perms there are an equivalent leak primitive.
-            /etc/shadow|/etc/shadow-|/etc/gshadow|/etc/gshadow-|/etc/sudoers) return 0 ;;
-            /etc/sudoers.d/*) return 0 ;;
-            /etc/ssh/ssh_host_*_key) return 0 ;;
-            *) return 1 ;;
-        esac
-    }
+# Prints "$1<TAB>problem" when file $2 fails expected mode $3. Always returns
+# 0, so a caller under errexit keeps going past the first bad file.
+_fs_sensitive_perm_issue() {
+    local result
+    result=$(_fs_check_sensitive_file "$2" "$3") && return 0
+    [[ -n "$result" ]] && printf '%s\t%s\n' "$1" "$result"
+    return 0
+}
 
+# One "high|med<TAB>problem" line per sensitive file whose mode or ownership
+# is wrong. Empty output is the audit's pass condition.
+_fs_sensitive_perm_issues() {
+    local file expected bucket
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
-        local expected="${FS_SENSITIVE_FILES[$file]}"
+        expected="${FS_SENSITIVE_FILES[$file]}"
         # RHEL ships host private keys as 640 root:ssh_keys, which is the
         # default rather than a slip. Accepted ONLY when the group really is
         # ssh_keys; 640 still forbids world bits. Debian and Arch keep 600.
         if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
             expected="640"
         fi
-        local result
-        result=$(_fs_check_sensitive_file "$file" "$expected")
-        if [[ -n "$result" ]]; then
-            if _fs_is_critical_perm_path "$file"; then
-                high_issues+=("$result")
-            else
-                med_issues+=("$result")
-            fi
-        fi
+        bucket=med
+        _fs_is_critical_perm_path "$file" && bucket=high
+        _fs_sensitive_perm_issue "$bucket" "$file" "$expected"
     done
 
     # Drop-in directories, expanded here because the static list cannot use
@@ -906,17 +918,28 @@ _fs_audit_sensitive_perms() {
     # privilege-escalation primitive — passes cleanly.
     local _drop
     for _drop in "$FS_SUDOERS_D"/*; do
-        [[ -f "$_drop" ]] || continue
-        local result
-        result=$(_fs_check_sensitive_file "$_drop" "440")
-        [[ -n "$result" ]] && high_issues+=("$result")
+        [[ -f "$_drop" ]] && _fs_sensitive_perm_issue high "$_drop" 440
     done
     for _drop in "$FS_SSHD_CONFIG_D"/*; do
-        [[ -f "$_drop" ]] || continue
-        local result
-        result=$(_fs_check_sensitive_file "$_drop" "644")
-        [[ -n "$result" ]] && med_issues+=("$result")
+        [[ -f "$_drop" ]] && _fs_sensitive_perm_issue med "$_drop" 644
     done
+    return 0
+}
+
+_fs_sensitive_perms_ok() {
+    [[ -z "$(_fs_sensitive_perm_issues)" ]]
+}
+
+_fs_audit_sensitive_perms() {
+    # Two buckets, one finding each, so the score reflects real exposure.
+    local high_issues=() med_issues=() issues bucket result
+    issues=$(_fs_sensitive_perm_issues)
+    while IFS=$'\t' read -r bucket result; do
+        case "$bucket" in
+            high) high_issues+=("$result") ;;
+            med)  med_issues+=("$result") ;;
+        esac
+    done <<<"$issues"
 
     local total=$(( ${#high_issues[@]} + ${#med_issues[@]} ))
 
@@ -971,7 +994,7 @@ _fs_audit_umask() {
     local configured usergroups effective
     configured=$(_fs_check_umask)
     usergroups=$(_fs_get_usergroups_enab)
-    effective=$(_fs_compute_effective_umask "$configured" "$usergroups")
+    effective=$(_fs_umask_effective)
 
     local pam_umask_on=0
     _fs_check_pam_umask_enabled && pam_umask_on=1
@@ -1223,7 +1246,7 @@ _fs_fix_umask() {
     # next audit re-flags.
     local usergroups effective
     usergroups=$(_fs_get_usergroups_enab)
-    effective=$(_fs_compute_effective_umask "$(_fs_check_umask)" "$usergroups")
+    effective=$(_fs_umask_effective)
     if ! _fs_umask_is_strict "$effective"; then
         print_error "$(i18n 'filesystem.umask_not_effective' "value=$effective")"
         return 1

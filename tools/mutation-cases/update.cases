@@ -87,11 +87,19 @@ run_case "service/timer-not-enabled" 1 \
     '    systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true' \
     '    :'
 
-# ---- postconditions --------------------------------------------------
+# ---- postconditions (FIX_VERIFY asks these; the fixes no longer do) --
 
-run_case "postcondition/enable-removed" 1 \
-    '    if _update_unattended_enabled; then' \
-    '    if true; then'
+run_case "predicate/always-enabled" 1 \
+    '    [[ "$(auto_update_status)" == "ok" ]]' \
+    '    true'
+
+run_case "predicate/security-zero-still-pending" 1 \
+    '    (( n <= 0 ))' \
+    '    (( n < 0 ))'
+
+run_case "predicate/failed-query-reads-none-pending" 1 \
+    '    n=$(pkg_security_update_count) || return 1' \
+    '    n=$(pkg_security_update_count) || return 0'
 
 run_case "postcondition/install-status-discarded" 1 \
     '        return $?' \

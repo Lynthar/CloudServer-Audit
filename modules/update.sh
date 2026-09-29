@@ -30,6 +30,14 @@ _update_unattended_enabled() {
     [[ "$(auto_update_status)" == "ok" ]]
 }
 
+# No security update pending (a negative count means no security channel).
+# A failed query is not "none pending".
+_update_no_security_pending() {
+    local n
+    n=$(pkg_security_update_count) || return 1
+    (( n <= 0 ))
+}
+
 # Pure-data variant for tests. 0 when needrestart reports a pending kernel
 # reboot: NEEDRESTART-KSTA in {2,3}. 2 is included on purpose — an
 # ABI-compatible kernel still needs a reboot to actually run.
@@ -402,15 +410,12 @@ Unattended-Upgrade::SyslogEnable \"true\";"; then
 
     # The TIMER is what runs unattended-upgrade on a schedule; the service
     # only flushes at shutdown, so enabling it alone hides a masked timer.
+    # Whether all of this took effect is FIX_VERIFY's question
+    # (_update_unattended_enabled), the one the audit asks.
     systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true
     systemctl enable unattended-upgrades 2>/dev/null || true
     systemctl start unattended-upgrades 2>/dev/null || true
 
-    if _update_unattended_enabled; then
-        print_ok "$(i18n 'update.unattended_configured')"
-        return 0
-    else
-        print_error "$(i18n 'update.unattended_enable_failed')"
-        return 1
-    fi
+    print_ok "$(i18n 'update.unattended_configured')"
+    return 0
 }

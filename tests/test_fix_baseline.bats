@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh core/report.sh
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/baseline.sh"
 
@@ -15,6 +15,7 @@ setup() {
     # or not the key exists. en_US makes them read the real strings.
     i18n_load en_US
 
+    state_init
     etc=$(_vpssec_fake_etc)
     export TMPDIR="$BATS_TEST_TMPDIR"
 
@@ -262,13 +263,13 @@ SH
     _vpssec_refute _vpssec_stub_called apt-get
 }
 
-@test "apparmor: a service that comes up disabled is reported as failure" {
+@test "apparmor: a service that comes up disabled is not recorded" {
     # aa-status is present (so the install is skipped) but --enabled says no:
-    # a kernel without AppArmor support. The postcondition is the only thing
-    # that catches this, since enable/start both succeeded.
+    # a kernel without AppArmor support. Only FIX_VERIFY catches this, since
+    # enable/start both succeeded.
     _vpssec_stub aa-status 1
 
-    run _baseline_fix_enable_apparmor
+    run execute_fix baseline.enable_apparmor true
     [ "$status" -eq 1 ]
 }
 
@@ -329,6 +330,14 @@ SH
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called systemctl 'disable'
     _vpssec_refute _vpssec_stub_called systemctl 'stop'
+}
+
+@test "unused services: the predicate passes only once none is left enabled" {
+    _systemctl_units none cups
+    _vpssec_refute _baseline_no_unused_services
+
+    _systemctl_units none
+    _baseline_no_unused_services
 }
 
 @test "unused services: a failed disable still stops the running service" {

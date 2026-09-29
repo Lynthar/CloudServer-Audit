@@ -1,0 +1,20 @@
+# Mutation cases: tests/test_fix_verify_predicates.bats against modules/kernel.sh.
+# mutate-suite: modules/kernel.sh tests/test_fix_verify_predicates.bats
+
+# The 2026-09-28 ruling: on an RA host accept_ra=1 is not an IPv6 issue.
+run_case "ipv6/ra-host-accept-ra-flagged" 1 \
+    '        if [[ "$accept_ra" == "1" ]] && ! _kernel_ipv6_uses_ra; then' \
+    '        if [[ "$accept_ra" == "1" ]]; then'
+
+run_case "ipv6/idle-threshold-loosened" 1 \
+    '        (( $2 <= 2 ))' \
+    '        (( $2 <= 3 ))'
+
+# Reading nothing is network_params_unreadable, not a pass.
+run_case "network-ok/nothing-read-passes" 1 \
+    '    ! grep -q '"'"'^bad '"'"' <<<"$scan" && grep -q '"'"'^ok '"'"' <<<"$scan"' \
+    '    ! grep -q '"'"'^bad '"'"' <<<"$scan"'
+
+run_case "scan/bad-read-as-ok" 1 \
+    '            1) echo "bad $severity $param $expected $actual" ;;' \
+    '            1) echo "ok - $param" ;;'
