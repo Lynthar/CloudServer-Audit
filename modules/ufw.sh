@@ -17,47 +17,6 @@ _ufw_enabled() {
     LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"
 }
 
-# Does iptables have rules beyond the defaults?
-# `|| true`, never `|| echo 0`: grep -c already prints 0 on no matches, so
-# the fallback would append a second one and break the arithmetic below.
-_iptables_has_rules() {
-    local rule_count
-    rule_count=$(iptables -L -n 2>/dev/null | grep -cE "^(ACCEPT|DROP|REJECT)" || true)
-    [[ "${rule_count:-0}" -gt 3 ]]  # More than default policy rules
-}
-
-# Check if nftables is active
-_nftables_active() {
-    if check_command nft; then
-        local table_count
-        table_count=$(nft list tables 2>/dev/null | wc -l || true)
-        [[ "${table_count:-0}" -gt 0 ]]
-    else
-        return 1
-    fi
-}
-
-# Check if firewalld is running
-_firewalld_active() {
-    systemctl is-active --quiet firewalld 2>/dev/null
-}
-
-# Detect active firewall type
-# Returns: ufw, iptables, nftables, firewalld, or none
-_detect_firewall() {
-    if _ufw_enabled; then
-        echo "ufw"
-    elif _firewalld_active; then
-        echo "firewalld"
-    elif _nftables_active; then
-        echo "nftables"
-    elif _iptables_has_rules; then
-        echo "iptables"
-    else
-        echo "none"
-    fi
-}
-
 # UFW default incoming/outgoing policy. The verbose line reads
 # "Default: deny (incoming), ...", so the policy word PRECEDES the paren —
 # parse backwards from "(incoming)". LC_ALL=C: ufw translates "Default:".
@@ -206,11 +165,7 @@ ufw_audit() {
     # First, detect what firewall is active
     print_item "$(i18n 'ufw.check_firewall_status')"
     local active_fw
-    if declare -f fw_backend >/dev/null 2>&1; then
-        active_fw=$(fw_backend) || active_fw="unknown"
-    else
-        active_fw=$(_detect_firewall)
-    fi
+    active_fw=$(fw_backend) || active_fw="unknown"
 
     case "$active_fw" in
         ufw)

@@ -300,3 +300,19 @@ SH
     [ "$status" -eq 0 ]
     _vpssec_stub_called systemctl 'reload fail2ban'
 }
+
+@test "a declined rollback exits 0 and restores nothing (deprecated: 1 at the next major)" {
+    # docs/compatibility.md promises 0 here until the next MAJOR release; this
+    # pins it so the change to 1 happens there, on purpose, not by accident.
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    backup_list() { echo 20260501_120000; }
+    backup_list_contents() { :; }
+    confirm_critical() { return 1; }
+    backup_restore() { : > "$BATS_TEST_TMPDIR/restored"; return 0; }
+
+    run rollback_mode 20260501_120000
+    [ "$status" -eq 0 ]
+    [ ! -f "$BATS_TEST_TMPDIR/restored" ]
+}
+

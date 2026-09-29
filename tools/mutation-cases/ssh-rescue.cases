@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_ssh_rescue_port.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_rescue_port.bats
+
+# A failed firewall query is read as "no firewall" again, silently.
+run_case "ssh-rescue/unknown-read-as-none" 1 \
+    '    backend=$(fw_backend 2>/dev/null) || backend="unknown"' \
+    '    backend=$(fw_backend 2>/dev/null) || backend="none"'
+
+# The unknown state is recognised but not said.
+run_case "ssh-rescue/unknown-silent" 1 \
+    "            print_warn \"\$(i18n 'ssh.rescue_fw_unknown' \"port=\$SSH_RESCUE_PORT\")\"" \
+    '            :'

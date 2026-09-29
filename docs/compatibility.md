@@ -34,6 +34,12 @@ are not part of the contract.
 Never "fix" a red CI by mapping 3 or 4 back to 0: they exist so that an
 incomplete scan or an unsupported capability cannot read as success.
 
+**Deprecated, changes in the next MAJOR release:** a `rollback` declined at its
+confirmation prompt, or unable to read one because there is no terminal, exits 0
+today; it will exit 1, the same code as "nothing restored", so automation can
+tell a restore from no restore. `guide` cancelled at its fix selection for the
+same reasons will likewise exit 1 instead of 0.
+
 ## Reports
 
 - **`reports/summary.json`** is the machine interface. The top-level shape —

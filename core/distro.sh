@@ -540,6 +540,11 @@ _fw_nft_input_filters() {
     ' <<<"$ruleset"
 }
 
+# firewalld's own CLI ships with it; a seam of its own so tests decide it.
+_fw_firewalld_installed() {
+    command -v firewall-cmd >/dev/null 2>&1
+}
+
 # Active firewall backend: ufw|firewalld|nftables|iptables|none, first match in
 # that order. "none" needs every installed tool to have answered: when a query
 # fails and no backend was found, returns 1 and prints nothing.
@@ -556,8 +561,14 @@ fw_backend() {
             failed=1
         fi
     fi
-    if systemctl is-active --quiet firewalld 2>/dev/null; then
-        echo "firewalld"; return 0
+    # is-active exits 3 for inactive, failed or absent units (4 per LSB): a
+    # plain "no". Any other failure is a query that failed, which counts only
+    # where firewalld is installed; elsewhere it would flag every container.
+    local fwd_rc=0
+    systemctl is-active --quiet firewalld 2>/dev/null || fwd_rc=$?
+    (( fwd_rc == 0 )) && { echo "firewalld"; return 0; }
+    if (( fwd_rc != 3 && fwd_rc != 4 )) && _fw_firewalld_installed; then
+        failed=1
     fi
     if command -v nft >/dev/null 2>&1; then
         if out=$(nft list tables 2>/dev/null); then

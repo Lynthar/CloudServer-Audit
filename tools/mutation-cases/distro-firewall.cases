@@ -55,3 +55,19 @@ run_case "firewall/real-rule-ignored" 1 \
 run_case "firewall/listing-failure-unfiltered" 1 \
     '    ruleset=$(nft list ruleset 2>/dev/null) || return 0' \
     '    ruleset=$(nft list ruleset 2>/dev/null) || return 1'
+
+# firewalld installed but unqueryable is read as not running: an error answers
+# the question. (The `failed=1` indexes above count only the 12-space probes.)
+run_case "firewall/firewalld-failure-ignored" 1 \
+    '    if (( fwd_rc != 3 && fwd_rc != 4 )) && _fw_firewalld_installed; then' \
+    '    if false; then'
+
+# Every host whose systemctl cannot answer — containers too — becomes unknown.
+run_case "firewall/firewalld-absent-flagged" 1 \
+    '    if (( fwd_rc != 3 && fwd_rc != 4 )) && _fw_firewalld_installed; then' \
+    '    if (( fwd_rc != 3 && fwd_rc != 4 )); then'
+
+# A plain "not running" (exit 3) on a firewalld host is read as a failed query.
+run_case "firewall/firewalld-inactive-flagged" 1 \
+    '    if (( fwd_rc != 3 && fwd_rc != 4 )) && _fw_firewalld_installed; then' \
+    '    if _fw_firewalld_installed; then'

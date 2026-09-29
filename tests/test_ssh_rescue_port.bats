@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# Tests for the rescue-port SELECTION logic in modules/ssh.sh; the daemon spawn,
-# firewall and pid verification need a real host. _ssh_pick_rescue_port must
-# never hand back the live SSH port or an already-listening one.
+# Rescue-port selection and the firewall decision in modules/ssh.sh; the daemon
+# spawn and pid verification need a real host. The port must never be the live
+# SSH port or a listening one, and an unknown firewall state must be said.
 
 load helpers
 
@@ -76,4 +76,44 @@ setup() {
 @test "rescue cidr: junk rejected" {
     _vpssec_refute _ssh_valid_cidr "not-a-cidr"
     _vpssec_refute _ssh_valid_cidr "999.1.1.1/24"
+}
+
+# ---- the firewall decision --------------------------------------------------
+
+_rescue_fw_with() {
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    SSH_RESCUE_PORT=2222
+    SSH_RESCUE_FW_RULE=""
+    get_current_ssh_ip() { echo ""; }
+    FW_ANSWER="$1"
+    fw_backend() { [[ "$FW_ANSWER" == unknown ]] && return 1; echo "$FW_ANSWER"; }
+    _vpssec_stub ufw 0
+}
+
+@test "rescue firewall: an unknown firewall state is said, not treated as none" {
+    _rescue_fw_with unknown
+
+    run _ssh_rescue_allow_firewall
+    [ "$status" -eq 0 ]
+    grep -q 'Could not determine the firewall state' <<<"$output"
+    _vpssec_refute grep -q 'Firewall is active' <<<"$output"
+    _vpssec_refute _vpssec_stub_called ufw
+}
+
+@test "rescue firewall: no firewall adds nothing and says nothing" {
+    _rescue_fw_with none
+
+    run _ssh_rescue_allow_firewall
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    _vpssec_refute _vpssec_stub_called ufw
+}
+
+@test "rescue firewall: a firewall it does not manage is named as active" {
+    _rescue_fw_with nftables
+
+    run _ssh_rescue_allow_firewall
+    [ "$status" -eq 0 ]
+    grep -q 'Firewall is active' <<<"$output"
 }

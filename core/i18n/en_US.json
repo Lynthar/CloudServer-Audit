@@ -189,6 +189,7 @@
     "rescue_no_free_port": "Could not find a free port for the rescue SSH daemon - aborting for safety",
     "rescue_fw_allowed": "Allowed rescue port {port} through the firewall",
     "rescue_fw_warn": "Firewall is active but rescue port {port} was not auto-allowed; make sure it is reachable from your client before confirming",
+    "rescue_fw_unknown": "Could not determine the firewall state, so rescue port {port} was not auto-allowed; make sure it is reachable from your client before confirming",
     "rescue_port_verify": "A temporary rescue SSH daemon is now listening on port {port}. Before applying this change, open a SEPARATE terminal and verify you can still log in (e.g. ssh -p {port} your-user@this-host). If you cannot connect, do NOT proceed - this change could otherwise lock you out",
     "confirm_ssh_change": "Confirm SSH configuration change? This may affect remote access",
     "dropin_created": "Configuration file created: {path}",

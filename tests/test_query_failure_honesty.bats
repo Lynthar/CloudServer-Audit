@@ -273,6 +273,37 @@ _fw_probes_answer() {
     done
 }
 
+@test "ufw: firewalld installed but unqueryable is unknown, not none" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub systemctl 1
+    _fw_firewalld_installed() { return 0; }
+
+    run fw_backend
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "ufw: a failed systemctl query without firewalld installed is still none" {
+    # A container or non-systemd host: flagging it unknown would be noise.
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub systemctl 1
+    _fw_firewalld_installed() { return 1; }
+
+    run fw_backend
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
+@test "ufw: an inactive, failed or absent firewalld (exit 3) is none even when installed" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub systemctl 3
+    _fw_firewalld_installed() { return 0; }
+
+    run fw_backend
+    [ "$status" -eq 0 ]
+    [ "$output" = "none" ]
+}
+
 @test "ufw: every probe answering with nothing active is still none" {
     _fw_probes_answer 'printf "%s\n" "Chain INPUT (policy ACCEPT)"'
 

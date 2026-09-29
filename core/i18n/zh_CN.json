@@ -189,6 +189,7 @@
     "rescue_no_free_port": "找不到可用于救援 SSH 守护进程的空闲端口 - 为安全起见中止",
     "rescue_fw_allowed": "已在防火墙放行救援端口 {port}",
     "rescue_fw_warn": "防火墙已启用，但未能自动放行救援端口 {port}；请在确认前确保该端口可从你的客户端访问",
+    "rescue_fw_unknown": "查不到防火墙状态，因此没有为救援端口 {port} 自动放行；确认前请先确保从你的客户端能连上它",
     "rescue_port_verify": "已临时启动救援 SSH 守护进程，正在监听端口 {port}。在应用此更改前，请在另一个终端中验证你仍能登录（例如 ssh -p {port} 你的用户名@本机地址）。如果无法连接，请勿继续 - 否则此更改可能将你锁在门外",
     "confirm_ssh_change": "确认修改 SSH 配置？这可能影响远程访问",
     "dropin_created": "已创建配置文件: {path}",

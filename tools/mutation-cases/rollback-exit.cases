@@ -23,3 +23,9 @@ run_case "rollback-exit/partial-not-reloaded" 1 \
 run_case "rollback-exit/fail2ban-not-reloaded" 1 \
     '    for svc in ssh nginx fail2ban; do' \
     '    for svc in ssh nginx; do'
+
+# A declined rollback changes code before the next MAJOR release, which
+# docs/compatibility.md rules out. Occurrence 5 is rollback_mode's cancel branch.
+run_case "rollback-exit/declined-code-changed-early" 5 \
+    '        return 0' \
+    '        return 1'

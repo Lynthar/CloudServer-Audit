@@ -853,7 +853,7 @@ _ssh_rescue_is_up() {
 # auto-managed; other backends warn and lean on the reachability check.
 _ssh_rescue_allow_firewall() {
     local backend ip
-    backend=$(fw_backend 2>/dev/null || echo none)
+    backend=$(fw_backend 2>/dev/null) || backend="unknown"
     ip=$(get_current_ssh_ip)
 
     case "$backend" in
@@ -898,6 +898,11 @@ _ssh_rescue_allow_firewall() {
             ;;
         none)
             : # no active firewall: the rescue port is reachable, nothing to do
+            ;;
+        unknown)
+            # The firewall query failed: no rule is added, and the operator is
+            # told why the reachability check below is the one that matters.
+            print_warn "$(i18n 'ssh.rescue_fw_unknown' "port=$SSH_RESCUE_PORT")"
             ;;
         *)
             # firewalld / nftables / iptables: don't manipulate rules blind.
