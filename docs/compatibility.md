@@ -27,6 +27,7 @@ are not part of the contract.
 | `guide` | 0 | every fix in the executed plan succeeded |
 | `guide` | 4 | unsupported distro (not Debian/Ubuntu) — nothing was changed |
 | `rollback` | 0 | the requested restore completed (also: cancelled at the prompt) |
+| `rollback` | 2 | the restore ran but skipped some entries (counted in the output, named in `logs/vpssec.log`); services were still reloaded |
 | any | 1 | error — not root, bad arguments, a failed fix, nothing restored, … |
 | `run.sh <cmd>` | 2 | `guide`/`rollback` refused under the run-once entry point |
 

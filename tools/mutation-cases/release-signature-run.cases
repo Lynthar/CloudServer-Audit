@@ -1,0 +1,45 @@
+# Mutation cases: tests/test_release_signature.bats against run.sh.
+# mutate-suite: run.sh tests/test_release_signature.bats
+#
+# The suite loops over both entry points, so a mutation of run.sh's copy dies
+# on the run.sh iteration while install.sh's copy keeps passing.
+
+# One attempt only: a network blip refuses a good release again.
+run_case "release-signature-run/no-retry" 1 \
+    '    for attempt in 1 2 3; do' \
+    '    for attempt in 1; do'
+
+# The success exit is lost: a good release is re-checked until it is refused.
+run_case "release-signature-run/success-not-returned" 1 \
+    '            return 0' \
+    '            :'
+
+# Fails open: every attempt failed and the release is accepted anyway.
+run_case "release-signature-run/fail-open" 1 \
+    '    return 1' \
+    '    return 0'
+
+# cosign's error is discarded again, which is the defect this function fixes.
+run_case "release-signature-run/stderr-dropped" 1 \
+    '                "$archive" 2>&1 >/dev/null); then' \
+    '                "$archive" >/dev/null 2>&1); then'
+
+# cosign's stdout is captured with the error and can displace its last line.
+run_case "release-signature-run/stdout-captured" 1 \
+    '                "$archive" 2>&1 >/dev/null); then' \
+    '                "$archive" 2>&1); then'
+
+# All of stderr is quoted, including a TUF warning that is not the failure.
+run_case "release-signature-run/whole-stderr-quoted" 1 \
+    "    print_error \"  cosign: \${err##*\$'\\n'}\"" \
+    '    print_error "  cosign: ${err}"'
+
+# Retries run back to back, so a transient outage is still in progress.
+run_case "release-signature-run/no-wait" 1 \
+    '            sleep 5' \
+    '            :'
+
+# A wait follows the last attempt too, delaying the refusal for nothing.
+run_case "release-signature-run/wait-after-last" 1 \
+    '        if (( attempt < 3 )); then' \
+    '        if true; then'

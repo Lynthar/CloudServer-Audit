@@ -42,7 +42,8 @@ sudo vpssec audit
 curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.3.1 bash
 ```
 
-需要 `jq`。`cosign` 会在需要时按钉死的版本装上。
+服务器自带的那些（bash、coreutils、systemd、iproute2 里的 `ss`）之外，只额外需要
+`jq`，缺了两个脚本都会自己装。`cosign` 会在需要时按钉死的版本装上。
 
 ## 用法
 

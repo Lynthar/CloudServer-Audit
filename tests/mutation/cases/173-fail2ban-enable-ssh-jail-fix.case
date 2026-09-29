@@ -1,0 +1,46 @@
+# Plant: fail2ban running with the sshd jail switched off in jail.local.
+# Expect: fail2ban.ssh_jail_disabled → fail2ban.enable_ssh_jail →
+# fail2ban.ssh_jail_enabled: the fix's jail.d/*.local drop-in outranks jail.local.
+# Rollback deletes the drop-in and reloads fail2ban, so jail.local rules again and
+# the jail is off (rc 0). auth.log as in 171.
+TEST_DESC="sshd jail disabled in jail.local: fail2ban.enable_ssh_jail converges, rollback switches it off again"
+EXPECT_ID="fail2ban.ssh_jail_disabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="fail2ban"
+FIX_ID="fail2ban.enable_ssh_jail"
+EXPECT_FIXED_ID="fail2ban.ssh_jail_enabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="fail2ban.ssh_jail_disabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_AUTHLOG="/var/log/auth.log"
+_HAD_AUTHLOG=0
+
+precheck() {
+    ! command -v fail2ban-client >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    [[ -e "$_AUTHLOG" ]] && _HAD_AUTHLOG=1
+    touch "$_AUTHLOG"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null 2>&1 || return 1
+    printf '[sshd]\nenabled = false\n' > /etc/fail2ban/jail.local
+    systemctl restart fail2ban >/dev/null 2>&1
+    local i
+    for i in $(seq 1 20); do
+        fail2ban-client ping >/dev/null 2>&1 && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+restore() {
+    systemctl disable --now fail2ban >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq fail2ban >/dev/null 2>&1
+    rm -f /etc/fail2ban/jail.d/99-vpssec-sshd.local /etc/fail2ban/jail.local
+    (( _HAD_AUTHLOG == 0 )) && rm -f "$_AUTHLOG"
+    return 0
+}

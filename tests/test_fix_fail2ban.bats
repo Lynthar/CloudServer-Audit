@@ -389,6 +389,21 @@ SH
     [ -f "$F2B_DROPIN" ]
 }
 
+@test "install: a failed index refresh alone does not fail the install" {
+    _f2b_jail_comes_up
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _f2b_fix_install
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install -y fail2ban'
+}
+
 @test "install: the distro's own defaults-debian.conf does not count as tuning" {
     # It ships with the package and carries no real tuning, so a fresh install
     # must still get configured. This is the regression that made every fresh

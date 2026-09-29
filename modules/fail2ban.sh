@@ -435,7 +435,10 @@ _f2b_fix_install() {
 
     export DEBIAN_FRONTEND=noninteractive
 
-    if apt-get update -qq && apt-get install -y fail2ban; then
+    # Not gated on the refresh: one broken third-party repo fails it while
+    # fail2ban itself is still installable.
+    apt-get update -qq 2>/dev/null || true
+    if apt-get install -y fail2ban; then
         print_ok "$(i18n 'fail2ban.install_success')"
 
         # Failures must propagate: a successful apt install is not success if

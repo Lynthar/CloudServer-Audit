@@ -53,8 +53,18 @@ run_case "allow_ssh/failure-swallowed" 1 \
     '            rc=0'
 
 run_case "install/failure-swallowed" 1 \
-    '    if apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then' \
+    '    if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then' \
     '    if true; then'
+
+# The index is no longer refreshed: an empty apt cache cannot locate ufw.
+run_case "install/no-refresh" 1 \
+    '    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
+    '    :'
+
+# The refresh gates the install again: one broken repo blocks it.
+run_case "install/refresh-gates-install" 1 \
+    '    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
+    '    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || return 1'
 
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_error "Unknown UFW fix: $fix_id"' \

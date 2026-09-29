@@ -1313,6 +1313,12 @@ select_modules() {
         return 0
     fi
 
+    # rollback and status use no modules; a menu here would consume the answer
+    # meant for rollback's own confirmation prompt.
+    case "${VPSSEC_MODE:-}" in
+        rollback|status) return 0 ;;
+    esac
+
     # Non-interactive run, or no terminal to read from: run all modules.
     if _noninteractive || ! _tty_readable; then
         VPSSEC_INCLUDE=""

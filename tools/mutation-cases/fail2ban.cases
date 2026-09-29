@@ -201,8 +201,18 @@ run_case "service/postcondition-always-succeeds" 1 \
 # CONFIRM-class writer from running unasked.
 
 run_case "install/apt-failure-ignored" 1 \
-    '    if apt-get update -qq && apt-get install -y fail2ban; then' \
-    '    if apt-get update -qq || true; then'
+    '    if apt-get install -y fail2ban; then' \
+    '    if apt-get install -y fail2ban || true; then'
+
+# The index is no longer refreshed: an empty apt cache cannot locate fail2ban.
+run_case "install/no-refresh" 1 \
+    '    apt-get update -qq 2>/dev/null || true' \
+    '    :'
+
+# The refresh gates the install again: one broken repo blocks it.
+run_case "install/refresh-gates-install" 1 \
+    '    apt-get update -qq 2>/dev/null || true' \
+    '    apt-get update -qq 2>/dev/null || return 1'
 
 run_case "install/service-status-discarded" 1 \
     '        _f2b_fix_enable_service || rc=1' \

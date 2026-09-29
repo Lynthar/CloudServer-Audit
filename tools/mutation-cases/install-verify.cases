@@ -1,11 +1,10 @@
 # Mutation cases: tests/test_install_verify.bats against install.sh.
 # mutate-suite: install.sh tests/test_install_verify.bats
 #
-# Two occurrence indexes here are load-bearing. `    if [[ "$VPSSEC_NO_VERIFY"
+# One occurrence index here is load-bearing: `    if [[ "$VPSSEC_NO_VERIFY"
 # == "1" ]]; then` appears twice — 1 is ensure_cosign's short-circuit, 2 is
-# install_vpssec's skip branch. `            exit 1` also appears twice — 1 is
-# check_system's missing-package-manager exit, 2 is the verify failure. Check
-# the runner's reported line before believing any survivor from those two.
+# install_vpssec's skip branch. Check the runner's reported line before
+# believing a survivor from it.
 #
 # The last two cases are the ones worth the wall-clock: they model a release
 # asset that fails verification, and the property under test is that the
@@ -40,9 +39,9 @@ run_case "install-verify/download-failure-ignored" 1 \
 
 # Verification failure becomes advisory. This is the case the suite exists
 # for: the existing installation must still be intact afterwards.
-run_case "install-verify/verify-failure-advisory" 2 \
-    '            exit 1' \
-    '            :'
+run_case "install-verify/verify-failure-advisory" 1 \
+    '            "${VPSSEC_STAGING}/${archive}.sig.json" "$want_identity" || exit 1' \
+    '            "${VPSSEC_STAGING}/${archive}.sig.json" "$want_identity" || true'
 
 # The tarball's top level is no longer checked, so a re-pointed asset with a
 # different prefix installs whatever it happened to contain.

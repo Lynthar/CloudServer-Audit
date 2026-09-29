@@ -1,0 +1,38 @@
+# Plant: unattended-upgrades installed, with 20auto-upgrades set to
+# Unattended-Upgrade "0" — installed, but never applying anything.
+# Expect: update.unattended_disabled → update.enable_unattended → update.unattended_enabled.
+# Rollback restores the planted 20auto-upgrades and deletes the fix's origins
+# drop-in (rc 0), so the finding returns.
+TEST_DESC="unattended-upgrades switched off: update.enable_unattended converges, rollback switches it off again"
+EXPECT_ID="update.unattended_disabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="update"
+FIX_ID="update.enable_unattended"
+EXPECT_FIXED_ID="update.unattended_enabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="update.unattended_disabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
+
+precheck() {
+    ! dpkg -l unattended-upgrades 2>/dev/null | grep -q '^ii' && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unattended-upgrades >/dev/null 2>&1 \
+        || return 1
+    printf 'APT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\n' \
+        > "$_CONF"
+    return 0
+}
+
+restore() {
+    systemctl disable --now unattended-upgrades >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq unattended-upgrades >/dev/null 2>&1
+    rm -f "$_CONF" /etc/apt/apt.conf.d/52vpssec-unattended-security
+    return 0
+}

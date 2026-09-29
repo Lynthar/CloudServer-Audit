@@ -47,7 +47,9 @@ Environment variables go on the `bash` side of the pipe:
 curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.3.1 bash
 ```
 
-You need `jq`. `cosign` gets installed on demand at a pinned version.
+Beyond what a stock server install already has (bash, coreutils, systemd, `ss`
+from iproute2), the one extra dependency is `jq`, and both scripts install it
+if it is missing. `cosign` gets installed on demand at a pinned version.
 
 ## Usage
 

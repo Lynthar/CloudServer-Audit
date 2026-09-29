@@ -340,6 +340,9 @@ _update_fix_install_unattended() {
 
     export DEBIAN_FRONTEND=noninteractive
 
+    # Refreshed first, or an empty apt cache cannot locate the package. Not
+    # gated on: one broken third-party repo fails it while the install works.
+    apt-get update -qq 2>/dev/null || true
     if apt-get install -y unattended-upgrades apt-listchanges; then
         # Configure auto-upgrades
         _update_fix_enable_unattended

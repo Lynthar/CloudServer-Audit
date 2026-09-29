@@ -117,6 +117,9 @@ run_case() {
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
           EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC 2>/dev/null || true
+    # A command an earlier case ran and then uninstalled stays hashed in this
+    # shell, and `command -v` in the next precheck would still find it.
+    hash -r
 
     # shellcheck source=/dev/null
     if ! source "$case_file"; then
@@ -176,11 +179,9 @@ run_case() {
 
     local detected=0 warned=0
     if [[ -n "$hit_severity" ]]; then
-        # Optional substring check on the matched check's desc field.
-        # Critical for aggregate checks like kernel.kernel_params_weak
-        # that lump multiple sysctls into one check_id — without this,
-        # a case that mutates ldisc_autoload would "pass" simply because
-        # sysrq=438 was already in the failure list.
+        # Optional substring check on desc: an aggregate id such as
+        # kernel.kernel_params_weak lumps several values together, so a case
+        # would otherwise pass on a value some other setting already failed.
         local desc_ok=1
         if [[ -n "${EXPECT_DESC_CONTAINS:-}" ]]; then
             local hit_desc
@@ -286,9 +287,9 @@ run_fix_and_rollback() {
 
     # rollback confirms through confirm_critical, which reads /dev/tty and
     # ignores --yes on purpose; a pseudo-terminal answers it the way an
-    # operator would. --yes still skips the menus, which would eat the answer.
+    # operator would, with no menu in between to consume the answer.
     local rollback_rc=0
-    printf 'yes\n' | script -qefc "$VPSSEC_BIN rollback $session --yes --lang=en_US" /dev/null \
+    printf 'yes\n' | script -qefc "$VPSSEC_BIN rollback $session --lang=en_US" /dev/null \
         >"$STAGE_LOG" 2>&1 || rollback_rc=$?
     if (( rollback_rc != EXPECT_ROLLBACK_RC )); then
         echo "  $(color red '[FAIL]') rollback $session exited $rollback_rc, expected $EXPECT_ROLLBACK_RC"

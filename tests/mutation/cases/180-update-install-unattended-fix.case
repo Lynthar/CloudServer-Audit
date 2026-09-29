@@ -1,0 +1,33 @@
+# Plant: nothing — the image ships without unattended-upgrades and with an empty
+# apt cache, so the fix must refresh the index before it can install.
+# Expect: update.unattended_not_installed → update.install_unattended →
+# update.unattended_enabled. The package's postinst already writes 20auto-upgrades,
+# so the fix's backup snapshots that file: rollback restores it and deletes the
+# fix's origins drop-in (rc 0), and the package's own config keeps the host enabled.
+TEST_DESC="unattended-upgrades absent: update.install_unattended converges; rollback leaves the package's own config"
+EXPECT_ID="update.unattended_not_installed"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="update"
+FIX_ID="update.install_unattended"
+EXPECT_FIXED_ID="update.unattended_enabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="update.unattended_enabled"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=0
+
+precheck() {
+    ! dpkg -l unattended-upgrades 2>/dev/null | grep -q '^ii' && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    return 0
+}
+
+restore() {
+    systemctl disable --now unattended-upgrades >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq \
+        unattended-upgrades apt-listchanges >/dev/null 2>&1
+    rm -f /etc/apt/apt.conf.d/20auto-upgrades /etc/apt/apt.conf.d/52vpssec-unattended-security
+    return 0
+}

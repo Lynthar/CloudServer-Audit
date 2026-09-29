@@ -1154,7 +1154,7 @@ _rollback_reload_services() {
     command -v systemctl >/dev/null 2>&1 || return 0
     systemctl daemon-reload 2>/dev/null || log_warn "rollback: systemctl daemon-reload failed"
     local svc
-    for svc in ssh nginx; do
+    for svc in ssh nginx fail2ban; do
         systemctl is-active --quiet "$svc" 2>/dev/null || continue
         if ! systemctl reload "$svc" 2>/dev/null; then
             print_warn "$(i18n 'backup.reload_failed' "service=$svc")"

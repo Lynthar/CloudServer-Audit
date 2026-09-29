@@ -1,0 +1,40 @@
+# Plant: fail2ban installed, then stopped and disabled. An empty auth.log gives the
+# stock sshd jail a file to poll: this image runs no syslog, and without one the
+# stock config cannot start at all.
+# Expect: fail2ban.service_inactive → fail2ban.enable_service → fail2ban.service_active.
+# The fix enables and starts the unit and writes no file, so the session is empty:
+# rollback restores nothing (rc 1) and the service stays up.
+TEST_DESC="fail2ban stopped and disabled: fail2ban.enable_service converges; rollback has nothing to undo"
+EXPECT_ID="fail2ban.service_inactive"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="fail2ban"
+FIX_ID="fail2ban.enable_service"
+EXPECT_FIXED_ID="fail2ban.service_active"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="fail2ban.service_active"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=1
+
+_AUTHLOG="/var/log/auth.log"
+_HAD_AUTHLOG=0
+
+precheck() {
+    ! command -v fail2ban-client >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    [[ -e "$_AUTHLOG" ]] && _HAD_AUTHLOG=1
+    touch "$_AUTHLOG"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null 2>&1 || return 1
+    systemctl disable --now fail2ban >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    systemctl disable --now fail2ban >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq fail2ban >/dev/null 2>&1
+    (( _HAD_AUTHLOG == 0 )) && rm -f "$_AUTHLOG"
+    return 0
+}

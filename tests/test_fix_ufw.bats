@@ -286,6 +286,20 @@ _call_at() {
     [ "$status" -eq 1 ]
 }
 
+@test "install: a failed index refresh alone does not fail the install" {
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _ufw_fix_install
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install -y ufw'
+}
+
 @test "ufw_fix: an unknown fix id fails instead of silently doing nothing" {
     run ufw_fix "ufw.not_a_real_fix"
     [ "$status" -eq 1 ]

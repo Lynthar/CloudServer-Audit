@@ -1,0 +1,38 @@
+# Plant: a stand-in avahi-daemon.service (it only sleeps), enabled and started;
+# the audit judges the unit by name.
+# Expect: baseline.unused_services → baseline.disable_unused → baseline.no_unused_services.
+# The fix disables and stops units and writes no file, so the session is empty:
+# rollback restores nothing (rc 1) and the unit stays disabled — service state is
+# outside rollback, and the fix prints the enable command instead.
+TEST_DESC="an unused service enabled: baseline.disable_unused converges; rollback leaves it disabled"
+EXPECT_ID="baseline.unused_services"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+EXPECT_DESC_CONTAINS="avahi-daemon"
+MODULE="baseline"
+FIX_ID="baseline.disable_unused"
+EXPECT_FIXED_ID="baseline.no_unused_services"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="baseline.no_unused_services"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=1
+
+_UNIT="/etc/systemd/system/avahi-daemon.service"
+
+precheck() {
+    command -v systemctl >/dev/null 2>&1 && ! systemctl cat avahi-daemon.service >/dev/null 2>&1
+}
+
+mutate() {
+    printf '[Unit]\nDescription=vpssec mutation stand-in\n\n[Service]\nExecStart=/bin/sleep infinity\n\n[Install]\nWantedBy=multi-user.target\n' \
+        > "$_UNIT"
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable --now avahi-daemon.service >/dev/null 2>&1
+}
+
+restore() {
+    systemctl disable --now avahi-daemon.service >/dev/null 2>&1
+    rm -f "$_UNIT"
+    systemctl daemon-reload >/dev/null 2>&1
+    return 0
+}

@@ -263,3 +263,40 @@ SH
     _vpssec_stub_called systemctl 'reload ssh'
     _vpssec_refute _vpssec_stub_called systemctl 'reload nginx'
 }
+
+@test "rollback exits with backup_restore's outcome, reloading unless nothing was restored" {
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    # The seams under test: which of the three outcomes rollback passes out,
+    # and whether services reload after it.
+    backup_list() { echo 20260501_120000; }
+    backup_list_contents() { :; }
+    confirm_critical() { return 0; }
+    _rollback_reload_services() { : > "$BATS_TEST_TMPDIR/reloaded"; }
+
+    local rc
+    for rc in 0 1 2; do
+        rm -f "$BATS_TEST_TMPDIR/reloaded"
+        RESTORE_RC=$rc
+        backup_restore() { return "$RESTORE_RC"; }
+        run rollback_mode 20260501_120000
+        [ "$status" -eq "$rc" ]
+        if (( rc == 1 )); then
+            [ ! -f "$BATS_TEST_TMPDIR/reloaded" ]
+        else
+            [ -f "$BATS_TEST_TMPDIR/reloaded" ]
+        fi
+    done
+}
+
+@test "rollback reload: a running fail2ban is reloaded, since fixes write its jail drop-in" {
+    # Without it the drop-in is gone from disk while fail2ban keeps enforcing
+    # it, and the audit reads its runtime jails until the next restart.
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    _vpssec_stub systemctl 0
+
+    run _rollback_reload_services
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called systemctl 'reload fail2ban'
+}

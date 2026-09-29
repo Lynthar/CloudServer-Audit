@@ -83,6 +83,9 @@ SH
     # on every such host and ufw.allow_ssh could never be seen to work.
     source "$(_vpssec_repo_root)/core/distro.sh"
     source "$(_vpssec_repo_root)/modules/ufw.sh"
+    # Only Debian/Ubuntu fold no_firewall into ufw.disabled; pinned so the
+    # distro running bats (CI also runs Rocky and Arch) does not decide.
+    VPSSEC_DISTRO_FAMILY=debian
     _vpssec_stub ufw 0 "Status: inactive"
     _vpssec_stub systemctl 3
     _vpssec_stub nft 0

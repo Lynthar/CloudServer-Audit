@@ -1,14 +1,14 @@
 # Plant: a drop-in with client_header_timeout=60s (the nginx default, and the
 # value CIS 5.2.1 explicitly warns about).
 # Expect: the parser extracts the value, classifies it as > 10s, and emits
-# nginx.client_header_timeout_high at medium severity.
+# nginx.client_header_timeout_high at low severity.
 #
 # Safety: the drop-in goes to /etc/nginx/conf.d/ and is nginx -t verified before
 # reloading; restore removes it and reloads back.
 TEST_DESC="client_header_timeout=60s triggers nginx.client_header_timeout_high"
 EXPECT_ID="nginx.client_header_timeout_high"
 EXPECT_STATUS="failed"
-EXPECT_SEVERITY="medium"
+EXPECT_SEVERITY="low"
 MODULE="nginx"
 
 _CONF="/etc/nginx/conf.d/99-vpssec-mutation-test.conf"

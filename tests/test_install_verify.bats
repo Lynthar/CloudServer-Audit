@@ -13,12 +13,14 @@ setup() {
     eval "$(awk '/^_validate_version_tag\(\)/,/^}/' "$src")"
     eval "$(awk '/^resolve_version\(\)/,/^}/'      "$src")"
     eval "$(awk '/^ensure_cosign\(\)/,/^}/'        "$src")"
+    eval "$(awk '/^_verify_release_signature\(\)/,/^}/' "$src")"
     eval "$(awk '/^install_vpssec\(\)/,/^}/'       "$src")"
 
     print_info()  { echo "[INFO] $*"; }
     print_ok()    { echo "[OK] $*"; }
     print_warn()  { echo "[WARN] $*"; }
     print_error() { echo "[ERROR] $*"; }
+    sleep() { :; }
 
     GITHUB_REPO="Lynthar/CloudServer-Audit"
     COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
@@ -68,10 +70,9 @@ setup() {
 
 @test "ensure_cosign installs nothing when verification is opted out" {
     VPSSEC_NO_VERIFY=1
-    # PATH is emptied, not prepended to: the very next line of ensure_cosign is
-    # `command -v cosign && return 0`, so on a host that HAS cosign this test
-    # passes whether the opt-out short-circuit works or not. Mutation testing
-    # caught exactly that, on a container something else had installed it into.
+    # PATH is emptied, not prepended to: ensure_cosign's next line is
+    # `command -v cosign && return 0`, so on a host with cosign this test would
+    # pass whether or not the opt-out short-circuits.
     mkdir -p "$BATS_TEST_TMPDIR/nobin"
 
     # Reaching a package manager at all is the failure being asserted.
@@ -103,7 +104,7 @@ setup() {
     VPSSEC_VERSION="v1.2.0"
     run install_vpssec
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Signature verification FAILED"* ]]
+    [[ "$output" == *"Could not verify the release signature"* ]]
 
     [ ! -f "$REMOVE_CALLED" ]
     [ "$(cat "$INSTALL_DIR/state/ok.json")" = "precious" ]
@@ -168,11 +169,25 @@ setup() {
     # has to sit after the verify and the extract in the file.
     local src verify_line extract_line remove_line
     src="$(_vpssec_repo_root)/install.sh"
-    verify_line=$(grep -n 'cosign verify-blob' "$src" | head -1 | cut -d: -f1)
+    verify_line=$(grep -n '^ *_verify_release_signature "' "$src" | head -1 | cut -d: -f1)
     extract_line=$(grep -n 'did not contain vpssec-' "$src" | head -1 | cut -d: -f1)
     remove_line=$(grep -n '^ *safe_remove_install_dir$' "$src" | head -1 | cut -d: -f1)
 
     [ -n "$verify_line" ] && [ -n "$extract_line" ] && [ -n "$remove_line" ]
     [ "$remove_line" -gt "$verify_line" ]
     [ "$remove_line" -gt "$extract_line" ]
+}
+
+@test "run.sh verifies with the same function as install.sh, apart from the verb" {
+    # Kept out of test_release_signature.bats: there it would kill every
+    # mutation of either copy, whatever the behavioural tests made of it.
+    local root run_fn install_fn
+    root="$(_vpssec_repo_root)"
+    run_fn=$(awk '/^_verify_release_signature\(\)/,/^}/' "$root/run.sh" \
+        | sed 's/refusing to run\./refusing to VERB./')
+    install_fn=$(awk '/^_verify_release_signature\(\)/,/^}/' "$root/install.sh" \
+        | sed 's/refusing to install\./refusing to VERB./')
+
+    [ -n "$run_fn" ]
+    [ "$run_fn" = "$install_fn" ]
 }

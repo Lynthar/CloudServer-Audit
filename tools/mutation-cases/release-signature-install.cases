@@ -1,0 +1,38 @@
+# Mutation cases: tests/test_release_signature.bats against install.sh.
+# mutate-suite: install.sh tests/test_release_signature.bats
+#
+# install.sh's copy of the function run.sh also carries (test_install_verify.bats
+# keeps the two identical), so these are release-signature-run.cases' mutations
+# and each one's reason is written there.
+
+run_case "release-signature-install/no-retry" 1 \
+    '    for attempt in 1 2 3; do' \
+    '    for attempt in 1; do'
+
+run_case "release-signature-install/success-not-returned" 1 \
+    '            return 0' \
+    '            :'
+
+run_case "release-signature-install/fail-open" 1 \
+    '    return 1' \
+    '    return 0'
+
+run_case "release-signature-install/stderr-dropped" 1 \
+    '                "$archive" 2>&1 >/dev/null); then' \
+    '                "$archive" >/dev/null 2>&1); then'
+
+run_case "release-signature-install/stdout-captured" 1 \
+    '                "$archive" 2>&1 >/dev/null); then' \
+    '                "$archive" 2>&1); then'
+
+run_case "release-signature-install/whole-stderr-quoted" 1 \
+    "    print_error \"  cosign: \${err##*\$'\\n'}\"" \
+    '    print_error "  cosign: ${err}"'
+
+run_case "release-signature-install/no-wait" 1 \
+    '            sleep 5' \
+    '            :'
+
+run_case "release-signature-install/wait-after-last" 1 \
+    '        if (( attempt < 3 )); then' \
+    '        if true; then'

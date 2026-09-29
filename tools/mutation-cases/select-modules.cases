@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_select_modules.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_select_modules.bats
+
+# rollback shows the menu again, and the menu eats its confirmation answer.
+run_case "select-modules/rollback-shows-menu" 1 \
+    '        rollback|status) return 0 ;;' \
+    '        status) return 0 ;;'
+
+# status shows a menu for modules it never runs.
+run_case "select-modules/status-shows-menu" 1 \
+    '        rollback|status) return 0 ;;' \
+    '        rollback) return 0 ;;'
+
+# The skip widens to every mode, and audit loses its module menu.
+run_case "select-modules/menu-gone-for-audit" 1 \
+    '        rollback|status) return 0 ;;' \
+    '        *) return 0 ;;'

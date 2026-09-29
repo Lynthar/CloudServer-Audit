@@ -227,6 +227,22 @@ SH
     grep -qF 'APT::Periodic::Unattended-Upgrade "1";' "$UPDATE_AUTO_UPGRADES_CONF"
 }
 
+@test "install: the index is refreshed first, and a failed refresh alone does not fail it" {
+    # An empty apt cache cannot locate the package, while one broken
+    # third-party repo fails the refresh and leaves the install working.
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _update_fix_install_unattended
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install .*unattended-upgrades'
+}
+
 @test "install: a failed install does not go on to write config" {
     _vpssec_stub apt-get 100
 

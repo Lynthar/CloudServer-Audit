@@ -1,0 +1,45 @@
+# Plant: fail2ban running on the package's shipped defaults, which the audit does
+# not count as tuning (defaults-debian.conf alone). auth.log as in 171.
+# Expect: fail2ban.default_config → fail2ban.configure_ssh_jail → fail2ban.custom_config.
+# Rollback deletes the jail drop-in the fix created and reloads fail2ban, so the
+# host is back on the defaults and the finding returns (rc 0).
+TEST_DESC="fail2ban on stock defaults: fail2ban.configure_ssh_jail converges, rollback returns to the defaults"
+EXPECT_ID="fail2ban.default_config"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="fail2ban"
+FIX_ID="fail2ban.configure_ssh_jail"
+EXPECT_FIXED_ID="fail2ban.custom_config"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="fail2ban.default_config"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_AUTHLOG="/var/log/auth.log"
+_HAD_AUTHLOG=0
+
+precheck() {
+    ! command -v fail2ban-client >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    [[ -e "$_AUTHLOG" ]] && _HAD_AUTHLOG=1
+    touch "$_AUTHLOG"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null 2>&1 || return 1
+    systemctl restart fail2ban >/dev/null 2>&1
+    local i
+    for i in $(seq 1 20); do
+        fail2ban-client ping >/dev/null 2>&1 && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+restore() {
+    systemctl disable --now fail2ban >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq fail2ban >/dev/null 2>&1
+    rm -f /etc/fail2ban/jail.d/99-vpssec-sshd.local
+    (( _HAD_AUTHLOG == 0 )) && rm -f "$_AUTHLOG"
+    return 0
+}

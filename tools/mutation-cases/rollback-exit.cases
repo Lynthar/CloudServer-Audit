@@ -1,0 +1,25 @@
+# Mutation cases: tests/test_backup_restore.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_backup_restore.bats
+#
+# docs/compatibility.md promises rollback's 0 / 1 / 2, and the reload after it
+# makes the restored files live; each case breaks one of those.
+
+# A partial restore reads as complete, so automation never looks at the skips.
+run_case "rollback-exit/partial-reads-complete" 1 \
+    '    return "$restore_rc"' \
+    '    return 0'
+
+# Nothing restored falls through to the reload and reports partial success.
+run_case "rollback-exit/none-restored-not-failed" 1 \
+    '    if (( restore_rc == 1 )); then' \
+    '    if false; then'
+
+# A partial restore skips the reload, leaving services on the old config.
+run_case "rollback-exit/partial-not-reloaded" 1 \
+    '    _rollback_reload_services' \
+    '    (( restore_rc == 0 )) && _rollback_reload_services'
+
+# fail2ban leaves the reload list: its rolled-back jail drop-in stays enforced.
+run_case "rollback-exit/fail2ban-not-reloaded" 1 \
+    '    for svc in ssh nginx fail2ban; do' \
+    '    for svc in ssh nginx; do'

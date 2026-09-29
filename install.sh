@@ -322,6 +322,32 @@ resolve_version() {
     _validate_version_tag "$VPSSEC_VERSION"
 }
 
+# Keyless verification fetches the sigstore trust root first, so an unreachable
+# network fails exactly like a tampered file. Retried, and cosign's final error
+# is printed on failure: that line is the only thing telling the two apart.
+_verify_release_signature() {
+    local archive="$1" bundle="$2" identity="$3"
+    local attempt err=""
+    for attempt in 1 2 3; do
+        if err=$(cosign verify-blob \
+                --bundle "$bundle" \
+                --certificate-identity "$identity" \
+                --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+                "$archive" 2>&1 >/dev/null); then
+            return 0
+        fi
+        if (( attempt < 3 )); then
+            print_warn "Signature check failed (attempt ${attempt} of 3), retrying in 5s..."
+            sleep 5
+        fi
+    done
+    print_error "Could not verify the release signature — refusing to install."
+    print_error "  cosign: ${err##*$'\n'}"
+    print_error "  An error about TUF, rekor public keys or the network means sigstore was unreachable: retry later."
+    print_error "  Any other error means this file is not what the release workflow signed."
+    return 1
+}
+
 # Download and install vpssec
 install_vpssec() {
     local ver_tag="$VPSSEC_VERSION"
@@ -349,17 +375,9 @@ install_vpssec() {
         # Exact-match identity: the signing cert must name this repo's release
         # workflow at the tag being installed, not just any v* tag.
         local want_identity="https://github.com/${GITHUB_REPO}/.github/workflows/release.yml@refs/tags/${ver_tag}"
-        if cosign verify-blob \
-            --bundle "${VPSSEC_STAGING}/${archive}.sig.json" \
-            --certificate-identity "$want_identity" \
-            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-            "${VPSSEC_STAGING}/${archive}" >/dev/null 2>&1; then
-            print_ok "Signature verified (signer = ${GITHUB_REPO} release workflow @ ${ver_tag})"
-        else
-            print_error "Signature verification FAILED — refusing to install."
-            print_error "If the signer URL changed, check this install.sh against the latest copy."
-            exit 1
-        fi
+        _verify_release_signature "${VPSSEC_STAGING}/${archive}" \
+            "${VPSSEC_STAGING}/${archive}.sig.json" "$want_identity" || exit 1
+        print_ok "Signature verified (signer = ${GITHUB_REPO} release workflow @ ${ver_tag})"
     fi
 
     # The release tarball carries a single vpssec-<ver>/ top level.
