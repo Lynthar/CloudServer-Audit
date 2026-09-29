@@ -352,10 +352,7 @@ _logging_fix_setup_logrotate() {
     # The install status must propagate: returning 0 regardless records a
     # completion the next audit contradicts.
     if ! check_command logrotate; then
-        # Refresh first, or an empty apt cache gives "Unable to locate
-        # package". NOT gated on update's status: one broken third-party repo
-        # makes it non-zero while the package is still installable.
-        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+        apt_refresh_index
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then
             print_error "$(i18n 'logging.logrotate_install_failed')"
             return 1
@@ -387,6 +384,7 @@ include /etc/logrotate.d'; then
 _logging_fix_install_auditd() {
     print_info "$(i18n 'logging.installing_auditd')"
 
+    apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
         print_ok "$(i18n 'logging.auditd_installed')"
 

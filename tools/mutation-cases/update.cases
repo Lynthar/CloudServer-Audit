@@ -143,10 +143,10 @@ run_case "rollback/backup-failure-swallowed" 1 \
 # install_unattended no longer refreshes the index: an empty apt cache cannot
 # locate the package, which is how the fix failed on a fresh image.
 run_case "install/no-refresh" 1 \
-    '    apt-get update -qq 2>/dev/null || true' \
+    '    apt_refresh_index' \
     '    :'
 
-# The refresh gates the install: one broken repo blocks it.
-run_case "install/refresh-gates-install" 1 \
-    '    apt-get update -qq 2>/dev/null || true' \
-    '    apt-get update -qq 2>/dev/null || return 1'
+# apply_security installs unattended-upgrades without refreshing the index.
+run_case "apply/no-refresh" 1 \
+    '        apt_refresh_index' \
+    '        :'

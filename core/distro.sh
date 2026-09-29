@@ -524,17 +524,34 @@ distro_integrity_package() {
 
 # --- Firewall primitives (read-only) ---
 
+# True when an nft input hook filters: a drop/reject policy, or any rule other
+# than a jump into ufw's chains (which ufw empties when it is off). A listing
+# that fails counts as filtering, so an error never turns nftables into none.
+_fw_nft_input_filters() {
+    local ruleset
+    ruleset=$(nft list ruleset 2>/dev/null) || return 0
+    awk '
+        /^[ \t]*chain[ \t]/ { input = 0; next }
+        /hook[ \t]+input/ { input = 1; if ($0 ~ /policy[ \t]+(drop|reject)/) f = 1; next }
+        /^[ \t]*[}][ \t]*$/ { input = 0; next }
+        input && /jump[ \t]+ufw6?-/ { next }
+        input && !/^[ \t]*$/ { f = 1 }
+        END { exit !f }
+    ' <<<"$ruleset"
+}
+
 # Active firewall backend: ufw|firewalld|nftables|iptables|none, first match in
 # that order. "none" needs every installed tool to have answered: when a query
 # fails and no backend was found, returns 1 and prints nothing.
 fw_backend() {
-    local out failed=0
+    local out failed=0 ufw_off=0
     # LC_ALL=C: ufw gettext-translates "Status: active" under a non-C locale
     # (e.g. zh_CN "状态： 激活"); without it an active UFW is misdetected and
     # the probe falls through to "nftables" (ufw's chains make nft non-empty).
     if command -v ufw >/dev/null 2>&1; then
         if out=$(LC_ALL=C ufw status 2>/dev/null); then
             grep -q "Status: active" <<<"$out" && { echo "ufw"; return 0; }
+            ufw_off=1
         else
             failed=1
         fi
@@ -544,7 +561,11 @@ fw_backend() {
     fi
     if command -v nft >/dev/null 2>&1; then
         if out=$(nft list tables 2>/dev/null); then
-            [[ -n "$out" ]] && { echo "nftables"; return 0; }
+            # With ufw installed but off, tables that filter nothing on input
+            # (what `ufw disable` leaves) are not the firewall; ufw being off is.
+            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then
+                echo "nftables"; return 0
+            fi
         else
             failed=1
         fi

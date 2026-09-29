@@ -254,6 +254,23 @@ SH
     _vpssec_stub_called systemctl 'start apparmor'
 }
 
+@test "apparmor: the index is refreshed first, and a failed refresh does not stop the install" {
+    _apparmor_absent
+    _vpssec_stub_script apt-get <<SH
+case "\$*" in
+    *update*) exit 100 ;;
+esac
+: > "$BATS_TEST_TMPDIR/aa-installed"
+exit 0
+SH
+    _vpssec_stub aa-status 0
+
+    run _baseline_fix_enable_apparmor
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install .*apparmor'
+}
+
 @test "apparmor: an already-installed AppArmor is not reinstalled" {
     _vpssec_stub aa-status 0
     _vpssec_stub apt-get 0

@@ -1,0 +1,40 @@
+# Plant: ufw enabled with its default deny-incoming policy and no rule for sshd's
+# port. Harmless here: the runner talks to the container through docker exec, not
+# over the network the rules cover.
+# Expect: ufw.no_ssh_rule → ufw.allow_ssh → ufw.ssh_allowed. SAFE, no prompt.
+# ufw keeps its rules in its own files and the fix backs none up, so the session
+# is empty: rollback restores nothing (rc 1) and the rule stays.
+TEST_DESC="ufw enabled without an SSH rule: ufw.allow_ssh converges; rollback leaves the rule"
+EXPECT_ID="ufw.no_ssh_rule"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="ufw"
+FIX_ID="ufw.allow_ssh"
+EXPECT_FIXED_ID="ufw.ssh_allowed"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="ufw.ssh_allowed"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=1
+
+_NFT_WAS_EMPTY=0
+
+precheck() {
+    ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    if ! command -v nft >/dev/null 2>&1 || [[ -z "$(nft list ruleset 2>/dev/null)" ]]; then
+        _NFT_WAS_EMPTY=1
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1 || return 1
+    ufw --force enable >/dev/null 2>&1
+}
+
+restore() {
+    ufw --force disable >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq ufw >/dev/null 2>&1
+    # ufw disable leaves its chains behind; later cases must not inherit them.
+    (( _NFT_WAS_EMPTY == 1 )) && command -v nft >/dev/null 2>&1 && nft flush ruleset >/dev/null 2>&1
+    return 0
+}

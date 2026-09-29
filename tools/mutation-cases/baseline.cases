@@ -153,3 +153,9 @@ run_case "predicate/sysv-notice-not-skipped" 1 \
 run_case "rollback/backup-failure-swallowed" 1 \
     '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null || return 1' \
     '    backup_file "$BASELINE_SELINUX_CONFIG" >/dev/null 2>&1 || true'
+
+# AppArmor is installed without refreshing the index: an empty apt cache cannot
+# locate the packages.
+run_case "apparmor/no-refresh" 1 \
+    '        apt_refresh_index' \
+    '        :'

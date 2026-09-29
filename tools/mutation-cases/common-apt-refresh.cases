@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_fix_update.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_fix_update.bats
+
+# The shared refresh does nothing, so every install fix runs on whatever index
+# the host has — none at all on a fresh image.
+run_case "apt-refresh/no-update" 1 \
+    '    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
+    '    :'

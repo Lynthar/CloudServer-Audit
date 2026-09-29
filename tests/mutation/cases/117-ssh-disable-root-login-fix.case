@@ -1,0 +1,52 @@
+# Plant: PermitRootLogin yes in a 99- drop-in, plus the non-root admin the fix's
+# safety gate requires (a sudo-group member; password login is still on, so the
+# joint-lockout guard asks for no key).
+# Expect: ssh.root_login_enabled → ssh.disable_root_login → ssh.root_login_disabled,
+# through the rescue sshd and its terminal prompt (FIX_TTY_ANSWERS). Rollback
+# deletes the 00- drop-in, the plant rules again (rc 0).
+TEST_DESC="PermitRootLogin=yes: ssh.disable_root_login converges through its terminal prompt, rollback re-exposes it"
+EXPECT_ID="ssh.root_login_enabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+MODULE="ssh"
+FIX_ID="ssh.disable_root_login"
+FIX_TTY_ANSWERS="yes"
+EXPECT_FIXED_ID="ssh.root_login_disabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="ssh.root_login_enabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DROPIN="/etc/ssh/sshd_config.d/99-vpssec-mutation-test.conf"
+_HARDENING="/etc/ssh/sshd_config.d/00-vpssec-hardening.conf"
+_HAD_HARDENING=0
+_ADMIN="vpssecadm"
+_SERVICE=""
+_pick_service() {
+    if systemctl list-unit-files ssh.service &>/dev/null; then _SERVICE="ssh"
+    elif systemctl list-unit-files sshd.service &>/dev/null; then _SERVICE="sshd"
+    fi
+}
+
+precheck() {
+    command -v sshd >/dev/null 2>&1 && [[ -d /etc/ssh/sshd_config.d ]] \
+        && getent group sudo >/dev/null && ! getent passwd "$_ADMIN" >/dev/null
+}
+
+mutate() {
+    _pick_service
+    [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
+    useradd -m -s /bin/bash -G sudo "$_ADMIN" || return 1
+    printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > "$_DROPIN"
+    chmod 644 "$_DROPIN"
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    (( _HAD_HARDENING == 0 )) && rm -f "$_HARDENING"
+    userdel -r "$_ADMIN" >/dev/null 2>&1
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}

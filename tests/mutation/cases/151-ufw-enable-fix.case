@@ -1,0 +1,41 @@
+# Plant: ufw installed and left inactive, as a fresh install is.
+# Expect: ufw.disabled → ufw.enable → ufw.enabled. The fix allows every sshd port,
+# shows the rules and asks on the terminal before enabling (FIX_TTY_ANSWERS).
+# ufw keeps its own state and the fix backs up no file, so the session is empty:
+# rollback restores nothing (rc 1) and ufw stays enabled.
+TEST_DESC="ufw inactive: ufw.enable converges through its terminal prompt; rollback leaves it enabled"
+EXPECT_ID="ufw.disabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+MODULE="ufw"
+FIX_ID="ufw.enable"
+FIX_TTY_ANSWERS="yes"
+EXPECT_FIXED_ID="ufw.enabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="ufw.enabled"
+EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_RC=1
+
+_NFT_WAS_EMPTY=0
+
+precheck() {
+    ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    if ! command -v nft >/dev/null 2>&1 || [[ -z "$(nft list ruleset 2>/dev/null)" ]]; then
+        _NFT_WAS_EMPTY=1
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1 || return 1
+    ufw --force disable >/dev/null 2>&1
+    return 0
+}
+
+restore() {
+    ufw --force disable >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq ufw >/dev/null 2>&1
+    # ufw disable leaves its chains behind; later cases must not inherit them.
+    (( _NFT_WAS_EMPTY == 1 )) && command -v nft >/dev/null 2>&1 && nft flush ruleset >/dev/null 2>&1
+    return 0
+}

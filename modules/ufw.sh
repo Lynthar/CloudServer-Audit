@@ -516,9 +516,7 @@ ufw_fix() {
 _ufw_fix_install() {
     print_info "$(i18n 'ufw.installing_ufw')"
 
-    # Not gated on the refresh: one broken third-party repo fails it while
-    # ufw itself is still installable.
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+    apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then
         print_ok "$(i18n 'ufw.ufw_installed')"
         return 0

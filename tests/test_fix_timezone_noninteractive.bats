@@ -126,3 +126,21 @@ setup() {
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called locale-gen
 }
+
+# ---- enable_ntp's chrony fallback -------------------------------------
+
+@test "enable_ntp: chrony comes from a refreshed index, and a failed refresh does not stop it" {
+    _vpssec_stub timedatectl 1
+    _vpssec_stub systemctl 0
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _timezone_fix_enable_ntp
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install .*chrony'
+}

@@ -23,3 +23,9 @@ run_case "locale/backup-failure-swallowed" 1 \
 run_case "locale/gen-guard-inverted" 1 \
     '        if ! grep -q "^${target_locale}" "$TZ_LOCALE_GEN"; then' \
     '        if true; then'
+
+# The chrony fallback installs without refreshing the index: an empty apt cache
+# cannot locate the package.
+run_case "ntp/no-refresh" 1 \
+    '    apt_refresh_index' \
+    '    :'

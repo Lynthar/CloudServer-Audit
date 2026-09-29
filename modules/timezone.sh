@@ -396,6 +396,7 @@ _timezone_fix_enable_ntp() {
     fi
 
     # Try to install and enable chrony as alternative
+    apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y chrony &>/dev/null; then
         systemctl enable chrony &>/dev/null
         systemctl start chrony &>/dev/null

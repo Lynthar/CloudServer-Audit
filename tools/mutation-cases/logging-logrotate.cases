@@ -30,16 +30,8 @@ run_case "install/failure-swallowed" 1 \
 # Without refreshing the index first, a host whose /var/lib/apt/lists is empty
 # gets "Unable to locate package" and the fix can never succeed.
 run_case "install/no-index-refresh" 1 \
-    '        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
+    '        apt_refresh_index' \
     '        :'
-
-# The inverse, and the reason `|| true` is there deliberately: one broken
-# third-party repo makes apt-get update non-zero while logrotate is still
-# installable from the rest of the index, so gating the install on update's status
-# fails the fix on a host it would have fixed.
-run_case "install/update-status-gates-install" 1 \
-    '        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
-    '        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || return 1'
 
 # ---- the config write ------------------------------------------------
 

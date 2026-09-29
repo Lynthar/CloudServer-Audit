@@ -293,6 +293,22 @@ SH
     _vpssec_stub_called apt-get 'install .*unattended-upgrades'
 }
 
+@test "apply: that install uses a refreshed index, and a failed refresh does not stop it" {
+    _uu_not_installed
+    _vpssec_stub unattended-upgrade 0
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install .*unattended-upgrades'
+}
+
 @test "apply: an install failure aborts instead of upgrading everything" {
     _uu_not_installed
     _vpssec_stub apt-get 100

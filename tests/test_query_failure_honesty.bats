@@ -281,6 +281,79 @@ _fw_probes_answer() {
     [ "$output" = "none" ]
 }
 
+# nft answering like a host where `ufw disable` left its skeleton behind: base
+# chains with policy $1, jumping into emptied ufw chains, plus $2 as an extra
+# line in the INPUT chain.
+_nft_ufw_skeleton() {
+    NFT_POLICY="$1" NFT_EXTRA="$2"
+    _vpssec_stub_script nft <<SH
+case "\$*" in
+    "list tables") echo "table ip filter" ;;
+    "list ruleset")
+        printf '%s\n' 'table ip filter {' '	chain INPUT {' \
+            '		type filter hook input priority filter; policy $NFT_POLICY;' \
+            '		counter packets 3 bytes 180 jump ufw-before-input' \
+            '		$NFT_EXTRA' '	}' '	chain ufw-before-input {' '	}' '}'
+        ;;
+esac
+exit 0
+SH
+}
+
+@test "ufw: the empty chains ufw disable leaves behind are not an nftables firewall" {
+    # They filter nothing; reading them as nftables skipped ufw.disabled and
+    # passed ufw.firewall_active on a host with no filtering at all.
+    _fw_probes_answer 'exit 0'
+    _nft_ufw_skeleton accept ""
+    VPSSEC_DISTRO_FAMILY=debian
+
+    run fw_backend
+    [ "$output" = "none" ]
+    run ufw_audit
+    run jq -r '[.[] | .id] | join(",")' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "ufw.disabled" ]
+}
+
+@test "ufw: bare accepting base chains, as a never-enabled ufw's disable leaves them, are none too" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub_script nft <<'SH'
+case "$*" in
+    "list tables") echo "table ip filter" ;;
+    "list ruleset")
+        printf '%s\n' 'table ip filter {' '	chain INPUT {' \
+            '		type filter hook input priority filter; policy accept;' '	}' '}'
+        ;;
+esac
+exit 0
+SH
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
+@test "ufw: an nft ruleset that cannot be listed is not taken for an unfiltered one" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub_script nft <<'SH'
+case "$*" in
+    "list tables") echo "table ip filter" ;;
+    "list ruleset") exit 1 ;;
+esac
+exit 0
+SH
+    run fw_backend
+    [ "$output" = "nftables" ]
+}
+
+@test "ufw: a real rule or a drop policy beside that skeleton is still nftables" {
+    _fw_probes_answer 'exit 0'
+    _nft_ufw_skeleton accept "tcp dport 22 accept"
+    run fw_backend
+    [ "$output" = "nftables" ]
+
+    _nft_ufw_skeleton drop ""
+    run fw_backend
+    [ "$output" = "nftables" ]
+}
+
 @test "ufw: a backend found by a later probe wins over an earlier failed query" {
     _fw_probes_answer 'exit 0'
     _vpssec_stub ufw 1

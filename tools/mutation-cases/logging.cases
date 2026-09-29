@@ -85,3 +85,9 @@ run_case "dispatch/unknown-id-succeeds" 1 \
 run_case "rollback/backup-failure-swallowed" 1 \
     '    backup_file "$JOURNALD_DROPIN" >/dev/null || return 1' \
     '    backup_file "$JOURNALD_DROPIN" >/dev/null 2>&1 || true'
+
+# auditd is installed without refreshing the index: an empty apt cache cannot
+# locate the packages.
+run_case "auditd/no-refresh" 1 \
+    '    apt_refresh_index' \
+    '    :'

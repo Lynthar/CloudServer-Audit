@@ -9,7 +9,9 @@
 #   5. when the case names FIX_ID, runs `vpssec guide --fix=<id> --yes`
 #      through the real CLI, re-audits and asserts EXPECT_FIXED_ID has
 #      EXPECT_FIXED_STATUS ("absent" = the id must not appear at all),
-#      and that guide itself exited 0 on the host it converged
+#      and that guide itself exited 0 on the host it converged. A risky
+#      fix asks on /dev/tty and ignores --yes: the case lists what to type
+#      in FIX_TTY_ANSWERS, one line per prompt, fed through a pseudo-terminal
 #   6. then runs `vpssec rollback <that session>` (answering its
 #      confirmation on a pseudo-terminal), re-audits and asserts
 #      EXPECT_ROLLBACK_ID / EXPECT_ROLLBACK_STATUS and the rollback's
@@ -118,7 +120,8 @@ run_case() {
     unset -f mutate restore precheck postrollback 2>/dev/null || true
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
-          EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC 2>/dev/null || true
+          EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC \
+          FIX_TTY_ANSWERS 2>/dev/null || true
     # A command an earlier case ran and then uninstalled stays hashed in this
     # shell, and `command -v` in the next precheck would still find it.
     hash -r
@@ -254,8 +257,13 @@ run_fix_and_rollback() {
     before_sessions=$(ls -1 "$BACKUPS_DIR" 2>/dev/null | sort)
 
     local guide_rc=0
-    "$VPSSEC_BIN" guide --include="$MODULE" --fix="$FIX_ID" --yes --json-only --lang=en_US \
-        >"$STAGE_LOG" 2>&1 || guide_rc=$?
+    local guide_cmd=("$VPSSEC_BIN" guide --include="$MODULE" --fix="$FIX_ID" --yes --json-only --lang=en_US)
+    if [[ -n "${FIX_TTY_ANSWERS:-}" ]]; then
+        printf '%s\n' "$FIX_TTY_ANSWERS" | script -qefc "${guide_cmd[*]}" /dev/null \
+            >"$STAGE_LOG" 2>&1 || guide_rc=$?
+    else
+        "${guide_cmd[@]}" >"$STAGE_LOG" 2>&1 || guide_rc=$?
+    fi
 
     local session
     session=$(comm -13 <(printf '%s\n' "$before_sessions") \

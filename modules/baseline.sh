@@ -566,6 +566,7 @@ _baseline_fix_enable_apparmor() {
     # A swallowed install failure makes the operator read "Failed to enable
     # AppArmor", pointing at the service rather than the apt transaction.
     if ! check_command aa-status; then
+        apt_refresh_index
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then
             print_error "$(i18n 'baseline.apparmor_install_failed')"
             return 1

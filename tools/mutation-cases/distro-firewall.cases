@@ -19,3 +19,39 @@ run_case "firewall/iptables-failure-ignored" 3 \
 run_case "firewall/failure-still-reads-none" 1 \
     '    (( failed == 0 )) || return 1' \
     '    :'
+
+# With ufw installed but off, tables that filter nothing on input read as an
+# nftables firewall again, and ufw.disabled goes unreported.
+run_case "firewall/ufw-off-ignored" 1 \
+    '            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then' \
+    '            if [[ -n "$out" ]]; then'
+
+run_case "firewall/ufw-off-never-set" 1 \
+    '            ufw_off=1' \
+    '            :'
+
+# A ufw whose status query failed is treated as off, and an unknown state
+# decides the backend.
+run_case "firewall/ufw-state-unknown-trusted" 1 \
+    '            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then' \
+    '            if [[ -n "$out" ]] && { false || _fw_nft_input_filters; }; then'
+
+# A drop policy on the input hook no longer counts as filtering.
+run_case "firewall/drop-policy-ignored" 1 \
+    '        /hook[ \t]+input/ { input = 1; if ($0 ~ /policy[ \t]+(drop|reject)/) f = 1; next }' \
+    '        /hook[ \t]+input/ { input = 1; next }'
+
+# Jumps into ufw's emptied chains count as filtering again.
+run_case "firewall/ufw-jumps-filter" 1 \
+    '        input && /jump[ \t]+ufw6?-/ { next }' \
+    '        input && /jump[ \t]+nomatch-/ { next }'
+
+# A real input rule no longer counts as filtering.
+run_case "firewall/real-rule-ignored" 1 \
+    '        input && !/^[ \t]*$/ { f = 1 }' \
+    '        input && 0 { f = 1 }'
+
+# A ruleset that cannot be listed reads as unfiltered, turning an error into none.
+run_case "firewall/listing-failure-unfiltered" 1 \
+    '    ruleset=$(nft list ruleset 2>/dev/null) || return 0' \
+    '    ruleset=$(nft list ruleset 2>/dev/null) || return 1'

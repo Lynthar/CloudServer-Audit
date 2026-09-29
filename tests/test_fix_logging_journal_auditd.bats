@@ -309,6 +309,20 @@ _block_path_under() {
     [ -f "$AUDIT_RULES_FILE" ]
 }
 
+@test "install auditd: the index is refreshed first, and a failed refresh does not stop the install" {
+    _vpssec_stub_script apt-get <<'SH'
+case "$*" in
+    *update*) exit 100 ;;
+esac
+exit 0
+SH
+
+    run _logging_fix_install_auditd
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called apt-get 'update'
+    _vpssec_stub_called apt-get 'install .*auditd'
+}
+
 @test "install auditd: succeeds even where the service cannot start" {
     # Deliberate. This fix_id answers "auditd is not installed" and the install
     # is what that check measures; the service has its own check and fix_id.

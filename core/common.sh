@@ -916,6 +916,13 @@ write_file_atomic() {
 
 # --- Service Operations ---
 
+# Refresh the apt index before a fix installs a package: an empty or stale
+# cache cannot locate it. Never let it gate the install — one broken
+# third-party repo fails the refresh while the package is still installable.
+apt_refresh_index() {
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+}
+
 # --- Network Utilities ---
 
 get_current_ssh_ip() {
