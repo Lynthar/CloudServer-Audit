@@ -126,10 +126,10 @@ _ufw_find_permissive_rules() {
 
         # Check if this port is ALLOW from Anywhere
         if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then
-            issues+=("$port ($service) open to Anywhere")
+            issues+=("$(i18n 'ufw.f_open_anywhere' "port=$port ($service)")")
         fi
         if echo "$ufw_output" | grep -qE "^${port}/udp\s+ALLOW\s+(IN\s+)?Anywhere"; then
-            issues+=("$port/udp ($service) open to Anywhere")
+            issues+=("$(i18n 'ufw.f_open_anywhere' "port=$port/udp ($service)")")
         fi
     done
 
@@ -147,7 +147,7 @@ _ufw_find_permissive_rules() {
                 case "$rule_port" in
                     22|80|443|22/tcp|80/tcp|443/tcp) ;;
                     *)
-                        issues+=("$rule_port open to Anywhere (review if needed)")
+                        issues+=("$(i18n 'ufw.f_open_anywhere_review' "port=$rule_port")")
                         ;;
                 esac
             fi

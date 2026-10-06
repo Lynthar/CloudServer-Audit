@@ -538,37 +538,37 @@ _check_password_policy() {
     local login_defs="/etc/login.defs"
 
     if [[ ! -f "$login_defs" ]]; then
-        echo "login.defs_missing"
+        i18n 'users.pp_login_defs_missing'
         return
     fi
 
     # Check PASS_MAX_DAYS
     local pass_max=$(grep -E "^PASS_MAX_DAYS" "$login_defs" 2>/dev/null | awk '{print $2}')
     if [[ -z "$pass_max" ]]; then
-        issues+=("PASS_MAX_DAYS not set")
+        issues+=("$(i18n 'users.pp_max_unset')")
     elif [[ "$pass_max" == "99999" ]] || { [[ "$pass_max" =~ ^[0-9]+$ ]] && (( pass_max > 365 )); }; then
         # Guard the arithmetic: a non-numeric admin-edited value (e.g.
         # "PASS_MAX_DAYS unlimited") in `[[ x -gt N ]]` is treated as a
         # variable name and, if unbound, aborts the WHOLE audit under set -u.
-        issues+=("PASS_MAX_DAYS=$pass_max (no expiry or too long)")
+        issues+=("$(i18n 'users.pp_max_long' "val=$pass_max")")
     fi
 
     # Check PASS_MIN_DAYS
     local pass_min=$(grep -E "^PASS_MIN_DAYS" "$login_defs" 2>/dev/null | awk '{print $2}')
     if [[ -z "$pass_min" || "$pass_min" == "0" ]]; then
-        issues+=("PASS_MIN_DAYS=$pass_min (allows immediate changes)")
+        issues+=("$(i18n 'users.pp_min_zero' "val=$pass_min")")
     fi
 
     # Check PASS_MIN_LEN (may be deprecated in favor of pam)
     local pass_len=$(grep -E "^PASS_MIN_LEN" "$login_defs" 2>/dev/null | awk '{print $2}')
     if [[ "$pass_len" =~ ^[0-9]+$ ]] && (( pass_len < 8 )); then
-        issues+=("PASS_MIN_LEN=$pass_len (too short)")
+        issues+=("$(i18n 'users.pp_len_short' "val=$pass_len")")
     fi
 
     # Check PASS_WARN_AGE (guard the arithmetic against non-numeric values)
     local pass_warn=$(grep -E "^PASS_WARN_AGE" "$login_defs" 2>/dev/null | awk '{print $2}')
     if [[ -z "$pass_warn" ]] || { [[ "$pass_warn" =~ ^[0-9]+$ ]] && (( pass_warn < 7 )); }; then
-        issues+=("PASS_WARN_AGE=$pass_warn (should be at least 7)")
+        issues+=("$(i18n 'users.pp_warn_short' "val=$pass_warn")")
     fi
 
     printf '%s\n' "${issues[@]}"
@@ -621,7 +621,7 @@ _check_pwquality() {
     if [[ "$pam_uses_pwquality" == false ]]; then
         # Check for pam_cracklib as alternative
         if ! grep -rq "pam_cracklib" /etc/pam.d/ 2>/dev/null; then
-            issues+=("No password quality module (pwquality/cracklib) in PAM")
+            issues+=("$(i18n 'users.pwq_no_module')")
         fi
     fi
 
@@ -634,7 +634,7 @@ _check_pwquality() {
         local minlen
         minlen=$(_pwquality_get_directive minlen)
         if [[ -z "$minlen" ]] || { [[ "$minlen" =~ ^[0-9]+$ ]] && (( minlen < 8 )); }; then
-            issues+=("minlen=$minlen (should be at least 12)")
+            issues+=("$(i18n 'users.pwq_minlen_short' "val=$minlen")")
         fi
 
         local dcredit ucredit
@@ -643,10 +643,10 @@ _check_pwquality() {
 
         # Negative values mean required, 0 or positive means not enforced
         if [[ -z "$dcredit" ]] || { [[ "$dcredit" =~ ^-?[0-9]+$ ]] && (( dcredit >= 0 )); }; then
-            issues+=("dcredit not enforcing digit requirement")
+            issues+=("$(i18n 'users.pwq_dcredit')")
         fi
         if [[ -z "$ucredit" ]] || { [[ "$ucredit" =~ ^-?[0-9]+$ ]] && (( ucredit >= 0 )); }; then
-            issues+=("ucredit not enforcing uppercase requirement")
+            issues+=("$(i18n 'users.pwq_ucredit')")
         fi
     fi
 
@@ -690,11 +690,11 @@ _check_history_security() {
 
     # Report issues
     if [[ -z "$histtimeformat" ]]; then
-        issues+=("HISTTIMEFORMAT not set (no timestamps in history)")
+        issues+=("$(i18n 'users.hist_no_timestamps')")
     fi
 
     if [[ -z "$histcontrol" ]] || [[ ! "$histcontrol" =~ ignore ]]; then
-        issues+=("HISTCONTROL not set to ignore duplicates/spaces")
+        issues+=("$(i18n 'users.hist_no_ignore')")
     fi
 
     printf '%s\n' "${issues[@]}"
@@ -739,7 +739,7 @@ _check_hash_method() {
                     ;;
             esac
         done < "$USERS_SHADOW_FILE"
-        [[ -n "$weak" ]] && issues+=("Weak hashes in /etc/shadow: ${weak% }")
+        [[ -n "$weak" ]] && issues+=("$(i18n 'users.hash_weak_shadow' "users=${weak% }")")
     fi
 
     local pam_method="" f
@@ -753,15 +753,15 @@ _check_hash_method() {
 
     case "$pam_method" in
         yescrypt|sha512) ;;
-        sha256) issues+=("pam_unix configured for sha256 (sha512/yescrypt preferred)") ;;
-        md5|blowfish|bigcrypt|des) issues+=("pam_unix configured for $pam_method (weak)") ;;
+        sha256) issues+=("$(i18n 'users.hash_pam_sha256')") ;;
+        md5|blowfish|bigcrypt|des) issues+=("$(i18n 'users.hash_pam_weak' "method=$pam_method")") ;;
         "")
             local enc
             enc=$(grep -E '^ENCRYPT_METHOD' /etc/login.defs 2>/dev/null | awk '{print tolower($2)}')
             case "$enc" in
                 yescrypt|sha512|"") ;;
-                sha256) issues+=("ENCRYPT_METHOD=sha256 in login.defs (sha512 preferred)") ;;
-                md5|blowfish|bigcrypt|des) issues+=("ENCRYPT_METHOD=$enc in login.defs (weak)") ;;
+                sha256) issues+=("$(i18n 'users.hash_defs_sha256')") ;;
+                md5|blowfish|bigcrypt|des) issues+=("$(i18n 'users.hash_defs_weak' "method=$enc")") ;;
             esac
             ;;
     esac
@@ -795,12 +795,12 @@ _check_hash_rounds() {
     local rmin
     rmin=$(grep -E '^SHA_CRYPT_MIN_ROUNDS' /etc/login.defs 2>/dev/null | awk '{print $2}')
     if [[ -z "$rmin" ]]; then
-        echo "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended for SHA-512)"
+        i18n 'users.rounds_unset'
     elif [[ "$rmin" =~ ^[0-9]+$ ]] && (( rmin < 10000 )); then
         # Numeric guard before (( )): a non-numeric value in login.defs would
         # otherwise be treated as an arithmetic variable name and abort the
         # users audit under `set -u` (skipping the later sudoers-syntax check).
-        echo "SHA_CRYPT_MIN_ROUNDS=$rmin (>= 10000 recommended)"
+        i18n 'users.rounds_low' "val=$rmin"
     fi
 }
 
@@ -810,8 +810,8 @@ _check_faillog_logging() {
     local issues=() enab unk
     enab=$(grep -E '^FAILLOG_ENAB'     /etc/login.defs 2>/dev/null | awk '{print $2}')
     unk=$(grep -E  '^LOG_UNKFAIL_ENAB' /etc/login.defs 2>/dev/null | awk '{print $2}')
-    [[ -n "$enab" && "$enab" != "yes" ]] && issues+=("FAILLOG_ENAB=$enab (should be yes)")
-    [[ -n "$unk"  && "$unk"  != "yes" ]] && issues+=("LOG_UNKFAIL_ENAB=$unk (should be yes)")
+    [[ -n "$enab" && "$enab" != "yes" ]] && issues+=("$(i18n 'users.faillog_should_yes' "key=FAILLOG_ENAB" "val=$enab")")
+    [[ -n "$unk"  && "$unk"  != "yes" ]] && issues+=("$(i18n 'users.faillog_should_yes' "key=LOG_UNKFAIL_ENAB" "val=$unk")")
     printf '%s\n' "${issues[@]}"
 }
 
@@ -822,13 +822,13 @@ _check_sudoers_syntax() {
     local issues=() drop
 
     if ! visudo -c -f /etc/sudoers >/dev/null 2>&1; then
-        issues+=("/etc/sudoers syntax invalid")
+        issues+=("$(i18n 'users.sudoers_file_invalid' "file=/etc/sudoers")")
     fi
     for drop in /etc/sudoers.d/*; do
         [[ -f "$drop" ]] || continue
         _sudoers_dropin_ignored "$drop" && continue
         if ! visudo -c -f "$drop" >/dev/null 2>&1; then
-            issues+=("$drop syntax invalid")
+            issues+=("$(i18n 'users.sudoers_file_invalid' "file=$drop")")
         fi
     done
     printf '%s\n' "${issues[@]}"
@@ -1032,7 +1032,7 @@ users_audit() {
         policy_list="${policy_list%; }"
 
         check_emit "users.password_policy_weak" low failed \
-            title="$(i18n 'users.password_policy_weak'): $policy_count issues" \
+            title="$(i18n 'users.password_policy_weak'): $(i18n 'common.n_issues' "n=$policy_count")" \
             desc="$policy_list" \
             suggestion="$(i18n 'users.fix_password_policy')"
     else
@@ -1053,7 +1053,7 @@ users_audit() {
         pwq_list="${pwq_list%; }"
 
         check_emit "users.pwquality_weak" low failed \
-            title="$(i18n 'users.pwquality_weak'): $pwquality_count issues" \
+            title="$(i18n 'users.pwquality_weak'): $(i18n 'common.n_issues' "n=$pwquality_count")" \
             desc="$pwq_list" \
             suggestion="$(i18n 'users.fix_pwquality')"
     fi
@@ -1071,7 +1071,7 @@ users_audit() {
         hist_list="${hist_list%; }"
 
         check_emit "users.history_insecure" low failed \
-            title="$(i18n 'users.history_insecure'): $history_count issues" \
+            title="$(i18n 'users.history_insecure'): $(i18n 'common.n_issues' "n=$history_count")" \
             desc="$hist_list" \
             suggestion="$(i18n 'users.fix_history')"
     fi

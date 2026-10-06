@@ -375,7 +375,7 @@ _baseline_audit_selinux() {
     if [[ "$status" == "enforcing" ]]; then
         check_emit "baseline.selinux_enforcing" low passed \
             desc="$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials}")"
-        print_ok "$(i18n 'baseline.selinux_enforcing') (policy: ${policy:-targeted})"
+        print_ok "$(i18n 'baseline.selinux_enforcing') $(i18n 'baseline.selinux_policy_label' "policy=${policy:-targeted}")"
 
         # Check for excessive denials
         if [[ "$denials" != "unknown" ]] && [[ "$denials" -gt 50 ]]; then
@@ -395,7 +395,7 @@ _baseline_audit_selinux() {
 
         # Check if configured as disabled (will be disabled on reboot)
         if [[ "$config" == "disabled" ]]; then
-            print_warn "SELinux is configured as disabled in $BASELINE_SELINUX_CONFIG"
+            print_warn "$(i18n 'baseline.selinux_config_disabled' "file=$BASELINE_SELINUX_CONFIG")"
         fi
     fi
 }
@@ -423,7 +423,7 @@ _baseline_audit_apparmor() {
 
         check_emit "baseline.apparmor_enabled" low passed \
             desc="$(i18n 'baseline.apparmor_enabled_desc' "enforced=${enforced}" "complain=${complain}")"
-        print_ok "$(i18n 'baseline.apparmor_enabled') (enforcing: ${enforced}, complain: ${complain})"
+        print_ok "$(i18n 'baseline.apparmor_enabled') $(i18n 'baseline.apparmor_counts_label' "enforced=${enforced}" "complain=${complain}")"
 
         # Check if too many profiles in complain mode
         if [[ "$complain" -gt "$enforced" ]] && [[ "$complain" -gt 5 ]]; then
@@ -519,7 +519,7 @@ _baseline_fix_selinux_enforcing() {
     print_info "$(i18n 'baseline.setting_selinux_enforcing')"
 
     if ! check_command setenforce; then
-        print_error "setenforce command not found"
+        print_error "$(i18n 'common.command_missing' "cmd=setenforce")"
         return 1
     fi
 

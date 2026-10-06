@@ -204,7 +204,7 @@ main() {
     if [[ -n "${VPSSEC_MODE:-}" && "$VPSSEC_MODE" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_error "$(i18n 'error.root_required')"
-        echo "Please run with: sudo vpssec $VPSSEC_MODE"
+        echo "$(i18n 'error.run_with_sudo' "cmd=$VPSSEC_MODE")"
         exit 1
     fi
 
@@ -220,7 +220,7 @@ main() {
     if [[ "${VPSSEC_MODE:-}" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_error "$(i18n 'error.root_required')"
-        echo "Please run with: sudo vpssec ${VPSSEC_MODE:-}"
+        echo "$(i18n 'error.run_with_sudo' "cmd=${VPSSEC_MODE:-}")"
         exit 1
     fi
 
@@ -247,7 +247,7 @@ main() {
     # cheap syscall so the redundancy is fine.
     if [[ "$command" != "status" ]] && ! check_root; then
         print_error "$(i18n 'error.root_required')"
-        echo "Please run with: sudo vpssec $command"
+        echo "$(i18n 'error.run_with_sudo' "cmd=$command")"
         exit 1
     fi
 
@@ -256,10 +256,10 @@ main() {
         local os=$(detect_os)
         local version=$(detect_os_version)
         print_warn "$(i18n 'error.unsupported_os' "os=${os} ${version}")"
-        print_msg "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only."
+        print_msg "$(i18n 'error.supported_platforms')"
         print_msg ""
 
-        if [[ "$command" != "status" ]] && ! confirm "Continue anyway?" "n"; then
+        if [[ "$command" != "status" ]] && ! confirm "$(i18n 'common.continue_anyway')" "n"; then
             exit 1
         fi
     fi

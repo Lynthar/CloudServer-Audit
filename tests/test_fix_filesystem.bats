@@ -180,10 +180,10 @@ SH
 
     run _fs_fix_umask
     [ "$status" -eq 0 ]
-    # "not enabled in common-session", not just "pam_umask": the
+    # "not enabled in the PAM session stack", not just "pam_umask": the
     # USERGROUPS_ENAB note printed a few lines earlier also names the module,
     # so the looser pattern passed with this whole branch deleted.
-    grep -q 'not enabled in common-session' <<<"$output"
+    grep -q 'not enabled in the PAM session stack' <<<"$output"
 }
 
 @test "umask fix: no pam warning when pam_umask is enabled" {

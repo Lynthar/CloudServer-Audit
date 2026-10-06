@@ -102,10 +102,8 @@ _cleanup() {
 }
 trap _cleanup EXIT INT TERM
 
-# ----------------------------------------------------------------------------
-# Load vpssec exactly as the entry script does, then redirect state/backups
-# into the sandbox (mirrors tests/helpers.bash: override AFTER sourcing).
-# ----------------------------------------------------------------------------
+# --- Load vpssec exactly as the entry script does, then redirect state/backups
+# into the sandbox (mirrors tests/helpers.bash: override AFTER sourcing). ---
 export VPSSEC_LANG=en_US VPSSEC_COLOR=0 VPSSEC_JSON_ONLY=0 VPSSEC_QUIET_SCAN=1
 
 # shellcheck source=/dev/null

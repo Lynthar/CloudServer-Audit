@@ -405,7 +405,7 @@ _webapp_nginx_ssl_protocols() {
         for tok in $protocols; do
             for wl in "${WEAK_SSL_PROTOCOLS[@]}"; do
                 if [[ "${tok,,}" == "${wl,,}" ]]; then
-                    weak+=("$wl enabled")
+                    weak+=("$(i18n 'webapp.f_proto_enabled' "proto=$wl")")
                 fi
             done
         done
@@ -509,7 +509,7 @@ _webapp_apache_directory_index() {
 
     if grep -q "Options.*Indexes" "$conf" 2>/dev/null; then
         if ! grep -q "Options.*-Indexes" "$conf" 2>/dev/null; then
-            findings+=("$conf: Indexes enabled")
+            findings+=("$(i18n 'webapp.f_indexes_enabled' "file=$conf")")
         fi
     fi
 
@@ -519,7 +519,7 @@ _webapp_apache_directory_index() {
             [[ -f "$site" ]] || continue
             if grep -q "Options.*Indexes" "$site" 2>/dev/null; then
                 if ! grep -q "Options.*-Indexes" "$site" 2>/dev/null; then
-                    findings+=("$site: Indexes enabled")
+                    findings+=("$(i18n 'webapp.f_indexes_enabled' "file=$site")")
                 fi
             fi
         done
@@ -622,19 +622,19 @@ _webapp_php_session_security() {
     # session.cookie_httponly
     local httponly=$(_webapp_get_php_config "session.cookie_httponly")
     if ! _webapp_php_is_true "$httponly"; then
-        issues+=("session.cookie_httponly not enabled")
+        issues+=("$(i18n 'webapp.f_php_not_enabled' "key=session.cookie_httponly")")
     fi
 
     # session.cookie_secure
     local secure=$(_webapp_get_php_config "session.cookie_secure")
     if ! _webapp_php_is_true "$secure"; then
-        issues+=("session.cookie_secure not enabled (for HTTPS sites)")
+        issues+=("$(i18n 'webapp.f_php_cookie_secure')")
     fi
 
     # session.use_strict_mode
     local strict=$(_webapp_get_php_config "session.use_strict_mode")
     if ! _webapp_php_is_true "$strict"; then
-        issues+=("session.use_strict_mode not enabled")
+        issues+=("$(i18n 'webapp.f_php_not_enabled' "key=session.use_strict_mode")")
     fi
 
     printf '%s\n' "${issues[@]}"
@@ -677,9 +677,9 @@ _webapp_ssl_cert_expiry() {
             local days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
 
             if [[ $days_left -lt 0 ]]; then
-                findings+=("$cert|expired|$days_left days ago")
+                findings+=("$cert|expired|$(( -days_left ))")
             elif [[ $days_left -lt $CERT_EXPIRY_WARNING_DAYS ]]; then
-                findings+=("$cert|expiring|$days_left days left")
+                findings+=("$cert|expiring|$days_left")
             fi
         # -L is required: Let's Encrypt exposes live/<domain>/*.pem as
         # SYMLINKS into archive/, so without it `-type f` rejects every
@@ -941,7 +941,7 @@ webapp_audit() {
         # 14. allow_url_include
         local url_include=$(_webapp_php_allow_url_include)
         if _webapp_php_is_true "$url_include"; then
-            php_issues+=("allow_url_include=On (DANGEROUS)")
+            php_issues+=("allow_url_include=On $(i18n 'webapp.f_dangerous')")
         fi
 
         if [[ ${#php_issues[@]} -gt 0 ]]; then
@@ -994,11 +994,15 @@ webapp_audit() {
         local expired_list=""
         while IFS='|' read -r cert status days; do
             [[ -z "$cert" ]] && continue
-            expired_list+="$cert ($days); "
+            if [[ "$status" == "expired" ]]; then
+                expired_list+="$cert ($(i18n 'webapp.f_days_ago' "n=$days")); "
+            else
+                expired_list+="$cert ($(i18n 'webapp.f_days_left' "n=$days")); "
+            fi
         done <<< "$expiring"
 
         local severity="low"
-        echo "$expiring" | grep -q "expired" && severity="medium"
+        echo "$expiring" | grep -q "|expired|" && severity="medium"
 
         check_emit "webapp.ssl_cert_expiry" "$severity" failed \
             title="$(i18n 'webapp.cert_expiring'): $expiring_count" \
@@ -1216,8 +1220,8 @@ EOF
 
     # "created" would be a lie on a host that already had this drop-in: the
     # operator's own file is gone and only the backup path leads back to it.
-    if [[ "$pre_existed" == "true" ]]; then
-        print_warn "$(i18n 'webapp.headers_replaced' "file=$headers_conf" "backup=$bak")"
+    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then
+        print_warn "$(i18n 'webapp.template_replaced' "file=$headers_conf" "backup=$bak")"
     else
         print_ok "$(i18n 'webapp.headers_added'): $headers_conf"
     fi
@@ -1233,7 +1237,9 @@ _webapp_fix_nginx_hsts() {
 
     # Unconditional, as in the headers fix above: an absent path has to be
     # recorded as fix-created or a rollback cannot delete this file.
-    backup_file "$hsts_conf" >/dev/null || return 1
+    local pre_existed="false" bak=""
+    [[ -f "$hsts_conf" ]] && pre_existed="true"
+    bak=$(backup_file "$hsts_conf") || return 1
 
     # Atomic writer, not `cat >`: this lands in auto-included conf.d, so a
     # truncated file is config nginx must parse on its next reload.
@@ -1255,7 +1261,12 @@ EOF
         return 1
     fi
 
-    print_ok "$(i18n 'webapp.hsts_template_created'): $hsts_conf"
+    # An operator's own hsts.conf may have held a live header; say it is gone.
+    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then
+        print_warn "$(i18n 'webapp.template_replaced' "file=$hsts_conf" "backup=$bak")"
+    else
+        print_ok "$(i18n 'webapp.hsts_template_created'): $hsts_conf"
+    fi
     print_warn "$(i18n 'webapp.hsts_warning')"
     # The header is written commented out, so the finding is NOT resolved —
     # but the template was created. FIX_TEMPLATE_ONLY withholds the completion
@@ -1277,7 +1288,9 @@ _webapp_fix_nginx_ssl() {
 
     # Unconditional: see _webapp_fix_nginx_security_headers. A snippet this
     # fix created must be deletable by a rollback.
-    backup_file "$ssl_conf" >/dev/null || return 1
+    local pre_existed="false" bak=""
+    [[ -f "$ssl_conf" ]] && pre_existed="true"
+    bak=$(backup_file "$ssl_conf") || return 1
 
     local content
     content=$(cat << 'EOF'
@@ -1327,7 +1340,11 @@ EOF
         return 1
     fi
 
-    print_ok "$(i18n 'webapp.ssl_config_created'): $ssl_conf"
+    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then
+        print_warn "$(i18n 'webapp.template_replaced' "file=$ssl_conf" "backup=$bak")"
+    else
+        print_ok "$(i18n 'webapp.ssl_config_created'): $ssl_conf"
+    fi
     print_warn "$(i18n 'webapp.include_in_ssl'): include snippets/ssl-security.conf;"
     # The snippet is inert until the operator includes it, so the finding is
     # NOT resolved — but the write succeeded. FIX_TEMPLATE_ONLY is what stops

@@ -129,6 +129,27 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "pam_umask: with no override the family's PAM files are read (RHEL postlogin)" {
+    # RHEL 8/9 ship pam_umask in postlogin and Arch in system-login; a
+    # Debian-only file list reads both as "not enabled".
+    FS_PAM_SESSION_FILES=()
+    pam_session_files() { printf '%s\n' "$etc/pam.d/postlogin"; }
+    printf 'session     optional                   pam_umask.so silent\n' > "$etc/pam.d/postlogin"
+    run _fs_check_pam_umask_enabled
+    [ "$status" -eq 0 ]
+}
+
+@test "pam_umask: each family names the file its distro ships pam_umask in" {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/distro.sh"
+    VPSSEC_DISTRO_FAMILY=rhel run pam_session_files
+    grep -qxF /etc/pam.d/postlogin <<<"$output"
+    VPSSEC_DISTRO_FAMILY=arch run pam_session_files
+    grep -qxF /etc/pam.d/system-login <<<"$output"
+    VPSSEC_DISTRO_FAMILY=debian run pam_session_files
+    grep -qxF /etc/pam.d/common-session <<<"$output"
+}
+
 @test "pam_umask: absent files mean not enabled" {
     # The Debian 12 verification container is exactly this shape — no
     # pam_umask line anywhere — so this is the common case, not a corner one.

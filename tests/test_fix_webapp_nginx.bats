@@ -313,6 +313,20 @@ _active_server_tokens() {
     grep -qiE 'uncomment|注释' <<<"$output"
 }
 
+@test "hsts: replacing an existing hsts.conf says so and names the backup" {
+    # The template ships the header commented out, so overwriting an operator's
+    # live hsts.conf turns HSTS off at the next reload. "Created" would hide that.
+    VPSSEC_QUIET_SCAN=0
+    printf 'add_header Strict-Transport-Security "max-age=300";\n' > "$NGINX_CONFD/hsts.conf"
+    _vpssec_begin_backup_session
+
+    run _webapp_fix_nginx_hsts
+    [ "$status" -eq 0 ]
+    grep -qi 'replaced' <<<"$output"
+    grep -qF "${VPSSEC_BACKUP_SESSION}${NGINX_CONFD}/hsts.conf" <<<"$output"
+    _vpssec_refute grep -qi 'created' <<<"$output"
+}
+
 @test "hsts: a failed write is still a failure" {
     # The other direction: flipping the success path to 0 must not turn the
     # write-failure path green with it.
@@ -346,6 +360,19 @@ _active_server_tokens() {
 
     run _webapp_fix_nginx_ssl
     grep -qxF "$NGINX_SNIPPETS/ssl-security.conf" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+}
+
+@test "ssl: replacing an existing snippet says so and names the backup" {
+    VPSSEC_QUIET_SCAN=0
+    mkdir -p "$NGINX_SNIPPETS"
+    printf 'ssl_protocols TLSv1.3;\n' > "$NGINX_SNIPPETS/ssl-security.conf"
+    _vpssec_begin_backup_session
+
+    run _webapp_fix_nginx_ssl
+    [ "$status" -eq 0 ]
+    grep -qi 'replaced' <<<"$output"
+    grep -qF "${VPSSEC_BACKUP_SESSION}${NGINX_SNIPPETS}/ssl-security.conf" <<<"$output"
+    _vpssec_refute grep -qi 'created' <<<"$output"
 }
 
 @test "ssl: writing the snippet successfully is reported as success" {

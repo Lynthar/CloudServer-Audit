@@ -11,3 +11,8 @@ run_case "derive/module-is-whole-id" 1 \
 run_case "derive/title-default-dropped" 1 \
     '    [[ -n "$title" ]] || title=$(i18n "$id")' \
     '    :'
+
+# bash 5.2+ only: an unquoted replacement turns & into the matched {var}.
+run_case "i18n/replacement-unquoted" 1 \
+    '        text="${text//\{$var\}/"$val"}"' \
+    '        text="${text//\{$var\}/$val}"'

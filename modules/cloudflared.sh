@@ -187,6 +187,11 @@ _cloudflared_audit_config() {
         local issues=$(_cloudflared_check_ingress_security "$config")
 
         if [[ -n "$issues" ]]; then
+            local tok issues_text=""
+            for tok in $issues; do
+                issues_text+="$(i18n "cloudflared.issue_$tok"); "
+            done
+            issues="${issues_text%; }"
             check_emit "cloudflared.config_issues" low failed \
                 title="$(i18n 'cloudflared.config_has_issues')" \
                 desc="$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \

@@ -206,8 +206,8 @@ _ssh_effective_authorizedkeysfiles() {
     local tok path
     for tok in $akf; do
         path="${tok//%%/$'\x01'}"   # protect literal %% before %h/%u
-        path="${path//%h/$home_dir}"
-        path="${path//%u/$user}"
+        path="${path//%h/"$home_dir"}"
+        path="${path//%u/"$user"}"
         path="${path//$'\x01'/%}"
         [[ "$path" != /* ]] && path="$home_dir/$path"
         echo "$path"
@@ -329,7 +329,7 @@ _ssh_check_authkeys_permissions() {
     local ssh_perms
     ssh_perms=$(stat -c "%a" "$ssh_dir" 2>/dev/null)
     if [[ -n "$ssh_perms" ]] && [[ "$ssh_perms" != "700" ]] && [[ "$ssh_perms" != "755" ]]; then
-        issues+=("$ssh_dir has permissions $ssh_perms (should be 700)")
+        issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$ssh_dir" "mode=$ssh_perms" "want=700")")
     fi
 
     # Check authorized_keys permissions (should be 600 or 644)
@@ -337,14 +337,14 @@ _ssh_check_authkeys_permissions() {
         local ak_perms
         ak_perms=$(stat -c "%a" "$auth_keys" 2>/dev/null)
         if [[ -n "$ak_perms" ]] && [[ "$ak_perms" != "600" ]] && [[ "$ak_perms" != "644" ]]; then
-            issues+=("$auth_keys has permissions $ak_perms (should be 600)")
+            issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$auth_keys" "mode=$ak_perms" "want=600")")
         fi
 
         # Check ownership
         local ak_owner
         ak_owner=$(stat -c "%U" "$auth_keys" 2>/dev/null)
         if [[ -n "$ak_owner" ]] && [[ "$ak_owner" != "$user" ]] && [[ "$ak_owner" != "root" ]]; then
-            issues+=("$auth_keys owned by $ak_owner (should be $user)")
+            issues+=("$(i18n 'ssh.authkeys_bad_owner' "path=$auth_keys" "owner=$ak_owner" "want=$user")")
         fi
     fi
 
@@ -424,11 +424,11 @@ _ssh_audit_root_login() {
         # exposure rather than a checkbox.
         local sev="high"
         local title_key="ssh.root_login_enabled"
-        local info="PermitRootLogin=yes (allows root via password and key)"
+        local info="PermitRootLogin=yes $(i18n 'ssh.root_login_any_desc')"
         if ! _ssh_password_auth_enabled; then
             sev="medium"
             title_key="ssh.root_login_keyonly"
-            info="PermitRootLogin=yes; effectively key-only because PasswordAuthentication=no globally"
+            info="PermitRootLogin=yes; $(i18n 'ssh.root_login_keyonly_desc')"
         fi
         check_emit "ssh.root_login_enabled" "$sev" failed \
             title="$(i18n "$title_key")" \
@@ -738,7 +738,7 @@ _ssh_audit_algorithms() {
             desc="$(i18n 'ssh.weak_algorithms_desc' "list=$issue_list")" \
             suggestion="$(i18n 'ssh.fix_algorithms')" \
             fix="ssh.harden_algorithms"
-        print_severity "low" "$(i18n 'ssh.weak_algorithms'): ${#issues[@]} found"
+        print_severity "low" "$(i18n 'ssh.weak_algorithms'): $(i18n 'common.n_found' "n=${#issues[@]}")"
     else
         check_emit "ssh.algorithms_ok" low passed \
             desc="$(i18n 'ssh.algorithms_ok_desc')"
@@ -769,7 +769,7 @@ _ssh_audit_port() {
         check_emit "ssh.default_port" low failed \
             desc="$(i18n 'ssh.default_port_desc')" \
             suggestion="$(i18n 'ssh.default_port_suggestion')"
-        print_severity "low" "SSH using default port 22 (consider changing)"
+        print_severity "low" "$(i18n 'ssh.default_port')"
     else
         check_emit "ssh.custom_port" low passed \
             desc="$(i18n 'ssh.custom_port_desc' "ssh_port=$ssh_port")"

@@ -253,7 +253,7 @@ docker_audit() {
 
         check_emit "docker.not_installed" low passed \
             desc="$(i18n 'docker.not_installed_desc')"
-        print_ok "$(i18n 'docker.not_installed') - Skipping"
+        print_ok "$(i18n 'docker.not_installed') - $(i18n 'common.skipping')"
         return
     fi
     print_ok "$(i18n 'docker.installed_running')"
@@ -350,13 +350,13 @@ _docker_audit_root_containers() {
             title="$(i18n 'docker.all_root_containers' "count=$count")" \
             desc="$(i18n 'docker.all_root_containers_desc')" \
             suggestion="$(i18n 'docker.root_containers_suggestion')"
-        print_severity "low" "All $count containers running as root"
+        print_severity "low" "$(i18n 'docker.all_root_containers' "count=$count")"
     elif ((count > 0)); then
         check_emit "docker.some_root_containers" low failed \
             title="$(i18n 'docker.some_root_containers' "count=$count" "total=$total")" \
             desc="$(i18n 'docker.some_root_containers_desc')" \
             suggestion="$(i18n 'docker.root_containers_suggestion')"
-        print_severity "low" "$count of $total containers running as root"
+        print_severity "low" "$(i18n 'docker.some_root_containers' "count=$count" "total=$total")"
     else
         check_emit "docker.no_root_containers" low passed
         print_ok "$(i18n 'docker.no_root_containers')"
@@ -389,7 +389,7 @@ _docker_audit_daemon_settings() {
             desc="$(i18n 'docker.no_live_restore_desc')" \
             suggestion="$(i18n 'docker.no_live_restore_suggestion')" \
             fix="docker.enable_live_restore"
-        print_severity "low" "Docker live-restore not enabled"
+        print_severity "low" "$(i18n 'docker.no_live_restore')"
         ((issues++)) || true
     fi
 
@@ -399,7 +399,7 @@ _docker_audit_daemon_settings() {
             desc="$(i18n 'docker.no_new_privileges_disabled_desc')" \
             suggestion="$(i18n 'docker.no_new_privileges_disabled_suggestion')" \
             fix="docker.enable_no_new_privileges"
-        print_severity "low" "Docker no-new-privileges not set as default"
+        print_severity "low" "$(i18n 'docker.no_new_privileges_disabled')"
         ((issues++)) || true
     fi
 

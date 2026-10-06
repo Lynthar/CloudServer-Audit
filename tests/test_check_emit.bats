@@ -41,6 +41,14 @@ _recorded() {
     [ "$(_recorded severity)"   = "medium" ]
 }
 
+@test "i18n: a substituted value is inserted verbatim, & and backslashes included" {
+    # bash 5.2+ expands an unquoted & in a ${//} replacement to the match, so a
+    # crontab line "a && b" would render as "a {cmd}{cmd} b".
+    VPSSEC_I18N[test.cmd]='run: {cmd}'
+    run i18n test.cmd 'cmd=a && b \x'
+    [ "$output" = 'run: a && b \x' ]
+}
+
 @test "check_emit: an unknown field is an error and nothing is recorded" {
     run check_emit "ssh.x11_forwarding_enabled" low failed dsec="typo"
     [ "$status" -eq 1 ]
@@ -170,6 +178,38 @@ SH
         echo "  $missing"
         false
     fi
+}
+
+@test "every literal i18n key in the code is an en_US key" {
+    # A key missing from BOTH languages passes parity and prints as the raw key.
+    local keys missing="" key
+    keys=$(jq -r 'paths(scalars) | join(".")' "$REPO/core/i18n/en_US.json")
+    while IFS= read -r key; do
+        grep -qxF -- "$key" <<<"$keys" || missing+="$key "
+    done < <(grep -ohE "i18n ['\"][A-Za-z0-9_]+\.[A-Za-z0-9_.]+['\"]" \
+                 "$REPO"/modules/*.sh "$REPO"/core/*.sh "$REPO/vpssec" \
+             | sed -E "s/^i18n ['\"]//; s/['\"]$//" | sort -u)
+    if [[ -n "$missing" ]]; then
+        echo "i18n keys used in code but absent from en_US.json: $missing"
+        false
+    fi
+}
+
+@test "every issue token rendered through a key prefix has that key" {
+    # These helpers return tokens the audit renders as "<prefix><token>" at
+    # display time; a new token without its key shows up as the raw key.
+    local keys missing="" spec file fn prefix tok
+    keys=$(jq -r 'paths(scalars) | join(".")' "$REPO/core/i18n/en_US.json")
+    for spec in "modules/kernel.sh _kernel_ipv6_check_security kernel.ipv6_issue_" \
+                "modules/kernel.sh _kernel_check_core_dump kernel.core_issue_" \
+                "modules/cloudflared.sh _cloudflared_check_ingress_security cloudflared.issue_"; do
+        read -r file fn prefix <<<"$spec"
+        while IFS= read -r tok; do
+            grep -qxF -- "$prefix$tok" <<<"$keys" || missing+="$prefix$tok "
+        done < <(sed -n "/^$fn() {/,/^}/p" "$REPO/$file" \
+                     | grep -oE 'issues\+=\("[a-z_]+"\)' | cut -d'"' -f2)
+    done
+    [[ -z "$missing" ]] || { echo "missing: $missing"; false; }
 }
 
 @test "modules/ and core/engine.sh record checks only through check_emit" {

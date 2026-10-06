@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_cron_spool.bats against modules/filesystem.sh.
+# mutate-suite: modules/filesystem.sh tests/test_cron_spool.bats
+#
+# Occurrence 1 is the suspicious-entry scan, 2 the user-crontab count; the
+# mutant restores the Debian-only path that skipped cronie hosts.
+
+run_case "spool/scan-hardcodes-debian-path" 1 \
+    '    spool=$(cron_spool_dir)' \
+    '    spool=/var/spool/cron/crontabs'
+
+run_case "spool/count-hardcodes-debian-path" 2 \
+    '    spool=$(cron_spool_dir)' \
+    '    spool=/var/spool/cron/crontabs'

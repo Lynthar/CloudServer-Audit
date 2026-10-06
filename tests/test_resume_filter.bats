@@ -9,10 +9,9 @@ setup() {
     _vpssec_load
 }
 
-# The one copy of the filter this file exercises. The last test asserts that
-# core/engine.sh still contains this exact string — without that, editing the
-# production filter leaves every test below green against a stale copy.
-# The jq variable is `$completed_ids`, not `$done`, to dodge ShellCheck SC1010.
+# The one copy of the filter this file exercises; the last test asserts that
+# core/engine.sh still contains it verbatim, or the tests pass on a stale copy.
+# `$completed_ids`, not `$done`: ShellCheck SC1010.
 RESUME_FILTER='.fixes | map(select(.fix_id as $id | ($completed_ids | index($id)) | not))'
 
 _filter_remaining() {

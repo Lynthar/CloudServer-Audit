@@ -68,9 +68,10 @@ _alerts_audit_config() {
             # PRESENCE only, never the values: a webhook URL and an email
             # address are bearer secrets, and this text lands in every report
             # format plus the copy run.sh leaves in /tmp.
-            local webhook_status="no" email_status="no"
-            [[ -n "$webhook" ]] && webhook_status="yes"
-            [[ -n "$email" ]] && email_status="yes"
+            local webhook_status email_status
+            webhook_status=$(i18n 'common.no') email_status=$(i18n 'common.no')
+            [[ -n "$webhook" ]] && webhook_status=$(i18n 'common.yes')
+            [[ -n "$email" ]] && email_status=$(i18n 'common.yes')
             check_emit "alerts.configured" low passed \
                 desc="$(i18n 'alerts.config_status' "webhook=$webhook_status" "email=$email_status")"
             print_ok "$(i18n 'alerts.configured')"

@@ -46,7 +46,12 @@
     "and": "和",
     "files": "文件",
     "services": "服务",
-    "manual_required": "需要手动配置"
+    "manual_required": "需要手动配置",
+    "n_issues": "{n} 项问题",
+    "n_processes": "{n} 个进程",
+    "command_missing": "找不到 {cmd} 命令",
+    "n_found": "发现 {n} 项",
+    "continue_anyway": "仍要继续吗？"
   },
   "cli": {
     "usage": "用法: vpssec <命令> [选项]",
@@ -281,7 +286,11 @@
     "tcp_keepalive_enabled_suggestion": "将 TCPKeepAlive 设为 no，改用 ClientAliveInterval",
     "default_port_suggestion": "建议改用非标准端口（如 2222、22222）",
     "admin_no_key": "管理员用户 {user} 没有 SSH 密钥",
-    "authkeys_permissions": "SSH 密钥文件权限不安全"
+    "authkeys_permissions": "SSH 密钥文件权限不安全",
+    "authkeys_bad_mode": "{path} 权限为 {mode}（应为 {want}）",
+    "authkeys_bad_owner": "{path} 属主为 {owner}（应为 {want}）",
+    "root_login_any_desc": "（root 可用密码和密钥登录）",
+    "root_login_keyonly_desc": "全局 PasswordAuthentication=no，实际只能用密钥登录"
   },
   "ufw": {
     "default_accept_desc": "默认入站策略为 ACCEPT",
@@ -345,7 +354,9 @@
     "ssh_rule_failed": "添加 SSH 规则失败",
     "firewall_empty": "{type} 已激活但 ruleset 为空",
     "fix_firewall_empty": "为 {type} 加载规则，或改用 UFW/firewalld 等托管前端",
-    "fix_enable_firewall": "启用系统防火墙（RHEL 用 firewalld，Arch 用 nftables/ufw）"
+    "fix_enable_firewall": "启用系统防火墙（RHEL 用 firewalld，Arch 用 nftables/ufw）",
+    "f_open_anywhere": "{port} 对任意来源开放",
+    "f_open_anywhere_review": "{port} 对任意来源开放（请按需复核）"
   },
   "update": {
     "reboot_required_desc": "需要重启的软件包：{list}",
@@ -401,7 +412,12 @@
     "check_failed_fix": "手动刷新软件包索引（apt-get update / dnf makecache / pacman -Sy）后重新审计",
     "apt_locked_suggestion": "等待其他进程结束，或移除锁文件",
     "updates_available_suggestion": "用系统的包管理器安装待更新的软件包",
-    "reboot_required_suggestion": "安排一次系统重启以应用内核/安全更新"
+    "reboot_required_suggestion": "安排一次系统重启以应用内核/安全更新",
+    "security_updates_count": "安全更新：{count}",
+    "unattended_service_disabled": "自动更新的服务/定时器未启用",
+    "unattended_periodic_off": "自动更新已安装，但没有设为实际安装更新",
+    "unattended_no_origins": "unattended-upgrades 没有配置 Origins-Pattern/Allowed-Origins",
+    "unattended_not_effective": "自动更新机制已安装但未生效"
   },
   "docker": {
     "all_root_containers_desc": "所有容器都以 root 用户运行",
@@ -606,7 +622,10 @@
     "selinux_permissive_suggestion": "将 SELinux 设为 enforcing: setenforce 1",
     "selinux_disabled_suggestion": "在 /etc/selinux/config 中启用 SELinux 并重启",
     "apparmor_many_complain_suggestion": "检查这些 profile 并切换到 enforce 模式",
-    "no_mac_system_suggestion": "安装并启用 AppArmor 或 SELinux"
+    "no_mac_system_suggestion": "安装并启用 AppArmor 或 SELinux",
+    "selinux_config_disabled": "{file} 中 SELinux 被配置为 disabled",
+    "selinux_policy_label": "（策略：{policy}）",
+    "apparmor_counts_label": "（enforce 模式：{enforced}，complain 模式：{complain}）"
   },
   "logging": {
     "title": "日志与审计",
@@ -717,7 +736,10 @@
     "service_installed": "Cloudflared 服务已安装",
     "service_start_failed": "服务已安装但启动失败",
     "check_logs": "查看日志: journalctl -u cloudflared",
-    "service_install_failed": "Cloudflared 服务安装失败"
+    "service_install_failed": "Cloudflared 服务安装失败",
+    "issue_no_catchall": "没有兜底规则（service: http_status:404）",
+    "issue_notls_verify": "noTLSVerify: true",
+    "issue_no_origin_request": "没有 originRequest 设置"
   },
   "alerts": {
     "title": "告警通知",
@@ -795,7 +817,8 @@
     "restore_count": "已恢复 {restored} 个文件",
     "restored_partial": "回滚已完成，但有部分条目被跳过",
     "reload_failed": "{service} 正在运行但 reload 失败；恢复的配置要等它重启后才生效",
-    "snapshot_failed": "无法备份 {file}——本次修改已中止（未改动任何内容）。"
+    "snapshot_failed": "无法备份 {file}——本次修改已中止（未改动任何内容）。",
+    "reloading_services": "正在重载服务..."
   },
   "fail2ban": {
     "title": "Fail2ban 防护",
@@ -882,7 +905,8 @@
     "cron_fetches_internet": "{count} 条 cron 条目通过管道下载并执行远程内容",
     "cron_clean": "未发现可疑的 cron 模式",
     "at_jobs_present_suggestion": "用 'at -c <jobid>' 查看，用 'atrm <jobid>' 删除。服务器上很少使用 at 任务——请逐一确认是否有意为之",
-    "cron_fetches_internet_suggestion": "逐条检查；将 curl/wget 的输出直接管道给 sh 执行，是典型的后门 / 供应链投毒手法"
+    "cron_fetches_internet_suggestion": "逐条检查；将 curl/wget 的输出直接管道给 sh 执行，是典型的后门 / 供应链投毒手法",
+    "src_user_crontab": "用户 crontab（{user}）"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR 已禁用（randomize_va_space=0）",
@@ -967,7 +991,14 @@
     "unused_protocols_unblocked_suggestion": "通过 /etc/modprobe.d/blacklist-rare-network.conf 拉黑",
     "ipv6_unused_insecure_suggestion": "建议禁用 IPv6，或加固相关设置",
     "ipv6_firewall_missing_suggestion": "在防火墙配置中启用 IPv6 规则",
-    "aslr_unknown": "无法确定 ASLR 状态"
+    "aslr_unknown": "无法确定 ASLR 状态",
+    "f_expected": "（应为 {want}）",
+    "ipv6_issue_accept_ra_enabled": "accept_ra=1（接受路由通告）",
+    "ipv6_issue_forwarding_enabled": "forwarding=1（开启了 IPv6 转发）",
+    "ipv6_issue_privacy_extensions_weak": "use_tempaddr 不为 2（未优先使用隐私扩展地址）",
+    "ipv6_issue_accept_redirects_enabled": "accept_redirects=1（接受 ICMP 重定向）",
+    "core_issue_no_core_limit": "limits.conf 没有把 core 大小限制为 0",
+    "core_issue_systemd_coredump": "systemd-coredump 未设置 Storage=none"
   },
   "filesystem": {
     "caps_unavailable_desc": "安装 libcap2-bin 后才能检查文件 capabilities",
@@ -1032,7 +1063,7 @@
     "umask_stage_failed": "无法为 {file} 生成 UMASK 027 行，未做修改 - 请手动设置 UMASK 027",
     "umask_write_failed": "无法写入 {file}，umask 未改变",
     "umask_not_effective": "login.defs 已写入，但生效的 umask 仍是 {value}；请检查是否存在第二条 UMASK 行",
-    "umask_pam_missing": "common-session 中未启用 pam_umask，因此该 UMASK 只对 shell 登录会话生效，而非所有 PAM 会话",
+    "umask_pam_missing": "PAM 会话栈中未启用 pam_umask，因此该 UMASK 只对 shell 登录会话生效，而非所有 PAM 会话",
     "login_defs_not_found": "未找到 /etc/login.defs",
     "manual_review_required": "此问题需要手动检查",
     "check_caps": "检查文件能力",
@@ -1049,8 +1080,14 @@
     "umask_weak_suggestion": "将 umask 设为 027 或 077",
     "non_standard_caps_suggestion": "确认这些 capabilities 是否必要",
     "suspicious_cron_suggestion": "逐条检查 cron 条目，排查恶意程序或后门",
-    "pam_umask_disabled": "common-session 中未启用 pam_umask",
-    "caps_unavailable": "getcap 不可用"
+    "pam_umask_disabled": "PAM 会话栈中未启用 pam_umask",
+    "caps_unavailable": "getcap 不可用",
+    "f_mode_expected": "权限 {mode}（应为 {want}）",
+    "f_owner_expected": "属主 {owner}（应为 root）",
+    "f_group_access": "属组 {group} 有访问权限",
+    "f_cron_match": "{src}：匹配 '{pattern}'",
+    "f_cron_user_match": "用户 {user} 的 crontab：匹配 '{pattern}'",
+    "umask_usergroups_note": "注意：USERGROUPS_ENAB=yes 生效中，pam_umask 会把 027 实际应用成 007（组权限位 = 属主权限位）。只有在有意用共享组做文件隔离时，才需要手动设 USERGROUPS_ENAB=no。"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "元数据无会话令牌即可访问；阿里云建议开启加固模式（Security Hardening Mode）",
@@ -1218,7 +1255,28 @@
     "sudoers_syntax_invalid": "sudoers 文件存在语法错误",
     "fix_sudoers_syntax": "仅通过 visudo 编辑；检查 /etc/sudoers 和 /etc/sudoers.d/*",
     "sudo_root_only": "仅 root，无其他管理员账号",
-    "sudo_non_root": "{count} 个非 root"
+    "sudo_non_root": "{count} 个非 root",
+    "pp_login_defs_missing": "未找到 /etc/login.defs",
+    "pp_max_unset": "未设置 PASS_MAX_DAYS",
+    "pp_max_long": "PASS_MAX_DAYS={val}（永不过期或过长）",
+    "pp_min_zero": "PASS_MIN_DAYS={val}（改完可立即再改）",
+    "pp_len_short": "PASS_MIN_LEN={val}（过短）",
+    "pp_warn_short": "PASS_WARN_AGE={val}（应不少于 7）",
+    "pwq_no_module": "PAM 中没有密码质量模块（pwquality/cracklib）",
+    "pwq_minlen_short": "minlen={val}（应不少于 12）",
+    "pwq_dcredit": "dcredit 未强制要求数字",
+    "pwq_ucredit": "ucredit 未强制要求大写字母",
+    "hist_no_timestamps": "未设置 HISTTIMEFORMAT（历史记录无时间戳）",
+    "hist_no_ignore": "HISTCONTROL 未设为忽略重复/空格开头的命令",
+    "hash_weak_shadow": "/etc/shadow 中有弱哈希：{users}",
+    "hash_pam_sha256": "pam_unix 配置为 sha256（建议 sha512/yescrypt）",
+    "hash_pam_weak": "pam_unix 配置为 {method}（弱）",
+    "hash_defs_sha256": "login.defs 中 ENCRYPT_METHOD=sha256（建议 sha512）",
+    "hash_defs_weak": "login.defs 中 ENCRYPT_METHOD={method}（弱）",
+    "rounds_unset": "未设置 SHA_CRYPT_MIN_ROUNDS（glibc 默认 5000；SHA-512 建议 >= 10000）",
+    "rounds_low": "SHA_CRYPT_MIN_ROUNDS={val}（建议 >= 10000）",
+    "faillog_should_yes": "{key}={val}（应为 yes）",
+    "sudoers_file_invalid": "{file} 语法无效"
   },
   "report": {
     "guide_supported": "可用（guide、rollback）",
@@ -1471,7 +1529,16 @@
     "c2_actions": "立即行动",
     "network_block": "阻止 IP",
     "investigate_cmd": "调查命令",
-    "cpu_cmd": "监控命令"
+    "cpu_cmd": "监控命令",
+    "f_unknown": "未知",
+    "f_preload_nonempty": "/etc/ld.so.preload 非空：{libs}",
+    "f_preload_missing": "预加载的库不存在：{lib}",
+    "f_lkm_hidden": "隐藏的内核模块（/sys 下无条目）：{mod}",
+    "f_lkm_path": "模块来自非常规路径：{mod} -> {path}",
+    "f_pool_conn": "连接矿池端口：{remote}（PID：{pid}）",
+    "f_shell_socket": "PID {pid}：持有网络套接字的 shell（inode：{inode}）",
+    "f_sus_outbound": "可疑外连：{remote}（进程：{proc}）",
+    "f_many_conns": "到 {ip} 的连接数过多：{n} 个"
   },
   "webapp": {
     "apache_server_signature_desc": "ServerSignature 会在错误页暴露 Apache 版本",
@@ -1544,7 +1611,6 @@
     "nginx_test_failed": "Nginx 配置测试失败",
     "nginx_test_output": "nginx 的原始报错：{msg}",
     "reload_failed": "配置校验通过，但 'systemctl reload nginx' 失败：改动已写入磁盘但尚未生效，请手动重载 nginx。",
-    "headers_replaced": "已替换既有的 security-headers drop-in {file}；原文件备份在 {backup}",
     "nginx_restored": "更改未通过校验，已从备份恢复 Nginx 配置",
     "adding_headers": "正在添加安全响应头...",
     "headers_added": "安全响应头配置已创建",
@@ -1571,7 +1637,16 @@
     "backups_to_remove": "需要移除的备份文件",
     "other_webserver": "存在未被审计的 Web 服务器：{server}",
     "other_webserver_desc": "vpssec 只审计 Nginx 与 Apache。本机运行着 {server}，所有 Web 服务器检查都没有作用在它上面。",
-    "other_webserver_fix": "手工审计该 Web 服务器的配置，或确认这台主机是否还需要它"
+    "other_webserver_fix": "手工审计该 Web 服务器的配置，或确认这台主机是否还需要它",
+    "fix_hsts_always": "给 Strict-Transport-Security 的 add_header 加上 always 参数，让错误响应也带上它",
+    "f_proto_enabled": "已启用 {proto}",
+    "f_indexes_enabled": "{file}：启用了 Indexes",
+    "f_php_not_enabled": "未启用 {key}",
+    "f_php_cookie_secure": "未启用 session.cookie_secure（针对 HTTPS 站点）",
+    "f_dangerous": "（危险）",
+    "f_days_ago": "已过期 {n} 天",
+    "f_days_left": "剩 {n} 天",
+    "template_replaced": "已替换既有的 {file}；原文件备份在 {backup}"
   },
   "error": {
     "root_required": "需要 root 权限运行此命令",
@@ -1598,7 +1673,17 @@
     "module_failed_load_desc": "{module} 模块加载失败，其所有检查均未运行。本报告对该模块而言是不完整的。",
     "module_failed_fix": "用 --debug 重新运行并查看 logs/vpssec.log；若持续出现请反馈。",
     "malformed_check_fix": "请将 logs/vpssec.log 中的相关条目反馈给 vpssec 维护者",
-    "malformed_check": "丢弃了格式错误的检查 JSON"
+    "malformed_check": "丢弃了格式错误的检查 JSON",
+    "malformed_check_desc": "某个模块为一项检查输出了无效的 JSON。原始内容（前 500 字节）：{raw}",
+    "unknown_modules": "--{flag} 中有未知模块：{list}",
+    "available_modules": "可用模块：{list}",
+    "unknown_modules_ignored": "--{flag} 中有未知模块（已忽略）：{list}",
+    "tempfile_failed": "创建临时文件失败",
+    "already_running_pid": "另一个 vpssec 实例正在运行（PID {pid}）。",
+    "already_running": "另一个 vpssec 实例正在运行。",
+    "already_running_hint": "等它结束，或者停掉它：kill {pid}",
+    "run_with_sudo": "请这样运行：sudo vpssec {cmd}",
+    "supported_platforms": "支持（审计）：Debian 12/13、Ubuntu 22.04/24.04/26.04、RHEL 8/9/10 系（Rocky/Alma/CentOS Stream）、Arch。自动修复（guide）仅支持 Debian/Ubuntu。"
   },
   "fixwarn": {
     "baseline.selinux_disabled": "启用 SELinux 需要重启系统，且可能导致服务被拒绝",

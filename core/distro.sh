@@ -615,32 +615,15 @@ cron_spool_dir() {
     esac
 }
 
-# Candidate GRUB config locations (newline-separated; caller existence-
-# checks each). RHEL's real grub.cfg on a UEFI install lives under
-# /boot/efi/EFI/<id>/, which the old single-path check missed.
-grub_cfg_path() {
-    local id="${VPSSEC_DISTRO_ID:-}"
-    case "$VPSSEC_DISTRO_FAMILY" in
-        debian) printf '%s\n' /boot/grub/grub.cfg ;;
-        rhel)   printf '%s\n' /boot/grub2/grub.cfg "/boot/efi/EFI/${id}/grub.cfg" ;;
-        arch)   printf '%s\n' /boot/grub/grub.cfg ;;
-        *)      printf '%s\n' /boot/grub/grub.cfg /boot/grub2/grub.cfg ;;
-    esac
-}
-
-# PAM files that define the password stack (hash method / rounds).
-pam_password_files() {
-    case "$VPSSEC_DISTRO_FAMILY" in
-        debian) echo "/etc/pam.d/common-password" ;;
-        *)      echo "/etc/pam.d/system-auth /etc/pam.d/password-auth" ;;
-    esac
-}
-
-# PAM files that define the session stack (pam_umask probe).
+# PAM files where a session-stack pam_umask line can live (newline-separated;
+# caller existence-checks each). RHEL ships it in postlogin and Arch in
+# system-login, so a Debian-only list reads "not enabled" on both.
 pam_session_files() {
     case "$VPSSEC_DISTRO_FAMILY" in
-        debian) echo "/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive" ;;
-        *)      echo "/etc/pam.d/system-auth /etc/pam.d/password-auth" ;;
+        debian) printf '%s\n' /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive ;;
+        rhel)   printf '%s\n' /etc/pam.d/postlogin /etc/pam.d/system-auth /etc/pam.d/password-auth ;;
+        arch)   printf '%s\n' /etc/pam.d/system-login ;;
+        *)      printf '%s\n' /etc/pam.d/common-session /etc/pam.d/postlogin /etc/pam.d/system-login ;;
     esac
 }
 

@@ -3,10 +3,8 @@
 # test_fix_filesystem.bats).
 # mutate-suite: modules/filesystem.sh tests/test_filesystem_umask.bats
 #
-# Two of the tests pinned here could not run at all until FS_LOGIN_DEFS and
-# FS_PAM_SESSION_FILES became module variables: one skipped on every host that has
-# /etc/login.defs (i.e. all of CI) and the other asserted only that a function
-# existed.
+# An empty FS_PAM_SESSION_FILES means "ask pam_session_files"; the suite stubs
+# that function to stand in for a RHEL host whose pam_umask is in postlogin.
 
 run_case "usergroups/default-flipped" 1 \
     '    echo "${val:-yes}"' \
@@ -25,8 +23,12 @@ run_case "pam/any-session-line-matches" 1 \
     "        grep -qE '^[[:space:]]*session' \"\$f\" 2>/dev/null && return 0"
 
 run_case "pam/only-the-first-file-checked" 1 \
-    '    for f in "${FS_PAM_SESSION_FILES[@]}"; do' \
-    '    for f in "${FS_PAM_SESSION_FILES[0]}"; do'
+    '    for f in "${files[@]}"; do' \
+    '    for f in "${files[0]}"; do'
+
+run_case "pam/family-files-never-asked" 1 \
+    '    (( ${#files[@]} )) || mapfile -t files < <(pam_session_files)' \
+    '    :'
 
 run_case "effective/usergroups-rewrite-dropped" 1 \
     '        echo "${raw:0:1}${raw:1:1}${raw:1:1}${raw:3:1}"' \

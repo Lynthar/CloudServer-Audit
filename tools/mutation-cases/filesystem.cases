@@ -24,8 +24,8 @@ run_case "paths/audit-reader-inlined" 1 \
     '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' /etc/login.defs 2>/dev/null)'
 
 run_case "paths/pam-files-inlined" 1 \
-    '    for f in "${FS_PAM_SESSION_FILES[@]}"; do' \
-    '    for f in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do'
+    '    local f files=("${FS_PAM_SESSION_FILES[@]}")' \
+    '    local f files=(/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive)'
 
 # ---- filesystem.fix_umask -------------------------------------------
 
@@ -156,9 +156,9 @@ run_case "sensitive/cron-allow-retightened" 1 \
 # Scoping, not existence: a whitelist that accepts these groups on ANY path
 # would let a daemon-group /etc/shadow pass. Killed by the outside-path tests.
 run_case "sensitive/daemon-group-accepted-everywhere" 1 \
-    '                daemon) [[ "$file" == /etc/at.* ]] || problems+=("group $group grants access") ;;' \
+    '                daemon) [[ "$file" == /etc/at.* ]] || problems+=("$(i18n '"'"'filesystem.f_group_access'"'"' "group=$group")") ;;' \
     '                daemon) : ;;'
 
 run_case "sensitive/crontab-group-accepted-everywhere" 1 \
-    '                crontab) [[ "$file" == /etc/cron* ]] || problems+=("group $group grants access") ;;' \
+    '                crontab) [[ "$file" == /etc/cron* ]] || problems+=("$(i18n '"'"'filesystem.f_group_access'"'"' "group=$group")") ;;' \
     '                crontab) : ;;'

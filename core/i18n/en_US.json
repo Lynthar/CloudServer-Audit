@@ -46,7 +46,12 @@
     "and": "and",
     "files": "files",
     "services": "services",
-    "manual_required": "Manual configuration required"
+    "manual_required": "Manual configuration required",
+    "n_issues": "{n} issues",
+    "n_processes": "{n} processes",
+    "command_missing": "{cmd} command not found",
+    "n_found": "{n} found",
+    "continue_anyway": "Continue anyway?"
   },
   "cli": {
     "usage": "Usage: vpssec <command> [options]",
@@ -281,7 +286,11 @@
     "tcp_keepalive_enabled_suggestion": "Set TCPKeepAlive to no and rely on ClientAliveInterval instead",
     "default_port_suggestion": "Consider changing to a non-standard port (e.g., 2222, 22222)",
     "admin_no_key": "Admin user {user} has no SSH key",
-    "authkeys_permissions": "SSH key files have insecure permissions"
+    "authkeys_permissions": "SSH key files have insecure permissions",
+    "authkeys_bad_mode": "{path} has permissions {mode} (should be {want})",
+    "authkeys_bad_owner": "{path} owned by {owner} (should be {want})",
+    "root_login_any_desc": "(allows root via password and key)",
+    "root_login_keyonly_desc": "effectively key-only because PasswordAuthentication=no globally"
   },
   "ufw": {
     "default_accept_desc": "Default incoming policy is ACCEPT",
@@ -345,7 +354,9 @@
     "ssh_rule_failed": "Failed to add SSH rule",
     "firewall_empty": "{type} active but ruleset is empty",
     "fix_firewall_empty": "Load rules into {type} or switch to a managed front-end like UFW/firewalld",
-    "fix_enable_firewall": "Enable a system firewall (firewalld on RHEL, nftables/ufw on Arch)"
+    "fix_enable_firewall": "Enable a system firewall (firewalld on RHEL, nftables/ufw on Arch)",
+    "f_open_anywhere": "{port} open to Anywhere",
+    "f_open_anywhere_review": "{port} open to Anywhere (review if needed)"
   },
   "update": {
     "reboot_required_desc": "Packages requiring reboot: {list}",
@@ -401,7 +412,12 @@
     "check_failed_fix": "Refresh the package index manually (apt-get update / dnf makecache / pacman -Sy) and re-run the audit",
     "apt_locked_suggestion": "Wait for other process to finish or remove lock",
     "updates_available_suggestion": "Apply pending updates with the system package manager",
-    "reboot_required_suggestion": "Schedule a system reboot to apply kernel/security updates"
+    "reboot_required_suggestion": "Schedule a system reboot to apply kernel/security updates",
+    "security_updates_count": "Security updates: {count}",
+    "unattended_service_disabled": "auto-update service/timer is not enabled",
+    "unattended_periodic_off": "auto-update is installed but not set to apply updates",
+    "unattended_no_origins": "unattended-upgrades has no Origins-Pattern/Allowed-Origins configured",
+    "unattended_not_effective": "auto-update mechanism installed but not effective"
   },
   "docker": {
     "all_root_containers_desc": "All containers are running as root user",
@@ -606,7 +622,10 @@
     "selinux_permissive_suggestion": "Set SELinux to enforcing: setenforce 1",
     "selinux_disabled_suggestion": "Enable SELinux in /etc/selinux/config and reboot",
     "apparmor_many_complain_suggestion": "Review and set profiles to enforce mode",
-    "no_mac_system_suggestion": "Install and enable AppArmor or SELinux"
+    "no_mac_system_suggestion": "Install and enable AppArmor or SELinux",
+    "selinux_config_disabled": "SELinux is configured as disabled in {file}",
+    "selinux_policy_label": "(policy: {policy})",
+    "apparmor_counts_label": "(enforcing: {enforced}, complain: {complain})"
   },
   "logging": {
     "title": "Logging & Audit",
@@ -717,7 +736,10 @@
     "service_installed": "Cloudflared service installed",
     "service_start_failed": "Service installed but failed to start",
     "check_logs": "Check logs: journalctl -u cloudflared",
-    "service_install_failed": "Failed to install Cloudflared service"
+    "service_install_failed": "Failed to install Cloudflared service",
+    "issue_no_catchall": "no catch-all rule (service: http_status:404)",
+    "issue_notls_verify": "noTLSVerify: true",
+    "issue_no_origin_request": "no originRequest settings"
   },
   "alerts": {
     "title": "Alert Notifications",
@@ -795,7 +817,8 @@
     "restore_count": "{restored} file(s) restored",
     "restored_partial": "Rollback finished, but some entries were skipped",
     "reload_failed": "{service} is running but did not reload; the restored config is not live until it restarts",
-    "snapshot_failed": "Could not back up {file} — aborting this change (nothing was modified)."
+    "snapshot_failed": "Could not back up {file} — aborting this change (nothing was modified).",
+    "reloading_services": "Reloading services..."
   },
   "fail2ban": {
     "title": "Fail2ban Protection",
@@ -882,7 +905,8 @@
     "cron_fetches_internet": "{count} cron entry(ies) pipe remote downloads to a shell",
     "cron_clean": "No suspicious cron patterns detected",
     "at_jobs_present_suggestion": "Inspect with 'at -c <jobid>'; remove with 'atrm <jobid>'. at jobs are uncommon on servers — verify each is intentional",
-    "cron_fetches_internet_suggestion": "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern"
+    "cron_fetches_internet_suggestion": "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern",
+    "src_user_crontab": "user crontab ({user})"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR is disabled (randomize_va_space=0)",
@@ -967,7 +991,14 @@
     "unused_protocols_unblocked_suggestion": "Blacklist via /etc/modprobe.d/blacklist-rare-network.conf",
     "ipv6_unused_insecure_suggestion": "Consider disabling IPv6 or hardening settings",
     "ipv6_firewall_missing_suggestion": "Enable IPv6 in firewall configuration",
-    "aslr_unknown": "Cannot determine ASLR status"
+    "aslr_unknown": "Cannot determine ASLR status",
+    "f_expected": "(expected {want})",
+    "ipv6_issue_accept_ra_enabled": "accept_ra=1 (router advertisements accepted)",
+    "ipv6_issue_forwarding_enabled": "forwarding=1 (IPv6 forwarding enabled)",
+    "ipv6_issue_privacy_extensions_weak": "use_tempaddr is not 2 (privacy extensions not preferred)",
+    "ipv6_issue_accept_redirects_enabled": "accept_redirects=1 (ICMP redirects accepted)",
+    "core_issue_no_core_limit": "limits.conf does not cap core size at 0",
+    "core_issue_systemd_coredump": "systemd-coredump has no Storage=none"
   },
   "filesystem": {
     "caps_unavailable_desc": "Install libcap2-bin to check file capabilities",
@@ -1032,7 +1063,7 @@
     "umask_stage_failed": "Could not produce a UMASK 027 line for {file}; left unchanged - set UMASK 027 manually",
     "umask_write_failed": "Could not write {file}; umask is unchanged",
     "umask_not_effective": "login.defs was written but the effective umask is still {value}; check for a second UMASK line",
-    "umask_pam_missing": "pam_umask is not enabled in common-session, so this UMASK only applies to shell login sessions, not to every PAM session",
+    "umask_pam_missing": "pam_umask is not enabled in the PAM session stack, so this UMASK only applies to shell login sessions, not to every PAM session",
     "login_defs_not_found": "/etc/login.defs not found",
     "manual_review_required": "Manual review required for this issue",
     "check_caps": "Checking file capabilities",
@@ -1049,8 +1080,14 @@
     "umask_weak_suggestion": "Set umask to 027 or 077",
     "non_standard_caps_suggestion": "Review if these capabilities are needed",
     "suspicious_cron_suggestion": "Review cron entries for potential malware or backdoors",
-    "pam_umask_disabled": "pam_umask not enabled in common-session",
-    "caps_unavailable": "getcap not available"
+    "pam_umask_disabled": "pam_umask not enabled in the PAM session stack",
+    "caps_unavailable": "getcap not available",
+    "f_mode_expected": "mode {mode} (expected {want})",
+    "f_owner_expected": "owner {owner} (expected root)",
+    "f_group_access": "group {group} grants access",
+    "f_cron_match": "{src}: matches '{pattern}'",
+    "f_cron_user_match": "User {user} crontab: matches '{pattern}'",
+    "umask_usergroups_note": "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode",
@@ -1218,7 +1255,28 @@
     "sudoers_syntax_invalid": "sudoers file has syntax errors",
     "fix_sudoers_syntax": "Edit via visudo only; check /etc/sudoers and /etc/sudoers.d/*",
     "sudo_root_only": "root only - no non-root admin",
-    "sudo_non_root": "{count} non-root"
+    "sudo_non_root": "{count} non-root",
+    "pp_login_defs_missing": "/etc/login.defs not found",
+    "pp_max_unset": "PASS_MAX_DAYS not set",
+    "pp_max_long": "PASS_MAX_DAYS={val} (no expiry or too long)",
+    "pp_min_zero": "PASS_MIN_DAYS={val} (allows immediate changes)",
+    "pp_len_short": "PASS_MIN_LEN={val} (too short)",
+    "pp_warn_short": "PASS_WARN_AGE={val} (should be at least 7)",
+    "pwq_no_module": "No password quality module (pwquality/cracklib) in PAM",
+    "pwq_minlen_short": "minlen={val} (should be at least 12)",
+    "pwq_dcredit": "dcredit not enforcing digit requirement",
+    "pwq_ucredit": "ucredit not enforcing uppercase requirement",
+    "hist_no_timestamps": "HISTTIMEFORMAT not set (no timestamps in history)",
+    "hist_no_ignore": "HISTCONTROL not set to ignore duplicates/spaces",
+    "hash_weak_shadow": "Weak hashes in /etc/shadow: {users}",
+    "hash_pam_sha256": "pam_unix configured for sha256 (sha512/yescrypt preferred)",
+    "hash_pam_weak": "pam_unix configured for {method} (weak)",
+    "hash_defs_sha256": "ENCRYPT_METHOD=sha256 in login.defs (sha512 preferred)",
+    "hash_defs_weak": "ENCRYPT_METHOD={method} in login.defs (weak)",
+    "rounds_unset": "SHA_CRYPT_MIN_ROUNDS not set (glibc default 5000; >= 10000 recommended for SHA-512)",
+    "rounds_low": "SHA_CRYPT_MIN_ROUNDS={val} (>= 10000 recommended)",
+    "faillog_should_yes": "{key}={val} (should be yes)",
+    "sudoers_file_invalid": "{file} syntax invalid"
   },
   "report": {
     "guide_supported": "available (guide, rollback)",
@@ -1471,7 +1529,16 @@
     "c2_actions": "Immediate actions",
     "network_block": "To block an IP",
     "investigate_cmd": "Investigation commands",
-    "cpu_cmd": "Monitor with"
+    "cpu_cmd": "Monitor with",
+    "f_unknown": "unknown",
+    "f_preload_nonempty": "Non-empty /etc/ld.so.preload: {libs}",
+    "f_preload_missing": "Preloaded library not found: {lib}",
+    "f_lkm_hidden": "Hidden kernel module (no /sys entry): {mod}",
+    "f_lkm_path": "Module from unusual path: {mod} -> {path}",
+    "f_pool_conn": "Mining pool port connection: {remote} (PID: {pid})",
+    "f_shell_socket": "PID {pid}: Shell with network socket (inode: {inode})",
+    "f_sus_outbound": "Suspicious outbound: {remote} (Process: {proc})",
+    "f_many_conns": "High connection count to {ip}: {n} connections"
   },
   "webapp": {
     "apache_server_signature_desc": "ServerSignature exposes Apache version in error pages",
@@ -1544,7 +1611,6 @@
     "nginx_test_failed": "Nginx configuration test failed",
     "nginx_test_output": "nginx reported: {msg}",
     "reload_failed": "Config is valid but 'systemctl reload nginx' failed: the change is written to disk but NOT live. Reload nginx manually.",
-    "headers_replaced": "Replaced the existing security-headers drop-in {file}; the previous file is backed up at {backup}",
     "nginx_restored": "Restored Nginx configuration from backup after the change failed validation",
     "adding_headers": "Adding security headers...",
     "headers_added": "Security headers configuration created",
@@ -1571,7 +1637,16 @@
     "backups_to_remove": "Backup files to remove",
     "other_webserver": "Web server present but not audited: {server}",
     "other_webserver_desc": "vpssec audits Nginx and Apache only. {server} is running on this host and none of the web-server checks were applied to it.",
-    "other_webserver_fix": "Audit this web server's configuration by hand, or check whether the host still needs it"
+    "other_webserver_fix": "Audit this web server's configuration by hand, or check whether the host still needs it",
+    "fix_hsts_always": "Add the 'always' parameter to the Strict-Transport-Security add_header so error responses carry it too",
+    "f_proto_enabled": "{proto} enabled",
+    "f_indexes_enabled": "{file}: Indexes enabled",
+    "f_php_not_enabled": "{key} not enabled",
+    "f_php_cookie_secure": "session.cookie_secure not enabled (for HTTPS sites)",
+    "f_dangerous": "(DANGEROUS)",
+    "f_days_ago": "expired {n} days ago",
+    "f_days_left": "{n} days left",
+    "template_replaced": "Replaced the existing {file}; the previous file is backed up at {backup}"
   },
   "error": {
     "root_required": "Root privileges required to run this command",
@@ -1598,7 +1673,17 @@
     "module_failed_load_desc": "The {module} module failed to load; none of its checks ran. This report is incomplete for that module.",
     "module_failed_fix": "Re-run with --debug and check logs/vpssec.log; report the failure if it persists.",
     "malformed_check_fix": "Please report to vpssec maintainers with the relevant logs/vpssec.log entry",
-    "malformed_check": "Malformed check JSON dropped"
+    "malformed_check": "Malformed check JSON dropped",
+    "malformed_check_desc": "A module emitted invalid JSON for a check. Raw payload (first 500 bytes): {raw}",
+    "unknown_modules": "Unknown module(s) in --{flag}: {list}",
+    "available_modules": "Available modules: {list}",
+    "unknown_modules_ignored": "Unknown module(s) in --{flag} (ignored): {list}",
+    "tempfile_failed": "Failed to create temp file",
+    "already_running_pid": "Another vpssec instance is already running (PID {pid}).",
+    "already_running": "Another vpssec instance is already running.",
+    "already_running_hint": "Wait for it to finish, or stop it: kill {pid}",
+    "run_with_sudo": "Please run with: sudo vpssec {cmd}",
+    "supported_platforms": "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only."
   },
   "fixwarn": {
     "baseline.selinux_disabled": "Enabling SELinux requires system reboot and may cause service issues",

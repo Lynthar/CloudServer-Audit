@@ -302,11 +302,11 @@ _module_validate_filter() {
     (( ${#invalid[@]} == 0 )) && return 0
 
     if [[ "$severity" == "fatal" ]]; then
-        print_error "Unknown module(s) in --${flag}: ${invalid[*]}"
-        print_msg "Available modules: ${VPSSEC_MODULE_ORDER[*]}"
+        print_error "$(i18n 'error.unknown_modules' "flag=$flag" "list=${invalid[*]}")"
+        print_msg "$(i18n 'error.available_modules' "list=${VPSSEC_MODULE_ORDER[*]}")"
         exit 2
     else
-        print_warn "Unknown module(s) in --${flag} (ignored): ${invalid[*]}"
+        print_warn "$(i18n 'error.unknown_modules_ignored' "flag=$flag" "list=${invalid[*]}")"
     fi
 }
 
@@ -335,6 +335,7 @@ audit_module() {
     if declare -f "$audit_func" > /dev/null; then
         log_info "Running audit: $module"
         print_subheader "$(i18n "${module}.title")"
+        local started=$SECONDS
 
         # `if fn; then : ; else r=$?` captures the module's REAL status —
         # `if ! fn` would capture the status of `!`, which is always 0.
@@ -353,6 +354,7 @@ audit_module() {
                 desc="$(i18n 'error.module_failed_desc' "module=$module" "rc=$audit_result")" \
                 suggestion="$(i18n 'error.module_failed_fix')"
         fi
+        log_info "Audit $module took $((SECONDS - started))s"
 
         return 0  # Module audit completed (even if with warnings)
     else
@@ -479,12 +481,7 @@ get_available_fixes() {
         while read -r fix; do
             local fix_id=$(echo "$fix" | jq -r '.fix_id')
             local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
-            local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
-            local can_fix_result=$(can_fix "$fix_id" 2>/dev/null && echo "true" || echo "false")
-
-            # Add safety info to fix
-            local enriched=$(echo "$fix" | jq --arg safety "$safety" --arg warning "$warning" --arg can_fix "$can_fix_result" \
-                '. + {safety: $safety, safety_warning: $warning, can_auto_fix: ($can_fix == "true")}')
+            local enriched=$(echo "$fix" | jq --arg safety "$safety" '. + {safety: $safety}')
 
             enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
         done < <(echo "$fixes" | jq -c '.[]')
@@ -996,7 +993,7 @@ guide_mode() {
     # Create temporary file for plan preview with cleanup trap
     local plan_preview
     plan_preview=$(mktemp -t vpssec-plan.XXXXXX) || {
-        print_error "Failed to create temp file"
+        print_error "$(i18n 'error.tempfile_failed')"
         return 1
     }
     chmod 600 "$plan_preview"
@@ -1141,7 +1138,7 @@ rollback_mode() {
         print_warn "$(i18n 'backup.restored_partial')"
     fi
 
-    print_info "Reloading services..."
+    print_info "$(i18n 'backup.reloading_services')"
     _rollback_reload_services
 
     return "$restore_rc"

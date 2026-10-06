@@ -14,6 +14,7 @@ setup() {
     fi
 
     _vpssec_load core/state.sh
+    i18n_load en_US
     # filesystem.sh defines FS_SENSITIVE_FILES and helpers we need.
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/filesystem.sh"

@@ -103,11 +103,8 @@ FS_MAX_REPORT_ITEMS=20
 FS_LOGIN_DEFS="/etc/login.defs"
 FS_PROFILE="/etc/profile"
 # Files whose pam_umask line decides whether login.defs UMASK applies at
-# session start at all.
-declare -ga FS_PAM_SESSION_FILES=(
-    "/etc/pam.d/common-session"
-    "/etc/pam.d/common-session-noninteractive"
-)
+# session start at all. Empty means "this family's pam_session_files".
+declare -ga FS_PAM_SESSION_FILES=()
 # Drop-in directories expanded by BOTH the audit and the permissions fix.
 # FS_SENSITIVE_FILES cannot hold globs, so these are walked separately; the
 # fix mirrors the audit's expected modes (sudoers.d 0440, sshd_config.d 0644).
@@ -392,7 +389,7 @@ _fs_check_sensitive_file() {
     local expected_num=$((8#$expected))
     local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
     if (( extra_bits != 0 )); then
-        problems+=("mode $actual (expected $expected)")
+        problems+=("$(i18n 'filesystem.f_mode_expected' "mode=$actual" "want=$expected")")
     fi
 
     # Ownership is only checked as root, the production condition: bats
@@ -401,7 +398,7 @@ _fs_check_sensitive_file() {
         # Owner: every file in FS_SENSITIVE_FILES is root-owned on every
         # supported distro; anything else is drift worth surfacing.
         if [[ -n "$owner" && "$owner" != "root" ]]; then
-            problems+=("owner $owner (expected root)")
+            problems+=("$(i18n 'filesystem.f_owner_expected' "owner=$owner")")
         fi
 
         # Group only matters when it actually gets access bits AND is outside
@@ -410,9 +407,9 @@ _fs_check_sensitive_file() {
         if [[ -n "$group" ]] && (( actual_num & 070 )) ; then
             case "$group" in
                 root|shadow|ssh_keys) : ;;
-                daemon) [[ "$file" == /etc/at.* ]] || problems+=("group $group grants access") ;;
-                crontab) [[ "$file" == /etc/cron* ]] || problems+=("group $group grants access") ;;
-                *) problems+=("group $group grants access") ;;
+                daemon) [[ "$file" == /etc/at.* ]] || problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
+                crontab) [[ "$file" == /etc/cron* ]] || problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
+                *) problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
             esac
         fi
     fi
@@ -528,12 +525,13 @@ _fs_umask_ok() {
     _fs_umask_is_strict "$(_fs_umask_effective)"
 }
 
-# Is pam_umask enabled in /etc/pam.d/common-session*? It is what makes the
+# Is pam_umask enabled in the session stack? It is what makes the
 # login.defs UMASK take effect at session start; without it only shell rc
 # files influence umask.
 _fs_check_pam_umask_enabled() {
-    local f
-    for f in "${FS_PAM_SESSION_FILES[@]}"; do
+    local f files=("${FS_PAM_SESSION_FILES[@]}")
+    (( ${#files[@]} )) || mapfile -t files < <(pam_session_files)
+    for f in "${files[@]}"; do
         [[ -f "$f" ]] || continue
         # Match "session ... pam_umask.so" while skipping commented lines.
         grep -qE '^[[:space:]]*session[[:space:]]+[^#]*pam_umask\.so' "$f" 2>/dev/null && return 0
@@ -707,7 +705,7 @@ _fs_find_suspicious_cron() {
         for pattern in "${patterns[@]}"; do
             local matches=$(grep -iE "$pattern" /etc/crontab 2>/dev/null | head -2)
             if [[ -n "$matches" ]]; then
-                suspicious+=("/etc/crontab: matches '$pattern'")
+                suspicious+=("$(i18n 'filesystem.f_cron_match' "src=/etc/crontab" "pattern=$pattern")")
             fi
         done
     fi
@@ -720,21 +718,23 @@ _fs_find_suspicious_cron() {
             for pattern in "${patterns[@]}"; do
                 local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
                 if [[ -n "$matches" ]]; then
-                    suspicious+=("$file: matches '$pattern'")
+                    suspicious+=("$(i18n 'filesystem.f_cron_match' "src=$file" "pattern=$pattern")")
                 fi
             done
         done
     done
 
     # Check user crontabs
-    if [[ -d /var/spool/cron/crontabs ]]; then
-        for file in /var/spool/cron/crontabs/*; do
+    local spool
+    spool=$(cron_spool_dir)
+    if [[ -d "$spool" ]]; then
+        for file in "$spool"/*; do
             [[ -f "$file" ]] || continue
             local username=$(basename "$file")
             for pattern in "${patterns[@]}"; do
                 local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
                 if [[ -n "$matches" ]]; then
-                    suspicious+=("User $username crontab: matches '$pattern'")
+                    suspicious+=("$(i18n 'filesystem.f_cron_user_match' "user=$username" "pattern=$pattern")")
                 fi
             done
         done
@@ -745,10 +745,11 @@ _fs_find_suspicious_cron() {
 
 # Count user crontabs
 _fs_count_user_crontabs() {
-    local count=0
-    if [[ -d /var/spool/cron/crontabs ]]; then
-        count=$(ls -1 /var/spool/cron/crontabs 2>/dev/null | wc -l)
-    fi
+    local count=0 spool f
+    spool=$(cron_spool_dir)
+    for f in "$spool"/*; do
+        [[ -f "$f" ]] && count=$((count + 1))
+    done
     echo "$count"
 }
 
@@ -986,7 +987,7 @@ _fs_audit_tmp_mount() {
         check_emit "filesystem.tmp_mount_missing_opts" low failed \
             desc="$(i18n 'filesystem.tmp_mount_missing_opts_desc' "missing=$missing")" \
             suggestion="$(i18n 'filesystem.tmp_mount_missing_opts_suggestion')"
-        print_severity "low" "/tmp missing mount options: $missing"
+        print_severity "low" "$(i18n 'filesystem.tmp_mount_missing_opts'): $missing"
     fi
 }
 
@@ -1029,7 +1030,7 @@ _fs_audit_umask() {
             desc="$(i18n 'filesystem.umask_weak_desc' "desc=$desc")" \
             suggestion="$(i18n 'filesystem.umask_weak_suggestion')" \
             fix="filesystem.fix_umask"
-        print_severity "low" "Weak umask: $desc"
+        print_severity "low" "$(i18n 'filesystem.umask_weak') ($desc)"
     fi
 
     # Informational: without pam_umask the login.defs UMASK may never apply
@@ -1045,7 +1046,7 @@ _fs_audit_caps() {
     if ! command -v getcap &>/dev/null; then
         check_emit "filesystem.caps_unavailable" low info \
             desc="$(i18n 'filesystem.caps_unavailable_desc')"
-        print_info "getcap not available (install libcap2-bin)"
+        print_info "$(i18n 'filesystem.caps_unavailable')"
         return
     fi
 
@@ -1070,7 +1071,7 @@ _fs_audit_caps() {
             title="$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
             desc="$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
             suggestion="$(i18n 'filesystem.review_caps')"
-        print_severity "medium" "Files with dangerous capabilities: $dangerous_count"
+        print_severity "medium" "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")"
     elif ((total_count > 0)); then
         local caps_list=""
         while IFS= read -r line; do
@@ -1084,7 +1085,7 @@ _fs_audit_caps() {
             title="$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
             desc="$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
             suggestion="$(i18n 'filesystem.non_standard_caps_suggestion')"
-        print_severity "low" "Non-standard file capabilities: $total_count"
+        print_severity "low" "$(i18n 'filesystem.non_standard_caps' "count=$total_count")"
     else
         check_emit "filesystem.caps_ok" low passed
         print_ok "$(i18n 'filesystem.caps_ok')"
@@ -1110,7 +1111,7 @@ _fs_audit_cron() {
             title="$(i18n 'filesystem.suspicious_cron' "count=$sus_count")" \
             desc="$sus_list" \
             suggestion="$(i18n 'filesystem.suspicious_cron_suggestion')"
-        print_severity "medium" "Suspicious cron entries found: $sus_count"
+        print_severity "medium" "$(i18n 'filesystem.suspicious_cron' "count=$sus_count")"
     else
         check_emit "filesystem.cron_ok" low passed \
             desc="$(i18n 'filesystem.cron_ok_desc' "user_crontabs=$user_crontabs")"
@@ -1258,7 +1259,7 @@ _fs_fix_umask() {
     # group bits mirror the owner bits, so 027 becomes an effective 007.
     # World access is still denied.
     if [[ "$usergroups" == "yes" ]]; then
-        print_info "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
+        print_info "$(i18n 'filesystem.umask_usergroups_note')"
     fi
 
     # Without pam_umask the value just written only reaches shell login

@@ -418,6 +418,20 @@ _kernel_check_core_dump() {
     echo "${issues[*]}"
 }
 
+# Display text for _kernel_check_core_dump's tokens. The tokens stay as they
+# are because the fix's postcondition tests that output for emptiness.
+_kernel_core_issue_text() {
+    local tok out=() joined
+    for tok in $1; do
+        case "$tok" in
+            no_core_limit|systemd_coredump) out+=("$(i18n "kernel.core_issue_$tok")") ;;
+            *) out+=("$tok") ;;
+        esac
+    done
+    printf -v joined '%s; ' "${out[@]}"
+    echo "${joined%; }"
+}
+
 # The pass condition of _kernel_audit_core_dump: nothing left unrestricted.
 _kernel_core_dump_restricted() {
     [[ -z "$(_kernel_check_core_dump)" ]]
@@ -526,9 +540,13 @@ _kernel_audit_ipv6() {
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
         if ! _kernel_ipv6_issues_ok yes "$issue_count"; then
+            local tok ipv6_text=""
+            for tok in $ipv6_issues; do
+                ipv6_text+="$(i18n "kernel.ipv6_issue_$tok"); "
+            done
             check_emit "kernel.ipv6_insecure" low failed \
                 title="$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
-                desc="$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=$ipv6_issues")" \
+                desc="$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=${ipv6_text%; }")" \
                 suggestion="$(i18n 'kernel.fix_ipv6')" \
                 fix="kernel.harden_ipv6"
             print_severity "low" "$(i18n 'kernel.ipv6_insecure' "count=$issue_count")"
@@ -604,7 +622,7 @@ _kernel_audit_aslr() {
             ;;
         *)
             check_emit "kernel.aslr_unknown" low failed
-            print_severity "low" "Cannot determine ASLR status"
+            print_severity "low" "$(i18n 'kernel.aslr_unknown')"
             ;;
     esac
 }
@@ -690,7 +708,7 @@ _kernel_audit_network_params() {
             ok) passed=$((passed + 1)) ;;
             bad)
                 case "$sev" in
-                    high)   issues_high+=("$param=$actual (expected $expected)") ;;
+                    high)   issues_high+=("$param=$actual $(i18n 'kernel.f_expected' "want=$expected")") ;;
                     medium) issues_medium+=("$param=$actual") ;;
                     low)    issues_low+=("$param=$actual") ;;
                 esac
@@ -765,7 +783,7 @@ _kernel_audit_kernel_params() {
             na) unavailable+=("$param") ;;
             bad)
                 case "$sev" in
-                    high)   issues_high+=("$param=$actual (expected $expected)") ;;
+                    high)   issues_high+=("$param=$actual $(i18n 'kernel.f_expected' "want=$expected")") ;;
                     medium) issues_medium+=("$param=$actual") ;;
                     low)    issues_low+=("$param=$actual") ;;
                 esac
@@ -785,7 +803,7 @@ _kernel_audit_kernel_params() {
             desc="$(i18n 'kernel.kernel_params_high_desc' "list=$issue_list")" \
             suggestion="$(i18n 'kernel.fix_kernel_params')" \
             fix="kernel.harden_kernel"
-        print_severity "medium" "Critical kernel hardening issues: ${#issues_high[@]}"
+        print_severity "medium" "$(i18n 'kernel.kernel_params_critical' "count=${#issues_high[@]}")"
     fi
 
     # Report medium AND low tiers together (see _kernel_audit_network_params for
@@ -826,7 +844,7 @@ _kernel_audit_core_dump() {
         print_ok "$(i18n 'kernel.core_dump_disabled')"
     else
         check_emit "kernel.core_dump_enabled" low failed \
-            desc="$(i18n 'kernel.core_dump_enabled_desc' "issues=$issues")" \
+            desc="$(i18n 'kernel.core_dump_enabled_desc' "issues=$(_kernel_core_issue_text "$issues")")" \
             suggestion="$(i18n 'kernel.fix_core_dump')" \
             fix="kernel.disable_core_dump"
         print_severity "low" "$(i18n 'kernel.core_dump_enabled')"
@@ -1106,7 +1124,7 @@ ProcessSizeMax=0'
         return 0
     fi
 
-    print_warn "$(i18n 'kernel.core_dump_partial' "issues=$remaining")"
+    print_warn "$(i18n 'kernel.core_dump_partial' "issues=$(_kernel_core_issue_text "$remaining")")"
     log_warn "kernel.disable_core_dump: still unrestricted after fix: $remaining"
     return 1
 }

@@ -143,10 +143,9 @@ EOF
     [ "$output" = "none" ]
 }
 
-@test "catchall fallback: H18 path:line regression — file detected without xargs bug" {
-    # Original chained grep that fed `path:matched-line` to xargs and
-    # looked for a literal filename. Now the loop iterates `grep -rl`
-    # filenames and probes each; this still works.
+@test "catchall fallback: a file whose comment mimics a listen line is still detected" {
+    # The comment repeats the directive with a hostname:port lookalike; the real
+    # default_server block below it must decide the answer.
     cat >"$NGINX_SITES_ENABLED/weird.conf" <<'EOF'
 # server: api  listen 80 default_server; / hostname:port confusion
 server {

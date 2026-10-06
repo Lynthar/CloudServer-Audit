@@ -63,12 +63,20 @@ run_case "headers/reload-unchecked" 2 \
 # Reporting "created" over the operator's own drop-in is how the replacement
 # went unnoticed: the file is backed up, but nothing said it had been replaced.
 run_case "headers/replacement-reported-as-created" 1 \
-    '    if [[ "$pre_existed" == "true" ]]; then' \
+    '    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then' \
     '    if false; then'
 
 run_case "hsts/backup-skipped" 1 \
-    '    backup_file "$hsts_conf" >/dev/null || return 1' \
+    '    bak=$(backup_file "$hsts_conf") || return 1' \
     '    :'
+
+run_case "hsts/replacement-reported-as-created" 2 \
+    '    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then' \
+    '    if false; then'
+
+run_case "ssl/replacement-reported-as-created" 3 \
+    '    if [[ "$pre_existed" == "true" && -n "$bak" ]]; then' \
+    '    if false; then'
 
 # The two defects worth pinning are the two halves that used to be conflated: a case
 # replacing the print_warn with `return 0` is a no-op on the status now that
@@ -84,7 +92,7 @@ run_case "hsts/success-reported-as-failure" 4 \
     '    return 1'
 
 run_case "ssl/backup-skipped" 1 \
-    '    backup_file "$ssl_conf" >/dev/null || return 1' \
+    '    bak=$(backup_file "$ssl_conf") || return 1' \
     '    :'
 
 run_case "ssl/written-into-conf.d" 1 \

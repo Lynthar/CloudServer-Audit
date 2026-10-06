@@ -1,25 +1,7 @@
 #!/usr/bin/env bash
-#
-# Prove the uninstaller install.sh generates behaves, against REAL directories.
-#
-#   sudo bash tests/uninstall/run.sh      # from the repo root
-#
-# Why this is not a bats test: install.sh's allowlist deliberately accepts
-# only /opt/<name> and /var/lib/<name>, so the success paths — data kept,
-# data purged — cannot be reached from a bats tmpdir at all. The refusal
-# paths and the generated text ARE covered by tests/test_install_uninstaller.bats;
-# what is here is everything that needs a real allowlisted directory and a
-# real `rm -rf`.
-#
-# Needs root and a disposable host, exactly like tests/mutation/ — it creates
-# and deletes /opt/vpssec-proof-* and /srv/vpssec-proof-*. It is not wired
-# into CI. Expected baseline: every line "ok", final line
-# "UNINSTALLER PROOF: ALL PASS", exit 0.
-#
-# The four cases exist because this is the one change in the project that
-# generates an `rm -rf`: paths baked correctly, data preserved by default,
-# an out-of-allowlist path refused without touching anything, and a
-# shell-metacharacter path quoted rather than executed.
+# The generated uninstaller against REAL allowlisted dirs (/opt/vpssec-proof-*):
+# root on a disposable host only, not in CI. `sudo bash tests/uninstall/run.sh`
+# from the repo root; pass = every line "ok", then "UNINSTALLER PROOF: ALL PASS".
 cd /opt/vpssec || exit 1
 fail=0
 
@@ -80,12 +62,9 @@ mk_install "$D"
 CANARY=/opt/vpssec-proof-canary
 mkdir -p "$CANARY"; printf 'alive\n' > "$CANARY/marker"
 INSTALL_DIR="$D" BIN_LINK=/tmp/proof-bin-d create_uninstaller
-# Re-bake the hostile value the way a mis-set env var would, keeping the
-# generated body verbatim. Strip everything up to and including the real
-# BIN_LINK= line — an earlier version of this test took the body from the
-# first blank line on, which left the ORIGINAL INSTALL_DIR= assignment in
-# place to overwrite the hostile one, so the case passed against a benign
-# path and proved nothing.
+# Re-bake the hostile value, keeping the generated body verbatim. Strip through
+# the real BIN_LINK= line: a body that keeps the original INSTALL_DIR= overwrites
+# the hostile one, and the case then passes against a benign path.
 { printf '#!/bin/bash\n'
   printf 'INSTALL_DIR=%q\n' "$D; rm -rf $CANARY"
   printf 'BIN_LINK=%q\n' /tmp/proof-bin-d

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scheduling module: cron and at job inventory plus anomaly detection.
-# Inspects job CONTENT; filesystem.sh covers cron-file permissions only.
+# Looks for network fetches piped to a shell; filesystem.sh greps the same
+# files for its own pattern list.
 
 # --- Helpers ---
 
@@ -38,15 +39,13 @@ _sched_list_cron_entries() {
         done
     done
 
-    # Per-user crontabs from /var/spool/cron/* — paths vary by distro.
-    for dir in /var/spool/cron /var/spool/cron/crontabs; do
-        [[ -d "$dir" ]] || continue
-        for f in "$dir"/*; do
-            [[ -f "$f" ]] || continue
-            local user; user=$(basename "$f")
-            grep -Ev '^[[:space:]]*(#|$)' "$f" 2>/dev/null \
-                | sed "s|^|user crontab (${user}): |"
-        done
+    # Per-user crontabs; the spool directory differs by distro family.
+    local spool tag
+    spool=$(cron_spool_dir)
+    for f in "$spool"/*; do
+        [[ -f "$f" ]] || continue
+        tag=$(i18n 'scheduling.src_user_crontab' "user=$(basename "$f")")
+        grep -Ev '^[[:space:]]*(#|$)' "$f" 2>/dev/null | sed "s|^|${tag}: |"
     done
 }
 

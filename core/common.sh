@@ -472,7 +472,8 @@ i18n() {
     for arg in "$@"; do
         local var="${arg%%=*}"
         local val="${arg#*=}"
-        text="${text//\{$var\}/$val}"
+        # Quoted: bash 5.2+ otherwise expands & in $val to the matched {var}.
+        text="${text//\{$var\}/"$val"}"
     done
 
     echo "$text"
@@ -1469,13 +1470,13 @@ vpssec_init() {
             local _other_pid
             _other_pid=$(cat "$_run_lock" 2>/dev/null || true)
             if [[ -n "$_other_pid" ]]; then
-                print_error "Another vpssec instance is already running (PID ${_other_pid})."
+                print_error "$(i18n 'error.already_running_pid' "pid=$_other_pid")"
             else
-                print_error "Another vpssec instance is already running."
+                print_error "$(i18n 'error.already_running')"
             fi
             # Never advise removing the lock file: reaching here means a LIVE
             # holder, and a fresh inode would let two mutating runs coexist.
-            print_msg "Wait for it to finish, or stop it: kill ${_other_pid:-<pid>}"
+            print_msg "$(i18n 'error.already_running_hint' "pid=${_other_pid:-<pid>}")"
             exit 1
         fi
         # Record our PID for the next caller's diagnostics.

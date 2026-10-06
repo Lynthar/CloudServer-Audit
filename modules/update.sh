@@ -186,7 +186,7 @@ _update_audit_available() {
 
             sec_shown=$security_count
             if ((sec_shown > update_count)); then sec_shown=$update_count; fi
-            sec_desc="Security updates: $sec_shown"
+            sec_desc="$(i18n 'update.security_updates_count' "count=$sec_shown")"
 
             local stale_days
             stale_days=$(pkg_index_age_days)
@@ -247,13 +247,13 @@ _update_audit_unattended() {
         local reason_desc
         case "$status" in
             service_disabled)
-                reason_desc="auto-update service/timer is not enabled" ;;
+                reason_desc="$(i18n 'update.unattended_service_disabled')" ;;
             periodic_off)
-                reason_desc="auto-update is installed but not set to apply updates" ;;
+                reason_desc="$(i18n 'update.unattended_periodic_off')" ;;
             no_origins)
-                reason_desc="unattended-upgrades has no Origins-Pattern/Allowed-Origins configured" ;;
+                reason_desc="$(i18n 'update.unattended_no_origins')" ;;
             *)
-                reason_desc="auto-update mechanism installed but not effective" ;;
+                reason_desc="$(i18n 'update.unattended_not_effective')" ;;
         esac
 
         check_emit "update.unattended_disabled" low failed \
