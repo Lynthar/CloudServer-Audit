@@ -716,6 +716,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # Visible in the report but scored in neither direction: the honest signal
     # is meta.complete=false and the exit code.
     ["_internal.module_failed"]="info"
+    ["filesystem.scan_incomplete"]="info"
+    ["webapp.scan_incomplete"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"
     ["preflight.network_ok"]="info"

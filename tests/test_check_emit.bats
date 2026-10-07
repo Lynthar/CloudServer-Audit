@@ -56,6 +56,64 @@ _recorded() {
     [ ! -e "$STATE_CHECKS_FILE" ]
 }
 
+# ---- a check that cannot be recorded is a failure, never an absence ----------
+
+@test "check_emit: a desc past the 128 KiB argv limit is recorded whole" {
+    local long
+    long=$(head -c 200000 /dev/zero | tr '\0' a)
+    check_emit "malware.crypto_miner" high failed desc="$long"
+    [ "$(jq length "$STATE_CHECKS_FILE")" -eq 1 ]
+    [ "$(_recorded 'desc | length')" -eq 200000 ]
+}
+
+@test "check_emit: a check that cannot be written marks its module incomplete and returns 0" {
+    source "$REPO/core/engine.sh"
+    mkdir "$STATE_CHECKS_FILE"   # a directory: every write to it fails
+    local rc=0
+    check_emit "ssh.x11_forwarding_enabled" low failed || rc=$?
+    [ "$rc" -eq 0 ]
+    [[ " ${VPSSEC_MODULES_FAILED[*]} " == *" ssh "* ]]
+    [ "${VPSSEC_MODULE_EMIT_FAILED[ssh]:-}" = "1" ]
+    grep -q "check_emit ssh.x11_forwarding_enabled: the check could not be recorded" "$_log_file"
+}
+
+@test "check_emit: a lost _internal record does not list _internal as a failed module" {
+    source "$REPO/core/engine.sh"
+    mkdir "$STATE_CHECKS_FILE"
+    check_emit "_internal.module_failed" low failed
+    [ "${#VPSSEC_MODULES_FAILED[@]}" -eq 0 ]
+}
+
+@test "a check lost mid-audit is reported after the pass, and the audit exits 3" {
+    source "$REPO/core/engine.sh"
+    eval "_real_$(declare -f state_add_check)"
+    state_add_check() {
+        [[ "$1" == *'"fake.lost"'* ]] && return 1
+        _real_state_add_check "$@"
+    }
+    VPSSEC_MODULE_ORDER=(fake)
+    VPSSEC_MODULE_ENABLED[fake]=1
+    VPSSEC_MODULE_LOADED[fake]=1
+    fake_audit() {
+        check_emit fake.lost low failed
+        check_emit fake.kept low passed
+    }
+    report_generate_all() { :; }
+
+    run audit_all
+    [ "$status" -eq 3 ]
+    jq -e 'any(.[]; .id == "fake.kept") and all(.[]; .id != "fake.lost")' "$STATE_CHECKS_FILE"
+    run jq -r '.[] | select(.id == "_internal.module_failed") | .desc' "$STATE_CHECKS_FILE"
+    [ "${#lines[@]}" -eq 1 ]
+    [ "$output" = "$(i18n 'error.module_failed_emit_desc' "module=fake")" ]
+}
+
+@test "state_add_check: an empty record is malformed, not silently dropped" {
+    state_init
+    state_add_check ""
+    [ "$(_recorded id)" = "_internal.malformed_check" ]
+}
+
 # Every `check_emit` / `_malware_emit_finding` command, continuation lines
 # joined and split into words the way the shell would (quotes and $(...) kept
 # whole). Prints "CALL:file:line", then "file:line:key" per field argument.

@@ -22,7 +22,8 @@ second sshd on a spare port and makes sure you can still get in.
 
 A one-shot run that leaves no files on the system: this pulls the latest release
 into a private temp directory, checks its signature, runs, and deletes itself.
-The report is copied out to `/tmp/vpssec-report-*`.
+If you save the report when asked at the end, it is copied out to
+`/tmp/vpssec-report-*`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -75,7 +76,8 @@ vpssec help ssh      # the checks and fix ids in one module
 Findings come out as `summary.md` for people to read, plus `summary.json` and
 SARIF 2.1.0 for machines to parse — `summary.md` is for humans and its shape will
 change, so don't parse it. All three are available in Chinese and English
-(`VPSSEC_LANG`).
+(`VPSSEC_LANG`). An audit asks before writing them to `reports/` (the default is
+no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 

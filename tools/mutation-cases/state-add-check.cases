@@ -1,0 +1,15 @@
+# Mutation cases: tests/test_check_emit.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_check_emit.bats
+#
+# state_add_check is where an emitted check is either recorded or reported lost.
+
+# An empty record passes the malformed guard (jq accepts empty input) and the
+# append then fails with nothing in the report.
+run_case "add/empty-passes-guard" 1 \
+    '    if [[ -z "$check_json" ]] || ! printf '"'"'%s'"'"' "$check_json" | jq empty 2>/dev/null; then' \
+    '    if ! printf '"'"'%s'"'"' "$check_json" | jq empty 2>/dev/null; then'
+
+# The check back on argv: past 128 KiB the append fails and the check is lost.
+run_case "add/check-on-argv" 1 \
+    "                | jq -s '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then" \
+    "                | jq -s --argjson argv_check \"\$check_json\" '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then"

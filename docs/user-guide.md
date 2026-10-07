@@ -1012,7 +1012,7 @@ vpssec [mode] [options]
 | `--include=MODS` | 只运行指定模块（逗号分隔） |
 | `--exclude=MODS` | 排除指定模块 |
 | `--fix=IDS` | 只对 `guide`：不出菜单，直接执行逗号分隔的修复 ID；本次审计没给出的 ID 一律拒绝并退出 1 |
-| `--yes` | 自动确认非关键提示（**critical_confirm 仍然必须手动确认**） |
+| `--yes` | 自动确认非关键提示（**critical_confirm 仍然必须手动确认**）；审计结束时的「是否保存报告」也算，带 `--yes` 报告总是写出（不带时默认不写，`reports/` 里已有的旧报告不动，并说明它们是哪次写的） |
 | `--json-only` | 只输出 JSON（CI/CD 用） |
 | `--no-color` | 关闭彩色输出 |
 | `--debug` | 详细日志写到 `logs/vpssec.log` |
@@ -1023,7 +1023,7 @@ vpssec [mode] [options]
 
 | 变量 | 说明 |
 |---|---|
-| `VPSSEC_FS_TIMEOUT=N` | 单次 find 遍历的超时秒数（默认 60），用于 SUID/SGID/世界可写/无主文件扫描 |
+| `VPSSEC_FS_TIMEOUT=N` | 单次文件系统遍历的超时秒数，大于 0 的整数（默认 60），用于 SUID/SGID/世界可写/无主文件/文件能力与网站目录扫描；值不合法时 `audit`/`guide` 直接拒绝并退出 1。遍历超时或没跑成时，相应的「未发现」通过项不再给出，报告多一条 `filesystem.scan_incomplete`（或 `webapp.scan_incomplete`），审计退出 3 |
 
 ---
 

@@ -36,13 +36,14 @@ state_init() {
 
 # --- Check State Management ---
 
-# Append a check to state under a write lock. Invalid JSON is replaced by a
+# Append a check to state under a write lock; returns 1 when the write fails.
+# Invalid JSON (an empty string included: jq accepts it) is replaced by a
 # synthetic "malformed check" record so the breakage shows up in the report.
 state_add_check() {
     local check_json="$1"
     local lock_file="${VPSSEC_STATE}/.checks.lock"
 
-    if ! printf '%s' "$check_json" | jq empty 2>/dev/null; then
+    if [[ -z "$check_json" ]] || ! printf '%s' "$check_json" | jq empty 2>/dev/null; then
         log_error "state_add_check received malformed JSON (first 200 bytes): ${check_json:0:200}"
         local raw_preview="${check_json:0:500}"
         check_json=$(create_check_json \
@@ -63,7 +64,10 @@ state_add_check() {
         local temp_file
         temp_file=$(mktemp "${STATE_CHECKS_FILE}.XXXXXX") || return 1
 
-        if jq --argjson check "$check_json" '. += [$check]' "$STATE_CHECKS_FILE" > "$temp_file" 2>/dev/null; then
+        # The check goes in on stdin, not --argjson: argv caps one string at
+        # 128 KiB, and a check carrying a long host value would be dropped.
+        if { cat "$STATE_CHECKS_FILE"; printf '%s' "$check_json"; } \
+                | jq -s '.[0] + .[1:]' > "$temp_file" 2>/dev/null; then
             mv -f "$temp_file" "$STATE_CHECKS_FILE"
         else
             rm -f "$temp_file"

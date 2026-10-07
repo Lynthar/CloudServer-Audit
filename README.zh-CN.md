@@ -19,7 +19,7 @@
 ## 安装
 
 一次性运行，不在系统里留下文件：这条命令把最新 release 下载到一个私有临时目录，验签、
-执行、然后自删，报告拷到 `/tmp/vpssec-report-*`。
+执行、然后自删。结束时选了保存报告的话，报告会拷到 `/tmp/vpssec-report-*`。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -67,7 +67,8 @@ vpssec help ssh      # 某个模块里的检查项与 fix id
 ```
 
 结果出成 `summary.md` 给人读，`summary.json` 与 SARIF 2.1.0 给机器解析——`summary.md`
-的格式会变，不要拿它做解析。三种输出都支持中英文（`VPSSEC_LANG`）。
+的格式会变，不要拿它做解析。三种输出都支持中英文（`VPSSEC_LANG`）。审计结束时会先问
+要不要写进 `reports/`（默认不写）；带 `--yes` 或 `--json-only` 则总是写出。
 
 ## 检查什么
 

@@ -62,13 +62,13 @@ report_generate_json() {
 
     # Built via jq so every string field is escaped: a hostname or os-release
     # value with a quote or control char would otherwise break the document.
-    # score/stats/checks are already valid JSON, so they go in as --argjson.
+    # checks arrive on stdin, not argv: argv caps one string at 128 KiB.
     [[ -n "$score" ]]  || score=0
     [[ -n "$stats" ]]  || stats='{}'
     [[ -n "$checks" ]] || checks='[]'
 
     local json
-    json=$(jq -n \
+    json=$(printf '%s' "$checks" | jq -n \
         --arg version "${VPSSEC_VERSION:-}" \
         --arg timestamp "$(date -Iseconds)" \
         --arg os "$os" \
@@ -84,13 +84,13 @@ report_generate_json() {
         --argjson failed_modules "$failed_modules_json" \
         --argjson score "$score" \
         --argjson stats "$stats" \
-        --argjson checks "$checks" \
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         '
+        input as $checks
         # Set ONLY where true: absence from FIX_TEMPLATE_ONLY is no evidence
         # that a fix is direct. $fid binds before the pipe because inside
         # `$tmpl_fixes | ...` the input is the array, not the check.
-        ($checks | map(
+        | ($checks | map(
             (.fix_id // "") as $fid
             | if $fid != "" and ($tmpl_fixes | index($fid))
               then . + {fix_type: "template_only"}
@@ -664,9 +664,9 @@ report_generate_sarif() {
             | jq -Rn '[inputs] | unique') || failed_modules_json="[]"
     fi
 
+    # checks on stdin for the same argv limit as summary.json.
     local sarif
-    sarif=$(jq -n \
-        --argjson checks "$checks" \
+    sarif=$(printf '%s' "$checks" | jq -n \
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         --arg     version "${VPSSEC_VERSION:-}" \
         --arg     host    "$hostname" \
@@ -684,7 +684,8 @@ report_generate_sarif() {
           elif . == "medium" then "5.0"
           elif . == "low"    then "2.0"
           else "0.0" end;
-        {
+        input as $checks
+        | {
           "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
           "version": "2.1.0",
           "runs": [{
@@ -764,15 +765,27 @@ report_generate_sarif() {
     echo "$output_file"
 }
 
-# Write all three report files. The report_generate_* functions return their
-# output path on stdout, so their output MUST be captured, not left bare.
+# Write all three report files; returns 1 if any failed, and names the files
+# that failed in _REPORT_WRITE_FAILED. The report_generate_* functions return
+# their output path on stdout, so their output MUST be captured, not left bare.
+_REPORT_WRITE_FAILED=()
 _report_write_files() {
+    _REPORT_WRITE_FAILED=()
     mkdir -p "${VPSSEC_REPORTS}"
-    local rc=0
-    report_generate_json     >/dev/null || rc=1
-    report_generate_markdown >/dev/null || rc=1
-    report_generate_sarif    >/dev/null || rc=1
-    return $rc
+    report_generate_json     >/dev/null || _REPORT_WRITE_FAILED+=(summary.json)
+    report_generate_markdown >/dev/null || _REPORT_WRITE_FAILED+=(summary.md)
+    report_generate_sarif    >/dev/null || _REPORT_WRITE_FAILED+=(summary.sarif)
+    (( ${#_REPORT_WRITE_FAILED[@]} == 0 ))
+}
+
+# When the newest summary.* in the reports dir was written, or nothing if none.
+_report_previous_time() {
+    local newest="" f
+    for f in "${VPSSEC_REPORTS}"/summary.{json,md,sarif}; do
+        [[ -f "$f" ]] || continue
+        [[ -z "$newest" || "$f" -nt "$newest" ]] && newest="$f"
+    done
+    [[ -n "$newest" ]] && date -r "$newest" '+%Y-%m-%d %H:%M:%S'
 }
 
 # Generate all reports
@@ -788,27 +801,37 @@ report_generate_all() {
         print_msg "───────────────────────────────"
         print_msg ""
 
+        # Saving is opt-in. Files already in reports/ are never deleted, only
+        # named as older, so nobody reads them as this run's result.
         local save_prompt=$(i18n 'report.save_prompt')
-        if confirm "$save_prompt" "n"; then
-            _report_write_files || print_warn "$(i18n 'report.save_failed')"
-
-            print_msg ""
-            # All three files are written, so all three are listed. The
-            # .sarif was silently omitted here before, which read as "it
-            # wasn't generated".
-            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.json")"
-            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.md")"
-            print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.sarif")"
-            print_msg ""
+        if ! confirm "$save_prompt" "n"; then
+            local previous
+            previous=$(_report_previous_time) || true
+            if [[ -n "$previous" ]]; then
+                print_info "$(i18n 'report.not_saved_previous' "dir=${VPSSEC_REPORTS}" "time=$previous")"
+            else
+                print_info "$(i18n 'report.not_saved')"
+            fi
+            return 0
         fi
+
+        # Same rule as --json-only: a failed write fails the run (exit 1), and
+        # no "saved" line may stand next to a file from an earlier run.
+        if ! _report_write_files; then
+            print_error "$(i18n 'report.save_failed' "files=${_REPORT_WRITE_FAILED[*]}" "dir=${VPSSEC_REPORTS}")"
+            return 1
+        fi
+        print_msg ""
+        print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.json")"
+        print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.md")"
+        print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.sarif")"
+        print_msg ""
     else
         # Regenerate ALL three files, or a CI job shipping the Markdown or
         # SARIF publishes the previous run's data. Only the JSON goes to
         # stdout; write failure is FATAL and the old file is NEVER echoed.
         if ! _report_write_files; then
-            # Direct echo, not print_error: print_msg suppresses ALL output
-            # under --json-only, which would turn this fatal error into a
-            # silent empty stdout. stderr keeps the JSON channel clean.
+            # stderr keeps the JSON channel clean.
             echo "vpssec: report generation failed; refusing to emit a stale summary.json (see logs/vpssec.log)" >&2
             return 1
         fi

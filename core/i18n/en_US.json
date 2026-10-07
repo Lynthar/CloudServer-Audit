@@ -51,7 +51,9 @@
     "n_processes": "{n} processes",
     "command_missing": "{cmd} command not found",
     "n_found": "{n} found",
-    "continue_anyway": "Continue anyway?"
+    "continue_anyway": "Continue anyway?",
+    "walk_incomplete_desc": "These walks did not finish, so finding nothing in them proves nothing: {walks}. Each walk stops after VPSSEC_FS_TIMEOUT seconds (now {timeout}); logs/vpssec.log records why each one stopped.",
+    "walk_incomplete_fix": "Re-run with a longer limit, e.g. VPSSEC_FS_TIMEOUT=300 vpssec audit"
   },
   "cli": {
     "usage": "Usage: vpssec <command> [options]",
@@ -1091,7 +1093,8 @@
     "f_group_access": "group {group} grants access",
     "f_cron_match": "{src}: matches '{pattern}'",
     "f_cron_user_match": "User {user} crontab: matches '{pattern}'",
-    "umask_usergroups_note": "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation."
+    "umask_usergroups_note": "Note: USERGROUPS_ENAB=yes is in effect; pam_umask will apply 027 as effective 007 (group bits = owner bits). Set USERGROUPS_ENAB=no manually only if you intentionally use shared groups for file isolation.",
+    "scan_incomplete": "Filesystem scan incomplete"
   },
   "cloud": {
     "imds_alibaba_normal_mode_desc": "Metadata reachable without a session token; Alibaba recommends Security Hardening Mode",
@@ -1305,7 +1308,9 @@
     "info_note": "{count} of these are advisory and do not affect the score",
     "advisory_checks": "Advisory (not scored)",
     "legend": "Legend",
-    "save_failed": "Some report files could not be written (see logs/vpssec.log)"
+    "save_failed": "Report files could not be written: {files}. Any of them already in {dir} is from an earlier run (see logs/vpssec.log)",
+    "not_saved": "Reports not saved.",
+    "not_saved_previous": "Reports not saved; {dir} still holds the ones written {time}."
   },
   "category": {
     "basics": "System Basics",
@@ -1347,7 +1352,10 @@
     "resume_executing": "Resuming: {count} fix(es) remaining out of {total}",
     "resume_complete_hint": "Run 'vpssec audit' to see the updated state.",
     "fix_not_offered": "This audit does not offer the fix {id} — nothing was run",
-    "plan_empty": "Selection resolved to zero executable fixes — nothing was run. The UI handed over IDs the planner does not recognize; please report this."
+    "plan_empty": "Selection resolved to zero executable fixes — nothing was run. The UI handed over IDs the planner does not recognize; please report this.",
+    "progress_discarded": "Discarded the interrupted plan saved {ts}: --fix names a new plan.",
+    "progress_pending": "An interrupted plan (saved {ts}) is waiting, and this run cannot ask about it. Run vpssec guide in a terminal to resume or discard it, pass --fix to replace it, or delete {path}.",
+    "resume_module_unavailable": "Cannot resume: the plan needs the {module} module, which could not be loaded (see logs/vpssec.log). The interrupted plan is kept."
   },
   "fix": {
     "alert_only": "Alert only - manual fix required",
@@ -1651,7 +1659,8 @@
     "f_dangerous": "(DANGEROUS)",
     "f_days_ago": "expired {n} days ago",
     "f_days_left": "{n} days left",
-    "template_replaced": "Replaced the existing {file}; the previous file is backed up at {backup}"
+    "template_replaced": "Replaced the existing {file}; the previous file is backed up at {backup}",
+    "scan_incomplete": "Web root scan incomplete"
   },
   "error": {
     "root_required": "Root privileges required to run this command",
@@ -1690,7 +1699,9 @@
     "run_with_sudo": "Please run with: sudo vpssec {cmd}",
     "oneshot_stateful": "'{cmd}' is not available through the one-line runner: it deletes its temporary directory on exit, and a fix's backups with it. Install vpssec with install.sh, then run: sudo vpssec {cmd}",
     "supported_platforms": "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only.",
-    "confirm_timeout": "No answer within {seconds}s - treated as NO"
+    "confirm_timeout": "No answer within {seconds}s - treated as NO",
+    "module_failed_emit_desc": "At least one {module} check could not be recorded (see logs/vpssec.log), so its result is missing. This report is incomplete for that module.",
+    "bad_fs_timeout": "VPSSEC_FS_TIMEOUT must be a whole number of seconds greater than 0 (got \"{value}\")"
   },
   "fixwarn": {
     "baseline.selinux_disabled": "Enabling SELinux requires system reboot and may cause service issues",

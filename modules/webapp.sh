@@ -698,7 +698,7 @@ _webapp_ssl_cert_expiry() {
 
 # Check for sensitive files in web roots
 _webapp_sensitive_files() {
-    local findings=()
+    local findings=() cut=0
 
     # One find name-expression, built once. Per-pattern finds also bypass
     # _fs_run_find and _FS_PRUNE_PATHS, which every walk must go through.
@@ -722,6 +722,7 @@ _webapp_sensitive_files() {
         for root in $root_pattern; do
             [[ -d "$root" ]] || continue
             while IFS= read -r -d '' found; do
+                [[ "$found" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
                 findings+=("$found")
             done < <(_fs_run_find "webapp-sensitive" \
                 find "$root" -maxdepth 3 "${prune_args[@]}" \
@@ -730,11 +731,12 @@ _webapp_sensitive_files() {
     done
 
     printf '%s\n' "${findings[@]}" | sort -u | head -50
+    return "$cut"
 }
 
 # Check for backup files
 _webapp_backup_files() {
-    local findings=()
+    local findings=() cut=0
 
     local prune_args=()
     _fs_build_prune_args prune_args
@@ -747,6 +749,7 @@ _webapp_backup_files() {
 
             # Common backup patterns
             while IFS= read -r -d '' file; do
+                [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
                 findings+=("$file")
             done < <(_fs_run_find "webapp-backup" \
                 find "$root" -maxdepth 4 "${prune_args[@]}" \( \
@@ -765,6 +768,7 @@ _webapp_backup_files() {
     done
 
     printf '%s\n' "${findings[@]}"
+    return "$cut"
 }
 
 # --- Audit Function ---
@@ -773,6 +777,7 @@ webapp_audit() {
     log_info "Running web application security audit"
 
     local has_webserver=false
+    _FS_CUT_WALKS=()
 
     # === Nginx Security ===
     if _webapp_nginx_installed; then
@@ -1014,7 +1019,9 @@ webapp_audit() {
     print_item "$(i18n 'webapp.checking_exposure')"
 
     # 19. Sensitive files
-    local sensitive=$(_webapp_sensitive_files)
+    # Declared apart from the assignment: `local x=$(…)` returns local's status.
+    local sensitive walked=1
+    sensitive=$(_webapp_sensitive_files) || { walked=0; _FS_CUT_WALKS+=(webapp-sensitive); }
     local sensitive_count=$(count_lines "$sensitive")
 
     if [[ -n "$sensitive" && "$sensitive_count" -gt 0 ]]; then
@@ -1022,14 +1029,15 @@ webapp_audit() {
             title="$(i18n 'webapp.sensitive_files_found'): $sensitive_count" \
             desc="$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
             suggestion="$(i18n 'webapp.remove_sensitive')"
-    else
+    elif (( walked )); then
         check_emit "webapp.sensitive_files_ok" info passed \
             title="$(i18n 'webapp.no_sensitive_files')" \
             desc="$(i18n 'webapp.sensitive_files_ok_desc')"
     fi
 
     # 20. Backup files
-    local backups=$(_webapp_backup_files)
+    local backups
+    backups=$(_webapp_backup_files) || _FS_CUT_WALKS+=(webapp-backup)
     local backup_count=$(count_lines "$backups")
 
     if [[ -n "$backups" && "$backup_count" -gt 0 ]]; then
@@ -1037,6 +1045,14 @@ webapp_audit() {
             title="$(i18n 'webapp.backup_files_found'): $backup_count" \
             desc="$(echo "$backups" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
             suggestion="$(i18n 'webapp.remove_backups')"
+    fi
+
+    # Same rule as filesystem_audit: a cut-short walk proves nothing absent.
+    if (( ${#_FS_CUT_WALKS[@]} > 0 )); then
+        check_emit "webapp.scan_incomplete" info failed \
+            desc="$(i18n 'common.walk_incomplete_desc' "walks=${_FS_CUT_WALKS[*]}" "timeout=$_FS_FIND_TIMEOUT")" \
+            suggestion="$(i18n 'common.walk_incomplete_fix')"
+        _module_record_failure webapp walk
     fi
 
     # "No web server detected" is a claim about the host, and it is false on

@@ -90,9 +90,9 @@ declare -gA VPSSEC_MODULE_ENABLED=()
 declare -gA VPSSEC_MODULE_LOADED=()
 declare -gA VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
 
-# Modules that did NOT complete: failed to source, missing audit function, or
-# audit returned non-zero. This is the ONLY signal for an incomplete audit —
-# add new failure modes here rather than inventing a parallel one.
+# Modules that did NOT complete: failed to load, audit returned non-zero, a
+# check could not be recorded, or a filesystem walk was cut short. This is the
+# ONLY signal for an incomplete audit — add new failure modes here, not beside it.
 declare -ga VPSSEC_MODULES_FAILED=()
 
 # Load-failed modules, separately: loading happens BEFORE state_init, so
@@ -100,10 +100,15 @@ declare -ga VPSSEC_MODULES_FAILED=()
 # would be wiped. _run_audit_pass emits one per entry after state_init.
 declare -gA VPSSEC_MODULE_LOAD_FAILED=()
 
-# Record a module failure once (kind is "load" or "audit").
+# Modules that lost a check: the record is emitted after the pass, not from
+# inside check_emit, which is the very call that just failed.
+declare -gA VPSSEC_MODULE_EMIT_FAILED=()
+
+# Record a module failure once (kind: load, audit, emit or walk).
 _module_record_failure() {
     local module="$1" kind="$2"
     [[ "$kind" == "load" ]] && VPSSEC_MODULE_LOAD_FAILED[$module]=1
+    [[ "$kind" == "emit" ]] && VPSSEC_MODULE_EMIT_FAILED[$module]=1
     local entry
     for entry in ${VPSSEC_MODULES_FAILED[@]+"${VPSSEC_MODULES_FAILED[@]}"}; do
         [[ "$entry" == "$module" ]] && return 0
@@ -117,14 +122,17 @@ module_load() {
     local module="$1"
     local module_file="${VPSSEC_MODULES}/${module}.sh"
 
+    # A module the run asked for but cannot load is a failure, not an absence:
+    # otherwise a damaged install tree audits as complete.
     if [[ ! -f "$module_file" ]]; then
-        log_warn "Module file not found: $module_file"
+        log_error "Module file not found: $module_file"
+        _module_record_failure "$module" "load"
         return 1
     fi
 
-    # Validate module file is readable
     if [[ ! -r "$module_file" ]]; then
         log_error "Module file not readable: $module_file"
+        _module_record_failure "$module" "load"
         return 1
     fi
 
@@ -136,14 +144,13 @@ module_load() {
         return 1
     fi
 
-    # Verify the module's audit function exists
+    # Never marked loaded: audit_module returns 1 for it, and _run_audit_pass
+    # calls that under errexit, so the whole audit would die with no report.
     local audit_func="${module}_audit"
     if ! declare -f "$audit_func" > /dev/null 2>&1; then
-        log_warn "Module $module loaded but missing ${audit_func}() function"
-        # Still mark as loaded, but record it: a module without an audit
-        # function will contribute zero checks, which is indistinguishable
-        # from "everything fine" unless the incompleteness is surfaced.
+        log_error "Module $module loaded but missing ${audit_func}() function"
         _module_record_failure "$module" "load"
+        return 1
     fi
 
     VPSSEC_MODULE_LOADED[$module]=1
@@ -442,6 +449,12 @@ _run_audit_pass() {
         check_emit "_internal.module_failed" low failed \
             title="$(i18n 'error.module_failed' "module=$module")" \
             desc="$(i18n 'error.module_failed_load_desc' "module=$module")" \
+            suggestion="$(i18n 'error.module_failed_fix')"
+    done
+    for module in "${!VPSSEC_MODULE_EMIT_FAILED[@]}"; do
+        check_emit "_internal.module_failed" low failed \
+            title="$(i18n 'error.module_failed' "module=$module")" \
+            desc="$(i18n 'error.module_failed_emit_desc' "module=$module")" \
             suggestion="$(i18n 'error.module_failed_fix')"
     done
 
@@ -767,6 +780,19 @@ _guide_resume() {
         return 0
     fi
 
+    # The plan was approved under whatever --include ran then; this run may
+    # have loaded fewer modules, and a missing *_fix would fail every step and
+    # clear the progress. Stop instead, with the progress still there.
+    local fix_id fix_module
+    while IFS= read -r fix_id; do
+        fix_module="${fix_id%%.*}"
+        [[ "${VPSSEC_MODULE_LOADED[$fix_module]:-0}" == "1" ]] && continue
+        if ! module_load "$fix_module"; then
+            print_error "$(i18n 'guide.resume_module_unavailable' "module=$fix_module")"
+            return 1
+        fi
+    done < <(echo "$remaining_fixes" | jq -r '.[].fix_id')
+
     print_header "$(i18n 'guide.resume_executing' "count=$remaining_count" "total=$plan_count")"
     print_msg ""
 
@@ -813,39 +839,51 @@ guide_mode() {
         _completed_count=$(echo "$_progress" | jq -r '.completed | length')
         _ts=$(echo "$_progress" | jq -r '.timestamp')
 
-        tty_warn "$(i18n 'guide.interrupted_detected' \
-            "step=$((_completed_count + 1))" \
-            "total=$_total" \
-            "current=$_current" \
-            "ts=$_ts")"
-        tty_say ""
-        tty_say "  1) $(i18n 'guide.resume_option')"
-        tty_say "  2) $(i18n 'guide.discard_option')"
-        tty_say "  3) $(i18n 'guide.cancel_option')"
-        tty_say -n "  > "
+        # --fix names a whole new plan, so the old one is dropped, out loud.
+        # With nobody to answer the menu, stop non-zero: its cancel exits 0 and
+        # keeps the progress, so every automated run would read "done" and stall.
+        if [[ -n "${VPSSEC_FIX_IDS:-}" ]]; then
+            state_clear_progress
+            log_warn "Discarded the interrupted plan saved $_ts: --fix names a new plan"
+            print_warn "$(i18n 'guide.progress_discarded' "ts=$_ts")"
+        elif _noninteractive || ! _tty_readable; then
+            print_error "$(i18n 'guide.progress_pending' "ts=$_ts" "path=$STATE_PROGRESS_FILE")"
+            return 1
+        else
+            tty_warn "$(i18n 'guide.interrupted_detected' \
+                "step=$((_completed_count + 1))" \
+                "total=$_total" \
+                "current=$_current" \
+                "ts=$_ts")"
+            tty_say ""
+            tty_say "  1) $(i18n 'guide.resume_option')"
+            tty_say "  2) $(i18n 'guide.discard_option')"
+            tty_say "  3) $(i18n 'guide.cancel_option')"
+            tty_say -n "  > "
 
-        local _choice
-        if ! read -r _choice 2>/dev/null </dev/tty; then
-            _choice=3
+            local _choice
+            if ! read -r _choice 2>/dev/null </dev/tty; then
+                _choice=3
+            fi
+
+            case "$_choice" in
+                1)
+                    # rc-capture: a bare call would let set -e abort guide_mode on
+                    # a failed resumed fix; the status still propagates via return.
+                    local _resume_rc=0
+                    _guide_resume || _resume_rc=$?
+                    return "$_resume_rc"
+                    ;;
+                2)
+                    state_clear_progress
+                    # Fall through to the fresh-audit flow below.
+                    ;;
+                *)
+                    print_msg "$(i18n 'common.cancel')"
+                    return 0
+                    ;;
+            esac
         fi
-
-        case "$_choice" in
-            1)
-                # rc-capture: a bare call would let set -e abort guide_mode on
-                # a failed resumed fix; the status still propagates via return.
-                local _resume_rc=0
-                _guide_resume || _resume_rc=$?
-                return "$_resume_rc"
-                ;;
-            2)
-                state_clear_progress
-                # Fall through to the fresh-audit flow below.
-                ;;
-            *)
-                print_msg "$(i18n 'common.cancel')"
-                return 0
-                ;;
-        esac
     fi
 
     # First run audit

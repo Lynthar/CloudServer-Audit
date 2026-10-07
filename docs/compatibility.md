@@ -22,13 +22,13 @@ are not part of the contract.
 
 | Command | Code | Meaning |
 |---|---|---|
-| `audit` | 0 | complete scan — every selected module finished; reports written |
-| `audit` | 3 | one or more modules did not finish; reports are still written, the names are in `meta.modules_failed` |
+| `audit` | 0 | complete scan — every selected module finished |
+| `audit` | 3 | one or more modules did not finish (failed to load or crashed, a check could not be recorded, or a filesystem walk hit `VPSSEC_FS_TIMEOUT`); the names are in `meta.modules_failed` |
 | `guide` | 0 | every fix in the executed plan succeeded |
 | `guide` | 4 | unsupported distro (not Debian/Ubuntu) — nothing was changed |
 | `rollback` | 0 | the requested restore completed (also: cancelled at the prompt) |
 | `rollback` | 2 | the restore ran but skipped some entries (counted in the output, named in `logs/vpssec.log`); services were still reloaded |
-| any | 1 | error — not root, bad arguments, a failed fix, nothing restored, … |
+| any | 1 | error — not root, bad arguments (including `VPSSEC_FS_TIMEOUT`), a failed fix, nothing restored, a report file that could not be written, … |
 | `run.sh` | 2 | `guide`/`rollback` refused under the run-once entry point, whether named on its command line, picked in the mode menu, or set through `VPSSEC_MODE` |
 
 Never "fix" a red CI by mapping 3 or 4 back to 0: they exist so that an
@@ -42,6 +42,9 @@ same reasons will likewise exit 1 instead of 0.
 
 ## Reports
 
+- **When reports are written:** always with `--json-only` or `--yes`; otherwise
+  only if the operator answers yes at the end of the audit. Files already in
+  `reports/` are never deleted, so check `meta.timestamp` before trusting one.
 - **`reports/summary.json`** is the machine interface. The top-level shape —
   `meta`, `stats`, `checks[]` — and existing field names are removed or
   renamed only in a MAJOR release; new fields may appear in any MINOR, so

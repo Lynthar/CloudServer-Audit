@@ -1,0 +1,20 @@
+# Mutation cases: tests/test_fs_walk_cut.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_fs_walk_cut.bats
+#
+# The walker's half of the contract: a walk that did not finish says so in-band.
+
+# No cut record at all: every cut walk reads as a complete one.
+run_case "walk/cut-record-dropped" 1 \
+    "    printf '%s\\0' \"\$_FS_WALK_CUT\"" \
+    '    :'
+
+# A walk that never ran (timeout(1) rejected the value, the tool is missing)
+# passes as finished with nothing found.
+run_case "walk/never-ran-reads-finished" 1 \
+    '        125|126|127) log_warn "filesystem scan '"'"'${label}'"'"' did not run (exit ${rc})" ;;' \
+    '        125|126|127) return 0 ;;'
+
+# The startup check lets 0 through, which timeout(1) reads as "no limit".
+run_case "timeout/zero-accepted" 1 \
+    '    [[ "$_FS_FIND_TIMEOUT" =~ ^[1-9][0-9]*$ ]]' \
+    '    [[ "$_FS_FIND_TIMEOUT" =~ ^[0-9]+$ ]]'

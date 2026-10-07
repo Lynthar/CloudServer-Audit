@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_fs_walk_cut.bats against vpssec.
+# mutate-suite: vpssec tests/test_fs_walk_cut.bats
+
+# The entry no longer refuses a value timeout(1) rejects: every walk is skipped
+# and the audit runs on, reporting the walks cut instead of naming the typo.
+run_case "entry/bad-timeout-accepted" 1 \
+    '    if [[ "$command" == "audit" || "$command" == "guide" ]] && ! fs_timeout_valid; then' \
+    '    if false; then'

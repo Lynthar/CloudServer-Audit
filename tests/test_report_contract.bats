@@ -70,6 +70,51 @@ _fail_writes_to() {
     [ "$status" -ne 0 ]
 }
 
+@test "interactive save: a failed write exits 1, names the file, and claims nothing saved" {
+    printf '{"stale":true}' > "$VPSSEC_REPORTS/summary.json"
+    _fail_writes_to summary.json
+    VPSSEC_YES=1
+    run report_generate_all
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$(i18n 'report.save_failed' "files=summary.json" "dir=$VPSSEC_REPORTS")"* ]]
+    _vpssec_refute grep -qF "$(i18n 'report.report_saved' "path=")" <<<"$output"
+    # Named as older, never deleted: the operator saved it once.
+    grep -q '"stale"' "$VPSSEC_REPORTS/summary.json"
+}
+
+@test "interactive, not saved: an earlier report stays, named with its time, exit 0" {
+    printf '{"stale":true}' > "$VPSSEC_REPORTS/summary.json"
+    touch -d '2020-01-02 03:04:05' "$VPSSEC_REPORTS/summary.json"
+    confirm() { return 1; }
+    VPSSEC_QUIET_SCAN=0
+    run report_generate_all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(i18n 'report.not_saved_previous' "dir=$VPSSEC_REPORTS" "time=2020-01-02 03:04:05")"* ]]
+    grep -q '"stale"' "$VPSSEC_REPORTS/summary.json"
+}
+
+@test "interactive, not saved, nothing earlier: it says so and writes nothing" {
+    confirm() { return 1; }
+    VPSSEC_QUIET_SCAN=0
+    run report_generate_all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(i18n 'report.not_saved')"* ]]
+    [ -z "$(ls -A "$VPSSEC_REPORTS")" ]
+}
+
+@test "json and sarif carry a checks array past the 128 KiB argv limit" {
+    local long
+    long=$(head -c 140000 /dev/zero | tr '\0' a)
+    state_add_check "$(create_check_json "malware.big" "malware" "high" "failed" "Big" "$long" "" "")"
+
+    run report_generate_json "$VPSSEC_REPORTS/summary.json"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.checks[] | select(.id == "malware.big") | .desc | length' "$VPSSEC_REPORTS/summary.json")" -eq 140000 ]
+    run report_generate_sarif "$VPSSEC_REPORTS/summary.sarif"
+    [ "$status" -eq 0 ]
+    jq -e '[.runs[0].results[].ruleId] | index("malware.big")' "$VPSSEC_REPORTS/summary.sarif"
+}
+
 # ==============================================================================
 # meta describes the real scope
 # ==============================================================================

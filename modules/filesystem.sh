@@ -97,6 +97,9 @@ declare -gA FS_SENSITIVE_FILES=(
 # Maximum number of items to report (to prevent huge output)
 FS_MAX_REPORT_ITEMS=20
 
+# The _fs_find_* walkers return 1 when their walk was cut short. A full page of
+# findings stops reading before the cut record; that check fails either way.
+
 # Variables, not literals, for two reasons: the audit predicate and the fix
 # must not be able to point at different files, and a fix with a hardcoded
 # /etc path cannot be exercised against a scratch tree.
@@ -191,13 +194,14 @@ _fs_is_whitelisted() {
 # prune list handles container-image storage on the root fs, whose overlay
 # diffs ship legitimate SUID binaries.
 _fs_find_suid_files() {
-    local count=0
+    local count=0 cut=0
     local results=()
 
     local prune_args=()
     _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
+        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         if ! _fs_is_whitelisted "$file"; then
             results+=("$file")
             ((count++)) || true
@@ -211,11 +215,12 @@ _fs_find_suid_files() {
         -type f -perm -4000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Find SGID files (excluding common ones)
 _fs_find_sgid_files() {
-    local count=0
+    local count=0 cut=0
     local results=()
     local sgid_whitelist=(
         "/usr/bin/wall"
@@ -234,6 +239,7 @@ _fs_find_sgid_files() {
     _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
+        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         local skip=0
         for pattern in "${sgid_whitelist[@]}"; do
             # Unquoted RHS = glob match (e.g. /usr/lib/*/utempter/utempter across arches)
@@ -271,19 +277,21 @@ _fs_find_sgid_files() {
         -type f -perm -2000 -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Find world-writable files, excluding volatile mounts AND container
 # storage — without the latter, image-internal files are flagged as host
 # findings on any Docker host.
 _fs_find_world_writable() {
-    local count=0
+    local count=0 cut=0
     local results=()
 
     local prune_args=()
     _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
+        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         results+=("$file")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
@@ -301,18 +309,20 @@ _fs_find_world_writable() {
         -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Find world-writable directories without sticky bit. Same prune
 # fix as world-writable files.
 _fs_find_world_writable_dirs() {
-    local count=0
+    local count=0 cut=0
     local results=()
 
     local prune_args=()
     _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' dir; do
+        [[ "$dir" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         results+=("$dir")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
@@ -332,19 +342,21 @@ _fs_find_world_writable_dirs() {
         -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Find files with no owner. Same container-prune fix: a host that
 # pulls images often accumulates orphan-uid files inside Docker
 # overlays that aren't host-level orphans.
 _fs_find_no_owner() {
-    local count=0
+    local count=0 cut=0
     local results=()
 
     local prune_args=()
     _fs_build_prune_args prune_args
 
     while IFS= read -r -d '' file; do
+        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         results+=("$file")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
@@ -358,6 +370,7 @@ _fs_find_no_owner() {
         -print0 2>/dev/null)
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Check a sensitive file's permissions AND ownership. Mode alone is not
@@ -594,18 +607,19 @@ declare -ga FS_DANGEROUS_CAPS=(
 # Find files with capabilities set
 _fs_find_caps_files() {
     local results=()
-    local count=0
+    local count=0 cut=0
 
     # Check if getcap is available
     if ! command -v getcap &>/dev/null; then
         return
     fi
 
-    # getcap output differs by libcap version: "path cap=ep" on 2.43+ and
-    # "path = cap+ep" before it. Split on the first space, then strip a
-    # leading "= " so both forms parse.
-    while IFS= read -r line; do
+    # getcap prints "path cap=ep" (libcap 2.43+) or "path = cap+ep", one per line;
+    # tr below makes each line a NUL record like the other walks. Split on the
+    # first space, then strip a leading "= " so both forms parse.
+    while IFS= read -r -d '' line; do
         [[ -z "$line" ]] && continue
+        [[ "$line" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
 
         local file="${line%% *}"
         local caps="${line#* }"
@@ -668,9 +682,10 @@ _fs_find_caps_files() {
                 break
             fi
         fi
-    done < <(_fs_run_find "caps" getcap -r / 2>/dev/null | grep -v "^$")
+    done < <(_fs_run_find "caps" getcap -r / 2>/dev/null | tr '\n' '\0')
 
     printf '%s\n' "${results[@]}"
+    return "$cut"
 }
 
 # Find suspicious cron entries
@@ -758,6 +773,7 @@ _fs_count_user_crontabs() {
 
 filesystem_audit() {
     local module="filesystem"
+    _FS_CUT_WALKS=()
 
     # Check SUID files
     print_item "$(i18n 'filesystem.check_suid')"
@@ -794,11 +810,20 @@ filesystem_audit() {
     # Check cron jobs for suspicious entries
     print_item "$(i18n 'filesystem.check_cron')"
     _fs_audit_cron
+
+    # A cut-short walk withheld its "passed" above; say which, and mark the
+    # audit incomplete rather than let the missing checks read as clean.
+    if (( ${#_FS_CUT_WALKS[@]} > 0 )); then
+        check_emit "filesystem.scan_incomplete" info failed \
+            desc="$(i18n 'common.walk_incomplete_desc' "walks=${_FS_CUT_WALKS[*]}" "timeout=$_FS_FIND_TIMEOUT")" \
+            suggestion="$(i18n 'common.walk_incomplete_fix')"
+        _module_record_failure filesystem walk
+    fi
 }
 
 _fs_audit_suid() {
-    local suid_files
-    suid_files=$(_fs_find_suid_files)
+    local suid_files walked=1
+    suid_files=$(_fs_find_suid_files) || { walked=0; _FS_CUT_WALKS+=(suid); }
     local count=$(_fs_sanitize_count "$(echo "$suid_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
@@ -809,7 +834,7 @@ _fs_audit_suid() {
             suggestion="$(i18n 'filesystem.review_suid')"
         print_severity "medium" "$(i18n 'filesystem.suspicious_suid' "count=$count")"
         log_info "Suspicious SUID files: $suid_files"
-    else
+    elif (( walked )); then
         check_emit "filesystem.suid_ok" low passed \
             desc="$(i18n 'filesystem.suid_ok_desc')"
         print_ok "$(i18n 'filesystem.suid_ok')"
@@ -817,8 +842,8 @@ _fs_audit_suid() {
 }
 
 _fs_audit_sgid() {
-    local sgid_files
-    sgid_files=$(_fs_find_sgid_files)
+    local sgid_files walked=1
+    sgid_files=$(_fs_find_sgid_files) || { walked=0; _FS_CUT_WALKS+=(sgid); }
     local count=$(_fs_sanitize_count "$(echo "$sgid_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
@@ -828,7 +853,7 @@ _fs_audit_sgid() {
             desc="$(i18n 'filesystem.suspicious_sgid_desc' "list=$file_list")" \
             suggestion="$(i18n 'filesystem.review_sgid')"
         print_severity "low" "$(i18n 'filesystem.suspicious_sgid' "count=$count")"
-    else
+    elif (( walked )); then
         check_emit "filesystem.sgid_ok" low passed \
             desc="$(i18n 'filesystem.sgid_ok_desc')"
         print_ok "$(i18n 'filesystem.sgid_ok')"
@@ -836,12 +861,12 @@ _fs_audit_sgid() {
 }
 
 _fs_audit_world_writable() {
-    local ww_files
-    ww_files=$(_fs_find_world_writable)
+    local ww_files walked=1
+    ww_files=$(_fs_find_world_writable) || { walked=0; _FS_CUT_WALKS+=(world-writable); }
     local count=$(_fs_sanitize_count "$(echo "$ww_files" | grep -c . 2>/dev/null)")
 
     local ww_dirs
-    ww_dirs=$(_fs_find_world_writable_dirs)
+    ww_dirs=$(_fs_find_world_writable_dirs) || { walked=0; _FS_CUT_WALKS+=(world-writable-dirs); }
     local dir_count=$(_fs_sanitize_count "$(echo "$ww_dirs" | grep -c . 2>/dev/null)")
 
     if ((count > 0 || dir_count > 0)); then
@@ -852,15 +877,15 @@ _fs_audit_world_writable() {
             desc="$(i18n 'filesystem.world_writable_desc' "items=$items")" \
             suggestion="$(i18n 'filesystem.fix_world_writable')"
         print_severity "medium" "$(i18n 'filesystem.world_writable' "count=$total")"
-    else
+    elif (( walked )); then
         check_emit "filesystem.no_world_writable" low passed
         print_ok "$(i18n 'filesystem.no_world_writable')"
     fi
 }
 
 _fs_audit_no_owner() {
-    local no_owner_files
-    no_owner_files=$(_fs_find_no_owner)
+    local no_owner_files walked=1
+    no_owner_files=$(_fs_find_no_owner) || { walked=0; _FS_CUT_WALKS+=(no-owner); }
     local count=$(_fs_sanitize_count "$(echo "$no_owner_files" | grep -c . 2>/dev/null)")
 
     if ((count > 0)); then
@@ -870,7 +895,7 @@ _fs_audit_no_owner() {
             desc="$(i18n 'filesystem.no_owner_desc' "list=$file_list")" \
             suggestion="$(i18n 'filesystem.fix_no_owner')"
         print_severity "low" "$(i18n 'filesystem.no_owner' "count=$count")"
-    else
+    elif (( walked )); then
         check_emit "filesystem.owner_ok" low passed
         print_ok "$(i18n 'filesystem.owner_ok')"
     fi
@@ -1052,8 +1077,8 @@ _fs_audit_caps() {
         return
     fi
 
-    local caps_files
-    caps_files=$(_fs_find_caps_files)
+    local caps_files walked=1
+    caps_files=$(_fs_find_caps_files) || { walked=0; _FS_CUT_WALKS+=(caps); }
     local total_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c . 2>/dev/null)")
     local dangerous_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c "^DANGEROUS:" 2>/dev/null)")
 
@@ -1088,7 +1113,7 @@ _fs_audit_caps() {
             desc="$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
             suggestion="$(i18n 'filesystem.non_standard_caps_suggestion')"
         print_severity "low" "$(i18n 'filesystem.non_standard_caps' "count=$total_count")"
-    else
+    elif (( walked )); then
         check_emit "filesystem.caps_ok" low passed
         print_ok "$(i18n 'filesystem.caps_ok')"
     fi

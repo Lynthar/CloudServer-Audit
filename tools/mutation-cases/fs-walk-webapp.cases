@@ -1,0 +1,16 @@
+# Mutation cases: tests/test_fs_walk_cut.bats against modules/webapp.sh.
+# mutate-suite: modules/webapp.sh tests/test_fs_walk_cut.bats
+#
+# The web-root walks follow the filesystem module's rule for a cut walk.
+
+run_case "sensitive/passed-despite-cut" 1 \
+    '    elif (( walked )); then' \
+    '    else'
+
+run_case "backup/cut-unnamed" 1 \
+    '    backups=$(_webapp_backup_files) || _FS_CUT_WALKS+=(webapp-backup)' \
+    '    backups=$(_webapp_backup_files) || true'
+
+run_case "cut/module-not-marked" 1 \
+    '        _module_record_failure webapp walk' \
+    '        :'

@@ -78,6 +78,30 @@ setup() {
     [[ "$output" == *"marker=1 args="* ]]
 }
 
+@test "an incomplete audit (exit 3) still gets its reports copied out before run.sh exits 3" {
+    local src work dest
+    src="$(_vpssec_repo_root)/run.sh"
+    work="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$work"
+    eval "$(awk '/^main\(\)/,/^}/' "$src")"
+    print_banner() { :; }; cleanup() { :; }
+    print_info() { echo "[INFO] $*"; }
+    check_requirements() { :; }; resolve_version() { :; }; download_and_verify() { :; }
+    printf '#!/bin/sh\nmkdir -p reports && echo report > reports/summary.md\nexit 3\n' > "$work/vpssec"
+    chmod +x "$work/vpssec"
+
+    # errexit as run.sh runs it (bats' `run` turns it off): a bare ./vpssec
+    # returning 3 would end main there, before the copy.
+    _errexit() { set -euo pipefail; "$@"; }
+    cd "$work"
+    run _errexit main audit
+    [ "$status" -eq 3 ]
+    dest=$(sed -n 's/.*Reports saved to: //p' <<<"$output")
+    [[ "$dest" == /tmp/vpssec-report-* ]]
+    [ "$(cat "$dest/summary.md")" = "report" ]
+    rm -rf "$dest"
+}
+
 @test "vpssec refuses guide and rollback under the marker, however the mode was set" {
     [ "$(id -u)" = "0" ] || skip "the root check runs first and exits 1 for non-root"
     local m

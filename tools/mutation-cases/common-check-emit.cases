@@ -5,8 +5,8 @@
 # the id, and the title from the id's i18n key.
 
 run_case "derive/module-is-whole-id" 1 \
-    '    state_add_check "$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \' \
-    '    state_add_check "$(create_check_json "$id" "$id" "$severity" "$status" \'
+    '    if json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \' \
+    '    if json=$(create_check_json "$id" "$id" "$severity" "$status" \'
 
 run_case "derive/title-default-dropped" 1 \
     '    [[ -n "$title" ]] || title=$(i18n "$id")' \
@@ -16,3 +16,20 @@ run_case "derive/title-default-dropped" 1 \
 run_case "i18n/replacement-unquoted" 1 \
     '        text="${text//\{$var\}/"$val"}"' \
     '        text="${text//\{$var\}/$val}"'
+
+# A check that cannot be written leaves no trace: the module still reads as
+# complete and the audit exits 0 with a check missing.
+run_case "emit/lost-check-unrecorded" 1 \
+    '    [[ "${id%%.*}" == "_internal" ]] || _module_record_failure "${id%%.*}" "emit"' \
+    '    :'
+
+# The _internal exemption dropped: a lost module_failed record would list
+# "_internal" in meta.modules_failed, a module that does not exist.
+run_case "emit/internal-listed-as-module" 1 \
+    '    [[ "${id%%.*}" == "_internal" ]] || _module_record_failure "${id%%.*}" "emit"' \
+    '    _module_record_failure "${id%%.*}" "emit"'
+
+# Fields back on argv: a 200 KB desc exceeds MAX_ARG_STRLEN and the check vanishes.
+run_case "create/desc-on-argv" 1 \
+    '               "title": .[4], "desc": .[5], "suggestion": .[6], "fix_id": .[7]}'"'"'' \
+    '               "title": .[4], "desc": $d, "suggestion": .[6], "fix_id": .[7]}'"'"' --arg d "${6:-}"'

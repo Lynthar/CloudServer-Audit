@@ -347,21 +347,24 @@ main() {
     # VPSSEC_MODE reach them with no mode word for the check above to see.
     export VPSSEC_ONESHOT=1
 
+    # vpssec's status is passed on only after the reports are copied out: an
+    # incomplete scan (3) still saved them, and the EXIT trap deletes this tree.
+    local rc=0
     if [[ -n "$mode" ]]; then
         print_info "Running vpssec $mode..."
         echo "" >&2
         if (( ${#args[@]} > 0 )); then
-            ./vpssec "$mode" "${args[@]}"
+            ./vpssec "$mode" "${args[@]}" || rc=$?
         else
-            ./vpssec "$mode"
+            ./vpssec "$mode" || rc=$?
         fi
     else
         print_info "Starting vpssec..."
         echo "" >&2
         if (( ${#args[@]} > 0 )); then
-            ./vpssec "${args[@]}"
+            ./vpssec "${args[@]}" || rc=$?
         else
-            ./vpssec
+            ./vpssec || rc=$?
         fi
     fi
 
@@ -379,6 +382,7 @@ main() {
             print_warn "mktemp failed — reports were not copied out of the temporary directory"
         fi
     fi
+    return "$rc"
 }
 
 main "$@"

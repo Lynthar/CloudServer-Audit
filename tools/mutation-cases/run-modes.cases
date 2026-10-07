@@ -31,3 +31,9 @@ run_case "run-modes/refuse-after-download" 1 \
 run_case "run-modes/marker-not-exported" 1 \
     '    export VPSSEC_ONESHOT=1' \
     '    :'
+
+# vpssec's status no longer held until after the copy: an incomplete audit (3)
+# ends run.sh under errexit, and the trap deletes the reports it saved.
+run_case "run/status-not-held" 1 \
+    '            ./vpssec "$mode" || rc=$?' \
+    '            ./vpssec "$mode"'

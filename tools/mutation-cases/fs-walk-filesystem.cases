@@ -1,0 +1,42 @@
+# Mutation cases: tests/test_fs_walk_cut.bats against modules/filesystem.sh.
+# mutate-suite: modules/filesystem.sh tests/test_fs_walk_cut.bats
+#
+# A cut walk must withhold its passed check, be named, and mark the module
+# incomplete. Occurrences 1-5 of the elif are suid, sgid, world-writable,
+# no-owner and caps, in file order.
+
+run_case "suid/passed-despite-cut" 1 \
+    '    elif (( walked )); then' \
+    '    else'
+
+run_case "sgid/passed-despite-cut" 2 \
+    '    elif (( walked )); then' \
+    '    else'
+
+run_case "world-writable/passed-despite-cut" 3 \
+    '    elif (( walked )); then' \
+    '    else'
+
+run_case "no-owner/passed-despite-cut" 4 \
+    '    elif (( walked )); then' \
+    '    else'
+
+run_case "caps/passed-despite-cut" 5 \
+    '    elif (( walked )); then' \
+    '    else'
+
+# The cut record read as a path: a phantom SUID finding, and the cut unnoticed.
+run_case "suid/cut-record-as-path" 1 \
+    '        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }' \
+    '        :'
+
+# Cut walks named but the module still reads as complete: exit 0.
+run_case "cut/module-not-marked" 1 \
+    '        _module_record_failure filesystem walk' \
+    '        :'
+
+# The cut record matched exactly instead of as a suffix: a half-written last
+# path glued to it reads as a SUID finding, and the cut goes unnoticed.
+run_case "suid/cut-record-exact-match" 1 \
+    '        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }' \
+    '        [[ "$file" == "$_FS_WALK_CUT" ]] && { cut=1; continue; }'

@@ -261,6 +261,13 @@ main() {
         exit 1
     fi
 
+    # A bad VPSSEC_FS_TIMEOUT would skip every filesystem walk and report the
+    # host clean, so the commands that audit refuse it up front.
+    if [[ "$command" == "audit" || "$command" == "guide" ]] && ! fs_timeout_valid; then
+        print_error "$(i18n 'error.bad_fs_timeout' "value=${VPSSEC_FS_TIMEOUT:-}")"
+        exit 1
+    fi
+
     # Check OS support
     if ! is_supported_os; then
         local os=$(detect_os)

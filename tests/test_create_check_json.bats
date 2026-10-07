@@ -49,20 +49,29 @@ setup() {
     # filter source itself.
     local root
     root=$(_vpssec_repo_root)
-    run grep -E '"module":\s*\$mod' "$root/core/common.sh"
+    run grep -E '"module":\s*\.\[1\]' "$root/core/common.sh"
     [ "$status" -eq 0 ]
+    run grep -nE '[{,]\s*module:' "$root/core/common.sh"
+    [ "$status" -ne 0 ]
 }
 
-@test "create_check_json: source uses --arg mod, NOT --arg module" {
+@test "create_check_json: source never passes --arg module" {
     # `--arg module` injects a jq variable named $module, which jq 1.7+ rejects
-    # as a reserved word; the fix is `--arg mod`. The pattern matches only real
-    # jq command lines, so comments naming the old form are exempt.
+    # as a reserved word. The pattern matches only real jq command lines.
     local root
     root=$(_vpssec_repo_root)
     run grep -nE -- '--arg +module +"' "$root/core/common.sh"
     [ "$status" -ne 0 ]
-    run grep -E -- '--arg +mod +"' "$root/core/common.sh"
-    [ "$status" -eq 0 ]
+}
+
+@test "create_check_json: a field past the 128 KiB argv limit survives whole" {
+    # A host value this long (a process command line) must not make the check
+    # vanish: argv caps one string at 128 KiB, so no field may travel there.
+    local long out
+    long=$(head -c 200000 /dev/zero | tr '\0' a)
+    out=$(create_check_json "x.id" "mod" "low" "failed" "T" "$long" "S" "x.fix")
+    [ "$(printf '%s' "$out" | jq -r '.desc | length')" -eq 200000 ]
+    [ "$(printf '%s' "$out" | jq -r '.fix_id')" = "x.fix" ]
 }
 
 @test "create_check_json: SARIF report writer also avoids --arg module" {

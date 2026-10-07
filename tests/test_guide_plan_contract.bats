@@ -4,6 +4,7 @@
 # plan and a failed plan must both be visible in the exit status.
 
 load helpers.bash
+bats_require_minimum_version 1.5.0
 
 setup() {
     _vpssec_load core/state.sh core/engine.sh core/report.sh
@@ -213,6 +214,38 @@ _checklist_tags_only() {
     [[ "$output" == *crashmod* ]]
 }
 
+# errexit as production runs it: bats' `run` turns it off, and a bare failing
+# call that would kill the real audit then goes unnoticed.
+_errexit() { set -euo pipefail; "$@"; }
+
+@test "a module whose file is missing is a load failure, and the audit exits 3" {
+    VPSSEC_MODULES="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPSSEC_MODULES"
+    VPSSEC_MODULE_ORDER=(ghost)
+    module_load_all "" ""
+    report_generate_all() { :; }
+
+    run _errexit audit_all
+    [ "$status" -eq 3 ]
+    run jq -r '.[] | select(.id == "_internal.module_failed") | .desc' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "$(i18n 'error.module_failed_load_desc' "module=ghost")" ]
+}
+
+@test "a module without an audit function is a load failure, not an audit killed by errexit" {
+    VPSSEC_MODULES="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPSSEC_MODULES"
+    printf 'nofn_fix() { :; }\n' > "$VPSSEC_MODULES/nofn.sh"
+    VPSSEC_MODULE_ORDER=(nofn)
+    module_load_all "" ""
+    [ "${VPSSEC_MODULE_LOADED[nofn]:-0}" = "0" ]
+    report_generate_all() { :; }
+
+    run _errexit audit_all
+    [ "$status" -eq 3 ]
+    run jq -r '.[] | select(.id == "_internal.module_failed") | .desc' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "$(i18n 'error.module_failed_load_desc' "module=nofn")" ]
+}
+
 # ---- guide_mode --fix: the plan named on the command line --------------------
 
 # Everything after the audit is stubbed; the audit itself is the fixture
@@ -267,6 +300,91 @@ _guide_fix_harness() {
     run guide_mode
     [ "$status" -eq 1 ]
     [[ "$output" == *"mod.other_fix"* ]]
+}
+
+# ---- a leftover progress.json versus a run nobody can answer -----------------
+
+# An interrupted one-fix plan, as execute_plan leaves it behind.
+_leftover_progress() {
+    state_save_plan '{"fixes":[{"fix_id":"mod.other_fix","title":"Old plan"}]}'
+    state_save_progress "mod.other_fix" 1 '[]'
+}
+
+@test "guide --fix with leftover progress: the old plan is dropped and logged, the named fix runs" {
+    _guide_fix_harness
+    _leftover_progress
+    export VPSSEC_FIX_IDS="mod.shared_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EXEC mod.shared_fix "* ]]
+    grep -q "Discarded the interrupted plan saved" "$_log_file"
+    _vpssec_refute state_has_progress
+}
+
+@test "guide --fix with leftover progress still refuses an id this audit does not offer" {
+    _guide_fix_harness
+    _leftover_progress
+    export VPSSEC_FIX_IDS="no.such_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    _vpssec_refute grep -q "EXEC" <<<"$output"
+}
+
+@test "guide --yes with leftover progress and no --fix stops non-zero, keeping the plan" {
+    _guide_fix_harness
+    _run_audit_pass() { echo "AUDIT-RAN"; }
+    _leftover_progress
+    export VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$STATE_PROGRESS_FILE"* ]]
+    _vpssec_refute grep -q "AUDIT-RAN" <<<"$output"
+    state_has_progress
+}
+
+@test "guide with leftover progress and no terminal stops non-zero without showing the menu" {
+    _guide_fix_harness
+    _tty_readable() { return 1; }
+    _leftover_progress
+    run guide_mode
+    [ "$status" -eq 1 ]
+    _vpssec_refute grep -qF "$(i18n 'guide.resume_option')" <<<"$output"
+    state_has_progress
+}
+
+@test "guide --json-only with leftover progress leaves stdout empty and says why on stderr" {
+    _guide_fix_harness
+    _leftover_progress
+    export VPSSEC_JSON_ONLY=1
+    run --separate-stderr guide_mode
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"$STATE_PROGRESS_FILE"* ]]
+}
+
+@test "resume loads a module the plan needs that this run did not, and runs its fix" {
+    VPSSEC_MODULES="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPSSEC_MODULES"
+    printf 'later_audit() { :; }\nlater_fix() { echo "FIXED $1"; }\n' > "$VPSSEC_MODULES/later.sh"
+    FIX_SAFE["later.do"]="test fixture"
+    state_save_plan '{"fixes":[{"fix_id":"later.do","title":"Later"}]}'
+    state_save_progress "later.do" 1 '[]'
+
+    run _guide_resume
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FIXED later.do"* ]]
+}
+
+@test "resume stops, keeping the progress, when a module the plan needs cannot load" {
+    VPSSEC_MODULES="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPSSEC_MODULES"
+    state_save_plan '{"fixes":[{"fix_id":"gone.do","title":"Gone"}]}'
+    state_save_progress "gone.do" 1 '[]'
+
+    run _guide_resume
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$(i18n 'guide.resume_module_unavailable' "module=gone")"* ]]
+    state_has_progress
 }
 
 @test "ui_confirm_execute: --yes answers the execute prompt, otherwise the prompt decides" {

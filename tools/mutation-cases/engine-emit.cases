@@ -1,0 +1,16 @@
+# Mutation cases: tests/test_check_emit.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_check_emit.bats
+#
+# A check lost at emission must reach the report as an _internal.module_failed
+# record and make the audit exit 3.
+
+# The kind is no longer tracked: the module is marked incomplete but the report
+# never says which module lost a check.
+run_case "emit/kind-not-tracked" 1 \
+    '    [[ "$kind" == "emit" ]] && VPSSEC_MODULE_EMIT_FAILED[$module]=1' \
+    '    :'
+
+# The deferred record is never emitted after the pass.
+run_case "emit/deferred-record-dropped" 1 \
+    '    for module in "${!VPSSEC_MODULE_EMIT_FAILED[@]}"; do' \
+    '    for module in; do'

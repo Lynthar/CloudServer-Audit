@@ -64,3 +64,37 @@ run_case "guide/fix-ignored-menu-shown" 1 \
 run_case "plan/rollback-offered-without-session" 1 \
     '    if [[ -d "$VPSSEC_BACKUP_SESSION" ]]; then' \
     '    if true; then'
+
+# ---- a module the run asked for but cannot load ------------------------------
+
+# A missing module file leaves no record: the audit of a damaged install tree
+# exits 0 and reads as complete.
+run_case "load/missing-file-unrecorded" 1 \
+    '        _module_record_failure "$module" "load"' \
+    '        :'
+
+# A module without an audit function is marked loaded again: audit_module then
+# returns 1 under errexit and the whole audit dies with exit 1 and no report.
+run_case "load/no-audit-fn-loaded" 4 \
+    '        _module_record_failure "$module" "load"' \
+    '        _module_record_failure "$module" "load"; VPSSEC_MODULE_LOADED[$module]=1; return 0'
+
+# ---- leftover progress.json versus the run's flags ---------------------------
+
+# --fix keeps the old progress: the next interactive guide offers to resume a
+# plan this run already replaced.
+run_case "resume/fix-keeps-progress" 1 \
+    '            state_clear_progress' \
+    '            :'
+
+# Nobody can answer, yet the menu is shown: its cancel exits 0 with nothing
+# done, and every later automated run is held at the same menu.
+run_case "resume/menu-without-anyone" 1 \
+    '        elif _noninteractive || ! _tty_readable; then' \
+    '        elif false; then'
+
+# Resume no longer loads the modules its plan needs: a plan approved under
+# another --include fails every step and loses the progress.
+run_case "resume/plan-modules-not-loaded" 1 \
+    '        if ! module_load "$fix_module"; then' \
+    '        if false; then'

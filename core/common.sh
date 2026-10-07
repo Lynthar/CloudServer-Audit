@@ -1225,34 +1225,18 @@ sudo_nopasswd_admin() {
 # Create a check result JSON. Serialised by jq so the full U+0000..U+001F
 # range is escaped correctly; do not hand-roll an escape path here.
 create_check_json() {
-    local id="$1"
-    local module="$2"
-    local severity="$3"
-    local status="$4"
-    local title="$5"
-    local desc="${6:-}"
-    local suggestion="${7:-}"
-    local fix_id="${8:-}"
-
-    # `module` is a reserved word in jq 1.7.0+, so every JSON key is quoted
-    # and the bash-side arg is named `mod`. Keep both: stock Linux jq rejects
-    # `{module: ...}` and `--arg module` while the macOS build accepts them.
-    jq -n \
-        --arg id        "$id" \
-        --arg mod       "$module" \
-        --arg severity  "$severity" \
-        --arg status    "$status" \
-        --arg title     "$title" \
-        --arg desc      "$desc" \
-        --arg suggestion "$suggestion" \
-        --arg fix_id    "$fix_id" \
-        '{"id": $id, "module": $mod, "severity": $severity, "status": $status,
-          "title": $title, "desc": $desc, "suggestion": $suggestion, "fix_id": $fix_id}'
+    # Fields reach jq on stdin, NUL-separated, never as --arg: an argv string is
+    # capped at 128 KiB, past which jq fails and the check vanishes. END keeps
+    # jq 1.6 from dropping trailing empty fields; keys are quoted (jq 1.7 `module`).
+    { printf '%s\0' "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" "${8:-}"; printf 'END'; } |
+        jq -Rs 'split("\u0000")
+            | {"id": .[0], "module": .[1], "severity": .[2], "status": .[3],
+               "title": .[4], "desc": .[5], "suggestion": .[6], "fix_id": .[7]}'
 }
 
-# Emit one check: module is the id prefix, title defaults to i18n "$id", and
-# the record is serialised and written in one step. Trailing args are key=value
-# with keys title desc suggestion fix; an unknown key drops the check with an error.
+# Emit one check: module is the id prefix, title defaults to i18n "$id"; trailing
+# args are key=value (title desc suggestion fix), an unknown key drops the check.
+# A check that cannot be recorded marks its module incomplete and still returns 0.
 check_emit() {
     local id="$1" severity="$2" status="$3"
     shift 3
@@ -1267,8 +1251,15 @@ check_emit() {
         esac
     done
     [[ -n "$title" ]] || title=$(i18n "$id")
-    state_add_check "$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \
-        "$title" "$desc" "$suggestion" "$fix")"
+    local json
+    if json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \
+            "$title" "$desc" "$suggestion" "$fix") && state_add_check "$json"; then
+        return 0
+    fi
+    log_error "check_emit $id: the check could not be recorded"
+    # An _internal record reports a failure that is already recorded.
+    [[ "${id%%.*}" == "_internal" ]] || _module_record_failure "${id%%.*}" "emit"
+    return 0  # engine.sh emits under errexit, where 1 would kill the whole run
 }
 
 # --- User Interaction ---
@@ -1346,8 +1337,21 @@ declare -ga _FS_PRUNE_PATHS=(
 )
 
 # Hard timeout per filesystem walk; override with VPSSEC_FS_TIMEOUT=<seconds>.
-# A timed-out scan returns its partial output and logs a warning.
 _FS_FIND_TIMEOUT="${VPSSEC_FS_TIMEOUT:-60}"
+
+# A whole number of seconds above 0. Checked at startup: a value timeout(1)
+# rejects would skip every walk, and 0 would remove the bound altogether.
+fs_timeout_valid() {
+    [[ "$_FS_FIND_TIMEOUT" =~ ^[1-9][0-9]*$ ]]
+}
+
+# Record a walk ends with when it was cut short or never ran. No record a walk
+# prints ends in "/", so a suffix match cannot hit a real path, and it also
+# swallows the unterminated record a killed walk leaves behind.
+_FS_WALK_CUT="vpssec:walk-cut-short/"
+
+# Labels of the walks the running audit saw cut short; each module resets it.
+_FS_CUT_WALKS=()
 
 # Build `-path P -prune -o` args from _FS_PRUNE_PATHS into the named array.
 # Every filesystem walk MUST go through this, or it will report container
@@ -1361,26 +1365,27 @@ _fs_build_prune_args() {
     done
 }
 
-# Run find under a hard timeout, forwarding output to stdout. Timeout (124)
-# logs a warning and returns 0 so the audit continues on partial output.
-# The no-timeout fallback is for environments without GNU coreutils.
+# Run a walk under the hard timeout, forwarding its output. A walk that timed
+# out (124) or never ran (125-127) ends with the NUL-terminated _FS_WALK_CUT
+# record, so its partial output cannot be read as "nothing found".
 _fs_run_find() {
     local label="$1"
     shift
+    # `|| rc=$?`: errexit is on in the process-substitution subshell this runs
+    # in, and a bare failing walk would exit before the record is written.
+    local rc=0
     if command -v timeout >/dev/null 2>&1; then
-        # `|| rc=$?` makes this a tested expression: errexit is active in the
-        # process-substitution subshell, so a bare failing timeout would abort
-        # before the warning could log.
-        local rc=0
         timeout "$_FS_FIND_TIMEOUT" "$@" || rc=$?
-        if (( rc == 124 )); then
-            log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend."
-        fi
     else
         log_debug "timeout(1) unavailable; running '${label}' scan without time bound"
-        "$@"
+        "$@" || rc=$?
     fi
-    return 0
+    case "$rc" in
+        124) log_warn "filesystem scan '${label}' timed out after ${_FS_FIND_TIMEOUT}s; results truncated. Set VPSSEC_FS_TIMEOUT=N to extend." ;;
+        125|126|127) log_warn "filesystem scan '${label}' did not run (exit ${rc})" ;;
+        *) return 0 ;;
+    esac
+    printf '%s\0' "$_FS_WALK_CUT"
 }
 
 # --- Initialization ---
