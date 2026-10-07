@@ -18,7 +18,10 @@
 #      exit code EXPECT_ROLLBACK_RC — what rollback really undoes is the
 #      case's claim, not the driver's assumption — and, when the case
 #      defines postrollback(), that it returns 0 (e.g. `nginx -t`: the
-#      audit cannot see a config the service would refuse to load)
+#      audit cannot see a config the service would refuse to load).
+#      A case with ROLLBACK_BY="undo" names a fix that backs up no file:
+#      it must leave no session, and the undo command it logged is run
+#      instead of the rollback, with the same assertions on the result
 #   7. runs restore() to revert the planted defect
 #
 # IMPORTANT: run only on a disposable VM or container. Restore is
@@ -121,7 +124,7 @@ run_case() {
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
           EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC \
-          FIX_TTY_ANSWERS 2>/dev/null || true
+          FIX_TTY_ANSWERS ROLLBACK_BY 2>/dev/null || true
     # A command an earlier case ran and then uninstalled stays hashed in this
     # shell, and `command -v` in the next precheck would still find it.
     hash -r
@@ -253,8 +256,9 @@ run_case() {
 run_fix_and_rollback() {
     local case_name="$1"
 
-    local before_sessions
+    local before_sessions before_log_lines
     before_sessions=$(ls -1 "$BACKUPS_DIR" 2>/dev/null | sort)
+    before_log_lines=$(wc -l < "${VPSSEC_ROOT}/logs/vpssec.log" 2>/dev/null || echo 0)
 
     local guide_rc=0
     local guide_cmd=("$VPSSEC_BIN" guide --include="$MODULE" --fix="$FIX_ID" --yes --json-only --lang=en_US)
@@ -289,20 +293,41 @@ run_fix_and_rollback() {
         return 1
     fi
 
-    if [[ -z "$session" ]]; then
-        echo "  $(color red '[FAIL]') guide left no backup session to roll back"
-        results+=("FAIL  | $case_name | no backup session after fix")
-        return 1
-    fi
-
-    # rollback confirms through confirm_critical, which reads /dev/tty and
-    # ignores --yes on purpose; a pseudo-terminal answers it the way an
-    # operator would, with no menu in between to consume the answer.
     local rollback_rc=0
-    printf 'yes\n' | script -qefc "$VPSSEC_BIN rollback $session --lang=en_US" /dev/null \
-        >"$STAGE_LOG" 2>&1 || rollback_rc=$?
+    if [[ "${ROLLBACK_BY:-}" == "undo" ]]; then
+        if [[ -n "$session" ]]; then
+            echo "  $(color red '[FAIL]') a fix that backs up no file left session $session"
+            results+=("FAIL  | $case_name | unexpected backup session $session")
+            return 1
+        fi
+        # The command this run's fix logged, never one from an earlier case.
+        local undo
+        undo=$(tail -n +"$(( before_log_lines + 1 ))" "${VPSSEC_ROOT}/logs/vpssec.log" 2>/dev/null \
+            | sed -n "s/.*Undo for ${FIX_ID//./\\.}: //p" | tail -1)
+        if [[ -z "$undo" ]]; then
+            echo "  $(color red '[FAIL]') $FIX_ID logged no undo command"
+            results+=("FAIL  | $case_name | no undo command logged")
+            return 1
+        fi
+        # Written for a person at a terminal (apt asks before removing): answer
+        # yes as that person would. Not a pipe, so yes's SIGPIPE is no status.
+        DEBIAN_FRONTEND=noninteractive bash -c "$undo" >"$STAGE_LOG" 2>&1 < <(yes) \
+            || rollback_rc=$?
+        session="undo: $undo"
+    else
+        if [[ -z "$session" ]]; then
+            echo "  $(color red '[FAIL]') guide left no backup session to roll back"
+            results+=("FAIL  | $case_name | no backup session after fix")
+            return 1
+        fi
+        # rollback confirms through confirm_critical, which reads /dev/tty and
+        # ignores --yes on purpose; a pseudo-terminal answers it the way an
+        # operator would, with no menu in between to consume the answer.
+        printf 'yes\n' | script -qefc "$VPSSEC_BIN rollback $session --lang=en_US" /dev/null \
+            >"$STAGE_LOG" 2>&1 || rollback_rc=$?
+    fi
     if (( rollback_rc != EXPECT_ROLLBACK_RC )); then
-        echo "  $(color red '[FAIL]') rollback $session exited $rollback_rc, expected $EXPECT_ROLLBACK_RC"
+        echo "  $(color red '[FAIL]') rollback ($session) exited $rollback_rc, expected $EXPECT_ROLLBACK_RC"
         tail -n 10 "$STAGE_LOG" | sed 's/^/         | /'
         results+=("FAIL  | $case_name | rollback rc $rollback_rc, want $EXPECT_ROLLBACK_RC")
         return 1

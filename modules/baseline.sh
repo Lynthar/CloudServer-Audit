@@ -565,7 +565,9 @@ _baseline_fix_enable_apparmor() {
 
     # A swallowed install failure makes the operator read "Failed to enable
     # AppArmor", pointing at the service rather than the apt transaction.
+    local -a missing=()
     if ! check_command aa-status; then
+        mapfile -t missing < <(pkg_missing apparmor apparmor-utils)
         apt_refresh_index
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then
             print_error "$(i18n 'baseline.apparmor_install_failed')"
@@ -575,8 +577,13 @@ _baseline_fix_enable_apparmor() {
 
     # Neither status is decisive alone: a unit can be enabled and still refuse
     # to start. FIX_VERIFY's _baseline_apparmor_enabled decides the outcome.
+    local undo_svc
+    undo_svc=$(service_undo_cmd apparmor)
     systemctl enable apparmor || log_warn "systemctl enable apparmor failed"
     systemctl start apparmor || log_warn "systemctl start apparmor failed"
+    local undo_pkg=""
+    (( ${#missing[@]} )) && undo_pkg=$(pkg_remove_hint "${missing[@]}")
+    record_undo baseline.enable_apparmor "$(undo_join "$undo_svc" "$undo_pkg")"
     return 0
 }
 
@@ -611,13 +618,8 @@ _baseline_fix_disable_unused() {
         fi
     done
 
-    # rollback restores FILES, so a disabled unit is invisible to it. Print
-    # AND log the undo command: a printed line scrolls away, and this one may
-    # be needed days later.
     if (( ${#disabled[@]} > 0 )); then
-        local revert="systemctl enable --now ${disabled[*]}"
-        print_info "$(i18n 'baseline.services_revert_hint' "cmd=$revert")"
-        log_info "baseline.disable_unused revert command: $revert"
+        record_undo baseline.disable_unused "systemctl enable --now ${disabled[*]}"
     fi
 
     (( failed == 0 ))

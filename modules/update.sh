@@ -332,15 +332,21 @@ _update_fix_apply_security() {
     # NEVER fall back to `apt-get upgrade -y`: that upgrades every package on
     # the host, which is not what "apply security updates" may do. Install
     # unattended-upgrades and use it, or surface the failure.
+    local installed_uu=0
     if ! _update_unattended_installed; then
         print_info "$(i18n 'update.installing_unattended_for_security')"
         export DEBIAN_FRONTEND=noninteractive
+        # Installed as the tool for this one run, not to turn on daily upgrades:
+        # left alone, its postinst writes 20auto-upgrades enabling them.
+        backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1
+        _update_uu_no_auto_enable
         apt_refresh_index
         if ! apt-get install -y unattended-upgrades; then
             print_error "$(i18n 'update.unattended_install_failed')"
             print_info "$(i18n 'update.security_aborted_install_uu_first')"
             return 1
         fi
+        installed_uu=1
     fi
 
     if unattended-upgrade -d 2>/dev/null; then
@@ -349,6 +355,7 @@ _update_fix_apply_security() {
         # to it. This message is the operator's only pointer to what changed.
         print_info "$(i18n 'update.security_applied_revert_hint')"
         log_info "update.apply_security: upgraded packages are listed in /var/log/apt/history.log"
+        (( installed_uu )) && record_undo update.apply_security "apt purge unattended-upgrades"
         return 0
     fi
 
@@ -357,16 +364,31 @@ _update_fix_apply_security() {
     return 1
 }
 
+# Preseed "do not enable automatic updates", so installing unattended-upgrades
+# does not by itself write 20auto-upgrades; a file that already exists keeps
+# deciding (the package's config script reads it back).
+_update_uu_no_auto_enable() {
+    echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean false' \
+        | debconf-set-selections 2>/dev/null \
+        || log_warn "debconf preseed failed: unattended-upgrades may enable itself"
+}
+
 _update_fix_install_unattended() {
     print_info "$(i18n 'update.installing_unattended')"
 
     export DEBIAN_FRONTEND=noninteractive
 
+    # Snapshot before the install: the package's postinst writes this file,
+    # and a copy taken afterwards would already be the changed one.
+    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1
+    local -a missing=()
+    mapfile -t missing < <(pkg_missing unattended-upgrades apt-listchanges)
+
     apt_refresh_index
     if apt-get install -y unattended-upgrades apt-listchanges; then
-        # Configure auto-upgrades
-        _update_fix_enable_unattended
-        return $?
+        _update_fix_enable_unattended || return 1
+        (( ${#missing[@]} )) && record_undo update.install_unattended "$(pkg_remove_hint "${missing[@]}")"
+        return 0
     else
         print_error "$(i18n 'update.unattended_install_failed')"
         return 1
@@ -431,10 +453,9 @@ Unattended-Upgrade::SyslogEnable \"true\";"; then
             || print_warn "$(i18n 'update.unattended_dryrun_warn')"
     fi
 
-    # The TIMER is what runs unattended-upgrade on a schedule; the service
-    # only flushes at shutdown, so enabling it alone hides a masked timer.
-    # Whether all of this took effect is FIX_VERIFY's question
-    # (_update_unattended_enabled), the one the audit asks.
+    # The TIMER runs unattended-upgrade on a schedule; the service only flushes
+    # at shutdown, so enabling it alone hides a masked timer. FIX_VERIFY
+    # (_update_unattended_enabled, the audit's own predicate) decides the outcome.
     systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true
     systemctl enable unattended-upgrades 2>/dev/null || true
     systemctl start unattended-upgrades 2>/dev/null || true

@@ -11,7 +11,7 @@
 # literal on the WRITE would rewrite the container's own /etc/apt/apt.conf.d and
 # leave every later case running against a changed host.
 
-run_case "paths/auto-upgrades-inlined" 1 \
+run_case "paths/auto-upgrades-inlined" 2 \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
     '    backup_file /etc/apt/apt.conf.d/20auto-upgrades >/dev/null || return 1'
 
@@ -21,11 +21,11 @@ run_case "paths/dropin-inlined" 1 \
 
 # ---- the rollback contract -------------------------------------------
 
-run_case "rollback/auto-upgrades-backup-skipped" 1 \
+run_case "rollback/auto-upgrades-backup-skipped" 2 \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
     '    :'
 
-run_case "rollback/auto-upgrades-backup-guarded-again" 1 \
+run_case "rollback/auto-upgrades-backup-guarded-again" 2 \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
     '    [[ -f "$UPDATE_AUTO_UPGRADES_CONF" ]] && { backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1; }'
 
@@ -102,8 +102,30 @@ run_case "predicate/failed-query-reads-none-pending" 1 \
     '    n=$(pkg_security_update_count) || return 0'
 
 run_case "postcondition/install-status-discarded" 1 \
-    '        return $?' \
-    '        return 0'
+    '        _update_fix_enable_unattended || return 1' \
+    '        _update_fix_enable_unattended || true'
+
+# The snapshot moves after the install, where the postinst has already
+# rewritten 20auto-upgrades.
+run_case "install/snapshot-after-postinst" 1 \
+    '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
+    '    :'
+
+run_case "install/undo-not-recorded" 1 \
+    '        (( ${#missing[@]} )) && record_undo update.install_unattended "$(pkg_remove_hint "${missing[@]}")"' \
+    '        :'
+
+run_case "apply/auto-enable-not-prevented" 1 \
+    '        _update_uu_no_auto_enable' \
+    '        :'
+
+run_case "apply/auto-upgrades-not-recorded" 1 \
+    '        backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
+    '        :'
+
+run_case "apply/undo-not-recorded" 1 \
+    '        (( installed_uu )) && record_undo update.apply_security "apt purge unattended-upgrades"' \
+    '        :'
 
 run_case "apply/installed-check-inverted" 1 \
     '    if ! _update_unattended_installed; then' \
@@ -136,7 +158,7 @@ run_case "dispatch/unknown-id-succeeds" 1 \
     '            return 0'
 
 # A swallowed backup failure lets the fix rewrite /etc with no way back.
-run_case "rollback/backup-failure-swallowed" 1 \
+run_case "rollback/backup-failure-swallowed" 2 \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1' \
     '    backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null 2>&1 || true'
 

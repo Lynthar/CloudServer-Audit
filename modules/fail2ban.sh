@@ -473,9 +473,12 @@ _f2b_fix_install() {
 
     export DEBIAN_FRONTEND=noninteractive
 
+    local -a missing=()
+    mapfile -t missing < <(pkg_missing fail2ban)
     apt_refresh_index
     if apt-get install -y fail2ban; then
         print_ok "$(i18n 'fail2ban.install_success')"
+        (( ${#missing[@]} )) && record_undo fail2ban.install "$(pkg_remove_hint "${missing[@]}")"
 
         # Failures must propagate: a successful apt install is not success if
         # the service then fails to start. errexit is off here, so capture.
@@ -499,11 +502,14 @@ _f2b_fix_install() {
 _f2b_fix_enable_service() {
     print_info "$(i18n 'fail2ban.enabling_service')"
 
+    local undo
+    undo=$(service_undo_cmd fail2ban)
     systemctl enable fail2ban 2>/dev/null
     systemctl start fail2ban 2>/dev/null
 
     if _f2b_service_active; then
         print_ok "$(i18n 'fail2ban.service_started')"
+        record_undo fail2ban.enable_service "$undo"
         return 0
     else
         print_error "$(i18n 'fail2ban.service_start_failed')"
@@ -543,7 +549,9 @@ _f2b_fix_configure_ssh_jail() {
     f2b_bak=$(backup_file "$F2B_DROPIN") || return 1
 
     # Get SSH port and detect log path/backend/banaction
-    local ssh_port=$(get_ssh_port)
+    # Every port sshd listens on: a jail on 22 alone bans nothing on 2222.
+    local ssh_port
+    ssh_port=$(get_ssh_ports | paste -sd, -)
     local ssh_logpath=$(_f2b_detect_ssh_logpath)
     local f2b_backend=$(_f2b_detect_backend)
     local f2b_banaction

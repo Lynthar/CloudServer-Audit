@@ -17,6 +17,8 @@ LOGROTATE_D="/etc/logrotate.d"
 RSYSLOG_CONF="/etc/rsyslog.conf"
 AUDIT_RULES_D="/etc/audit/rules.d"
 AUDIT_RULES_FILE="${AUDIT_RULES_D}/99-vpssec.rules"
+# What augenrules --load regenerates from rules.d.
+AUDIT_RULES_COMPILED="/etc/audit/audit.rules"
 
 # --- Logging Helper Functions ---
 
@@ -351,7 +353,9 @@ _logging_fix_setup_logrotate() {
 
     # The install status must propagate: returning 0 regardless records a
     # completion the next audit contradicts.
+    local -a missing=()
     if ! check_command logrotate; then
+        mapfile -t missing < <(pkg_missing logrotate)
         apt_refresh_index
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then
             print_error "$(i18n 'logging.logrotate_install_failed')"
@@ -378,15 +382,19 @@ include /etc/logrotate.d'; then
     fi
 
     print_ok "$(i18n 'logging.logrotate_configured')"
+    (( ${#missing[@]} )) && record_undo logging.setup_logrotate "$(pkg_remove_hint "${missing[@]}")"
     return 0
 }
 
 _logging_fix_install_auditd() {
     print_info "$(i18n 'logging.installing_auditd')"
 
+    local -a missing=()
+    mapfile -t missing < <(pkg_missing auditd audispd-plugins)
     apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
         print_ok "$(i18n 'logging.auditd_installed')"
+        (( ${#missing[@]} )) && record_undo logging.install_auditd "$(pkg_remove_hint "${missing[@]}")"
 
         # The follow-ups are a convenience and deliberately do NOT decide this
         # fix: it answers logging.auditd_not_installed, which measures the
@@ -403,8 +411,11 @@ _logging_fix_install_auditd() {
 _logging_fix_enable_auditd() {
     print_info "$(i18n 'logging.enabling_auditd')"
 
+    local undo
+    undo=$(service_undo_cmd auditd)
     if systemctl enable auditd && systemctl start auditd; then
         print_ok "$(i18n 'logging.auditd_service_enabled')"
+        record_undo logging.enable_auditd "$undo"
         return 0
     fi
     print_error "$(i18n 'logging.auditd_start_failed')"
@@ -483,6 +494,9 @@ EOF
         print_error "$(i18n 'logging.audit_rules_failed')"
         return 1
     fi
+
+    # augenrules rewrites the compiled audit.rules from rules.d.
+    backup_file "$AUDIT_RULES_COMPILED" >/dev/null || return 1
 
     # Report whether the KERNEL took the rules (auditctl -l), not whether the
     # file exists: augenrules can fail while the file looks fine on disk.

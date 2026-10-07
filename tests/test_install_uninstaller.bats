@@ -118,3 +118,47 @@ setup() {
     [ "$status" -ne 0 ]
     [ "$(cat "$fake/state/ok.json")" = "precious" ]
 }
+
+# ---- keeping data across two uninstalls --------------------------------
+
+# Bats can only write outside the allowlist, so this runs the generated body
+# with the path guard cut out; tests/uninstall/run.sh runs it whole, as root.
+_uninstaller_unguarded() {
+    INSTALL_DIR="$fake" create_uninstaller
+    sed '/^if \[\[ -z "\$INSTALL_DIR" \]\] || \\$/,/^fi$/d' "$fake/uninstall.sh" \
+        > "$BATS_TEST_TMPDIR/unguarded.sh"
+    _vpssec_refute grep -q 'not a recognised vpssec install path' "$BATS_TEST_TMPDIR/unguarded.sh"
+}
+
+@test "uninstaller: keeping data merges into what an earlier uninstall kept" {
+    # The earlier session is the only copy of /etc before vpssec first touched it.
+    mkdir -p "$fake/backups/20260202_000000" "$fake.data-kept/backups/20250101_000000"
+    echo new > "$fake/backups/20260202_000000/marker"
+    echo first > "$fake.data-kept/backups/20250101_000000/marker"
+    _uninstaller_unguarded
+
+    run bash "$BATS_TEST_TMPDIR/unguarded.sh" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(cat "$fake.data-kept/backups/20250101_000000/marker")" = "first" ]
+    [ "$(cat "$fake.data-kept/backups/20260202_000000/marker")" = "new" ]
+    [ ! -e "$fake" ]
+}
+
+@test "uninstaller: a session name already kept stops it before anything is moved" {
+    # Checked up front: mv alone also refuses the clash, but only after the
+    # sessions sorted before it were moved, leaving the data split in two.
+    mkdir -p "$fake/backups/20260101_000000" "$fake/backups/20260202_000000" \
+        "$fake.data-kept/backups/20260202_000000"
+    echo early > "$fake/backups/20260101_000000/marker"
+    echo mine > "$fake/backups/20260202_000000/marker"
+    echo kept > "$fake.data-kept/backups/20260202_000000/marker"
+    _uninstaller_unguarded
+
+    run bash "$BATS_TEST_TMPDIR/unguarded.sh" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"already exists"* ]]
+    [ "$(cat "$fake.data-kept/backups/20260202_000000/marker")" = "kept" ]
+    [ "$(cat "$fake/backups/20260202_000000/marker")" = "mine" ]
+    [ "$(cat "$fake/backups/20260101_000000/marker")" = "early" ]
+    [ -e "$BIN_LINK" ]
+}

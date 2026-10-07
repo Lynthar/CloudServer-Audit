@@ -1,0 +1,46 @@
+# Mutation cases: tests/test_ufw_ssh_limit.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_ufw_ssh_limit.bats
+#
+# _ufw_admits_port reads ufw's rule tuples; each case turns off one thing it
+# must refuse to count, or one rule shape it must understand.
+
+run_case "admits/out-counted" 1 \
+    '            if ($n !~ /^in(_|$)/) next' \
+    '            if (0) next'
+
+run_case "admits/deny-counted" 1 \
+    '            if ($4 != "allow" && $4 != "limit") next' \
+    '            if (0) next'
+
+run_case "admits/limit-dropped" 1 \
+    '            if ($4 != "allow" && $4 != "limit") next' \
+    '            if ($4 != "allow") next'
+
+run_case "admits/udp-counted" 1 \
+    '            if ($5 != "tcp" && $5 != "any") next' \
+    '            if (0) next'
+
+run_case "admits/open-ignores-limits" 1 \
+    '            if (scope == "open" && ($n != "in" || !wild($7) || !wild($9))) next' \
+    '            if (0) next'
+
+run_case "admits/range-ignored" 1 \
+    '                if (split(items[i], r, ":") == 2) {' \
+    '                if (0) {'
+
+run_case "admits/any-port-ignored" 1 \
+    '            if ($6 == "any") { hit = 1; exit }' \
+    '            if (0) { hit = 1; exit }'
+
+run_case "admits/v6-rules-skipped" 1 \
+    '    for f in "$UFW_USER_RULES" "$UFW_USER6_RULES"; do' \
+    '    for f in "$UFW_USER_RULES"; do'
+
+# A trailing comment= field read as the direction drops every commented rule.
+run_case "admits/comment-read-as-direction" 1 \
+    '            if ($n ~ /^comment=/) n--' \
+    '            n = n'
+
+run_case "allowed/one-port-enough" 1 \
+    '        _ufw_admits_port "$port" || return 1' \
+    '        _ufw_admits_port "$port" && return 0'

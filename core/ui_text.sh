@@ -11,9 +11,10 @@ text_yesno() {
     local message="$2"
     local default="${3:-no}"
 
-    print_header "$title"
-    echo "$message"
-    echo ""
+    tty_say ""
+    tty_say "${BOLD}  $title${NC}"
+    tty_say "$message"
+    tty_say ""
 
     local prompt
     if [[ "$default" == "yes" ]]; then

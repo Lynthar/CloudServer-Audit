@@ -70,3 +70,7 @@ run_case "conf/write-failure-unchecked" 1 \
 run_case "rollback/backup-failure-swallowed" 1 \
     '        backup_file "$LOGROTATE_CONF" >/dev/null || return 1' \
     '        backup_file "$LOGROTATE_CONF" >/dev/null 2>&1 || true'
+
+run_case "logrotate/undo-not-recorded" 1 \
+    '    (( ${#missing[@]} )) && record_undo logging.setup_logrotate "$(pkg_remove_hint "${missing[@]}")"' \
+    '    :'

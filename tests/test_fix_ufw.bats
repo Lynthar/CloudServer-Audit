@@ -18,8 +18,11 @@ setup() {
     unset SSH_CONNECTION SSH_CLIENT
     _vpssec_stub who
 
-    ufw_rules="$BATS_TEST_TMPDIR/ufw-rules"
     ufw_state="$BATS_TEST_TMPDIR/ufw-state"
+    ufw_policy="$BATS_TEST_TMPDIR/ufw-policy"
+    # ufw's own rule store, which is what the coverage predicate reads.
+    UFW_USER_RULES="$BATS_TEST_TMPDIR/user.rules"
+    UFW_USER6_RULES="$BATS_TEST_TMPDIR/user6.rules"
 
     _sshd_ports 22
     _ufw_working
@@ -36,29 +39,55 @@ exit 0
 SH
 }
 
-# A ufw that remembers: `allow` records a rule and `status` reports the rules
-# recorded so far, so _ufw_port_allowed sees what earlier calls did. $1, when
-# given, is a port whose `allow` fails; everything else succeeds.
+# `sshd -T` the way real sshd prints `ListenAddress host:port`: the port line
+# still says the default, only the listenaddress lines carry the real port.
+_sshd_listening_on() {
+    { printf 'port 22\n'; printf 'listenaddress %s\n' "$@"; } > "$BATS_TEST_TMPDIR/sshd-ports"
+}
+
+# Seed ufw's rule store with one tuple, in the format ufw writes.
+_tuple() {
+    printf '### tuple ### %s\n' "$*" >> "$UFW_USER_RULES"
+}
+
+# A ufw that remembers: `allow`/`limit` append the tuple ufw would write,
+# `delete` removes it, `default` records the policy. $1: a port whose `allow`
+# fails; $2: a subcommand refused outright.
 _ufw_working() {
-    local failing_port="${1:-}"
-    : > "$ufw_rules"
+    local failing_port="${1:-}" refused="${2:-}"
+    : > "$UFW_USER_RULES"
     printf 'inactive\n' > "$ufw_state"
+    printf 'allow\n' > "$ufw_policy"
     _vpssec_stub_script ufw <<SH
-rules="$ufw_rules"
+rules="$UFW_USER_RULES"
 state="$ufw_state"
+policy="$ufw_policy"
 fail_port="$failing_port"
+[[ -n "$refused" && "\$1" == "$refused" ]] && exit 1
 case "\$1" in
-    allow)
-        if [[ "\$2" == from ]]; then
-            printf 'Anywhere ALLOW %s\n' "\$3" >> "\$rules"
+    allow|limit)
+        act="\$1"; shift
+        if [[ "\$1" == from ]]; then
+            echo "### tuple ### \$act any any 0.0.0.0/0 any \$2 in" >> "\$rules"
         else
-            [[ -n "\$fail_port" && "\$2" == "\$fail_port"* ]] && exit 1
-            printf '%s ALLOW  Anywhere\n' "\$2" >> "\$rules"
+            [[ -n "\$fail_port" && "\$1" == "\$fail_port"* ]] && exit 1
+            echo "### tuple ### \$act tcp \${1%/*} 0.0.0.0/0 any 0.0.0.0/0 in" >> "\$rules"
+        fi
+        ;;
+    delete)
+        if [[ "\$3" == from ]]; then
+            sed -i "/ any \$4 in\\\$/d" "\$rules"
+        else
+            sed -i "/^### tuple ### \$2 tcp \${3%/*} 0.0.0.0\\/0 any 0.0.0.0\\/0 in\\\$/d" "\$rules"
         fi
         ;;
     enable)  printf 'active\n' > "\$state" ;;
-    status)  printf 'Status: %s\n' "\$(cat "\$state")"; cat "\$rules" ;;
-    delete|default) ;;
+    status)
+        printf 'Status: %s\n' "\$(cat "\$state")"
+        [[ "\${2:-}" == verbose ]] && printf 'Default: %s (incoming), allow (outgoing), disabled (routed)\n' "\$(cat "\$policy")"
+        ;;
+    show)    cat "\$rules" ;;
+    default) [[ "\$3" == incoming ]] && printf '%s\n' "\$2" > "\$policy" ;;
 esac
 exit 0
 SH
@@ -67,25 +96,7 @@ SH
 # ufw refuses the operation named by $1 (enable / default), everything else
 # behaves as _ufw_working.
 _ufw_refuses() {
-    _ufw_working
-    local op="$1"
-    _vpssec_stub_script ufw <<SH
-rules="$ufw_rules"
-state="$ufw_state"
-[[ "\$1" == "$op" ]] && exit 1
-case "\$1" in
-    allow)
-        if [[ "\$2" == from ]]; then
-            printf 'Anywhere ALLOW %s\n' "\$3" >> "\$rules"
-        else
-            printf '%s ALLOW  Anywhere\n' "\$2" >> "\$rules"
-        fi
-        ;;
-    enable)  printf 'active\n' > "\$state" ;;
-    status)  printf 'Status: %s\n' "\$(cat "\$state")"; cat "\$rules" ;;
-esac
-exit 0
-SH
+    _ufw_working "" "$1"
 }
 
 # Pretend the operator is connected from this address.
@@ -152,6 +163,23 @@ _call_at() {
     run _ufw_fix_enable
     [ "$status" -eq 1 ]
     _vpssec_refute _vpssec_stub_called ufw 'enable'
+}
+
+@test "enable: declining removes every rule the fix added" {
+    _operator_at 203.0.113.9
+    confirm_critical() { return 1; }
+
+    run _ufw_fix_enable
+    [ "$status" -eq 1 ]
+    [ ! -s "$UFW_USER_RULES" ]
+}
+
+@test "enable: a successful enable logs how to undo it" {
+    confirm_critical() { return 0; }
+
+    run _ufw_fix_enable
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for ufw.enable: ufw disable && ufw delete allow 22/tcp' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "enable: declining removes the session rescue rule" {
@@ -230,12 +258,61 @@ _call_at() {
 }
 
 @test "default deny: an already-allowed port is not re-added" {
-    printf '22/tcp ALLOW  Anywhere\n' > "$ufw_rules"
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
 
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
     _vpssec_stub_called ufw 'default deny incoming'
+}
+
+@test "default deny: an outbound rule on the SSH port is not inbound coverage" {
+    # `ufw allow out 22/tcp` once let this fix skip the inbound rule and flip
+    # straight to deny, cutting the next login.
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 out
+
+    run _ufw_fix_default_deny
+    [ "$status" -eq 0 ]
+    local allow_at deny_at
+    allow_at=$(_call_at '^ufw allow 22/tcp')
+    deny_at=$(_call_at '^ufw default deny incoming')
+    [ -n "$allow_at" ]
+    [ "$allow_at" -lt "$deny_at" ]
+}
+
+@test "default deny and enable: a LIMIT rule covers its port and is kept" {
+    # `ufw allow` on a LIMIT port rewrites the rule into a plain ALLOW, and
+    # the rate limit disappears without a word.
+    _tuple limit tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    confirm_critical() { return 0; }
+
+    run _ufw_fix_default_deny
+    [ "$status" -eq 0 ]
+    run _ufw_fix_enable
+    [ "$status" -eq 0 ]
+    _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
+    grep -q '^### tuple ### limit tcp 22 ' "$UFW_USER_RULES"
+}
+
+@test "default deny: a rule confined to an interface still gets a rule open to anywhere" {
+    # The operator may be connected over the public address right now; the
+    # interface rule does not cover that path, and the deny would.
+    _tuple allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0
+
+    run _ufw_fix_default_deny
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called ufw 'allow 22/tcp'
+}
+
+@test "default deny: the command that restores the old policy is printed and logged" {
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+
+    run _ufw_fix_default_deny
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ufw default allow incoming"* ]]
+    grep -q 'Undo for ufw.set_default_deny: ufw default allow incoming && ufw delete allow 22/tcp' \
+        "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "default deny: outgoing traffic is left allowed" {
@@ -265,6 +342,43 @@ _call_at() {
     _vpssec_stub_called ufw 'allow 22/tcp'
     _vpssec_stub_called ufw 'allow 2222/tcp'
     _vpssec_stub_called ufw 'allow 2022/tcp'
+}
+
+@test "allow ssh: SSH confined to a VPN interface gains no rule open to anywhere" {
+    # Tailscale's documented ufw lockdown is `allow in on tailscale0` with no
+    # 22/tcp rule; a SAFE fix must not undo it.
+    _tuple allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0
+
+    _ufw_ssh_allowed
+    run _ufw_fix_allow_ssh
+    [ "$status" -eq 0 ]
+    _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
+}
+
+@test "allow ssh: an app profile rule resolved to the SSH port counts" {
+    # `ufw allow OpenSSH` as ufw stores it: ports resolved, app names kept.
+    _tuple allow tcp 22 0.0.0.0/0 any 10.0.0.0/8 OpenSSH - in comment=6f7073
+    _ufw_ssh_allowed
+}
+
+@test "allow ssh: the port sshd really listens on, from ListenAddress host:port" {
+    # No Port line: sshd -T still prints `port 22`, but sshd listens only on
+    # 2222. Opening 22 here and verifying 22 locked the operator out.
+    _sshd_listening_on 0.0.0.0:2222 '[::]:2222'
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+
+    _vpssec_refute _ufw_ssh_allowed
+    run _ufw_fix_allow_ssh
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called ufw 'allow 2222/tcp'
+    _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
+    _ufw_ssh_allowed
+}
+
+@test "allow ssh: the undo command is logged" {
+    run _ufw_fix_allow_ssh
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for ufw.allow_ssh: ufw delete allow 22/tcp' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "allow ssh: one refused port fails the fix even if another succeeded" {
@@ -300,6 +414,14 @@ SH
     _vpssec_stub_called apt-get 'install -y ufw'
 }
 
+@test "install: the logged undo command removes the package again" {
+    _vpssec_stub apt-get
+
+    run _ufw_fix_install
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for ufw.install: apt purge ufw' "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "ufw_fix: an unknown fix id fails instead of silently doing nothing" {
     run ufw_fix "ufw.not_a_real_fix"
     [ "$status" -eq 1 ]
@@ -309,16 +431,11 @@ SH
     _operator_at 203.0.113.9
     # Same as _ufw_working, except the `allow from <ip>` form is refused.
     _vpssec_stub_script ufw <<SH
-rules="$ufw_rules"
-state="$ufw_state"
 case "\$1" in
     allow)
         [[ "\$2" == from ]] && exit 1
-        printf '%s ALLOW  Anywhere\n' "\$2" >> "\$rules"
+        echo "### tuple ### allow tcp \${2%/*} 0.0.0.0/0 any 0.0.0.0/0 in" >> "$UFW_USER_RULES"
         ;;
-    enable)  printf 'active\n' > "\$state" ;;
-    status)  printf 'Status: %s\n' "\$(cat "\$state")"; cat "\$rules" ;;
-    delete|default) ;;
 esac
 exit 0
 SH

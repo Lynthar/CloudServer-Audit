@@ -85,14 +85,6 @@ _has_login_shell() {
     esac
 }
 
-# True for a sudoers.d drop-in that sudo IGNORES: @includedir skips any name
-# containing '.' or ending in '~'. Auditing those yields false findings, so
-# every sudoers.d scanner here must skip them.
-_sudoers_dropin_ignored() {
-    local base="${1##*/}"
-    [[ "$base" == *.* || "$base" == *'~' ]]
-}
-
 # Check if username is in system accounts list
 _is_system_account() {
     local user="$1"
@@ -176,86 +168,6 @@ _find_system_users_with_shells() {
     done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${suspicious[@]}"
-}
-
-# Pure-data variant of _group_all_members, for tests.
-# $1: a getent-group line (`name:x:gid:m1,m2`); $2: getent-passwd content.
-# Privileged access has four sources: sudo, wheel, user entries, %group.
-_group_all_members_from_streams() {
-    local group_line="$1"
-    local passwd_text="$2"
-
-    local name pwd gid secondary
-    IFS=: read -r name pwd gid secondary <<<"$group_line"
-
-    if [[ -n "$secondary" ]]; then
-        echo "$secondary" | tr ',' '\n'
-    fi
-    if [[ -n "$gid" ]]; then
-        awk -F: -v g="$gid" '$4 == g {print $1}' <<<"$passwd_text"
-    fi
-}
-
-# All users in a group: the 4th-field secondary members PLUS everyone whose
-# primary GID matches. Omitting the latter loses `useradd -g sudo bob`.
-_group_all_members() {
-    local group="$1"
-    local group_line passwd
-    group_line=$(getent group "$group" 2>/dev/null) || return 0
-    passwd=$(getent passwd 2>/dev/null)
-    _group_all_members_from_streams "$group_line" "$passwd"
-}
-
-_find_sudo_users() {
-    local sudo_users=()
-
-    # Check sudo and wheel groups (Debian/Ubuntu vs RHEL/CentOS).
-    local g
-    for g in sudo wheel; do
-        local arr=()
-        mapfile -t arr < <(_group_all_members "$g")
-        sudo_users+=("${arr[@]}")
-    done
-
-    # Scan sudoers files for direct user rules AND %group rules.
-    local sudoers_files=()
-    [[ -r /etc/sudoers ]] && sudoers_files+=(/etc/sudoers)
-    if [[ -d /etc/sudoers.d ]]; then
-        for f in /etc/sudoers.d/*; do
-            [[ -f "$f" && -r "$f" ]] || continue
-            _sudoers_dropin_ignored "$f" && continue
-            sudoers_files+=("$f")
-        done
-    fi
-
-    local f
-    for f in "${sudoers_files[@]}"; do
-        while IFS= read -r line; do
-            # Skip comments, blank lines, and sudoers keyword directives
-            # (we only want rule lines).
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-            [[ "$line" =~ ^[[:space:]]*(Defaults|Cmnd_Alias|Host_Alias|User_Alias|Runas_Alias) ]] && continue
-
-            # Leading token of a rule line. The class MUST include `.` and
-            # `\` for LDAP/AD names, or those admins go uncounted and the
-            # "no non-root admin" gate clears wrongly.
-            if [[ "$line" =~ ^[[:space:]]*(%?[a-zA-Z_][a-zA-Z0-9._\\-]*)[[:space:]]+[^=]+= ]]; then
-                local token="${BASH_REMATCH[1]}"
-                if [[ "$token" == %* ]]; then
-                    local group_name="${token#%}"
-                    local -a members_arr=()
-                    mapfile -t members_arr < <(_group_all_members "$group_name")
-                    sudo_users+=("${members_arr[@]}")
-                else
-                    sudo_users+=("$token")
-                fi
-            fi
-        done < "$f"
-    done
-
-    # Deduplicate and drop empty entries.
-    printf '%s\n' "${sudo_users[@]}" | grep -v '^$' | sort -u
 }
 
 # Find NOPASSWD sudo entries - HIGH RISK
@@ -888,7 +800,7 @@ users_audit() {
     # sudo_count includes root, so it is never zero. The title must carry the
     # NON-ROOT count: "Privileged Users: 1" reads as "safe to disable root
     # login" when that 1 is root itself.
-    local sudo_users=$(_find_sudo_users)
+    local sudo_users=$(sudo_admin_users)
     local sudo_count=$(count_lines "$sudo_users")
     local non_root_count=$(echo "$sudo_users" | grep -vx 'root' | grep -c .)
 

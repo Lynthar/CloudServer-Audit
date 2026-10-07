@@ -626,8 +626,7 @@ execute_plan() {
     # this one directory (VPSSEC_BACKUP_SESSION), so a rollback restores the
     # whole plan, not just the files backed up in the last wall-clock second.
     VPSSEC_BACKUP_SESSION=$(backup_create_session)
-    local backup_dir="$VPSSEC_BACKUP_SESSION"
-    log_info "Backup session created: $backup_dir"
+    log_info "Backup session: $VPSSEC_BACKUP_SESSION"
 
     # Buffered first, then iterated: feeding the loop from `< <(jq ...)` makes
     # that pipe the stdin of every fix body, and a fix that reads stdin would
@@ -663,11 +662,11 @@ execute_plan() {
             # Ask user what to do
             if [[ "${VPSSEC_YES}" != "1" ]]; then
                 local choice
-                echo ""
-                echo "  1) $(i18n 'common.skip')"
-                echo "  2) $(i18n 'common.retry')"
-                echo "  3) $(i18n 'common.rollback')"
-                echo -n "  > "
+                tty_say ""
+                tty_say "  1) $(i18n 'common.skip')"
+                tty_say "  2) $(i18n 'common.retry')"
+                tty_say "  3) $(i18n 'common.rollback')"
+                tty_say -n "  > "
                 read -r choice 2>/dev/null </dev/tty || choice="1"
 
                 case "$choice" in
@@ -711,10 +710,6 @@ execute_plan() {
     # Clear progress
     state_clear_progress
 
-    # Each guide run adds a timestamped directory, so prune. Rollback works
-    # against any session that survives.
-    backup_cleanup 30 || true
-
     # Print summary
     print_msg ""
     if [[ ${#failed[@]} -eq 0 ]]; then
@@ -725,8 +720,12 @@ execute_plan() {
         print_warn "$(i18n 'guide.partial_complete' "count=${#failed[@]}")"
     fi
 
-    print_msg ""
-    print_info "$(i18n 'guide.rollback_available')"
+    # Sessions are never pruned: the oldest one holds the only copy of the
+    # files as they were before vpssec first touched them.
+    if [[ -d "$VPSSEC_BACKUP_SESSION" ]]; then
+        print_msg ""
+        print_info "$(i18n 'guide.rollback_available')"
+    fi
 
     # Close the session so any later standalone backup_file call timestamps
     # its own directory again.
@@ -814,16 +813,16 @@ guide_mode() {
         _completed_count=$(echo "$_progress" | jq -r '.completed | length')
         _ts=$(echo "$_progress" | jq -r '.timestamp')
 
-        print_warn "$(i18n 'guide.interrupted_detected' \
+        tty_warn "$(i18n 'guide.interrupted_detected' \
             "step=$((_completed_count + 1))" \
             "total=$_total" \
             "current=$_current" \
             "ts=$_ts")"
-        print_msg ""
-        print_msg "  1) $(i18n 'guide.resume_option')"
-        print_msg "  2) $(i18n 'guide.discard_option')"
-        print_msg "  3) $(i18n 'guide.cancel_option')"
-        echo -n "  > "
+        tty_say ""
+        tty_say "  1) $(i18n 'guide.resume_option')"
+        tty_say "  2) $(i18n 'guide.discard_option')"
+        tty_say "  3) $(i18n 'guide.cancel_option')"
+        tty_say -n "  > "
 
         local _choice
         if ! read -r _choice 2>/dev/null </dev/tty; then
@@ -885,9 +884,11 @@ guide_mode() {
         return 0
     fi
 
-    # Show full report (same as audit mode)
-    report_print_details
-    report_print_summary
+    # Same terminal report as audit mode; --json-only keeps stdout for the JSON.
+    if [[ "${VPSSEC_JSON_ONLY}" != "1" ]]; then
+        report_print_details
+        report_print_summary
+    fi
 
     # Module/fix selection
     print_subheader "$(i18n 'guide.select_fixes')"
@@ -916,7 +917,7 @@ guide_mode() {
     else
         # Text mode - show numbered list
         local i=1
-        echo ""
+        tty_say ""
         while read -r fix; do
             local fix_id=$(echo "$fix" | jq -r '.fix_id')
             local title=$(echo "$fix" | jq -r '.title')
@@ -941,13 +942,13 @@ guide_mode() {
                 *)       safety_indicator="" ;;
             esac
 
-            echo -e "  $i) $prefix $title $safety_indicator"
+            tty_say "  $i) $prefix $title $safety_indicator"
             ((i++))
         done < <(echo "$fixes" | jq -c '.[]')
 
-        echo ""
-        echo "$(i18n 'guide.enter_numbers')"
-        echo -n "> "
+        tty_say ""
+        tty_say "$(i18n 'guide.enter_numbers')"
+        tty_say -n "> "
         read -r selection 2>/dev/null </dev/tty || selection=""
 
         if [[ "$selection" == "all" ]]; then
@@ -1026,8 +1027,10 @@ guide_mode() {
     if tui_available; then
         ui_review_plan "$plan_preview"
     else
-        cat "$plan_preview"
-        echo ""
+        # The plan is what the confirmations below refer to, so it goes where
+        # they go: never onto a --json-only stdout.
+        tty_out < "$plan_preview"
+        tty_say ""
     fi
     rm -f "$plan_preview"
     trap - EXIT INT TERM  # Remove trap after cleanup
@@ -1072,24 +1075,23 @@ rollback_mode() {
 
     if [[ -z "$timestamp" ]]; then
         # Interactive selection
-        print_msg "$(i18n 'common.info'): Available backups:"
-        echo ""
+        tty_say "$(i18n 'common.info'): Available backups:"
+        tty_say ""
 
         local i=1
         local -a backup_array=()
         while read -r ts; do
             backup_array+=("$ts")
             local contents=$(backup_list_contents "$ts" | wc -l)
-            echo "  $i) $ts ($contents files)"
+            tty_say "  $i) $ts ($contents files)"
             ((i++))
         done <<< "$backups"
 
-        echo ""
+        tty_say ""
         local choice
-        # Always print prompt first
-        echo -n "$(i18n 'common.enter_choice') [1-${#backup_array[@]}] > "
+        tty_say -n "$(i18n 'common.enter_choice') [1-${#backup_array[@]}] > "
         if ! read -r choice 2>/dev/null </dev/tty; then
-            echo ""
+            tty_say ""
             print_error "$(i18n 'error.cannot_read_input')"
             return 1
         fi
@@ -1102,20 +1104,18 @@ rollback_mode() {
         fi
     fi
 
-    # Confirm rollback
-    print_msg ""
-    print_warn "$(i18n 'backup.restoring') $timestamp"
+    # Confirm rollback. The file list is what the question is about.
+    tty_say ""
+    tty_warn "$(i18n 'backup.restoring') $timestamp"
 
     local contents=$(backup_list_contents "$timestamp")
     if [[ -n "$contents" ]]; then
-        print_msg ""
-        print_msg "$(i18n 'common.info'): Files to restore:"
-        echo "$contents" | while read -r f; do
-            print_item "$f"
-        done
+        tty_say ""
+        tty_say "$(i18n 'common.info'): Files to restore:"
+        sed 's/^/  - /' <<<"$contents" | tty_out
     fi
 
-    print_msg ""
+    tty_say ""
     if ! confirm_critical "$(i18n 'common.confirm')?"; then
         print_warn "$(i18n 'common.cancel')"
         return 0
@@ -1197,10 +1197,15 @@ status_mode() {
         print_msg "  $(i18n 'status.completed_fixes' "count=$completed")"
     fi
 
-    # Backup info
+    # Backup info. vpssec never deletes a session, so their number and size
+    # are shown here, where the operator decides what to remove.
     local latest_backup=$(backup_get_latest)
     if [[ -n "$latest_backup" ]]; then
         print_msg "  $(i18n 'status.latest_backup' "time=$latest_backup")"
+        local count size
+        count=$(backup_list | grep -c .) || count=0
+        size=$(du -sh "$VPSSEC_BACKUPS" 2>/dev/null | cut -f1) || size="?"
+        print_msg "  $(i18n 'status.backups_kept' "count=$count" "size=${size:-?}" "path=$VPSSEC_BACKUPS")"
     fi
 
     # progress.json is only present between a mid-fix kill and the next

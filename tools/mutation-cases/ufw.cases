@@ -5,16 +5,24 @@
 # the rule and the rest of the runner's contract are in tools/mutate-suite.sh's header.
 
 run_case "enable/allow-failure-ignored" 1 \
-    '        if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then' \
+    '    if ! _ufw_allow_ssh_ports undo < <(_ufw_ssh_ports_unopened); then' \
+    '    if false; then'
+
+run_case "helper/allow-failure-ignored" 1 \
+    '        if ! ufw allow "$p/tcp" comment "SSH (vpssec)" >/dev/null; then' \
     '        if false; then'
+
+run_case "helper/undo-not-recorded" 1 \
+    '        _undo+=("ufw delete allow $p/tcp")' \
+    '        :'
 
 run_case "enable/confirm-gate-removed" 1 \
     '    if ! confirm_critical "$(i18n '"'"'ufw.confirm_ufw_enable'"'"')"; then' \
     '    if false; then'
 
-run_case "enable/decline-keeps-rescue-rule" 1 \
-    '            ufw delete allow from "$current_ip" 2>/dev/null' \
-    '            :'
+run_case "enable/decline-keeps-added-rules" 2 \
+    '        _ufw_run_undo "${undo[@]}"' \
+    '        :'
 
 run_case "enable/rescue-rule-auto-deleted" 1 \
     '            print_warn "$(i18n '"'"'ufw.rescue_rule_kept'"'"' "ip=$current_ip")"' \
@@ -25,32 +33,54 @@ run_case "enable/rescue-rule-for-unknown-ip" 1 \
     '    if true; then'
 
 run_case "enable/enable-failure-swallowed" 1 \
-    '    if echo "y" | ufw enable; then' \
-    '    if echo "y" | ufw enable || true; then'
+    '    if echo "y" | ufw enable >/dev/null; then' \
+    '    if echo "y" | ufw enable >/dev/null || true; then'
 
-run_case "deny/ssh-rule-never-added" 1 \
-    '        if ! _ufw_port_allowed "$_p"; then' \
-    '        if false; then'
-
-run_case "deny/idempotence-removed" 1 \
-    '        if ! _ufw_port_allowed "$_p"; then' \
-    '        if true; then'
-
-run_case "deny/allow-failure-ignored" 1 \
-    '            if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then' \
-    '            if false; then'
-
-run_case "deny/outgoing-left-denied" 1 \
-    '        ufw default allow outgoing 2>/dev/null || true' \
+run_case "enable/undo-not-recorded" 1 \
+    '        record_undo ufw.enable "$(undo_join "ufw disable" "${undo[@]}")"' \
     '        :'
 
-run_case "allow_ssh/only-first-port" 1 \
-    '        any=1' \
-    '        any=1; [[ -n "${_seen:-}" ]] && continue || _seen=1'
+run_case "deny/allow-failure-ignored" 2 \
+    '    if ! _ufw_allow_ssh_ports undo < <(_ufw_ssh_ports_unopened); then' \
+    '    if false; then'
+
+run_case "deny/ssh-rule-never-added" 1 \
+    '        _ufw_admits_port "$port" open || echo "$port"' \
+    '        :'
+
+# Rules confined to an interface or a source would then count, and the policy
+# flip would cut an operator connected over the public address.
+run_case "deny/open-scope-dropped" 1 \
+    '        _ufw_admits_port "$port" open || echo "$port"' \
+    '        _ufw_admits_port "$port" || echo "$port"'
+
+run_case "deny/idempotence-removed" 1 \
+    '        _ufw_admits_port "$port" open || echo "$port"' \
+    '        echo "$port"'
+
+run_case "deny/outgoing-left-denied" 1 \
+    '        ufw default allow outgoing >/dev/null 2>&1 || true' \
+    '        :'
+
+run_case "deny/undo-policy-dropped" 1 \
+    '        [[ -n "$old_in" ]] && revert+=("ufw default ${old_in,,} incoming")' \
+    '        :'
+
+run_case "allow_ssh/coverage-ignored" 1 \
+    '        _ufw_admits_port "$p" || missing+="$p"$'"'"'\n'"'"'' \
+    '        missing+="$p"$'"'"'\n'"'"''
+
+run_case "allow_ssh/only-last-port" 1 \
+    '        _ufw_admits_port "$p" || missing+="$p"$'"'"'\n'"'"'' \
+    '        _ufw_admits_port "$p" || missing="$p"$'"'"'\n'"'"''
 
 run_case "allow_ssh/failure-swallowed" 1 \
-    '            rc=1' \
-    '            rc=0'
+    '    if ! _ufw_allow_ssh_ports undo <<<"$missing"; then' \
+    '    if false; then'
+
+run_case "allow_ssh/undo-not-recorded" 1 \
+    '    record_undo ufw.allow_ssh "$(undo_join "${undo[@]}")"' \
+    '    :'
 
 run_case "install/failure-swallowed" 1 \
     '    if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then' \
@@ -60,6 +90,10 @@ run_case "install/failure-swallowed" 1 \
 run_case "install/no-refresh" 1 \
     '    apt_refresh_index' \
     '    :'
+
+run_case "install/undo-not-recorded" 1 \
+    '        record_undo ufw.install "apt purge ufw"' \
+    '        :'
 
 run_case "dispatch/unknown-id-succeeds" 1 \
     '            log_error "Unknown UFW fix: $fix_id"' \

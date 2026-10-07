@@ -87,5 +87,49 @@ set +e; bash /tmp/twice.sh < /dev/null > /tmp/out5 2>&1; rc=$?; set -e
 ck "second run still exits 0"     "$rc"                                                     "0"
 rm -rf "$D" "$D.data-kept" /tmp/twice.sh /tmp/proof-bin-*
 
+# ---------------------------------------------------------------- 6
+say "6. a second keep-uninstall merges into what the first one kept"
+D=/opt/vpssec-proof-f
+mk_install "$D"
+mkdir -p "$D.data-kept/backups/20250101_000000"
+printf 'first-original\n' > "$D.data-kept/backups/20250101_000000/marker"
+INSTALL_DIR="$D" BIN_LINK=/tmp/proof-bin-f create_uninstaller
+bash "$D/uninstall.sh" < /dev/null > /tmp/out6 2>&1
+ck "earlier kept session survives" "$(cat $D.data-kept/backups/20250101_000000/marker 2>/dev/null)" "first-original"
+ck "new session joins it"          "$(cat $D.data-kept/backups/20260101_000000/marker 2>/dev/null)" "backed-up"
+rm -rf "$D" "$D.data-kept"
+
+# ---------------------------------------------------------------- 7
+say "7. a clashing session name stops the uninstall before anything is removed"
+D=/opt/vpssec-proof-g
+mk_install "$D"
+mkdir -p "$D.data-kept/backups/20260101_000000"
+printf 'kept-copy\n' > "$D.data-kept/backups/20260101_000000/marker"
+INSTALL_DIR="$D" BIN_LINK=/tmp/proof-bin-g create_uninstaller
+set +e; bash "$D/uninstall.sh" < /dev/null > /tmp/out7 2>&1; rc=$?; set -e
+ck "exits non-zero"                "$([[ $rc -ne 0 ]] && echo yes || echo no)"              "yes"
+ck "kept copy untouched"           "$(cat $D.data-kept/backups/20260101_000000/marker 2>/dev/null)" "kept-copy"
+ck "install left in place"         "$(cat $D/backups/20260101_000000/marker 2>/dev/null)"   "backed-up"
+rm -rf "$D" "$D.data-kept"
+
+# ---------------------------------------------------------------- 8
+say "8. install.sh will not replace an existing directory that is not vpssec"
+eval "$(awk '/^safe_remove_install_dir\(\)/,/^}/' install.sh)"
+eval "$(awk '/^stash_data_dirs\(\)/,/^}/' install.sh)"
+# Called by the eval'd safe_remove_install_dir and stash_data_dirs.
+# shellcheck disable=SC2329
+print_error() { echo "ERR $*"; }
+# shellcheck disable=SC2329
+print_info() { :; }
+D=/opt/vpssec-proof-foreign
+rm -rf "$D"; mkdir -p "$D/otherapp"; printf 'important\n' > "$D/otherapp/data"
+set +e; INSTALL_DIR="$D" safe_remove_install_dir > /tmp/out8 2>&1; rc=$?; set -e
+ck "refuses"                       "$rc"                                                     "1"
+ck "foreign data untouched"        "$(cat $D/otherapp/data 2>/dev/null)"                    "important"
+rm -rf "$D"; mkdir -p "$D"
+set +e; INSTALL_DIR="$D" safe_remove_install_dir > /tmp/out8b 2>&1; rc=$?; set -e
+ck "an empty directory is fine"    "$rc"                                                     "0"
+rm -rf "$D" /tmp/proof-bin-*
+
 printf '\n%s\n' "$([[ $fail -eq 0 ]] && echo 'UNINSTALLER PROOF: ALL PASS' || echo 'UNINSTALLER PROOF: FAILURES')"
 exit $fail

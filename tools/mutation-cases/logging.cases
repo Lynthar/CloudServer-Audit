@@ -91,3 +91,16 @@ run_case "rollback/backup-failure-swallowed" 1 \
 run_case "auditd/no-refresh" 1 \
     '    apt_refresh_index' \
     '    :'
+
+run_case "auditd/install-undo-not-recorded" 1 \
+    '        (( ${#missing[@]} )) && record_undo logging.install_auditd "$(pkg_remove_hint "${missing[@]}")"' \
+    '        :'
+
+run_case "auditd/enable-undo-not-recorded" 1 \
+    '        record_undo logging.enable_auditd "$undo"' \
+    '        :'
+
+# augenrules regenerates audit.rules; without the snapshot rollback cannot return it.
+run_case "rules/compiled-not-backed-up" 1 \
+    '    backup_file "$AUDIT_RULES_COMPILED" >/dev/null || return 1' \
+    '    :'

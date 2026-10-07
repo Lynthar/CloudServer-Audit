@@ -24,6 +24,10 @@ setup() {
     _vpssec_stub systemctl
     _vpssec_stub apt-get
     _vpssec_stub dpkg 0 ''
+    # Never the host's own debconf database; the answer it was fed is kept.
+    _vpssec_stub_script debconf-set-selections <<SH
+cat >> "$BATS_TEST_TMPDIR/debconf-fed"
+SH
     # A host where automatic updates are already effective, so the fix's
     # postcondition passes unless a test says otherwise. apt-config is what
     # auto_update_status actually reads.
@@ -59,6 +63,9 @@ echo "ii  unattended-upgrades  2.9.1  all  automatic installation of security up
 SH
 }
 _uu_not_installed() { _vpssec_stub dpkg 0 ''; }
+
+# dpkg-query answering "not installed" for every package, as pkg_is_installed asks.
+_no_packages_installed() { _vpssec_stub dpkg-query 1; }
 
 # ==============================================================================
 # update.enable_unattended  (FIX_CONFIRM — turns on automatic installation)
@@ -243,6 +250,31 @@ SH
     _vpssec_stub_called apt-get 'install .*unattended-upgrades'
 }
 
+@test "install: 20auto-upgrades is snapshotted before the package can rewrite it" {
+    # The postinst writes this file; a snapshot taken after the install would
+    # hold its version, and a rollback would restore that instead.
+    _vpssec_require_gnu_realpath
+    _vpssec_begin_backup_session
+    printf 'APT::Periodic::Unattended-Upgrade "0";\n' > "$UPDATE_AUTO_UPGRADES_CONF"
+    _vpssec_stub_script apt-get <<SH
+[[ "\$*" == *install* ]] && printf 'APT::Periodic::Unattended-Upgrade "1";\n' > "$UPDATE_AUTO_UPGRADES_CONF"
+exit 0
+SH
+
+    run _update_fix_install_unattended
+    [ "$status" -eq 0 ]
+    grep -qF '"0"' "$VPSSEC_BACKUP_SESSION/${UPDATE_AUTO_UPGRADES_CONF#/}"
+}
+
+@test "install: packages it installed are named in the logged undo command" {
+    _no_packages_installed
+
+    run _update_fix_install_unattended
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for update.install_unattended: apt purge unattended-upgrades apt-listchanges' \
+        "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "install: a failed install does not go on to write config" {
     _vpssec_stub apt-get 100
 
@@ -307,6 +339,26 @@ SH
     [ "$status" -eq 0 ]
     _vpssec_stub_called apt-get 'update'
     _vpssec_stub_called apt-get 'install .*unattended-upgrades'
+}
+
+@test "apply: unattended-upgrades installed for this run does not switch on daily upgrades" {
+    # Its postinst writes 20auto-upgrades "1" unless debconf says otherwise:
+    # a one-off security run would leave automatic upgrades on for good.
+    _uu_not_installed
+    _no_packages_installed
+    _vpssec_stub unattended-upgrade 0
+    _vpssec_begin_backup_session
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    grep -q 'unattended-upgrades/enable_auto_updates boolean false' "$BATS_TEST_TMPDIR/debconf-fed"
+    local fed_at install_at
+    fed_at=$(grep -n '^debconf-set-selections' "$VPSSEC_STUB_LOG" | head -1 | cut -d: -f1)
+    install_at=$(grep -n '^apt-get install' "$VPSSEC_STUB_LOG" | head -1 | cut -d: -f1)
+    [ "$fed_at" -lt "$install_at" ]
+    # Recorded as created beforehand, in case the preseed did not hold.
+    grep -qxF "$UPDATE_AUTO_UPGRADES_CONF" "$VPSSEC_BACKUP_SESSION/.vpssec_created"
+    grep -q 'Undo for update.apply_security: apt purge unattended-upgrades' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "apply: an install failure aborts instead of upgrading everything" {

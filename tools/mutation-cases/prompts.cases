@@ -1,0 +1,21 @@
+# Mutation cases: tests/test_prompts_json_only.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_prompts_json_only.bats
+#
+# Each case sends a question, or the note it depends on, back to stdout or into
+# print_msg's --json-only silence.
+
+run_case "critical/warning-swallowed" 1 \
+    "    tty_warn \"\$(i18n 'common.warning'): \$prompt\"" \
+    "    print_warn \"\$(i18n 'common.warning'): \$prompt\""
+
+run_case "critical/question-on-stdout" 1 \
+    "    tty_say -n \"\$(i18n 'common.confirm') [yes/NO] > \"" \
+    "    echo -n \"\$(i18n 'common.confirm') [yes/NO] > \""
+
+run_case "confirm/question-on-stdout" 1 \
+    '    tty_say -n "$prompt_text"' \
+    '    echo -n "$prompt_text"'
+
+run_case "error/swallowed-under-json-only" 1 \
+    '        echo -e "${RED}${SYM_FAIL}${NC} $*" >&2' \
+    '        :'

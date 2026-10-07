@@ -1,0 +1,9 @@
+# Mutation cases: tests/test_fix_ufw.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_fix_ufw.bats
+#
+# get_ssh_ports: `ListenAddress host:port` overrides Port, and only the
+# listenaddress lines of sshd -T say so.
+
+run_case "ports/listenaddress-ignored" 1 \
+    "        ports=\$(awk '\$1 == \"listenaddress\" { n = split(\$2, a, \":\"); if (a[n] ~ /^[0-9]+\$/) print a[n] }' <<<\"\$dump\")" \
+    '        ports=""'

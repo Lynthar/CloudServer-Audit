@@ -6,9 +6,9 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh
+    _vpssec_load core/distro.sh core/state.sh
     i18n_load en_US
-    export TMPDIR="$BATS_TEST_TMPDIR"
+    export TMPDIR="$BATS_TEST_TMPDIR" VPSSEC_PKG_MGR=apt
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/fail2ban.sh"
 
@@ -28,7 +28,7 @@ setup() {
     _vpssec_stub systemctl
     _vpssec_stub apt-get
     _vpssec_stub fail2ban-client
-    # `port 2222` because get_ssh_port reads `sshd -T` first and falls back to
+    # `port 2222` because get_ssh_ports reads `sshd -T` first and falls back to
     # grepping the real /etc/ssh/sshd_config — an unstubbed sshd would let the
     # test host decide what lands in the drop-in.
     _vpssec_stub sshd 0 'port 2222'
@@ -428,6 +428,20 @@ SH
     _vpssec_stub_called systemctl 'start fail2ban'
 }
 
+@test "enable_service: starting a stopped, disabled service logs the command that undoes it" {
+    _vpssec_stub_script systemctl <<SH
+case "\$1" in
+    start)      : > "$BATS_TEST_TMPDIR/f2b-started" ;;
+    is-enabled) exit 1 ;;
+    is-active)  [[ -e "$BATS_TEST_TMPDIR/f2b-started" ]] && exit 0; exit 3 ;;
+esac
+exit 0
+SH
+    run _f2b_fix_enable_service
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for fail2ban.enable_service: systemctl disable --now fail2ban' "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "enable_service: a service that does not come up is a failure" {
     _vpssec_stub_script systemctl <<'SH'
 case "$*" in
@@ -456,6 +470,15 @@ SH
     run _f2b_fix_install
     [ "$status" -eq 0 ]
     [ -f "$F2B_DROPIN" ]
+}
+
+@test "install: a package it installed is named in the logged undo command" {
+    _f2b_jail_comes_up
+    _vpssec_stub dpkg-query 1
+
+    run _f2b_fix_install
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for fail2ban.install: apt purge fail2ban' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "install: a failed index refresh alone does not fail the install" {
@@ -525,15 +548,10 @@ SH
 @test "install: a service that failed to start still fails it once the jail comes up" {
     # enable_service and configure_ssh_jail both consult `systemctl is-active`, so
     # a uniformly answering stub makes them fail together and hides a discarded
-    # enable_service status. Split them: down when one looks, up when the other does.
-    local marker="$BATS_TEST_TMPDIR/f2b-came-up"
+    # enable_service status. Split them: down until the jail drop-in is written.
     _vpssec_stub_script systemctl <<SH
 case "\$*" in
-    *is-active*)
-        [[ -e "$marker" ]] && exit 0
-        : > "$marker"
-        exit 3
-        ;;
+    *is-active*) [[ -f "$F2B_DROPIN" ]] && exit 0; exit 3 ;;
     *) exit 0 ;;
 esac
 SH

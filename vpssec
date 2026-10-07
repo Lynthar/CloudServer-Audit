@@ -265,9 +265,10 @@ main() {
     if ! is_supported_os; then
         local os=$(detect_os)
         local version=$(detect_os_version)
-        print_warn "$(i18n 'error.unsupported_os' "os=${os} ${version}")"
-        print_msg "$(i18n 'error.supported_platforms')"
-        print_msg ""
+        # What the question below is about, so it reaches the terminal too.
+        tty_warn "$(i18n 'error.unsupported_os' "os=${os} ${version}")"
+        tty_say "$(i18n 'error.supported_platforms')"
+        tty_say ""
 
         if [[ "$command" != "status" ]] && ! confirm "$(i18n 'common.continue_anyway')" "n"; then
             exit 1

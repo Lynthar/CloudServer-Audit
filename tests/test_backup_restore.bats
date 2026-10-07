@@ -319,3 +319,44 @@ SH
     [ ! -f "$BATS_TEST_TMPDIR/restored" ]
 }
 
+
+# ---- symlinks the backup and write primitives meet --------------------
+
+@test "backup_file on a working symlink snapshots the target, never the link's 777" {
+    _vpssec_require_gnu_realpath
+    local etc="$TEST_HOST_ROOT/etc"
+    printf 'orig\n' > "$etc/real.conf"
+    chmod 640 "$etc/real.conf"
+    ln -s real.conf "$etc/link.conf"
+    VPSSEC_BACKUP_SESSION=$(backup_create_session)
+
+    backup_file "$etc/link.conf" >/dev/null
+    [ -f "$VPSSEC_BACKUP_SESSION/${etc#/}/real.conf" ]
+    [ ! -e "$VPSSEC_BACKUP_SESSION/${etc#/}/link.conf" ]
+    grep -qx "640 $etc/real.conf" "$VPSSEC_BACKUP_SESSION/.vpssec_modes"
+    _vpssec_refute grep -q '^777 ' "$VPSSEC_BACKUP_SESSION/.vpssec_modes"
+    VPSSEC_BACKUP_SESSION=""
+}
+
+@test "write_file_atomic writes through a working symlink and keeps the link" {
+    local etc="$TEST_HOST_ROOT/etc"
+    printf 'orig\n' > "$etc/real.conf"
+    chmod 640 "$etc/real.conf"
+    ln -s real.conf "$etc/link.conf"
+
+    write_file_atomic "$etc/link.conf" "new"
+    [ -L "$etc/link.conf" ]
+    [ "$(cat "$etc/real.conf")" = "new" ]
+    [ "$(stat -c '%a' "$etc/real.conf")" = "640" ]
+}
+
+@test "write_file_atomic replaces a dangling symlink with the file" {
+    # There is no target to write through; this is what lets a fix repair a
+    # link a rollback left dangling.
+    local etc="$TEST_HOST_ROOT/etc"
+    ln -s missing.conf "$etc/dangling.conf"
+
+    write_file_atomic "$etc/dangling.conf" "new"
+    [ ! -L "$etc/dangling.conf" ]
+    [ "$(cat "$etc/dangling.conf")" = "new" ]
+}

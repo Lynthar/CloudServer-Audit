@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_ssh_rescue_port.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_ssh_rescue_port.bats
+#
+# confirm_critical's bounded wait: the rescue sshd lives as long as it waits.
+
+run_case "critical/no-timeout" 1 \
+    '    read -r -t "$VPSSEC_CONFIRM_TIMEOUT" yn 2>/dev/null </dev/tty || rc=$?' \
+    '    read -r yn 2>/dev/null </dev/tty || rc=$?'
+
+run_case "critical/timeout-not-said" 1 \
+    '        if (( rc > 128 )); then' \
+    '        if false; then'

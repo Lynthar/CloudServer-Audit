@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh core/report.sh
+    _vpssec_load core/distro.sh core/state.sh core/security_levels.sh core/engine.sh core/report.sh
     i18n_load en_US
     state_init
     # shellcheck source=/dev/null
@@ -24,7 +24,9 @@ setup() {
     JOURNAL_DIR="$BATS_TEST_TMPDIR/var-log-journal"
     AUDIT_RULES_D="$etc/audit/rules.d"
     AUDIT_RULES_FILE="$AUDIT_RULES_D/99-vpssec.rules"
+    AUDIT_RULES_COMPILED="$etc/audit/audit.rules"
     mkdir -p "$etc/systemd"
+    export VPSSEC_PKG_MGR=apt
 
     _vpssec_stub systemd-tmpfiles
     _journald_flushes
@@ -264,6 +266,16 @@ _block_path_under() {
     _vpssec_stub_called systemctl 'start auditd'
 }
 
+@test "enable auditd: starting a stopped, disabled unit logs the command that undoes it" {
+    _vpssec_stub_script systemctl <<'SH'
+case "$1" in is-enabled|is-active) exit 1 ;; esac
+exit 0
+SH
+    run _logging_fix_enable_auditd
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for logging.enable_auditd: systemctl disable --now auditd' "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "enable auditd: a service that never comes up is not recorded complete" {
     # systemctl answered 0 and the fix believed it; the audit asks is-active.
     _service_never_starts
@@ -283,6 +295,32 @@ _block_path_under() {
 # ==============================================================================
 # logging.install_auditd
 # ==============================================================================
+
+@test "install auditd: the packages it installed are named in the logged undo command" {
+    _vpssec_stub apt-get
+    _vpssec_stub dpkg-query 1
+
+    run _logging_fix_install_auditd
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for logging.install_auditd: apt purge auditd audispd-plugins' "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "audit rules: the audit.rules augenrules regenerates is snapshotted first" {
+    _vpssec_require_gnu_realpath
+    _vpssec_begin_backup_session
+    mkdir -p "$etc/audit"
+    printf -- '-D\n## original\n' > "$AUDIT_RULES_COMPILED"
+    export AUDIT_RULES_COMPILED
+    _vpssec_stub_script augenrules <<'SH'
+printf -- '-D\n## regenerated\n' > "$AUDIT_RULES_COMPILED"
+SH
+    _vpssec_stub auditctl 0 '-w /etc/passwd -p wa -k identity'
+
+    run _logging_fix_setup_audit_rules
+    [ "$status" -eq 0 ]
+    grep -q regenerated "$AUDIT_RULES_COMPILED"
+    grep -q original "$VPSSEC_BACKUP_SESSION/${AUDIT_RULES_COMPILED#/}"
+}
 
 @test "install auditd: a failed package install is propagated" {
     _vpssec_stub apt-get 100

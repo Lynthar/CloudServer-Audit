@@ -1,0 +1,6 @@
+# Mutation cases: tests/test_fix_cloudflared.bats against modules/cloudflared.sh.
+# mutate-suite: modules/cloudflared.sh tests/test_fix_cloudflared.bats
+
+run_case "service/undo-not-recorded" 1 \
+    '            record_undo cloudflared.setup_service "cloudflared service uninstall"' \
+    '            :'

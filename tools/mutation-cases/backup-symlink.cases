@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_backup_restore.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_backup_restore.bats
+#
+# The backup and atomic-write primitives meeting a symlink.
+
+# The link is snapshotted under its own name with its own mode, 777.
+run_case "backup/link-not-resolved" 1 \
+    '    if [[ -L "$file" && -e "$file" ]]; then' \
+    '    if false; then'
+
+run_case "write/link-replaced" 1 \
+    '    if [[ -L "$target" && -e "$target" ]]; then' \
+    '    if false; then'
+
+# A dangling link has no target to write through and must be replaced.
+run_case "write/dangling-link-written-through" 1 \
+    '    if [[ -L "$target" && -e "$target" ]]; then' \
+    '    if [[ -L "$target" ]]; then'

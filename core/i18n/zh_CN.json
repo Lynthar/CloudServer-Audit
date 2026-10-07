@@ -207,9 +207,9 @@
     "sshd_reloaded": "SSH 服务已重载",
     "effective_mismatch": "SSH 已重载，但生效的 '{key}' 仍不是 '{value}'（sshd -T）——排在 vpssec 之前读到的 drop-in 或指令胜出，已回滚。请修正冲突配置后重试。",
     "effective_match_override": "SSH 已重载，全局 '{key}' 已是 '{value}'，但有 Match 块对普通用户覆盖了它（sshd -T -C），已回滚。请修改该 Match 块后重试。",
-    "no_key_user": "未找到有 SSH 密钥的用户，无法安全禁用密码认证",
+    "no_key_user": "没有任何管理员账号能用 SSH 密钥登录并使用 sudo（sudo 需要可用的密码或 NOPASSWD 规则），无法安全禁用密码认证",
     "only_root_key_warning": "只有 root 拥有可用的 SSH 密钥。将依赖 root 的密钥禁用密码登录。除非某个非 root 管理员也有 SSH 密钥，否则请勿再禁用 root 登录，否则会被锁在门外。",
-    "no_admin_key_pw_off": "密码登录已禁用，且没有任何非 root 管理员拥有 SSH 密钥。此时再禁用 root 登录将切断最后的入口。请先为某个 sudo 用户添加 SSH 密钥。",
+    "no_admin_key_pw_off": "密码登录已禁用，且没有任何非 root 管理员能用 SSH 密钥登录并使用 sudo（需要可用的密码或 NOPASSWD 规则）。此时再禁用 root 登录将切断最后的入口。请先为某个 sudo 用户添加 SSH 密钥。",
     "add_key_first": "请先添加 SSH 密钥: ssh-copy-id user@host",
     "create_admin_first": "请先创建 sudo 用户: adduser newuser && usermod -aG sudo newuser",
     "current_connection": "当前连接来自: {ip}",
@@ -270,7 +270,7 @@
     "fix_access_control": "配置 SSH 访问控制",
     "default_port": "SSH 使用默认端口",
     "custom_port": "SSH 使用非默认端口",
-    "no_admin_for_root": "未找到非 root 管理员用户，无法安全禁用 root 登录",
+    "no_admin_for_root": "禁用 root 登录后，没有任何非 root 管理员还能登录并使用 sudo（需要可登录的 shell、可用的密码或 SSH 密钥，以及完整的 sudo 授权），无法安全禁用 root 登录",
     "move_file_failed": "移动配置文件失败",
     "reload_failed": "重载 SSH 失败",
     "rescue_fw_no_source": "无法识别你的来源 IP（控制台登录或环境变量被清除）。",
@@ -290,7 +290,9 @@
     "authkeys_bad_mode": "{path} 权限为 {mode}（应为 {want}）",
     "authkeys_bad_owner": "{path} 属主为 {owner}（应为 {want}）",
     "root_login_any_desc": "（root 可用密码和密钥登录）",
-    "root_login_keyonly_desc": "全局 PasswordAuthentication=no，实际只能用密钥登录"
+    "root_login_keyonly_desc": "全局 PasswordAuthentication=no，实际只能用密钥登录",
+    "verify_main_login": "刚才的救援验证测的是临时守护进程，不是这次改动。请保持当前会话不要断开，在另一个新终端里以 {user} 登录端口 {port}；如果登录失败，请在当前会话里执行 vpssec rollback。",
+    "pubkey_off_no_password_off": "公钥认证已关闭，此时再禁用密码认证会让 sshd 不再接受任何登录方式。请先启用公钥认证（ssh.enable_pubkey）。"
   },
   "ufw": {
     "default_accept_desc": "默认入站策略为 ACCEPT",
@@ -606,7 +608,6 @@
     "disabling_service": "正在禁用 {service}...",
     "service_disabled": "已禁用: {service}",
     "service_disable_failed": "无法禁用: {service}",
-    "services_revert_hint": "回滚只恢复文件，不恢复服务状态。撤销此改动请执行：{cmd}",
     "check_insecure_services": "检查不安全的传统服务",
     "insecure_services_active": "发现 {count} 个不安全的传统服务或软件包",
     "insecure_services_clean": "未发现不安全的传统服务",
@@ -817,7 +818,8 @@
     "restored_partial": "回滚已完成，但有部分条目被跳过",
     "reload_failed": "{service} 正在运行但 reload 失败；恢复的配置要等它重启后才生效",
     "snapshot_failed": "无法备份 {file}——本次修改已中止（未改动任何内容）。",
-    "reloading_services": "正在重载服务..."
+    "reloading_services": "正在重载服务...",
+    "undo_hint": "vpssec rollback 只恢复文件，撤销不了这项改动。撤销请执行：{cmd}"
   },
   "fail2ban": {
     "title": "Fail2ban 防护",
@@ -1394,7 +1396,8 @@
     "interrupted": "上一个加固计划在第 {current} 步（共 {total} 步）被中断。",
     "interrupted_hint": "运行 'vpssec guide' 续跑保存的计划，或运行 'vpssec rollback' 撤销已应用的部分变更。",
     "reloading_services": "正在重载服务...",
-    "state_unreadable": "当前用户无法读取状态目录（该目录有意归 root 所有）。请运行：sudo vpssec status"
+    "state_unreadable": "当前用户无法读取状态目录（该目录有意归 root 所有）。请运行：sudo vpssec status",
+    "backups_kept": "备份：{count} 个会话，共 {size}，位于 {path}——vpssec 不会自动删除，旧的请自行清理"
   },
   "timezone": {
     "title": "时区与时间同步",
@@ -1686,7 +1689,8 @@
     "already_running_hint": "等它结束，或者停掉它：kill {pid}",
     "run_with_sudo": "请这样运行：sudo vpssec {cmd}",
     "oneshot_stateful": "一行命令运行器不提供 '{cmd}'：它退出时删除临时目录，修复留下的备份也随之删除。请先用 install.sh 安装 vpssec，再运行：sudo vpssec {cmd}",
-    "supported_platforms": "支持（审计）：Debian 12/13、Ubuntu 22.04/24.04/26.04、RHEL 8/9/10 系（Rocky/Alma/CentOS Stream）、Arch。自动修复（guide）仅支持 Debian/Ubuntu。"
+    "supported_platforms": "支持（审计）：Debian 12/13、Ubuntu 22.04/24.04/26.04、RHEL 8/9/10 系（Rocky/Alma/CentOS Stream）、Arch。自动修复（guide）仅支持 Debian/Ubuntu。",
+    "confirm_timeout": "{seconds} 秒内未收到回答，按「否」处理"
   },
   "fixwarn": {
     "baseline.selinux_disabled": "启用 SELinux 需要重启系统，且可能导致服务被拒绝",

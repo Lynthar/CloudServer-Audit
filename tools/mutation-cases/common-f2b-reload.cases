@@ -6,3 +6,8 @@
 run_case "f2b-reload/plain-reload" 1 \
     '    fail2ban-client reload --restart >/dev/null 2>&1' \
     '    fail2ban-client reload >/dev/null 2>&1'
+
+# A unit that was stopped AND disabled is only half put back.
+run_case "undo/service-half-reverted" 1 \
+    '    if (( !enabled && !active )); then' \
+    '    if false; then'

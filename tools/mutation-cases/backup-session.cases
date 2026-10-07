@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_guide_plan_contract.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_guide_plan_contract.bats
+#
+# A plan that backs nothing up must leave no empty session behind.
+
+run_case "session/created-eagerly" 1 \
+    '    echo "${VPSSEC_BACKUPS}/${timestamp}"' \
+    '    mkdir -p "${VPSSEC_BACKUPS}/${timestamp}"; echo "${VPSSEC_BACKUPS}/${timestamp}"'

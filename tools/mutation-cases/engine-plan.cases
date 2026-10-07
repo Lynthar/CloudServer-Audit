@@ -59,3 +59,8 @@ run_case "guide/fix-on-clean-host-completes" 1 \
 run_case "guide/fix-ignored-menu-shown" 1 \
     "    if [[ -n \"\${VPSSEC_FIX_IDS:-}\" ]]; then" \
     "    if false; then"
+
+# A plan that backed nothing up still points the operator at a rollback.
+run_case "plan/rollback-offered-without-session" 1 \
+    '    if [[ -d "$VPSSEC_BACKUP_SESSION" ]]; then' \
+    '    if true; then'

@@ -128,7 +128,7 @@ run_case "unused/disabled-list-not-recorded" 1 \
     '            :'
 
 run_case "unused/revert-hint-dropped" 1 \
-    '        print_info "$(i18n '"'"'baseline.services_revert_hint'"'"' "cmd=$revert")"' \
+    '        record_undo baseline.disable_unused "systemctl enable --now ${disabled[*]}"' \
     '        :'
 
 run_case "unused/revert-hint-when-nothing-changed" 1 \
@@ -159,3 +159,11 @@ run_case "rollback/backup-failure-swallowed" 1 \
 run_case "apparmor/no-refresh" 1 \
     '        apt_refresh_index' \
     '        :'
+
+run_case "apparmor/undo-not-recorded" 1 \
+    '    record_undo baseline.enable_apparmor "$(undo_join "$undo_svc" "$undo_pkg")"' \
+    '    :'
+
+run_case "apparmor/service-state-not-read" 1 \
+    '    undo_svc=$(service_undo_cmd apparmor)' \
+    '    undo_svc=""'

@@ -2,9 +2,9 @@
 # stock sshd jail a file to poll: this image runs no syslog, and without one the
 # stock config cannot start at all.
 # Expect: fail2ban.service_inactive → fail2ban.enable_service → fail2ban.service_active.
-# The fix enables and starts the unit and writes no file, so the session is empty:
-# rollback restores nothing (rc 1) and the service stays up.
-TEST_DESC="fail2ban stopped and disabled: fail2ban.enable_service converges; rollback has nothing to undo"
+# The fix enables and starts the unit and writes no file, so it leaves no session;
+# the logged undo command (systemctl disable --now) stops it again.
+TEST_DESC="fail2ban stopped and disabled: fail2ban.enable_service converges; its logged undo command reverts it"
 EXPECT_ID="fail2ban.service_inactive"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"
@@ -12,9 +12,10 @@ MODULE="fail2ban"
 FIX_ID="fail2ban.enable_service"
 EXPECT_FIXED_ID="fail2ban.service_active"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="fail2ban.service_active"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="fail2ban.service_inactive"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 _AUTHLOG="/var/log/auth.log"
 _HAD_AUTHLOG=0

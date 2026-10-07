@@ -8,5 +8,31 @@ run_case "ssh-rescue/unknown-read-as-none" 1 \
 
 # The unknown state is recognised but not said.
 run_case "ssh-rescue/unknown-silent" 1 \
-    "            print_warn \"\$(i18n 'ssh.rescue_fw_unknown' \"port=\$SSH_RESCUE_PORT\")\"" \
+    "            tty_warn \"\$(i18n 'ssh.rescue_fw_unknown' \"port=\$SSH_RESCUE_PORT\")\"" \
     '            :'
+
+run_case "watchdog/never-started" 1 \
+    '            _ssh_rescue_start_watchdog' \
+    '            :'
+
+# A watchdog that waits on the clock alone lets a SIGKILLed vpssec leave the
+# rescue up for the whole window.
+run_case "watchdog/parent-death-ignored" 1 \
+    '        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do' \
+    '        while (( waited < limit )); do'
+
+run_case "watchdog/no-time-bound" 1 \
+    '        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do' \
+    '        while kill -0 "$parent" 2>/dev/null; do'
+
+run_case "watchdog/rescue-not-killed" 1 \
+    '        kill "$SSH_RESCUE_PID" 2>/dev/null || true' \
+    '        :'
+
+run_case "watchdog/firewall-rule-left" 1 \
+    '    _ssh_rescue_remove_firewall' \
+    '    :'
+
+run_case "watchdog/survives-normal-close" 1 \
+    '        kill "$SSH_RESCUE_WATCHDOG_PID" 2>/dev/null || true' \
+    '        :'

@@ -1,6 +1,6 @@
 # Plant: PermitRootLogin yes in a 99- drop-in, plus the non-root admin the fix's
-# safety gate requires (a sudo-group member; password login is still on, so the
-# joint-lockout guard asks for no key).
+# safety gate requires: a sudo-group member with a usable password, which is
+# both its way in (password login stays on) and its way through sudo.
 # Expect: ssh.root_login_enabled → ssh.disable_root_login → ssh.root_login_disabled,
 # through the rescue sshd and its terminal prompt (FIX_TTY_ANSWERS). Rollback
 # deletes the 00- drop-in, the plant rules again (rc 0).
@@ -30,13 +30,15 @@ _pick_service() {
 
 precheck() {
     command -v sshd >/dev/null 2>&1 && [[ -d /etc/ssh/sshd_config.d ]] \
-        && getent group sudo >/dev/null && ! getent passwd "$_ADMIN" >/dev/null
+        && getent group sudo >/dev/null && ! getent passwd "$_ADMIN" >/dev/null \
+        && [[ -r /etc/sudoers && -d /etc/sudoers.d ]]
 }
 
 mutate() {
     _pick_service
     [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
     useradd -m -s /bin/bash -G sudo "$_ADMIN" || return 1
+    printf '%s:%s\n' "$_ADMIN" "$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')" | chpasswd || return 1
     printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > "$_DROPIN"
     chmod 644 "$_DROPIN"
     [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1

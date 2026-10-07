@@ -6,7 +6,8 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/distro.sh
+    export VPSSEC_PKG_MGR=apt
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/logging.sh"
 
@@ -92,6 +93,17 @@ SH
     [ -f "$LOGROTATE_CONF" ]
     grep -q 'include /etc/logrotate.d' "$LOGROTATE_CONF"
     grep -q '^weekly$' "$LOGROTATE_CONF"
+}
+
+@test "logrotate: the package it installed is named in the logged undo command" {
+    _vpssec_absent_command logrotate
+    _vpssec_stub apt-get
+    _vpssec_stub dpkg-query 1
+    : > "$LOGROTATE_CONF"
+
+    run _logging_fix_setup_logrotate
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for logging.setup_logrotate: apt purge logrotate' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "logrotate: an existing config is left untouched" {

@@ -207,9 +207,9 @@
     "sshd_reloaded": "SSH service reloaded",
     "effective_mismatch": "SSH reloaded but the effective '{key}' is still not '{value}' (sshd -T) - a drop-in or directive read before vpssec's wins; rolled back. Fix the conflicting setting and retry.",
     "effective_match_override": "SSH reloaded and the global '{key}' is now '{value}', but a Match block overrides it for ordinary users (sshd -T -C); rolled back. Change that Match block and retry.",
-    "no_key_user": "No user with SSH key found. Cannot safely disable password auth.",
+    "no_key_user": "No admin account could log in by SSH key and then use sudo (that needs a usable password or a NOPASSWD rule). Cannot safely disable password auth.",
     "only_root_key_warning": "Only root has a usable SSH key. Password login will be disabled relying on root's key. Do NOT also disable root login unless a non-root admin has an SSH key, or you will be locked out.",
-    "no_admin_key_pw_off": "Password authentication is already disabled and no non-root admin has an SSH key. Disabling root login now would remove the last way in. Add an SSH key for a sudo user first.",
+    "no_admin_key_pw_off": "Password authentication is already disabled and no non-root admin can log in by SSH key and use sudo (a usable password or a NOPASSWD rule). Disabling root login now would remove the last way in. Add an SSH key for a sudo user first.",
     "add_key_first": "Please add an SSH key first: ssh-copy-id user@host",
     "create_admin_first": "Create a sudo user first: adduser newuser && usermod -aG sudo newuser",
     "current_connection": "Current connection from: {ip}",
@@ -270,7 +270,7 @@
     "fix_access_control": "Configure SSH access control",
     "default_port": "SSH using default port",
     "custom_port": "SSH using non-default port",
-    "no_admin_for_root": "No non-root admin user found. Cannot safely disable root login.",
+    "no_admin_for_root": "No non-root admin could log in and use sudo once root login is off (that needs a login shell, a usable password or SSH key, and a full sudo grant). Cannot safely disable root login.",
     "move_file_failed": "Failed to move config file",
     "reload_failed": "Failed to reload SSH",
     "rescue_fw_no_source": "Could not determine your source IP (console login or stripped environment).",
@@ -290,7 +290,9 @@
     "authkeys_bad_mode": "{path} has permissions {mode} (should be {want})",
     "authkeys_bad_owner": "{path} owned by {owner} (should be {want})",
     "root_login_any_desc": "(allows root via password and key)",
-    "root_login_keyonly_desc": "effectively key-only because PasswordAuthentication=no globally"
+    "root_login_keyonly_desc": "effectively key-only because PasswordAuthentication=no globally",
+    "verify_main_login": "The rescue check tested the temporary daemon, not this change. Keep this session open and, in a NEW terminal, log in as {user} on port {port}. If that fails, run 'vpssec rollback' from this session.",
+    "pubkey_off_no_password_off": "Public key authentication is disabled, so turning passwords off would leave sshd no way to log in. Enable public key authentication (ssh.enable_pubkey) first."
   },
   "ufw": {
     "default_accept_desc": "Default incoming policy is ACCEPT",
@@ -606,7 +608,6 @@
     "disabling_service": "Disabling {service}...",
     "service_disabled": "Disabled: {service}",
     "service_disable_failed": "Could not disable: {service}",
-    "services_revert_hint": "Rollback restores files, not service state. To undo this: {cmd}",
     "check_insecure_services": "Checking for insecure legacy services",
     "insecure_services_active": "{count} insecure legacy service(s)/package(s) present",
     "insecure_services_clean": "No insecure legacy services found",
@@ -817,7 +818,8 @@
     "restored_partial": "Rollback finished, but some entries were skipped",
     "reload_failed": "{service} is running but did not reload; the restored config is not live until it restarts",
     "snapshot_failed": "Could not back up {file} — aborting this change (nothing was modified).",
-    "reloading_services": "Reloading services..."
+    "reloading_services": "Reloading services...",
+    "undo_hint": "vpssec rollback restores files only and cannot undo this change. To undo it: {cmd}"
   },
   "fail2ban": {
     "title": "Fail2ban Protection",
@@ -1394,7 +1396,8 @@
     "interrupted": "Previous plan interrupted at fix {current} of {total}.",
     "interrupted_hint": "Run 'vpssec guide' to resume the saved plan, or 'vpssec rollback' to undo partial changes.",
     "reloading_services": "Reloading services...",
-    "state_unreadable": "State is not readable as this user (it is root-owned by design). Run: sudo vpssec status"
+    "state_unreadable": "State is not readable as this user (it is root-owned by design). Run: sudo vpssec status",
+    "backups_kept": "Backups: {count} session(s), {size}, in {path} - vpssec never deletes them; remove old ones yourself"
   },
   "timezone": {
     "title": "Timezone & Time Sync",
@@ -1686,7 +1689,8 @@
     "already_running_hint": "Wait for it to finish, or stop it: kill {pid}",
     "run_with_sudo": "Please run with: sudo vpssec {cmd}",
     "oneshot_stateful": "'{cmd}' is not available through the one-line runner: it deletes its temporary directory on exit, and a fix's backups with it. Install vpssec with install.sh, then run: sudo vpssec {cmd}",
-    "supported_platforms": "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only."
+    "supported_platforms": "Supported (audit): Debian 12/13, Ubuntu 22.04/24.04/26.04, RHEL 8/9/10 family (Rocky/Alma/CentOS Stream), Arch. Automated fixes (guide): Debian/Ubuntu only.",
+    "confirm_timeout": "No answer within {seconds}s - treated as NO"
   },
   "fixwarn": {
     "baseline.selinux_disabled": "Enabling SELinux requires system reboot and may cause service issues",

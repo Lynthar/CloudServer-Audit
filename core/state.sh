@@ -189,14 +189,12 @@ backup_get_latest() {
     backup_list | head -n1
 }
 
-# execute_plan assigns the returned path to VPSSEC_BACKUP_SESSION, so every
-# backup_file call during the plan lands here and rollback restores it as one.
+# The plan's session path, for VPSSEC_BACKUP_SESSION: every backup_file of the
+# plan lands there and rolls back as one. Not created here — backup_file does
+# that on first use, so a plan that backed nothing up leaves no empty session.
 backup_create_session() {
     local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
-    mkdir -p "$backup_dir"
-    chmod 700 "$backup_dir"
-    echo "$backup_dir"
+    echo "${VPSSEC_BACKUPS}/${timestamp}"
 }
 
 # Re-apply the mode recorded by backup_track_mode; a backup with no entry
@@ -227,7 +225,7 @@ backup_restore() {
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
 
     # Check 1: timestamp shape, so a crafted argument cannot select a
-    # hand-placed sibling directory. Same regex as backup_cleanup.
+    # hand-placed sibling directory.
     if [[ ! "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
         log_error "Refusing to restore: timestamp '$timestamp' does not match YYYYMMDD_HHMMSS"
         return 1
@@ -369,24 +367,6 @@ backup_list_contents() {
             echo "${f#"$backup_dir"}"
         done
     fi
-}
-
-# Clean old backups (keep last N)
-backup_cleanup() {
-    local keep="${1:-10}"
-    local count=0
-
-    backup_list | while read -r timestamp; do
-        ((count++)) || true
-        if ((count > keep)); then
-            local backup_path="${VPSSEC_BACKUPS}/${timestamp}"
-            # Underscore, matching what backup_create_session emits.
-            if [[ -n "$timestamp" ]] && [[ "$backup_path" =~ ^${VPSSEC_BACKUPS}/[0-9]{8}_[0-9]{6}$ ]] && [[ -d "$backup_path" ]]; then
-                rm -rf "$backup_path"
-                log_info "Removed old backup: $timestamp"
-            fi
-        fi
-    done
 }
 
 # --- Score Calculation ---

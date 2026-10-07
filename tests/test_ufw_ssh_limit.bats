@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# Regression tests for _ufw_ssh_allowed. Accepting only ALLOW misreports
-# `ufw limit ssh` — the rate-limited variant recommended for SSH — as "no SSH
-# rule", which routes the user to a fix that downgrades LIMIT to plain ALLOW.
+# _ufw_admits_port reads ufw's own rule tuples, the one source both the audit
+# and the three ufw fixes ask "is this port let in?". Reading an outbound rule
+# as inbound coverage locks the operator out; missing a LIMIT rule rewrites it.
 
 load helpers.bash
 
@@ -9,90 +9,87 @@ setup() {
     _vpssec_load
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/ufw.sh"
-
-    # Stub `ufw` and `get_ssh_port` so the helper runs against
-    # controlled output without needing a real UFW install.
-    export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
-    mkdir -p "$BATS_TEST_TMPDIR/bin"
-
-    # Default port for the stubbed get_ssh_port
-    get_ssh_port() { echo "${VPSSEC_TEST_SSH_PORT:-22}"; }
-    export -f get_ssh_port
+    UFW_USER_RULES="$BATS_TEST_TMPDIR/user.rules"
+    UFW_USER6_RULES="$BATS_TEST_TMPDIR/user6.rules"
+    : > "$UFW_USER_RULES"
+    : > "$UFW_USER6_RULES"
 }
 
-# Install a fake ufw whose `ufw status` prints $1.
-_install_ufw_stub() {
-    cat >"$BATS_TEST_TMPDIR/bin/ufw" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "status" ]]; then
-cat <<'STATUS'
-$1
-STATUS
-fi
-EOF
-    chmod +x "$BATS_TEST_TMPDIR/bin/ufw"
+# One tuple, in the format ufw writes to user.rules ($1) or user6.rules ($1=6).
+_tuple() {
+    local file="$UFW_USER_RULES"
+    [[ "$1" == 6 ]] && { file="$UFW_USER6_RULES"; shift; }
+    printf '### tuple ### %s\n' "$*" >> "$file"
 }
 
-@test "ssh: ALLOW rule on 22/tcp is accepted" {
-    _install_ufw_stub "Status: active
-
-To                         Action      From
---                         ------      ----
-22/tcp                     ALLOW       Anywhere
-22/tcp (v6)                ALLOW       Anywhere (v6)"
-    run _ufw_ssh_allowed
-    [ "$status" -eq 0 ]
+@test "ALLOW and LIMIT on the port both count" {
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_admits_port 22
+    : > "$UFW_USER_RULES"
+    _tuple limit tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_admits_port 22 open
 }
 
-@test "ssh: LIMIT rule on 22/tcp is accepted (regression)" {
-    # `ufw limit ssh` produces LIMIT, not ALLOW.
-    _install_ufw_stub "Status: active
-
-To                         Action      From
---                         ------      ----
-22/tcp                     LIMIT       Anywhere
-22/tcp (v6)                LIMIT       Anywhere (v6)"
-    run _ufw_ssh_allowed
-    [ "$status" -eq 0 ]
+@test "a rule only in user6.rules still counts" {
+    _tuple 6 limit tcp 22 ::/0 any ::/0 in
+    _ufw_admits_port 22
 }
 
-@test "ssh: v6-only LIMIT line is also accepted" {
-    _install_ufw_stub "Status: active
-
-To                         Action      From
---                         ------      ----
-22/tcp (v6)                LIMIT       Anywhere (v6)"
-    run _ufw_ssh_allowed
-    [ "$status" -eq 0 ]
+@test "DENY, outbound and routed rules never count" {
+    _tuple deny tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 out
+    _tuple route:allow any any 0.0.0.0/0 any 0.0.0.0/0 in_eth0!out_eth1
+    _vpssec_refute _ufw_admits_port 22
 }
 
-@test "ssh: no rule → not allowed" {
-    _install_ufw_stub "Status: active
-
-To                         Action      From
---                         ------      ----
-80/tcp                     ALLOW       Anywhere"
-    run _ufw_ssh_allowed
-    [ "$status" -ne 0 ]
+@test "port lists, ranges and any-protocol rules are understood" {
+    _tuple allow tcp 80,22,443 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_admits_port 22
+    : > "$UFW_USER_RULES"
+    _tuple allow tcp 2000:3000 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_admits_port 2222
+    _vpssec_refute _ufw_admits_port 22
+    : > "$UFW_USER_RULES"
+    _tuple allow any 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_admits_port 22
 }
 
-@test "ssh: DENY rule does not count as allowed" {
-    _install_ufw_stub "Status: active
-
-To                         Action      From
---                         ------      ----
-22/tcp                     DENY        Anywhere"
-    run _ufw_ssh_allowed
-    [ "$status" -ne 0 ]
+@test "a UDP-only rule does not admit TCP" {
+    _tuple allow udp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _vpssec_refute _ufw_admits_port 22
 }
 
-@test "ssh: custom port from get_ssh_port is honored" {
-    export VPSSEC_TEST_SSH_PORT=2222
-    _install_ufw_stub "Status: active
+@test "another port, or no rules at all, does not count" {
+    _tuple allow tcp 2200 0.0.0.0/0 any 0.0.0.0/0 in
+    _vpssec_refute _ufw_admits_port 22
+    rm -f "$UFW_USER_RULES" "$UFW_USER6_RULES"
+    _vpssec_refute _ufw_admits_port 22
+}
 
-To                         Action      From
---                         ------      ----
-2222/tcp                   LIMIT       Anywhere"
-    run _ufw_ssh_allowed
-    [ "$status" -eq 0 ]
+@test "interface, source and destination limits count for 'any' but not for 'open'" {
+    _tuple allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0
+    _ufw_admits_port 22
+    _vpssec_refute _ufw_admits_port 22 open
+    : > "$UFW_USER_RULES"
+    _tuple allow any any 0.0.0.0/0 any 203.0.113.5 in
+    _ufw_admits_port 22
+    _vpssec_refute _ufw_admits_port 22 open
+    : > "$UFW_USER_RULES"
+    _tuple allow tcp 22 10.1.1.1 any 0.0.0.0/0 in
+    _ufw_admits_port 22
+    _vpssec_refute _ufw_admits_port 22 open
+}
+
+@test "an app profile rule carries its resolved port, and a comment field is skipped" {
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 OpenSSH - in comment=6f7073
+    _ufw_admits_port 22
+    _ufw_admits_port 22 open
+}
+
+@test "the SSH check needs every port sshd listens on, not just one" {
+    get_ssh_ports() { printf '22\n2222\n'; }
+    _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
+    _vpssec_refute _ufw_ssh_allowed
+    _tuple limit tcp 2222 0.0.0.0/0 any 0.0.0.0/0 in
+    _ufw_ssh_allowed
 }

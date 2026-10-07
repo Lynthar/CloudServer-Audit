@@ -372,6 +372,7 @@ _cloudflared_fix_setup_service() {
         print_ok "$(i18n 'cloudflared.service_installed')"
 
         if systemctl enable cloudflared && systemctl start cloudflared; then
+            record_undo cloudflared.setup_service "cloudflared service uninstall"
             return 0
         fi
         print_error "$(i18n 'cloudflared.service_start_failed')"

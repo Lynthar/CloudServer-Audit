@@ -18,6 +18,8 @@ _vpssec_isolate_dirs() {
     export VPSSEC_TEMPLATES="$BATS_TEST_TMPDIR/templates"
     mkdir -p "$VPSSEC_STATE" "$VPSSEC_REPORTS" "$VPSSEC_BACKUPS" \
              "$VPSSEC_LOGS" "$VPSSEC_TEMPLATES"
+    # common.sh derived this from VPSSEC_LOGS at source time.
+    _log_file="$VPSSEC_LOGS/vpssec.log"
 }
 
 # Source production code; extra args layer more files (core/state.sh,
@@ -43,6 +45,9 @@ _vpssec_load() {
     # must come AFTER sourcing it and BEFORE the layered files, which re-derive
     # STATE_*_FILE from these at their own source time.
     _vpssec_isolate_dirs
+    # Operator prompts (tty_say) go to stderr, where `run` captures them,
+    # whether or not bats itself was started from a terminal.
+    _VPSSEC_TTY=/nonexistent/tty
 
     local extra
     for extra in "$@"; do

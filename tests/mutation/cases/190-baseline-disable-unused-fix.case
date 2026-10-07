@@ -1,10 +1,10 @@
 # Plant: a stand-in avahi-daemon.service (it only sleeps), enabled and started;
 # the audit judges the unit by name.
 # Expect: baseline.unused_services → baseline.disable_unused → baseline.no_unused_services.
-# The fix disables and stops units and writes no file, so the session is empty:
-# rollback restores nothing (rc 1) and the unit stays disabled — service state is
-# outside rollback, and the fix prints the enable command instead.
-TEST_DESC="an unused service enabled: baseline.disable_unused converges; rollback leaves it disabled"
+# The fix disables and stops units and writes no file, so it leaves no session;
+# service state is outside rollback, and the logged undo command (systemctl
+# enable --now) brings the unit back.
+TEST_DESC="an unused service enabled: baseline.disable_unused converges; its logged undo command reverts it"
 EXPECT_ID="baseline.unused_services"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"
@@ -13,9 +13,10 @@ MODULE="baseline"
 FIX_ID="baseline.disable_unused"
 EXPECT_FIXED_ID="baseline.no_unused_services"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="baseline.no_unused_services"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="baseline.unused_services"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 _UNIT="/etc/systemd/system/avahi-daemon.service"
 

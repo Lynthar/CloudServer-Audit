@@ -1,10 +1,10 @@
 # Plant: nothing — the image ships without unattended-upgrades and with an empty
 # apt cache, so the fix must refresh the index before it can install.
 # Expect: update.unattended_not_installed → update.install_unattended →
-# update.unattended_enabled. The package's postinst already writes 20auto-upgrades,
-# so the fix's backup snapshots that file: rollback restores it and deletes the
-# fix's origins drop-in (rc 0), and the package's own config keeps the host enabled.
-TEST_DESC="unattended-upgrades absent: update.install_unattended converges; rollback leaves the package's own config"
+# update.unattended_enabled. 20auto-upgrades is recorded before the install (its
+# postinst writes it), so rollback deletes it and the origins drop-in (rc 0): the
+# package stays, its removal logged as the undo command, and the host is off again.
+TEST_DESC="unattended-upgrades absent: update.install_unattended converges; rollback switches it off again"
 EXPECT_ID="update.unattended_not_installed"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"
@@ -12,8 +12,8 @@ MODULE="update"
 FIX_ID="update.install_unattended"
 EXPECT_FIXED_ID="update.unattended_enabled"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="update.unattended_enabled"
-EXPECT_ROLLBACK_STATUS="passed"
+EXPECT_ROLLBACK_ID="update.unattended_disabled"
+EXPECT_ROLLBACK_STATUS="failed"
 EXPECT_ROLLBACK_RC=0
 
 precheck() {

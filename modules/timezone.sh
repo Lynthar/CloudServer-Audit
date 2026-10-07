@@ -10,6 +10,8 @@ TZ_LOCALTIME="/etc/localtime"
 TZ_ZONEINFO="/usr/share/zoneinfo"
 TZ_LOCALE_GEN="/etc/locale.gen"
 TZ_DEFAULT_LOCALE="/etc/default/locale"
+TZ_LOCALE_CONF="/etc/locale.conf"
+TZ_ADJTIME="/etc/adjtime"
 
 # --- Timezone Audit ---
 
@@ -323,19 +325,19 @@ _timezone_fix_set_timezone() {
         "UTC"
     )
 
-    print_msg ""
-    print_msg "$(i18n 'timezone.select_timezone'):"
-    print_msg ""
+    tty_say ""
+    tty_say "$(i18n 'timezone.select_timezone'):"
+    tty_say ""
 
     local i=1
     for tz in "${common_timezones[@]}"; do
-        echo "  $i) $tz"
+        tty_say "  $i) $tz"
         ((i++))
     done
-    echo "  $i) $(i18n 'timezone.enter_custom')"
+    tty_say "  $i) $(i18n 'timezone.enter_custom')"
 
-    print_msg ""
-    echo -n "$(i18n 'common.enter_choice') [1-$i]: "
+    tty_say ""
+    tty_say -n "$(i18n 'common.enter_choice') [1-$i]: "
     local choice
     read -r choice 2>/dev/null </dev/tty || choice=""
 
@@ -344,7 +346,7 @@ _timezone_fix_set_timezone() {
         if ((choice >= 1 && choice < i)); then
             selected_tz="${common_timezones[$((choice-1))]}"
         elif ((choice == i)); then
-            echo -n "$(i18n 'timezone.enter_timezone'): "
+            tty_say -n "$(i18n 'timezone.enter_timezone'): "
             read -r selected_tz 2>/dev/null </dev/tty || selected_tz=""
         fi
     fi
@@ -360,23 +362,37 @@ _timezone_fix_set_timezone() {
         return 1
     fi
 
-    # Create backup. stdout is discarded: it carries the snapshot path, which
-    # these two bare calls used to print into the operator's output.
-    backup_file "$TZ_CONF" >/dev/null || return 1
-    backup_file "$TZ_LOCALTIME" >/dev/null || return 1
+    _timezone_apply "$selected_tz" "$current_tz"
+}
 
-    # Set timezone
-    if command -v timedatectl &>/dev/null; then
+# Switch the system timezone from $2 (may be empty) to $1. /etc/localtime is a
+# symlink that gets re-pointed, which rollback cannot restore: the previous
+# zone is handed back as an undo command instead.
+_timezone_apply() {
+    local selected_tz="$1" current_tz="$2" undo=""
+    # stdout is discarded: it carries the snapshot path.
+    backup_file "$TZ_CONF" >/dev/null || return 1
+    if check_command timedatectl; then
+        [[ -n "$current_tz" ]] && undo="timedatectl set-timezone $current_tz"
         if timedatectl set-timezone "$selected_tz"; then
+            # timedated leaves the legacy /etc/timezone alone (Debian 12), so
+            # the two would disagree.
+            if [[ -f "$TZ_CONF" ]]; then
+                write_file_atomic "$TZ_CONF" "$selected_tz"$'\n' \
+                    || log_warn "Could not update $TZ_CONF"
+            fi
             print_ok "$(i18n 'timezone.timezone_set' "tz=$selected_tz")"
+            record_undo timezone.set_timezone "$undo"
             return 0
         fi
     else
-        # Manual method
-        ln -sf "${TZ_ZONEINFO}/$selected_tz" "$TZ_LOCALTIME"
-        echo "$selected_tz" > "$TZ_CONF"
-        print_ok "$(i18n 'timezone.timezone_set' "tz=$selected_tz")"
-        return 0
+        [[ -n "$current_tz" ]] && undo="ln -sf ${TZ_ZONEINFO}/$current_tz $TZ_LOCALTIME"
+        if ln -sf "${TZ_ZONEINFO}/$selected_tz" "$TZ_LOCALTIME" \
+            && write_file_atomic "$TZ_CONF" "$selected_tz"$'\n'; then
+            print_ok "$(i18n 'timezone.timezone_set' "tz=$selected_tz")"
+            record_undo timezone.set_timezone "$undo"
+            return 0
+        fi
     fi
 
     print_error "$(i18n 'timezone.set_failed')"
@@ -389,18 +405,24 @@ _timezone_fix_enable_ntp() {
 
     # Check if systemd-timesyncd is available
     if command -v timedatectl &>/dev/null; then
+        local was_on
+        was_on=$(timedatectl show --property=NTP --value 2>/dev/null)
         if timedatectl set-ntp true; then
             print_ok "$(i18n 'timezone.ntp_enabled')"
+            [[ "$was_on" == "yes" ]] || record_undo timezone.enable_ntp "timedatectl set-ntp false"
             return 0
         fi
     fi
 
     # Try to install and enable chrony as alternative
+    local -a missing=()
+    mapfile -t missing < <(pkg_missing chrony)
     apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y chrony &>/dev/null; then
         systemctl enable chrony &>/dev/null
         systemctl start chrony &>/dev/null
         print_ok "$(i18n 'timezone.chrony_installed')"
+        (( ${#missing[@]} )) && record_undo timezone.enable_ntp "$(pkg_remove_hint "${missing[@]}")"
         return 0
     fi
 
@@ -417,6 +439,9 @@ _timezone_fix_rtc_utc() {
     print_info "$(i18n 'timezone.setting_rtc_utc')"
 
     if command -v timedatectl &>/dev/null; then
+        # timedated rewrites or deletes /etc/adjtime: back it up (or record it
+        # as created) first, so rollback can put the old RTC mode back.
+        backup_file "$TZ_ADJTIME" >/dev/null || return 1
         if timedatectl set-local-rtc 0; then
             print_ok "$(i18n 'timezone.rtc_utc_set')"
             return 0
@@ -455,8 +480,11 @@ _timezone_fix_set_locale() {
         fi
     fi
 
-    # Set locale
-    if command -v localectl &>/dev/null; then
+    # localed writes whichever of these the distro uses (Debian 13 links one
+    # to the other); both are backed up or recorded as created beforehand.
+    if check_command localectl; then
+        backup_file "$TZ_DEFAULT_LOCALE" >/dev/null || return 1
+        backup_file "$TZ_LOCALE_CONF" >/dev/null || return 1
         if localectl set-locale LANG="$target_locale"; then
             print_ok "$(i18n 'timezone.locale_set' "locale=$target_locale")"
             return 0

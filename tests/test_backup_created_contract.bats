@@ -290,25 +290,47 @@ _CREATES_NOTHING=(
     alerts.setup_config                 # vpssec's own template dir
     backup.generate_templates           # vpssec's own template dir
     baseline.disable_unused             # systemctl only
-    baseline.enable_apparmor            # systemctl only
+    baseline.enable_apparmor            # apt + systemctl
     baseline.selinux_set_enforcing      # setenforce + edits an existing file
     cloudflared.generate_config         # vpssec's own template dir
-    cloudflared.setup_service           # systemctl only
+    cloudflared.setup_service           # cloudflared's installer + systemctl
     docker.generate_proxy_template      # vpssec's own template dir
     fail2ban.enable_service             # systemctl only
     filesystem.fix_sensitive_perms      # chmod only; .vpssec_modes covers it
     filesystem.fix_umask                # rewrites an existing login.defs
     logging.enable_auditd               # systemctl only
     logging.install_auditd              # apt only
-    timezone.enable_ntp                 # apt + systemctl
-    timezone.set_rtc_utc                # timedatectl only
-    ufw.allow_ssh                       # firewall rules, not files
-    ufw.enable                          # firewall rules, not files
+    timezone.enable_ntp                 # timedatectl, or apt + systemctl
+    timezone.set_rtc_utc                # timedatectl rewrites /etc/adjtime, backed up first
+    ufw.allow_ssh                       # ufw's own rule files, through ufw
+    ufw.enable                          # ufw's own rule files, through ufw
     ufw.install                         # apt only
-    ufw.set_default_deny                # firewall rules, not files
-    update.apply_security               # apt only
-    update.install_unattended           # apt only
+    ufw.set_default_deny                # ufw's own rule files, through ufw
+    update.apply_security               # apt; 20auto-upgrades kept off and recorded
+    update.install_unattended           # apt; 20auto-upgrades snapshotted before it
     webapp.nginx_server_tokens          # rewrites an existing nginx.conf
+)
+
+# Fixes whose change rollback cannot reach (a package, a service, a firewall
+# rule, a re-pointed symlink), so they print and log the undo command through
+# record_undo. Each module's suite asserts the command; this list is the census.
+_RECORDS_UNDO=(
+    baseline.disable_unused
+    baseline.enable_apparmor
+    cloudflared.setup_service
+    fail2ban.enable_service
+    fail2ban.install
+    logging.enable_auditd
+    logging.install_auditd
+    logging.setup_logrotate
+    timezone.enable_ntp
+    timezone.set_timezone
+    ufw.allow_ssh
+    ufw.enable
+    ufw.install
+    ufw.set_default_deny
+    update.apply_security
+    update.install_unattended
 )
 
 _selectable_fix_ids() {
@@ -353,6 +375,20 @@ _selectable_fix_ids() {
     done
     [ -z "$stale" ] || {
         printf 'listed fix_id is not selectable (renamed or removed?): %s\n' "$stale" >&2
+        return 1
+    }
+}
+
+@test "every fix that records an undo command is in the census, and only those" {
+    # Restoring ufw's rule files under a live firewall would cut the session,
+    # so for these the logged command IS the rollback; one that stops calling
+    # record_undo leaves the operator nothing to undo with.
+    local in_source listed
+    in_source=$(grep -rhoE 'record_undo [a-z0-9_]+\.[a-z0-9_]+' "$(_vpssec_repo_root)/modules" \
+        | awk '{print $2}' | sort -u)
+    listed=$(printf '%s\n' "${_RECORDS_UNDO[@]}" | sort -u)
+    [ "$in_source" = "$listed" ] || {
+        diff <(echo "$listed") <(echo "$in_source") >&2
         return 1
     }
 }

@@ -104,7 +104,7 @@ There's no config file — flags and a few environment variables:
 | `VPSSEC_LANG` | `zh_CN` (default) or `en_US` |
 | `VPSSEC_INCLUDE` / `VPSSEC_EXCLUDE` | Same as `--include=` / `--exclude=` |
 | `VPSSEC_NO_VERIFY=1` | Skip signature verification — see [Security](#security) |
-| `INSTALL_DIR` | Where to install, default `/opt/vpssec` |
+| `INSTALL_DIR` | The vpssec directory itself (not its parent), default `/opt/vpssec`. An existing directory that is not vpssec is refused |
 
 State, reports and backups all live under the install tree.
 
@@ -116,8 +116,9 @@ State, reports and backups all live under the install tree.
   still can't be hardened.
 - **There's no fix-everything switch**, and there isn't going to be. Risky fixes
   require a confirmation typed on a TTY, and `--yes` can't skip them.
-- **Rollback only restores files.** Other changes — a stopped service, a symlink
-  it created — get printed with the command to undo them, for you to run.
+- **Rollback only restores files.** Other changes — a stopped service, a firewall
+  rule, an installed package — get printed and logged with the command to undo
+  them, for you to run.
 - **It's not a compliance tool.** No benchmark profiles, no control mappings, no
   exemptions. The score certifies nothing.
 - **One host per run.** No agent, no server, no cluster view.

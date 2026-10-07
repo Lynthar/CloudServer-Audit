@@ -10,7 +10,7 @@ setup() {
 }
 
 @test "pick_rescue_port: prefers 2222 when free and not the live port" {
-    get_ssh_port() { echo 22; }
+    get_ssh_ports() { echo 22; }
     get_listening_ports() { printf '22\n80\n443\n'; }
     run _ssh_pick_rescue_port
     [ "$status" -eq 0 ]
@@ -18,7 +18,7 @@ setup() {
 }
 
 @test "pick_rescue_port: avoids 2222 when it IS the live SSH port" {
-    get_ssh_port() { echo 2222; }
+    get_ssh_ports() { echo 2222; }
     get_listening_ports() { printf '2222\n'; }
     run _ssh_pick_rescue_port
     [ "$status" -eq 0 ]
@@ -26,7 +26,7 @@ setup() {
 }
 
 @test "pick_rescue_port: avoids 2222 when it is already listening" {
-    get_ssh_port() { echo 22; }
+    get_ssh_ports() { echo 22; }
     get_listening_ports() { printf '22\n2222\n'; }
     run _ssh_pick_rescue_port
     [ "$status" -eq 0 ]
@@ -34,7 +34,7 @@ setup() {
 }
 
 @test "pick_rescue_port: skips the whole occupied range to the first free port" {
-    get_ssh_port() { echo 2222; }
+    get_ssh_ports() { echo 2222; }
     # Live port 2222 plus 2200-2298 occupied; only 2299 is free in the 2200s.
     get_listening_ports() { printf '2222\n'; seq 2200 2298; }
     run _ssh_pick_rescue_port
@@ -43,7 +43,7 @@ setup() {
 }
 
 @test "pick_rescue_port: fails cleanly when no candidate port is free" {
-    get_ssh_port() { echo 22; }
+    get_ssh_ports() { echo 22; }
     get_listening_ports() { echo 2222; seq 2200 2299; seq 22000 22099; }
     run _ssh_pick_rescue_port
     [ "$status" -ne 0 ]
@@ -116,4 +116,108 @@ _rescue_fw_with() {
     run _ssh_rescue_allow_firewall
     [ "$status" -eq 0 ]
     grep -q 'Firewall is active' <<<"$output"
+}
+
+# ---- the rescue's lifetime bound --------------------------------------------
+
+# True while $1 runs; a never-reaped zombie (its parent may be a PID 1 that
+# does not reap) counts as gone. /proc, not ps: Rocky's image has no procps.
+_alive() {
+    local st
+    st=$(cut -d' ' -f3 "/proc/$1/stat" 2>/dev/null) || return 1
+    [[ -n "$st" && "$st" != Z ]]
+}
+
+# A stand-in vpssec in its own process: it arms the watchdog over a fake rescue
+# daemon ($1) and then blocks, as it would at the confirmation prompt. $2 and
+# $3 override the confirmation window and the grace period.
+_vpssec_holding_rescue() {
+    bash -c 'source "$1/core/common.sh"; source "$1/modules/ssh.sh"
+        _log_file=/dev/null; VPSSEC_CONFIRM_TIMEOUT=$3; SSH_RESCUE_GRACE=$4
+        SSH_RESCUE_PID=$2; SSH_RESCUE_PORT=2222; SSH_RESCUE_FW_RULE="ufw::2222"
+        _ssh_rescue_start_watchdog; sleep 300' \
+        _ "$(_vpssec_repo_root)" "$1" "${2:-300}" "${3:-120}" >/dev/null 2>&1 &
+    echo $!
+}
+
+@test "rescue watchdog: vpssec killed by SIGKILL does not leave the rescue running" {
+    # No trap runs on SIGKILL; before the watchdog the root-and-password
+    # daemon outlived vpssec until reboot, its firewall rule with it.
+    _vpssec_stub ufw
+    sleep 300 &
+    local rescue=$! parent i
+    parent=$(_vpssec_holding_rescue "$rescue")
+    sleep 1
+    kill -KILL "$parent"
+    for i in $(seq 1 50); do _alive "$rescue" || break; sleep 0.1; done
+
+    _vpssec_refute _alive "$rescue"
+    _vpssec_stub_called ufw 'delete allow 2222/tcp'
+}
+
+@test "rescue watchdog: the rescue does not outlive the confirmation window" {
+    # The session dropped silently: vpssec is still alive, blocked on a read
+    # nobody will answer. The bound must not depend on it noticing.
+    _vpssec_stub ufw
+    sleep 300 &
+    local rescue=$! parent i
+    parent=$(_vpssec_holding_rescue "$rescue" 1 1)
+    for i in $(seq 1 60); do _alive "$rescue" || break; sleep 0.1; done
+
+    _vpssec_refute _alive "$rescue"
+    _alive "$parent"
+    kill "$parent" 2>/dev/null || true
+}
+
+@test "rescue watchdog: a normal close stops the watchdog with the rescue" {
+    _vpssec_stub ufw
+    sleep 300 &
+    SSH_RESCUE_PID=$!
+    SSH_RESCUE_FW_RULE=""
+    _log_file=/dev/null
+    _ssh_rescue_start_watchdog
+    local dog="$SSH_RESCUE_WATCHDOG_PID" rescue="$SSH_RESCUE_PID" i
+
+    _ssh_close_rescue_port
+    for i in $(seq 1 30); do _alive "$dog" || break; sleep 0.1; done
+    _vpssec_refute _alive "$dog"
+    _vpssec_refute _alive "$rescue"
+}
+
+@test "rescue confirmation: no answer within the window is a no" {
+    # confirm_critical reads with a timeout; a silent session must decline.
+    # script(1) gives it a real terminal; the pipe keeps that terminal's input
+    # open and empty, so the read times out rather than hitting end-of-file.
+    command -v script >/dev/null || skip "script(1) not installed"
+    cat > "$BATS_TEST_TMPDIR/probe.sh" <<SH
+source "$(_vpssec_repo_root)/core/common.sh"
+_log_file=/dev/null
+VPSSEC_CONFIRM_TIMEOUT=1
+confirm_critical XYZ || echo "rc=\$?"
+SH
+    run bash -c "sleep 5 | script -qec 'bash $BATS_TEST_TMPDIR/probe.sh' /dev/null"
+    [[ "$output" == *XYZ* ]]
+    [[ "$output" == *error.confirm_timeout* ]]
+    [[ "$output" == *rc=1* ]]
+}
+
+@test "rescue open: a daemon confirmed listening gets its watchdog" {
+    # Through the real open path, with a stand-in daemon: the watchdog is what
+    # bounds the rescue once vpssec itself can no longer run its traps.
+    _log_file=/dev/null
+    _vpssec_stub sshd
+    printf '#!/usr/bin/env bash\nexec sleep 300\n' > "$BATS_TEST_TMPDIR/fake-sshd"
+    chmod +x "$BATS_TEST_TMPDIR/fake-sshd"
+    SSH_RESCUE_SSHD="$BATS_TEST_TMPDIR/fake-sshd"
+    _ssh_pick_rescue_port() { echo 2299; }
+    _ssh_rescue_is_up() { kill -0 "$SSH_RESCUE_PID" 2>/dev/null; }
+    _ssh_rescue_allow_firewall() { :; }
+
+    _ssh_open_rescue_port
+    local dog="$SSH_RESCUE_WATCHDOG_PID" rescue="$SSH_RESCUE_PID"
+    [ -n "$dog" ]
+    _alive "$dog"
+
+    _ssh_close_rescue_port
+    _vpssec_refute _alive "$rescue"
 }

@@ -436,6 +436,18 @@ pkg_is_installed() {
     esac
 }
 
+# The packages among $@ not installed now, one per line. "Cannot determine"
+# counts as installed, so an undo hint never removes what the host already had.
+pkg_missing() {
+    local p rc
+    for p in "$@"; do
+        rc=0
+        pkg_is_installed "$p" || rc=$?
+        (( rc == 1 )) && echo "$p"
+    done
+    return 0
+}
+
 # Does an installed package own this file? 0 = owned, 1 = not, 2 = cannot
 # determine. Callers MUST invoke this in a tested context (`if` / `&&`).
 file_owned_by_package() {
@@ -589,9 +601,8 @@ _fw_firewalld_installed() {
 }
 
 # Active firewall backend: ufw|firewalld|nftables|iptables|none, first match in
-# that order; nftables and iptables count only while their input hook filters.
-# "none" needs every installed tool to have answered: when a query fails and no
-# backend was found, returns 1 and prints nothing.
+# that order; nftables/iptables count only while their input hook filters. A
+# failed query with nothing found returns 1 and prints nothing, never "none".
 fw_backend() {
     local out failed=0
     # LC_ALL=C: ufw gettext-translates "Status: active" under a non-C locale

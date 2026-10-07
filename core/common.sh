@@ -235,8 +235,41 @@ print_warn() {
     print_msg "${YELLOW}${SYM_WARN}${NC} $*"
 }
 
+# Under --json-only an error goes to stderr instead of vanishing: stdout is
+# reserved for the JSON document, and a swallowed error leaves no trace.
 print_error() {
+    if [[ "${VPSSEC_JSON_ONLY}" == "1" ]]; then
+        echo -e "${RED}${SYM_FAIL}${NC} $*" >&2
+        return 0
+    fi
     print_msg "${RED}${SYM_FAIL}${NC} $*"
+}
+
+# Questions, menus and every note a question depends on (a rescue port, the
+# rules about to be enforced) go to the terminal, else stderr, never gated by
+# --json-only or quiet scan: an unseen safety note cannot be acted on.
+_VPSSEC_TTY=/dev/tty
+tty_say() {
+    local -a opt=(-e)
+    if [[ "${1:-}" == "-n" ]]; then
+        opt+=(-n)
+        shift
+    fi
+    echo "${opt[@]}" "$*" | tty_out
+}
+
+# stdin, verbatim, to the same place: data such as a plan or a rule list
+# must not go through echo -e, which would expand backslashes in it.
+tty_out() {
+    if { : >"$_VPSSEC_TTY"; } 2>/dev/null; then
+        cat >"$_VPSSEC_TTY"
+    else
+        cat >&2
+    fi
+}
+
+tty_warn() {
+    tty_say "${YELLOW}${SYM_WARN}${NC} $*"
 }
 
 print_header() {
@@ -770,6 +803,19 @@ backup_file() {
         return 1
     fi
 
+    # A working symlink is backed up as its target, which is what a write
+    # through it changes: snapshotting it under the link's name with the link's
+    # mode 777 restored a world-writable regular file in place of the link.
+    if [[ -L "$file" && -e "$file" ]]; then
+        local link="$file"
+        if ! file=$(readlink -f "$link") || ! validate_path "$file"; then
+            log_error "Backup failed (cannot resolve symlink): $link"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$link")" >&2
+            return 1
+        fi
+        log_info "Backing up symlink target: $link -> $file"
+    fi
+
     # Inside a plan session every fix backs up into one directory, so rollback
     # restores the whole plan. Standalone callers get a timestamped one.
     local backup_dir
@@ -862,6 +908,17 @@ write_file_atomic() {
         return 1
     fi
 
+    # Write THROUGH a working symlink, keeping the link: the rename below would
+    # otherwise replace it with a regular file. A dangling link has no target,
+    # so it is replaced — the nginx catchall's self-repair depends on that.
+    if [[ -L "$target" && -e "$target" ]]; then
+        local link="$target"
+        if ! target=$(readlink -f "$link") || ! validate_path "$target"; then
+            log_error "write_file_atomic: cannot resolve symlink $link"
+            return 1
+        fi
+    fi
+
     local temp_file
     local target_dir
     target_dir=$(dirname "$target")
@@ -931,6 +988,41 @@ fail2ban_reload_jails() {
     fail2ban-client reload --restart >/dev/null 2>&1
 }
 
+# Rollback restores files only. A fix that changes anything else — a service,
+# a package, a firewall rule, a symlink — passes the exact command that undoes
+# it: printed now, and logged, because it may be needed days later.
+record_undo() {
+    local fix_id="$1" cmd="$2"
+    [[ -n "$cmd" ]] || return 0
+    print_info "$(i18n 'backup.undo_hint' "cmd=$cmd")"
+    log_info "Undo for $fix_id: $cmd"
+}
+
+# Join undo commands into one line the operator can paste; empties skipped.
+undo_join() {
+    local out="" cmd
+    for cmd in "$@"; do
+        [[ -n "$cmd" ]] && out+="${out:+ && }$cmd"
+    done
+    printf '%s' "$out"
+}
+
+# Read BEFORE a fix enables and starts unit $1: the command that returns it to
+# its present state afterwards, or nothing when it is already enabled and up.
+service_undo_cmd() {
+    local unit="$1" enabled=0 active=0
+    systemctl is-enabled --quiet "$unit" 2>/dev/null && enabled=1
+    systemctl is-active --quiet "$unit" 2>/dev/null && active=1
+    if (( !enabled && !active )); then
+        echo "systemctl disable --now $unit"
+    elif (( !enabled )); then
+        echo "systemctl disable $unit"
+    elif (( !active )); then
+        echo "systemctl stop $unit"
+    fi
+    return 0
+}
+
 # --- Network Utilities ---
 
 get_current_ssh_ip() {
@@ -956,41 +1048,26 @@ get_current_ssh_ip() {
     echo ""
 }
 
-get_ssh_port() {
-    # `sshd -T` first: it resolves Include and the sshd_config.d drop-ins the
-    # way sshd loads them, and a cloud-init drop-in commonly overrides Port=.
-    local port=""
-    if command -v sshd &>/dev/null; then
-        # sshd -T outputs lowercase directives, one per line.
-        port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
-    fi
-    if [[ -z "$port" ]]; then
-        # Fallback: scan main file plus drop-ins, last occurrence wins.
-        # sshd itself is first-wins; the common case is a single Port= line.
-        port=$(grep -hE "^[[:space:]]*Port[[:space:]]+" \
-            /etc/ssh/sshd_config \
-            /etc/ssh/sshd_config.d/*.conf 2>/dev/null | \
-            tail -1 | awk '{print $2}')
-    fi
-    echo "${port:-22}"
-}
-
-# ALL configured SSH ports, deduped and ascending. Firewall fixes MUST open
-# every port this returns — get_ssh_port gives only the first, and a
-# default-deny flip would cut off an operator on any other one.
+# ALL ports sshd listens on, deduped and ascending; firewall fixes MUST open
+# every one. sshd -T prints one listenaddress line per bound address and
+# `ListenAddress host:port` overrides Port, so those lines are the truth.
 get_ssh_ports() {
-    local ports=""
+    local ports="" dump=""
     if command -v sshd &>/dev/null; then
-        ports=$(sshd -T 2>/dev/null | awk '/^port /{print $2}')
+        dump=$(sshd -T 2>/dev/null) || dump=""
+        ports=$(awk '$1 == "listenaddress" { n = split($2, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' <<<"$dump")
+        [[ -n "$ports" ]] || ports=$(awk '$1 == "port" && $2 ~ /^[0-9]+$/ { print $2 }' <<<"$dump")
     fi
     if [[ -z "$ports" ]]; then
-        ports=$(grep -hE "^[[:space:]]*Port[[:space:]]+" \
-            /etc/ssh/sshd_config \
-            /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}')
+        # sshd could not answer: Port lines plus explicit ListenAddress ports
+        # from the files. A superset at worst, which only opens a spare rule.
+        ports=$(grep -hiE "^[[:space:]]*(Port|ListenAddress)[[:space:]]+" \
+            /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '
+            tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2 }
+            tolower($1) == "listenaddress" && $2 ~ /:[0-9]+$/ { n = split($2, a, ":"); print a[n] }' \
+            || true)
     fi
     [[ -z "$ports" ]] && ports=22
-    # $ports is newline-separated (awk print per Port line); quoting keeps that
-    # exact output while satisfying shellcheck SC2086.
     printf '%s\n' "$ports" | sort -nu
 }
 
@@ -1027,6 +1104,120 @@ count_authorized_keys() {
         /(^|[[:space:]])(ssh-|ecdsa-|sk-)/ { c++ }
         END { print c + 0 }
     ' "$file" 2>/dev/null || echo 0
+}
+
+# --- Privileged accounts ---
+# The one answer to "who can become root through sudo": the users audit, the
+# ssh audit and the ssh lockout gates must agree, or a gate clears a lockout.
+
+SUDOERS_FILE="/etc/sudoers"
+SUDOERS_DIR="/etc/sudoers.d"
+
+# True for a sudoers.d drop-in that sudo IGNORES: @includedir skips any name
+# containing '.' or ending in '~'. Reading those reports grants sudo never gives.
+_sudoers_dropin_ignored() {
+    local base="${1##*/}"
+    [[ "$base" == *.* || "$base" == *'~' ]]
+}
+
+# The sudoers files sudo actually reads, one per line.
+sudoers_files() {
+    [[ -r "$SUDOERS_FILE" ]] && echo "$SUDOERS_FILE"
+    local f
+    for f in "$SUDOERS_DIR"/*; do
+        [[ -f "$f" && -r "$f" ]] || continue
+        _sudoers_dropin_ignored "$f" && continue
+        echo "$f"
+    done
+    return 0
+}
+
+# Pure-data variant of _group_all_members, for tests.
+# $1: a getent-group line (`name:x:gid:m1,m2`); $2: getent-passwd content.
+_group_all_members_from_streams() {
+    local group_line="$1"
+    local passwd_text="$2"
+
+    local name pwd gid secondary
+    IFS=: read -r name pwd gid secondary <<<"$group_line"
+
+    if [[ -n "$secondary" ]]; then
+        echo "$secondary" | tr ',' '\n'
+    fi
+    if [[ -n "$gid" ]]; then
+        awk -F: -v g="$gid" '$4 == g {print $1}' <<<"$passwd_text"
+    fi
+}
+
+# All users in a group: the 4th-field secondary members PLUS everyone whose
+# primary GID matches. Omitting the latter loses `useradd -g sudo bob`.
+_group_all_members() {
+    local group="$1"
+    local group_line passwd
+    group_line=$(getent group "$group" 2>/dev/null) || return 0
+    passwd=$(getent passwd 2>/dev/null)
+    _group_all_members_from_streams "$group_line" "$passwd"
+}
+
+# For a rule line granting FULL root — commands ALL, Runas absent or holding
+# ALL or root — print "<user-or-%group> <1 if NOPASSWD else 0>"; fail for any
+# other line. A command-restricted rule is not a way to root.
+_sudoers_full_grant() {
+    local line="$1"
+    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\(([^)]*)\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)ALL[[:space:]]*(#.*)?$'
+    [[ "$line" =~ $re ]] || return 1
+    local token="${BASH_REMATCH[1]}" runas="${BASH_REMATCH[3]}"
+    local has_runas="${BASH_REMATCH[2]}" tags="${BASH_REMATCH[4]}"
+    case "$token" in
+        Defaults|Cmnd_Alias|Host_Alias|User_Alias|Runas_Alias) return 1 ;;
+    esac
+    if [[ -n "$has_runas" ]]; then
+        local users="${runas%%:*}" u ok=0
+        for u in ${users//,/ }; do
+            [[ "$u" == "ALL" || "$u" == "root" ]] && ok=1
+        done
+        (( ok )) || return 1
+    fi
+    local nopasswd=0
+    [[ "$tags" == *NOPASSWD:* ]] && nopasswd=1
+    echo "$token $nopasswd"
+}
+
+# Every full grant as "<account> <0|1>": users and %group members named by a
+# full-grant rule. Group membership alone grants nothing (Arch ships %wheel
+# commented out); names that are not real accounts drop out.
+_sudo_admin_grants() {
+    local f line grant token flag m
+    {
+        while IFS= read -r f; do
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                grant=$(_sudoers_full_grant "$line") || continue
+                token="${grant% *}" flag="${grant##* }"
+                if [[ "$token" == %* ]]; then
+                    _group_all_members "${token#%}" | sed -n "/./s/\$/ $flag/p"
+                else
+                    echo "$token $flag"
+                fi
+            done < "$f"
+        done < <(sudoers_files)
+    } | while read -r m flag; do
+        # if-form: a dropped name must not become this pipeline's status.
+        if [[ -n "$m" ]] && getent passwd "$m" >/dev/null 2>&1; then
+            echo "$m $flag"
+        fi
+    done
+}
+
+# Accounts that can become root through sudo, root included; one per line.
+sudo_admin_users() {
+    _sudo_admin_grants | cut -d' ' -f1 | sort -u
+}
+
+# True when $1 holds a full grant that needs no password.
+sudo_nopasswd_admin() {
+    local grants
+    grants=$(_sudo_admin_grants)
+    grep -qxF "$1 1" <<<"$grants"
 }
 
 # --- JSON Utilities ---
@@ -1098,12 +1289,12 @@ confirm() {
         prompt_text="$prompt [y/N] > "
     fi
 
-    # Always print prompt first (works even if tty read fails)
-    echo -n "$prompt_text"
+    # Printed before the read, so it shows even when the read then fails.
+    tty_say -n "$prompt_text"
 
     # Read from /dev/tty to handle curl|bash piped execution
     if ! read -r yn 2>/dev/null </dev/tty; then
-        echo ""  # Newline after failed read
+        tty_say ""
         yn="$default"
     fi
     yn="${yn:-$default}"
@@ -1111,21 +1302,28 @@ confirm() {
     [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]]
 }
 
-# Strict confirm for critical operations (never auto-yes)
+# Seconds confirm_critical waits for an answer. Bounded because the rescue sshd
+# (root + password) stays up while it waits, and a session that dropped silently
+# would otherwise keep it up for the TCP keepalive's two hours.
+VPSSEC_CONFIRM_TIMEOUT=300
+
+# Strict confirm for critical operations: never auto-yes. No terminal, or no
+# answer within VPSSEC_CONFIRM_TIMEOUT, is a NO.
 confirm_critical() {
     local prompt="$1"
-    local yn
+    local yn rc=0
 
-    print_warn "$(i18n 'common.warning'): $prompt"
+    tty_warn "$(i18n 'common.warning'): $prompt"
+    tty_say -n "$(i18n 'common.confirm') [yes/NO] > "
 
-    # Always print prompt first
-    echo -n "$(i18n 'common.confirm') [yes/NO] > "
-
-    # For critical operations, we MUST get user confirmation
-    # If /dev/tty is not available, return failure (do not proceed)
-    if ! read -r yn 2>/dev/null </dev/tty; then
-        echo ""
-        print_error "$(i18n 'error.cannot_read_critical')"
+    read -r -t "$VPSSEC_CONFIRM_TIMEOUT" yn 2>/dev/null </dev/tty || rc=$?
+    if (( rc != 0 )); then
+        tty_say ""
+        if (( rc > 128 )); then
+            tty_say "${RED}${SYM_FAIL}${NC} $(i18n 'error.confirm_timeout' "seconds=$VPSSEC_CONFIRM_TIMEOUT")"
+        else
+            tty_say "${RED}${SYM_FAIL}${NC} $(i18n 'error.cannot_read_critical')"
+        fi
         return 1
     fi
 

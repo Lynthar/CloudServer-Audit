@@ -1,19 +1,20 @@
 # Plant: nothing — the case applies where logrotate is absent (the mutation
 # host image ships without it).
 # Expect: logging.logrotate_not_configured → logging.setup_logrotate → logrotate_ok.
-# The fix installs a package, which rollback does not track: the backup session
-# holds no file, `vpssec rollback` reports nothing restored (rc 1), and the
-# audit stays green. That boundary is the assertion, not a tolerated failure.
-TEST_DESC="logrotate absent: logging.setup_logrotate converges; a package install is outside rollback"
+# The fix installs a package, which rollback does not track: it backs up no file
+# and leaves no session, and the undo command it logs (apt purge) is what takes
+# the host back, so the runner runs that and expects the finding again.
+TEST_DESC="logrotate absent: logging.setup_logrotate converges; its logged undo command reverts it"
 EXPECT_ID="logging.logrotate_not_configured"
 EXPECT_STATUS="failed"
 MODULE="logging"
 FIX_ID="logging.setup_logrotate"
 EXPECT_FIXED_ID="logging.logrotate_ok"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="logging.logrotate_ok"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="logging.logrotate_not_configured"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 precheck() {
     ! command -v logrotate >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1

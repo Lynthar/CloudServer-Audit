@@ -1,0 +1,34 @@
+# Mutation cases: tests/test_sudo_admins.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_sudo_admins.bats
+#
+# Each case widens "who can become root through sudo" the way one of the old
+# copies did; the lockout gates trust whatever this list says.
+
+run_case "files/ignored-dropin-read" 1 \
+    '        _sudoers_dropin_ignored "$f" && continue' \
+    '        :'
+
+run_case "grant/command-restricted-counted" 1 \
+    "    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\\(([^)]*)\\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)ALL[[:space:]]*(#.*)?\$'" \
+    "    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\\(([^)]*)\\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)'"
+
+run_case "grant/runas-ignored" 1 \
+    '        (( ok )) || return 1' \
+    '        :'
+
+run_case "grant/nopasswd-never-seen" 1 \
+    '    [[ "$tags" == *NOPASSWD:* ]] && nopasswd=1' \
+    '    :'
+
+run_case "grants/group-rule-dropped" 1 \
+    '                if [[ "$token" == %* ]]; then' \
+    '                if false; then'
+
+# Aliases, typos and removed users come back as "admins".
+run_case "grants/non-accounts-kept" 1 \
+    '        if [[ -n "$m" ]] && getent passwd "$m" >/dev/null 2>&1; then' \
+    '        if [[ -n "$m" ]]; then'
+
+run_case "grants/group-members-dropped" 1 \
+    '                    _group_all_members "${token#%}" | sed -n "/./s/\$/ $flag/p"' \
+    '                    :'

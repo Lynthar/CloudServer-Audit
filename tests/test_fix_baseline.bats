@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh core/report.sh
+    _vpssec_load core/distro.sh core/state.sh core/security_levels.sh core/engine.sh core/report.sh
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/baseline.sh"
 
@@ -252,6 +252,26 @@ SH
     _vpssec_stub_called apt-get 'install .*apparmor'
     _vpssec_stub_called systemctl 'enable apparmor'
     _vpssec_stub_called systemctl 'start apparmor'
+}
+
+@test "apparmor: what it installed and started is logged as the undo command" {
+    export VPSSEC_PKG_MGR=apt
+    _apparmor_absent
+    _vpssec_stub_script apt-get <<SH
+: > "$BATS_TEST_TMPDIR/aa-installed"
+exit 0
+SH
+    _vpssec_stub aa-status 0
+    _vpssec_stub dpkg-query 1
+    _vpssec_stub_script systemctl <<'SH'
+case "$1" in is-enabled|is-active) exit 1 ;; esac
+exit 0
+SH
+
+    run _baseline_fix_enable_apparmor
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for baseline.enable_apparmor: systemctl disable --now apparmor && apt purge apparmor apparmor-utils' \
+        "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "apparmor: the index is refreshed first, and a failed refresh does not stop the install" {

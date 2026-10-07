@@ -50,26 +50,42 @@ exit 0
 SH
 }
 
-# The world the gate sees. State lives in globals, not closed over: a function
-# defined inside another captures the NAME of a `local`, so by call time it is
-# out of scope and `set -u` aborts — which looks exactly like the gate refusing.
+# The gate's inputs (sudo grants, keys, password hashes, sshd settings), so its
+# own predicates run for real. Globals, not locals closed over: by call time a
+# local is out of scope and `set -u` aborts, which reads as the gate refusing.
 _TEST_ADMINS=""
 _TEST_KEYED=""
-_TEST_ROOT_KEY_LOGIN="no"
+_TEST_PASSWORDS=""
+_TEST_NOPASSWD=""
+_TEST_PUBKEY="on"
 _TEST_PASSWORD_AUTH="on"
 
 _install_world() {
-    _ssh_get_admin_users()      { printf '%s\n' ${_TEST_ADMINS:-}; }
+    sudo_admin_users()           { printf '%s\n' root ${_TEST_ADMINS:-}; }
     # shellcheck disable=SC2317
-    _ssh_user_has_key()         { [[ " ${_TEST_KEYED} " == *" $1 "* ]]; }
-    _ssh_can_login_with_key()   { [[ "$_TEST_ROOT_KEY_LOGIN" == yes ]]; }
+    sudo_nopasswd_admin()        { [[ " ${_TEST_NOPASSWD} " == *" $1 "* ]]; }
+    _ssh_user_has_key()          { [[ " ${_TEST_KEYED} " == *" $1 "* ]]; }
+    _ssh_password_usable()       { [[ " ${_TEST_PASSWORDS} " == *" $1 "* ]]; }
+    _ssh_pubkey_enabled()        { [[ "$_TEST_PUBKEY" == on ]]; }
     _ssh_password_auth_enabled() { [[ "$_TEST_PASSWORD_AUTH" == on ]]; }
 }
 
-_admins_are()         { _TEST_ADMINS="$*"; }
+# By default every admin has a usable password, so sudo works for them.
+_admins_are()         { _TEST_ADMINS="$*"; _TEST_PASSWORDS="$*"; }
 _users_with_keys()    { _TEST_KEYED="$*"; }
-_root_can_key_login() { _TEST_ROOT_KEY_LOGIN="$1"; }
+_with_passwords()     { _TEST_PASSWORDS="$*"; }
+_nopasswd_for()       { _TEST_NOPASSWD="$*"; }
+_pubkey_auth()        { _TEST_PUBKEY="$1"; }
 _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
+# Root's key is usable unless PermitRootLogin says no; both halves are real.
+_root_can_key_login() {
+    if [[ "$1" == yes ]]; then
+        _TEST_KEYED="$_TEST_KEYED root"
+    else
+        _TEST_KEYED="$_TEST_KEYED root"
+        printf 'PermitRootLogin no\n' > "$SSH_DROPIN_DIR/50-test.conf"
+    fi
+}
 
 # ---- disable password authentication ---------------------------------
 
@@ -132,6 +148,27 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
     [ ! -e "$SSH_HARDENING_DROPIN" ]
 }
 
+@test "password-off gate: refuses while public key authentication is off" {
+    # Keys on disk are no way in when sshd will not offer publickey: with
+    # passwords off too, sshd would accept no method at all.
+    _admins_are alice
+    _users_with_keys alice root
+    _pubkey_auth off
+
+    run _ssh_fix_disable_password_auth
+    [ "$status" -eq 1 ]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "password-off gate: a keyed admin who cannot pass sudo is not enough" {
+    _admins_are alice
+    _with_passwords
+    _users_with_keys alice
+
+    run _ssh_fix_disable_password_auth
+    [ "$status" -eq 1 ]
+}
+
 @test "password-off gate: a rescue daemon that will not start aborts the fix" {
     _admins_are alice
     _users_with_keys alice
@@ -166,7 +203,7 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
     [ ! -e "$SSH_HARDENING_DROPIN" ]
 }
 
-@test "root-off gate: a keyless admin is enough while passwords still work" {
+@test "root-off gate: a keyless admin with a usable password is enough while passwords work" {
     _admins_are alice
     _users_with_keys
     _password_auth on
@@ -174,6 +211,56 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
     run _ssh_fix_disable_root_login
     [ "$status" -eq 0 ]
     grep -q '^PermitRootLogin no$' "$SSH_HARDENING_DROPIN"
+}
+
+@test "root-off gate: an admin with neither a usable password nor a key is refused" {
+    # `useradd -G sudo alice` and nothing else: the shadow hash is `!`, there
+    # is no key, so once root is refused nobody can log in at all.
+    _admins_are alice
+    _with_passwords
+    _users_with_keys
+    _password_auth on
+
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 1 ]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "root-off gate: a key-only admin who cannot pass sudo is refused" {
+    # Logs in by key, but sudo asks for a password the account does not have.
+    _admins_are alice
+    _with_passwords
+    _users_with_keys alice
+    _password_auth on
+
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 1 ]
+
+    # A NOPASSWD grant is the other way through sudo (the cloud-image shape).
+    _nopasswd_for alice
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 0 ]
+}
+
+@test "root-off gate: an admin whose account cannot log in is refused" {
+    _admins_are dave
+    _ssh_account_can_login() { [[ "$1" != dave ]]; }
+
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 1 ]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "root-off gate: root itself never counts as the admin who survives" {
+    # sudo_admin_users lists root too; root with a password and a key is
+    # exactly the account this change shuts out.
+    _admins_are
+    _with_passwords root
+    _users_with_keys root
+    _password_auth on
+
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 1 ]
 }
 
 @test "root-off gate: a keyless admin is NOT enough once passwords are off" {
@@ -216,4 +303,25 @@ _password_auth()      { _TEST_PASSWORD_AUTH="$1"; }
     # change is refused.
     grep -q '^PermitRootLogin no$' "$SSH_HARDENING_DROPIN"
     _vpssec_refute grep -q '^PasswordAuthentication no$' "$SSH_HARDENING_DROPIN"
+}
+
+# ---- the password half of the predicate --------------------------------
+
+@test "a usable password is a real hash; locked, starred or empty is none" {
+    unset -f _ssh_password_usable
+    source "$(_vpssec_repo_root)/modules/ssh.sh"
+    _vpssec_stub_script getent <<'SH'
+case "$2" in
+    alice) echo 'alice:$y$j9T$abc$def:19000:0:99999:7:::' ;;
+    bob)   echo 'bob:!$y$j9T$abc$def:19000:0:99999:7:::' ;;
+    carol) echo 'carol:*:19000:0:99999:7:::' ;;
+    dave)  echo 'dave::19000:0:99999:7:::' ;;
+    *) exit 2 ;;
+esac
+SH
+    _ssh_password_usable alice
+    _vpssec_refute _ssh_password_usable bob
+    _vpssec_refute _ssh_password_usable carol
+    _vpssec_refute _ssh_password_usable dave
+    _vpssec_refute _ssh_password_usable nobody-here
 }

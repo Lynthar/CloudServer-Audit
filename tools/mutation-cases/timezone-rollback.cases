@@ -1,0 +1,33 @@
+# Mutation cases: tests/test_fix_timezone_rollback.bats against modules/timezone.sh.
+# mutate-suite: modules/timezone.sh tests/test_fix_timezone_rollback.bats
+#
+# What a rollback can undo after the timezone fixes: files backed up before the
+# tool rewrites them, and the logged command for a re-pointed /etc/localtime.
+
+run_case "settz/undo-not-recorded" 1 \
+    '            record_undo timezone.set_timezone "$undo"' \
+    '            :'
+
+run_case "settz/old-zone-dropped" 1 \
+    '        [[ -n "$current_tz" ]] && undo="timedatectl set-timezone $current_tz"' \
+    '        :'
+
+run_case "settz/manual-undo-not-recorded" 2 \
+    '            record_undo timezone.set_timezone "$undo"' \
+    '            :'
+
+run_case "settz/legacy-file-left-stale" 1 \
+    '            if [[ -f "$TZ_CONF" ]]; then' \
+    '            if false; then'
+
+run_case "rtc/adjtime-not-backed-up" 1 \
+    '        backup_file "$TZ_ADJTIME" >/dev/null || return 1' \
+    '        :'
+
+run_case "locale/default-locale-not-backed-up" 1 \
+    '        backup_file "$TZ_DEFAULT_LOCALE" >/dev/null || return 1' \
+    '        :'
+
+run_case "ntp/undo-not-recorded" 1 \
+    '            [[ "$was_on" == "yes" ]] || record_undo timezone.enable_ntp "timedatectl set-ntp false"' \
+    '            :'

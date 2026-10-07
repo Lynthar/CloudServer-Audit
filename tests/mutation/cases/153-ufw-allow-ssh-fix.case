@@ -2,9 +2,9 @@
 # port. Harmless here: the runner talks to the container through docker exec, not
 # over the network the rules cover.
 # Expect: ufw.no_ssh_rule → ufw.allow_ssh → ufw.ssh_allowed. SAFE, no prompt.
-# ufw keeps its rules in its own files and the fix backs none up, so the session
-# is empty: rollback restores nothing (rc 1) and the rule stays.
-TEST_DESC="ufw enabled without an SSH rule: ufw.allow_ssh converges; rollback leaves the rule"
+# ufw keeps its rules in its own files, changed through ufw and not backed up;
+# the logged undo command (ufw delete allow) removes the rule again.
+TEST_DESC="ufw enabled without an SSH rule: ufw.allow_ssh converges; its logged undo command reverts it"
 EXPECT_ID="ufw.no_ssh_rule"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"
@@ -12,9 +12,10 @@ MODULE="ufw"
 FIX_ID="ufw.allow_ssh"
 EXPECT_FIXED_ID="ufw.ssh_allowed"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="ufw.ssh_allowed"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="ufw.no_ssh_rule"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 _NFT_WAS_EMPTY=0
 

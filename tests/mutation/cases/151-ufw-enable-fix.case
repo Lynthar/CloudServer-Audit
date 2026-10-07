@@ -1,9 +1,10 @@
 # Plant: ufw installed and left inactive, as a fresh install is.
 # Expect: ufw.disabled → ufw.enable → ufw.enabled. The fix allows every sshd port,
 # shows the rules and asks on the terminal before enabling (FIX_TTY_ANSWERS).
-# ufw keeps its own state and the fix backs up no file, so the session is empty:
-# rollback restores nothing (rc 1) and ufw stays enabled.
-TEST_DESC="ufw inactive: ufw.enable converges through its terminal prompt; rollback leaves it enabled"
+# ufw's rule files change through ufw; restoring them under a live firewall
+# could cut the session, so no file is backed up and the logged undo command
+# (ufw disable, delete the added rules) is what takes the host back.
+TEST_DESC="ufw inactive: ufw.enable converges through its terminal prompt; its logged undo command reverts it"
 EXPECT_ID="ufw.disabled"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="medium"
@@ -12,9 +13,10 @@ FIX_ID="ufw.enable"
 FIX_TTY_ANSWERS="yes"
 EXPECT_FIXED_ID="ufw.enabled"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="ufw.enabled"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="ufw.disabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 _NFT_WAS_EMPTY=0
 

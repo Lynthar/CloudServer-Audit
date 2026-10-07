@@ -247,3 +247,11 @@ run_case "install/gate-asks-about-jail-local-only" 1 \
 run_case "rollback/backup-failure-swallowed" 1 \
     '    f2b_bak=$(backup_file "$F2B_DROPIN") || return 1' \
     '    f2b_bak=$(backup_file "$F2B_DROPIN" 2>/dev/null) || f2b_bak=""'
+
+run_case "service/undo-not-recorded" 1 \
+    '        record_undo fail2ban.enable_service "$undo"' \
+    '        :'
+
+run_case "install/undo-not-recorded" 1 \
+    '        (( ${#missing[@]} )) && record_undo fail2ban.install "$(pkg_remove_hint "${missing[@]}")"' \
+    '        :'

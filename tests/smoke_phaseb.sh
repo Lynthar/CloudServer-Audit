@@ -206,8 +206,8 @@ tier1() {
 
     section "Tier 1.2: SSH rescue-port selection avoids the live/in-use port"
     local s_gp s_gl
-    s_gp=$(save_fn get_ssh_port); s_gl=$(save_fn get_listening_ports)
-    get_ssh_port() { echo 2222; }
+    s_gp=$(save_fn get_ssh_ports); s_gl=$(save_fn get_listening_ports)
+    get_ssh_ports() { echo 2222; }
     get_listening_ports() { printf '2222\n'; }
     local port; port=$(_ssh_pick_rescue_port)
     if [[ -n "$port" && "$port" != "2222" ]]; then
@@ -271,13 +271,13 @@ tier1() {
     local s_lp s_be s_ba s_act s_en s_gp2
     s_lp=$(save_fn _f2b_detect_ssh_logpath); s_be=$(save_fn _f2b_detect_backend)
     s_ba=$(save_fn _f2b_detect_banaction);   s_act=$(save_fn _f2b_service_active)
-    s_en=$(save_fn _f2b_ssh_jail_enabled);   s_gp2=$(save_fn get_ssh_port)
+    s_en=$(save_fn _f2b_ssh_jail_enabled);   s_gp2=$(save_fn get_ssh_ports)
     _f2b_detect_ssh_logpath() { echo /var/log/auth.log; }
     _f2b_detect_backend() { echo systemd; }
     _f2b_detect_banaction() { echo iptables-multiport; }
     _f2b_service_active() { return 1; }
     _f2b_ssh_jail_enabled() { return 0; }
-    get_ssh_port() { echo 22; }
+    get_ssh_ports() { echo 22; }
     fail2ban-client() { [[ "${1:-}" == "-t" ]] && return 1; return 0; }   # config test fails
     systemctl() { return 0; }
     _f2b_fix_configure_ssh_jail >/dev/null 2>&1; rc=$?
@@ -360,8 +360,8 @@ tier2() {
     # Make the rescue logic believe the live SSH port is prod_port, and keep the
     # firewall out of this tier (covered in Tier 3).
     local s_gp s_fw
-    s_gp=$(save_fn get_ssh_port); s_fw=$(save_fn fw_backend)
-    get_ssh_port() { echo "$prod_port"; }
+    s_gp=$(save_fn get_ssh_ports); s_fw=$(save_fn fw_backend)
+    get_ssh_ports() { echo "$prod_port"; }
     fw_backend() { echo none; }
 
     _ssh_open_rescue_port >/dev/null 2>&1

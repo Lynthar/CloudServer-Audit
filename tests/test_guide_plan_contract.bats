@@ -113,6 +113,47 @@ _checklist_tags_only() {
     [ "$status" -eq 0 ]
 }
 
+@test "execute_plan never deletes an older backup session" {
+    # The oldest session holds the only copy of /etc as it was before vpssec
+    # first touched it; a keep-the-last-30 prune deleted exactly that one.
+    export VPSSEC_YES=1
+    local i
+    for i in $(seq -w 1 31); do
+        mkdir -p "$VPSSEC_BACKUPS/202601${i}_000000/etc"
+        echo "copy $i" > "$VPSSEC_BACKUPS/202601${i}_000000/etc/x.conf"
+    done
+    fake_fix() { return 0; }
+    state_save_plan "$(jq -n '{timestamp: "t", fixes: [
+        {id: "fake.check", module: "fake", severity: "low", status: "failed",
+         title: "t", desc: "", suggestion: "", fix_id: "fake.works"}]}')"
+
+    run execute_plan
+    [ "$status" -eq 0 ]
+    [ "$(cat "$VPSSEC_BACKUPS/20260101_000000/etc/x.conf")" = "copy 01" ]
+    [ "$(backup_list | grep -c .)" -eq 31 ]
+}
+
+@test "execute_plan that backs nothing up leaves no empty session, and offers no rollback" {
+    export VPSSEC_YES=1 VPSSEC_QUIET_SCAN=0
+    fake_fix() { return 0; }
+    state_save_plan "$(jq -n '{timestamp: "t", fixes: [
+        {id: "fake.check", module: "fake", severity: "low", status: "failed",
+         title: "t", desc: "", suggestion: "", fix_id: "fake.works"}]}')"
+
+    run execute_plan
+    [ "$status" -eq 0 ]
+    [ -z "$(backup_list)" ]
+    [[ "$output" != *"vpssec rollback"* ]]
+
+    # A fix that did back something up gets its session and the pointer.
+    echo orig > "$BATS_TEST_TMPDIR/x.conf"
+    fake_fix() { backup_file "$BATS_TEST_TMPDIR/x.conf" >/dev/null; }
+    run execute_plan
+    [ "$status" -eq 0 ]
+    [ "$(backup_list | grep -c .)" -eq 1 ]
+    [[ "$output" == *"vpssec rollback"* ]]
+}
+
 @test "execute_fix refuses a fix_id no safety map classifies" {
     # The gate is a whitelist. An unclassified id used to miss the alert_only
     # test, miss the confirmation test, and then apply unannounced.

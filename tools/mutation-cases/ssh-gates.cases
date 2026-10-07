@@ -1,0 +1,47 @@
+# Mutation cases: tests/test_fix_ssh_lockout_gates.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_fix_ssh_lockout_gates.bats
+#
+# The two gates in front of disable_password_auth and disable_root_login. A
+# survivor here is a change that locks the operator out with the suite green.
+
+run_case "survives/account-login-ignored" 1 \
+    '    _ssh_account_can_login "$user" || return 1' \
+    '    :'
+
+# Keyless, passwordless admin passes again (useradd -G sudo and nothing else).
+run_case "survives/password-assumed" 1 \
+    '    _ssh_password_usable "$user" && pw_ok=1' \
+    '    pw_ok=1'
+
+run_case "survives/key-not-required-when-passwords-go" 1 \
+    '        _ssh_can_login_with_key "$user" || return 1' \
+    '        :'
+
+run_case "survives/sudo-path-ignored" 1 \
+    '    [[ "$pw_ok" == 1 ]] || sudo_nopasswd_admin "$user"' \
+    '    true'
+
+run_case "keylogin/pubkey-off-ignored" 1 \
+    '    _ssh_pubkey_enabled || return 1' \
+    '    :'
+
+run_case "keylogin/root-refusal-ignored" 1 \
+    '        [[ "${prl,,}" == "no" ]] && return 1' \
+    '        :'
+
+run_case "password/locked-hash-counted" 1 \
+    '    [[ -n "$hash" && "$hash" != [\!\*]* ]]' \
+    '    [[ -n "$hash" ]]'
+
+run_case "admins/root-counted-as-admin" 1 \
+    "    sudo_admin_users | grep -vx 'root'" \
+    '    sudo_admin_users'
+
+# The root-off gate asks as if passwords stayed on, whatever they are.
+run_case "rootoff/password-state-assumed" 1 \
+    '    _ssh_password_auth_enabled && pw_after="yes"' \
+    '    pw_after="yes"'
+
+run_case "passwordoff/root-fallback-ignores-refusal" 1 \
+    '        if _ssh_can_login_with_key "root"; then' \
+    '        if true; then'

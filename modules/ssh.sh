@@ -15,10 +15,15 @@ SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening.conf"
 # on first fix so prior settings carry over and the stale (ignored) file goes.
 SSH_HARDENING_DROPIN_LEGACY="${SSH_DROPIN_DIR}/99-vpssec-hardening.conf"
 SSH_RESCUE_PORT=2222     # preferred rescue port; replaced with a free port at open time
+SSH_RESCUE_SSHD="/usr/sbin/sshd"  # absolute: sshd re-executes itself by its own path
 SSH_RESCUE_PID=""        # pid of the rescue sshd we launched (the only kill target)
 SSH_RESCUE_CONFIG=""     # temp rescue config path
 SSH_RESCUE_PIDFILE=""    # temp rescue pidfile path
 SSH_RESCUE_FW_RULE=""    # firewall rule added for the rescue port, for exact teardown
+SSH_RESCUE_WATCHDOG_PID="" # pid of the watchdog that bounds the rescue's lifetime
+# Seconds the rescue may outlive the confirmation window (applying, reloading
+# and verifying the change) before the watchdog tears it down regardless.
+SSH_RESCUE_GRACE=120
 
 # --- SSH Helper Functions ---
 
@@ -66,23 +71,6 @@ _ssh_get_config() {
 
     # Return default
     echo "$default"
-}
-
-# Get SSH listening port (handles multiple ports)
-_ssh_get_port() {
-    local port=""
-
-    # Try sshd -T first
-    if command -v sshd &>/dev/null; then
-        port=$(sshd -T 2>/dev/null | grep -i "^port " | head -1 | awk '{print $2}')
-    fi
-
-    # Fallback to file parsing
-    if [[ -z "$port" ]]; then
-        port=$(grep "^Port[[:space:]]" "$SSH_CONFIG" 2>/dev/null | head -1 | awk '{print $2}')
-    fi
-
-    echo "${port:-22}"
 }
 
 # Check if password auth is enabled
@@ -142,46 +130,10 @@ _ssh_login_grace_time_ok() {
     [[ "$seconds" =~ ^[0-9]+$ ]] && (( seconds >= 1 && seconds <= 60 ))
 }
 
-# Non-root sudo users. Feeds the safety gate in disable_root_login, where an
-# empty result blocks the fix — so it must cover file-based grants in
-# /etc/sudoers and sudoers.d, not just the sudo/wheel groups.
+# Non-root accounts that can become root through sudo (core's one answer).
 _ssh_get_admin_users() {
-    local admin_users=()
-
-    # Group-based grants: members of `sudo` and `wheel`.
-    local grp
-    for grp in sudo wheel; do
-        if getent group "$grp" &>/dev/null; then
-            while IFS=: read -r _ _ _ members; do
-                for user in ${members//,/ }; do
-                    [[ -n "$user" && "$user" != "root" ]] && admin_users+=("$user")
-                done
-            done < <(getent group "$grp")
-        fi
-    done
-
-    # Direct `user ALL=...` entries only. %group entries are deliberately
-    # skipped: the two common groups are covered by the scan above, and
-    # resolving arbitrary group membership is out of scope here.
-    local sudoers_files=("/etc/sudoers")
-    local f
-    if [[ -d /etc/sudoers.d ]]; then
-        for f in /etc/sudoers.d/*; do
-            [[ -f "$f" ]] && sudoers_files+=("$f")
-        done
-    fi
-    for f in "${sudoers_files[@]}"; do
-        [[ -r "$f" ]] || continue
-        # Match lines like `alice ALL=(ALL) NOPASSWD: ALL` — username
-        # at column 0, whitespace, then ALL=. Skip #includes and
-        # comments.
-        while IFS= read -r user; do
-            [[ -n "$user" && "$user" != "root" ]] && admin_users+=("$user")
-        done < <(grep -E '^[a-zA-Z_][a-zA-Z0-9_-]*[[:space:]]+ALL=' "$f" 2>/dev/null | awk '{print $1}')
-    done
-
-    # Remove duplicates
-    printf '%s\n' "${admin_users[@]}" | sort -u
+    sudo_admin_users | grep -vx 'root'
+    return 0
 }
 
 # The EFFECTIVE AuthorizedKeysFile paths for a user, with sshd's token
@@ -249,17 +201,53 @@ _ssh_account_can_login() {
     return 0
 }
 
-# Can $user log in by key under the CURRENT effective config? For root this
-# also requires PermitRootLogin to permit key auth: under "no" root's key is
-# useless and must NOT count toward the disable-password safety gate.
+# Can $user log in by key under the CURRENT effective config? Needs
+# PubkeyAuthentication on; for root also a PermitRootLogin that permits keys —
+# under "no" root's key is useless and must NOT count toward the gate.
 _ssh_can_login_with_key() {
     local user="$1"
+    _ssh_pubkey_enabled || return 1
     if [[ "$user" == "root" ]]; then
         local prl
         prl=$(_ssh_get_config "PermitRootLogin" "prohibit-password")
         [[ "${prl,,}" == "no" ]] && return 1
     fi
     _ssh_user_has_key "$user"
+}
+
+# True when $1 has a password hash login and sudo will accept. Empty, `*` and
+# `!`-prefixed (locked) hashes do not; an unreadable shadow counts as none,
+# so the gates fail closed.
+_ssh_password_usable() {
+    local hash
+    hash=$(getent shadow "$1" 2>/dev/null | cut -d: -f2)
+    [[ -n "$hash" && "$hash" != [\!\*]* ]]
+}
+
+# Can admin $1 still log in and become root once the change lands, with
+# password authentication then $2 (yes|no)? Needs a login-capable account, an
+# auth method sshd still offers, and a usable password or NOPASSWD for sudo.
+_ssh_admin_survives() {
+    local user="$1" pw_after="$2" pw_ok=0
+    _ssh_account_can_login "$user" || return 1
+    _ssh_password_usable "$user" && pw_ok=1
+    if ! [[ "$pw_after" == yes && "$pw_ok" == 1 ]]; then
+        _ssh_can_login_with_key "$user" || return 1
+    fi
+    [[ "$pw_ok" == 1 ]] || sudo_nopasswd_admin "$user"
+}
+
+# First admin from _ssh_get_admin_users that survives the change ($1 as in
+# _ssh_admin_survives); fails when none does.
+_ssh_surviving_admin() {
+    local user
+    for user in $(_ssh_get_admin_users); do
+        if _ssh_admin_survives "$user" "$1"; then
+            echo "$user"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Check if SSH access control is configured (AllowUsers/DenyUsers/AllowGroups/DenyGroups)
@@ -762,9 +750,11 @@ _ssh_audit_access_control() {
 }
 
 _ssh_audit_port() {
-    local ssh_port=$(_ssh_get_port)
+    local ports ssh_port
+    ports=$(get_ssh_ports)
+    ssh_port=$(paste -sd, - <<<"$ports")
 
-    if [[ "$ssh_port" == "22" ]]; then
+    if grep -qx '22' <<<"$ports"; then
         # Default port - recommend changing for security through obscurity
         check_emit "ssh.default_port" low failed \
             desc="$(i18n 'ssh.default_port_desc')" \
@@ -826,10 +816,10 @@ ssh_fix() {
 # already-listening port. Prefer 2222, then scan small high-port ranges.
 _ssh_pick_rescue_port() {
     local live_port listening candidate
-    live_port=$(get_ssh_port 2>/dev/null || echo 22)
+    live_port=$(get_ssh_ports 2>/dev/null || echo 22)
     listening=$(get_listening_ports 2>/dev/null || echo "")
     for candidate in 2222 $(seq 2200 2299) $(seq 22000 22099); do
-        [[ "$candidate" == "$live_port" ]] && continue
+        grep -qx "$candidate" <<<"$live_port" && continue
         grep -qx "$candidate" <<<"$listening" && continue
         echo "$candidate"
         return 0
@@ -862,20 +852,21 @@ _ssh_rescue_allow_firewall() {
             # Empty answer or unreadable tty adds NO rule — the mandatory
             # reachability confirmation catches an unreachable rescue.
             if [[ -z "$ip" ]]; then
-                print_warn "$(i18n 'ssh.rescue_fw_no_source')"
-                echo -n "$(i18n 'ssh.rescue_fw_ask_cidr' "port=$SSH_RESCUE_PORT") > "
+                tty_warn "$(i18n 'ssh.rescue_fw_no_source')"
+                tty_say -n "$(i18n 'ssh.rescue_fw_ask_cidr' "port=$SSH_RESCUE_PORT") > "
                 local answer=""
-                read -r answer 2>/dev/null </dev/tty || answer=""
+                read -r -t "$VPSSEC_CONFIRM_TIMEOUT" answer 2>/dev/null </dev/tty || answer=""
                 if [[ "$answer" == "any" ]]; then
                     ip=""  # explicit world-open, handled below
                 elif [[ -n "$answer" ]] && _ssh_valid_cidr "$answer"; then
                     ip="$answer"
                 elif [[ -n "$answer" ]]; then
-                    print_warn "$(i18n 'ssh.rescue_fw_bad_cidr' "value=$answer")"
-                    print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+                    tty_warn "$(i18n 'ssh.rescue_fw_bad_cidr' "value=$answer")"
+                    tty_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
                     return 0
                 else
-                    print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+                    tty_say ""
+                    tty_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
                     return 0
                 fi
                 # world-open only via the explicit "any" answer above
@@ -891,9 +882,9 @@ _ssh_rescue_allow_firewall() {
                 fi
             fi
             if [[ -n "$SSH_RESCUE_FW_RULE" ]]; then
-                print_ok "$(i18n 'ssh.rescue_fw_allowed' "port=$SSH_RESCUE_PORT")"
+                tty_say "${GREEN}${SYM_OK}${NC} $(i18n 'ssh.rescue_fw_allowed' "port=$SSH_RESCUE_PORT")"
             else
-                print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+                tty_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
             fi
             ;;
         none)
@@ -902,11 +893,11 @@ _ssh_rescue_allow_firewall() {
         unknown)
             # The firewall query failed: no rule is added, and the operator is
             # told why the reachability check below is the one that matters.
-            print_warn "$(i18n 'ssh.rescue_fw_unknown' "port=$SSH_RESCUE_PORT")"
+            tty_warn "$(i18n 'ssh.rescue_fw_unknown' "port=$SSH_RESCUE_PORT")"
             ;;
         *)
             # firewalld / nftables / iptables: don't manipulate rules blind.
-            print_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
+            tty_warn "$(i18n 'ssh.rescue_fw_warn' "port=$SSH_RESCUE_PORT")"
             ;;
     esac
 }
@@ -960,7 +951,7 @@ _ssh_open_rescue_port() {
         return 1
     fi
     SSH_RESCUE_PORT="$port"
-    print_info "$(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
+    tty_say "${BLUE}${SYM_INFO}${NC} $(i18n 'ssh.rescue_port_notice' "port=$SSH_RESCUE_PORT")"
 
     SSH_RESCUE_CONFIG=$(mktemp -t vpssec-sshd-rescue.XXXXXX) || {
         print_error "$(i18n 'error.temp_file_failed')"
@@ -998,20 +989,22 @@ EOF
     # Launch in the foreground (-D) and background it, so $! is the master sshd
     # pid (a daemonising sshd double-forks and loses the pid). Output is dropped:
     # the config was validated above and the bind is verified below.
-    /usr/sbin/sshd -D -f "$SSH_RESCUE_CONFIG" >/dev/null 2>&1 &
+    "$SSH_RESCUE_SSHD" -D -f "$SSH_RESCUE_CONFIG" >/dev/null 2>&1 &
     SSH_RESCUE_PID=$!
 
     # Wait (up to ~3s) for OUR daemon to bind the rescue port.
     local _i
     for ((_i=0; _i<30; _i++)); do
         if _ssh_rescue_is_up; then
-            print_ok "$(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
+            tty_say "${GREEN}${SYM_OK}${NC} $(i18n 'ssh.rescue_port_opened' "port=$SSH_RESCUE_PORT")"
             # Armed the moment the daemon is confirmed listening: without it
             # a killed vpssec leaves a root-and-password sshd running forever,
             # since sshd re-execs on HUP rather than exiting.
             trap '_ssh_close_rescue_port' EXIT
             trap '_ssh_close_rescue_port; exit 130' INT TERM HUP
             _ssh_rescue_allow_firewall
+            # After the firewall rule exists, so the watchdog knows to remove it.
+            _ssh_rescue_start_watchdog
             return 0
         fi
         # If our daemon already exited, stop waiting.
@@ -1024,19 +1017,49 @@ EOF
     return 1
 }
 
-# Tear down the rescue daemon: kill ONLY our tracked pid, remove our firewall
-# rule, clean temps. Safe to call multiple times / after a failed open.
-_ssh_close_rescue_port() {
+# Tears the rescue down when vpssec dies without its traps (SIGKILL, OOM) or
+# outstays the confirmation window plus SSH_RESCUE_GRACE. Ignores INT/HUP, left
+# to the parent's trap, and must not hold the run lock (fd 200).
+_ssh_rescue_start_watchdog() {
+    local parent=$$
+    local limit=$(( VPSSEC_CONFIRM_TIMEOUT + SSH_RESCUE_GRACE ))
+    (
+        exec 200>&- </dev/null >/dev/null 2>&1
+        trap '' INT HUP
+        local waited=0
+        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do
+            sleep 1
+            waited=$(( waited + 1 ))
+        done
+        _ssh_rescue_teardown
+    ) &
+    SSH_RESCUE_WATCHDOG_PID=$!
+}
+
+# Kill ONLY our tracked daemon, remove our firewall rule, clean temps. Shared
+# by the parent's close and the watchdog, so either one alone is enough.
+_ssh_rescue_teardown() {
     _ssh_rescue_remove_firewall
 
     if [[ -n "${SSH_RESCUE_PID:-}" ]] && kill -0 "$SSH_RESCUE_PID" 2>/dev/null; then
         kill "$SSH_RESCUE_PID" 2>/dev/null || true
         log_info "Closed rescue sshd on port ${SSH_RESCUE_PORT} (pid: $SSH_RESCUE_PID)"
     fi
-    SSH_RESCUE_PID=""
 
     [[ -n "${SSH_RESCUE_CONFIG:-}" && -f "$SSH_RESCUE_CONFIG" ]] && rm -f "$SSH_RESCUE_CONFIG"
     [[ -n "${SSH_RESCUE_PIDFILE:-}" && -f "$SSH_RESCUE_PIDFILE" ]] && rm -f "$SSH_RESCUE_PIDFILE"
+    return 0
+}
+
+# Tear down the rescue daemon and its watchdog. Safe to call multiple times /
+# after a failed open.
+_ssh_close_rescue_port() {
+    if [[ -n "${SSH_RESCUE_WATCHDOG_PID:-}" ]]; then
+        kill "$SSH_RESCUE_WATCHDOG_PID" 2>/dev/null || true
+        SSH_RESCUE_WATCHDOG_PID=""
+    fi
+    _ssh_rescue_teardown
+    SSH_RESCUE_PID=""
     SSH_RESCUE_CONFIG=""
     SSH_RESCUE_PIDFILE=""
 
@@ -1210,28 +1233,20 @@ _ssh_fix_disable_password_auth() {
         print_info "$(i18n 'ssh.current_connection' "ip=$current_ip")"
     fi
 
-    # Safety gate: at least one account that can ACTUALLY log in by key must
-    # survive. A non-root admin with a key is safest. Root's key counts ONLY
-    # when PermitRootLogin still permits key auth.
-    local admin_users=$(_ssh_get_admin_users)
-    local has_key_user=""
-
-    # A key alone is not a way back in if the account itself cannot log in:
-    # a nologin-shell or expired "admin" satisfied this gate and the change
-    # then locked out everyone with a working shell.
-    for user in $admin_users; do
-        if _ssh_user_has_key "$user" && _ssh_account_can_login "$user"; then
-            has_key_user="$user"
-            break
-        fi
-    done
-
-    if [[ -z "$has_key_user" ]]; then
+    # Safety gate: once passwords are off, someone must still get in by key
+    # AND reach root. A non-root admin is safest; root's own key counts only
+    # while PermitRootLogin permits key auth.
+    local survivor=""
+    if ! survivor=$(_ssh_surviving_admin no); then
         if _ssh_can_login_with_key "root"; then
             # Root's key is the only way back in — legitimate on a fresh
             # image, but fragile. Warn that disabling root login too would
             # remove this last path.
             print_warn "$(i18n 'ssh.only_root_key_warning')"
+            survivor="root"
+        elif ! _ssh_pubkey_enabled; then
+            print_error "$(i18n 'ssh.pubkey_off_no_password_off')"
+            return 1
         else
             print_error "$(i18n 'ssh.no_key_user')"
             print_warn "$(i18n 'ssh.add_key_first')"
@@ -1271,6 +1286,7 @@ $content"
         _ssh_reload_safe PasswordAuthentication no
         local result=$?
         _ssh_close_rescue_port
+        (( result == 0 )) && _ssh_tell_verify_login "$survivor"
         return $result
     else
         _ssh_close_rescue_port
@@ -1278,31 +1294,29 @@ $content"
     fi
 }
 
-_ssh_fix_disable_root_login() {
-    # Safety check - ensure non-root admin exists
-    local admin_users=$(_ssh_get_admin_users)
-    if [[ -z "$admin_users" ]]; then
-        print_error "$(i18n 'ssh.no_admin_for_root')"
-        print_warn "$(i18n 'ssh.create_admin_first')"
-        return 1
-    fi
+# The rescue check above tested the rescue daemon, not the changed main one.
+# Name the account the gate relied on and how to undo from this session.
+_ssh_tell_verify_login() {
+    local ports
+    ports=$(get_ssh_ports | paste -sd, -)
+    tty_warn "$(i18n 'ssh.verify_main_login' "user=$1" "port=$ports")"
+}
 
-    # Joint-lockout guard: with password auth already off, removing root login
-    # leaves only the non-root admins' keys, so one must actually exist. This
-    # makes disable_password + disable_root safe in either apply order.
-    if ! _ssh_password_auth_enabled; then
-        local root_key_admin=""
-        for user in $admin_users; do
-            if _ssh_user_has_key "$user" && _ssh_account_can_login "$user"; then
-                root_key_admin="$user"
-                break
-            fi
-        done
-        if [[ -z "$root_key_admin" ]]; then
+_ssh_fix_disable_root_login() {
+    # Safety gate: with root login gone, an admin must still get in by what
+    # stays enabled and reach root through sudo. Asking with the CURRENT
+    # password setting keeps either order of the two SSH fixes safe.
+    local pw_after="no" survivor=""
+    _ssh_password_auth_enabled && pw_after="yes"
+    if ! survivor=$(_ssh_surviving_admin "$pw_after"); then
+        if [[ "$pw_after" == yes ]]; then
+            print_error "$(i18n 'ssh.no_admin_for_root')"
+            print_warn "$(i18n 'ssh.create_admin_first')"
+        else
             print_error "$(i18n 'ssh.no_admin_key_pw_off')"
             print_warn "$(i18n 'ssh.add_key_first')"
-            return 1
         fi
+        return 1
     fi
 
     # Open the rescue daemon BEFORE confirming, so the operator can actually
@@ -1337,6 +1351,7 @@ $content"
         _ssh_reload_safe PermitRootLogin no
         local result=$?
         _ssh_close_rescue_port
+        (( result == 0 )) && _ssh_tell_verify_login "$survivor"
         return $result
     else
         _ssh_close_rescue_port

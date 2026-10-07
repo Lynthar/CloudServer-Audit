@@ -1,9 +1,9 @@
 # Plant: ufw enabled with SSH allowed and the incoming policy set to allow.
 # Expect: ufw.default_accept → ufw.set_default_deny → ufw.default_deny. RISKY with
 # no prompt of its own, so the engine asks on the terminal (FIX_TTY_ANSWERS).
-# ufw keeps the policy in /etc/default/ufw, which the fix does not back up, so
-# rollback restores nothing (rc 1) and the policy stays deny.
-TEST_DESC="ufw default incoming allow: ufw.set_default_deny converges through the engine's prompt; rollback leaves it"
+# ufw keeps the policy in /etc/default/ufw, changed through ufw and not backed
+# up; the logged undo command (ufw default allow incoming) restores it.
+TEST_DESC="ufw default incoming allow: ufw.set_default_deny converges through the engine's prompt; its logged undo command reverts it"
 EXPECT_ID="ufw.default_accept"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="medium"
@@ -12,9 +12,10 @@ FIX_ID="ufw.set_default_deny"
 FIX_TTY_ANSWERS="yes"
 EXPECT_FIXED_ID="ufw.default_deny"
 EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="ufw.default_deny"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=1
+ROLLBACK_BY="undo"
+EXPECT_ROLLBACK_ID="ufw.default_accept"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
 
 _NFT_WAS_EMPTY=0
 

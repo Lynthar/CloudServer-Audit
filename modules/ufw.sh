@@ -36,23 +36,61 @@ _ufw_get_default_outgoing() {
     LC_ALL=C ufw status verbose 2>/dev/null | grep "Default:" | grep -oP '\w+(?=\s*\(outgoing\))'
 }
 
-# Is the SSH port allowed INBOUND? The pattern must allow an optional
-# " (v6)", accept LIMIT as well as ALLOW, and never match "ALLOW OUT" —
-# reading an outbound rule as inbound coverage is a lockout.
+# ufw's own rule store. Its `### tuple ###` lines hold every added rule
+# whether or not ufw is active, with app profiles already resolved to ports;
+# `ufw status` lists nothing while inactive.
+UFW_USER_RULES="/etc/ufw/user.rules"
+UFW_USER6_RULES="/etc/ufw/user6.rules"
+
+# Is TCP port $1 let in by an inbound ALLOW/LIMIT rule? Never OUT, routed or
+# DENY: outbound read as inbound is a lockout. $2 "any" (default) counts rules
+# confined to an interface or source; "open" only rules from anywhere.
+_ufw_admits_port() {
+    local port="$1" scope="${2:-any}" f
+    local -a files=()
+    for f in "$UFW_USER_RULES" "$UFW_USER6_RULES"; do
+        [[ -r "$f" ]] && files+=("$f")
+    done
+    (( ${#files[@]} > 0 )) || return 1
+    awk -v p="$port" -v scope="$scope" '
+        function wild(a) { return a == "0.0.0.0/0" || a == "::/0" }
+        $1 == "###" && $2 == "tuple" && $3 == "###" {
+            n = NF
+            if ($n ~ /^comment=/) n--
+            if ($4 != "allow" && $4 != "limit") next
+            if ($n !~ /^in(_|$)/) next
+            if ($5 != "tcp" && $5 != "any") next
+            if (scope == "open" && ($n != "in" || !wild($7) || !wild($9))) next
+            if ($6 == "any") { hit = 1; exit }
+            k = split($6, items, ",")
+            for (i = 1; i <= k; i++) {
+                if (split(items[i], r, ":") == 2) {
+                    if (p + 0 >= r[1] + 0 && p + 0 <= r[2] + 0) { hit = 1; exit }
+                } else if (items[i] + 0 == p + 0) { hit = 1; exit }
+            }
+        }
+        END { exit !hit }
+    ' "${files[@]}"
+}
+
+# Pass condition of the SSH rule check, and FIX_VERIFY's: every port sshd
+# listens on is admitted inbound by some rule.
 _ufw_ssh_allowed() {
-    local ssh_port=$(get_ssh_port)
-    LC_ALL=C ufw status 2>/dev/null | grep -qE "^${ssh_port}(/tcp)?([[:space:]]+\(v6\))?[[:space:]]+(ALLOW|LIMIT)([[:space:]]+IN)?[[:space:]]+(Anywhere|[0-9A-Fa-f:.])"
+    local port
+    while read -r port; do
+        _ufw_admits_port "$port" || return 1
+    done < <(get_ssh_ports)
+    return 0
 }
 
-# Get current UFW rules
-_ufw_get_rules() {
-    LC_ALL=C ufw status numbered 2>/dev/null
-}
-
-# Check if a port is allowed
-_ufw_port_allowed() {
-    local port="$1"
-    LC_ALL=C ufw status 2>/dev/null | grep -qE "^${port}(/tcp)?\s+ALLOW"
+# Every SSH port no rule opens to anywhere, one per line: the ports enable and
+# set_default_deny must add before the policy turns to deny. A LIMIT rule
+# already covers its port, so it is kept rather than rewritten into ALLOW.
+_ufw_ssh_ports_unopened() {
+    local port
+    while read -r port; do
+        _ufw_admits_port "$port" open || echo "$port"
+    done < <(get_ssh_ports)
 }
 
 # Pure-data variant of _ufw_get_ipv6_setting for tests. $1 is the text
@@ -303,7 +341,8 @@ _ufw_audit_default_policy() {
 }
 
 _ufw_audit_ssh_rule() {
-    local ssh_port=$(get_ssh_port)
+    local ssh_port
+    ssh_port=$(get_ssh_ports | paste -sd, -)
 
     if _ufw_ssh_allowed; then
         check_emit "ufw.ssh_allowed" low passed \
@@ -401,6 +440,7 @@ _ufw_fix_install() {
     apt_refresh_index
     if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then
         print_ok "$(i18n 'ufw.ufw_installed')"
+        record_undo ufw.install "apt purge ufw"
         return 0
     else
         print_error "$(i18n 'ufw.ufw_install_failed')"
@@ -408,49 +448,58 @@ _ufw_fix_install() {
     fi
 }
 
-_ufw_fix_enable() {
-    local current_ip=$(get_current_ssh_ip)
-
-    # EVERY sshd port, not just the first: enabling with default-deny and a
-    # missing rule locks the operator out. Any failure MUST abort before the
-    # firewall comes up.
-    local _p
-    while read -r _p; do
-        [[ -n "$_p" ]] || continue
-        print_info "$(i18n 'ufw.fix_allow_ssh') (port $_p)"
-        if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
+# Add `ufw allow <port>/tcp` for each port on stdin, appending the matching
+# delete command to the array named $1. Fails on the first rule ufw refuses.
+_ufw_allow_ssh_ports() {
+    local -n _undo=$1
+    local p
+    while read -r p; do
+        [[ -n "$p" ]] || continue
+        if ! ufw allow "$p/tcp" comment "SSH (vpssec)" >/dev/null; then
             print_error "$(i18n 'ufw.ssh_rule_failed')"
             return 1
         fi
-    done < <(get_ssh_ports)
+        print_ok "$(i18n 'ufw.rule_added' "rule=${p}/tcp ALLOW")"
+        _undo+=("ufw delete allow $p/tcp")
+    done
+}
+
+_ufw_fix_enable() {
+    local current_ip=$(get_current_ssh_ip)
+    local -a undo=()
+
+    # Every sshd port without a rule open to anywhere: enabling with
+    # default-deny and a missing rule locks the operator out. Any failure MUST
+    # abort before the firewall comes up.
+    if ! _ufw_allow_ssh_ports undo < <(_ufw_ssh_ports_unopened); then
+        _ufw_run_undo "${undo[@]}"
+        return 1
+    fi
 
     # Second safety net behind the port rules above. Its failure does not
     # abort, but claiming the rule exists when it does not would mislead.
     if [[ -n "$current_ip" ]]; then
-        if ufw allow from "$current_ip" comment "Current session (vpssec rescue)" 2>/dev/null; then
+        if ufw allow from "$current_ip" comment "Current session (vpssec rescue)" >/dev/null 2>&1; then
             print_info "$(i18n 'ufw.current_ip_whitelisted' "ip=$current_ip")"
+            undo+=("ufw delete allow from $current_ip")
         else
             print_warn "$(i18n 'ufw.rescue_rule_failed' "ip=$current_ip")"
             current_ip=""
         fi
     fi
 
-    # Critical confirmation
-    print_msg ""
-    print_warn "$(i18n 'ufw.current_rules')"
-    ufw status 2>/dev/null | head -20
+    # The rules about to be enforced are what the confirmation is about.
+    tty_say ""
+    tty_warn "$(i18n 'ufw.current_rules')"
+    LC_ALL=C ufw show added 2>/dev/null | head -20 | tty_out
 
     if ! confirm_critical "$(i18n 'ufw.confirm_ufw_enable')"; then
-        # Remove temporary rules if cancelled
-        if [[ -n "$current_ip" ]]; then
-            ufw delete allow from "$current_ip" 2>/dev/null
-        fi
+        _ufw_run_undo "${undo[@]}"
         return 1
     fi
 
-    # Enable UFW
     print_info "$(i18n 'ufw.enabling_ufw')"
-    if echo "y" | ufw enable; then
+    if echo "y" | ufw enable >/dev/null; then
         print_ok "$(i18n 'ufw.ufw_enabled')"
 
         # NEVER auto-delete the rescue rule: if the port rule does not cover
@@ -459,7 +508,7 @@ _ufw_fix_enable() {
         if [[ -n "$current_ip" ]]; then
             print_warn "$(i18n 'ufw.rescue_rule_kept' "ip=$current_ip")"
         fi
-
+        record_undo ufw.enable "$(undo_join "ufw disable" "${undo[@]}")"
         return 0
     else
         print_error "$(i18n 'ufw.ufw_enable_failed')"
@@ -467,51 +516,65 @@ _ufw_fix_enable() {
     fi
 }
 
+# Run the undo commands of rules this fix added (a declined or failed fix
+# leaves ufw as it found it).
+_ufw_run_undo() {
+    local cmd
+    for cmd in "$@"; do
+        # Word splitting is intended: each entry is a plain ufw argv.
+        # shellcheck disable=SC2086
+        $cmd >/dev/null 2>&1 || log_warn "ufw cleanup failed: $cmd"
+    done
+}
+
 _ufw_fix_default_deny() {
-    # EVERY sshd port must be allowed before flipping to deny-all, or the
-    # policy cuts the live session. Abort on any failure BEFORE the flip.
-    local _p
-    while read -r _p; do
-        [[ -n "$_p" ]] || continue
-        if ! _ufw_port_allowed "$_p"; then
-            print_info "$(i18n 'ufw.adding_ssh_rule')"
-            if ! ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
-                print_error "$(i18n 'ufw.ssh_rule_failed')"
-                return 1
-            fi
-        fi
-    done < <(get_ssh_ports)
+    local old_in old_out
+    old_in=$(_ufw_get_default_incoming)
+    old_out=$(_ufw_get_default_outgoing)
+    local -a undo=()
+
+    # Every sshd port must be open to anywhere before flipping to deny-all, or
+    # the policy cuts the next login. Abort on any failure BEFORE the flip.
+    if ! _ufw_allow_ssh_ports undo < <(_ufw_ssh_ports_unopened); then
+        _ufw_run_undo "${undo[@]}"
+        return 1
+    fi
 
     # Set default deny incoming
-    if ufw default deny incoming; then
+    if ufw default deny incoming >/dev/null; then
         print_ok "$(i18n 'ufw.default_deny_set')"
 
         # Set default allow outgoing (standard)
-        ufw default allow outgoing 2>/dev/null || true
+        ufw default allow outgoing >/dev/null 2>&1 || true
 
+        local -a revert=()
+        [[ -n "$old_in" ]] && revert+=("ufw default ${old_in,,} incoming")
+        [[ -n "$old_out" && "${old_out,,}" != "allow" ]] && revert+=("ufw default ${old_out,,} outgoing")
+        record_undo ufw.set_default_deny "$(undo_join "${revert[@]}" "${undo[@]}")"
         return 0
     else
         print_error "$(i18n 'ufw.default_deny_failed')"
+        _ufw_run_undo "${undo[@]}"
         return 1
     fi
 }
 
 _ufw_fix_allow_ssh() {
-    # Allow every sshd port, not just the first (a multi-port sshd otherwise
-    # keeps only one port reachable once ufw is enforcing).
-    local _p rc=0 any=0
-    while read -r _p; do
-        [[ -n "$_p" ]] || continue
-        any=1
-        if ufw allow "$_p/tcp" comment "SSH (vpssec)"; then
-            print_ok "$(i18n 'ufw.rule_added' "rule=${_p}/tcp ALLOW")"
-        else
-            print_error "$(i18n 'ufw.ssh_rule_failed')"
-            rc=1
-        fi
+    # Only the ports no rule admits yet: SSH already confined to a VPN
+    # interface or an admin address must not gain a rule open to anywhere.
+    local -a undo=()
+    local p missing=""
+    while read -r p; do
+        _ufw_admits_port "$p" || missing+="$p"$'\n'
     done < <(get_ssh_ports)
-    [[ "$any" == 1 ]] && return $rc
-    return 1
+    [[ -n "$missing" ]] || return 0
+
+    if ! _ufw_allow_ssh_ports undo <<<"$missing"; then
+        _ufw_run_undo "${undo[@]}"
+        return 1
+    fi
+    record_undo ufw.allow_ssh "$(undo_join "${undo[@]}")"
+    return 0
 }
 
 # --- UFW Utility Functions for Other Modules ---

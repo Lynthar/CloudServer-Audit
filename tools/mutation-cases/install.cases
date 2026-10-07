@@ -76,3 +76,14 @@ run_case "generated/not-made-executable" 1 \
 # two and a case for it could never be killed. The test "an empty install dir is
 # refused" still exists — it pins the BEHAVIOUR, which is what matters to an
 # operator.
+
+# ---- a second "keep" uninstall --------------------------------------------
+
+# The earlier kept backups are deleted to make room, as they once were.
+run_case "keep/clash-check-dropped" 1 \
+    '        if [[ -e "$keep_dir/backups/${s##*/}" ]]; then' \
+    '        if false; then'
+
+run_case "keep/sessions-not-merged" 1 \
+    '            mv "$s" "$keep_dir/backups/"' \
+    '            :'
