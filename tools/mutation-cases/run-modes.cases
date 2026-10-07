@@ -25,3 +25,9 @@ run_case "run-modes/no-way-forward" 1 \
 run_case "run-modes/refuse-after-download" 1 \
     '    _refuse_stateful_mode "$mode"' \
     '    :'
+
+# Without the marker vpssec cannot tell it runs from a tree deleted on exit, and
+# the mode menu leads straight into guide.
+run_case "run-modes/marker-not-exported" 1 \
+    '    export VPSSEC_ONESHOT=1' \
+    '    :'

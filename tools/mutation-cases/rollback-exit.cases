@@ -24,6 +24,12 @@ run_case "rollback-exit/fail2ban-not-reloaded" 1 \
     '    for svc in ssh nginx fail2ban; do' \
     '    for svc in ssh nginx; do'
 
+# fail2ban gets a plain reload again, which leaves a jail whose restored banaction
+# differs from the running one with no action at all.
+run_case "rollback-exit/fail2ban-plain-reload" 1 \
+    '        if [[ "$svc" == "fail2ban" ]]; then' \
+    '        if false; then'
+
 # A declined rollback changes code before the next MAJOR release, which
 # docs/compatibility.md rules out. Occurrence 5 is rollback_mode's cancel branch.
 run_case "rollback-exit/declined-code-changed-early" 5 \

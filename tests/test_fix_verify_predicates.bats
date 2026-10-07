@@ -264,6 +264,7 @@ _sysctl_table() {
 @test "fail2ban.configure_ssh_jail: every check that offers it has to pass" {
     source "$(_vpssec_repo_root)/modules/fail2ban.sh"
     _f2b_ssh_jail_enabled() { return 0; }
+    _f2b_ssh_jail_bans() { return 0; }
     _f2b_has_custom_config() { return 0; }
     _f2b_get_maxretry() { echo 3; }
     _f2b_ssh_jail_configured
@@ -274,6 +275,59 @@ _sysctl_table() {
     _f2b_get_maxretry() { echo 3; }
     _f2b_has_custom_config() { return 1; }
     _vpssec_refute _f2b_ssh_jail_configured
+
+    _f2b_has_custom_config() { return 0; }
+    _f2b_ssh_jail_bans() { return 1; }
+    _vpssec_refute _f2b_ssh_jail_configured
+}
+
+# ---- fail2ban: does the SSH jail ban? ------------------------------------------
+# A jail can be up and ban no one: fail2ban still counts the bans. The answers
+# below are fail2ban-client's own output, recorded from 1.0.2 and 1.1.0.
+
+_f2b_jail_actions() {
+    printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/actions"
+    _vpssec_stub_script fail2ban-client <<SH
+[[ "\$*" == "get sshd actions" ]] && cat "$BATS_TEST_TMPDIR/actions"
+exit 0
+SH
+}
+
+@test "fail2ban: a jail left with no action does not ban" {
+    source "$(_vpssec_repo_root)/modules/fail2ban.sh"
+    _f2b_jail_actions "No actions for jail sshd"
+    _vpssec_refute _f2b_ssh_jail_bans
+}
+
+@test "fail2ban: an action whose firewall tool is missing does not ban" {
+    source "$(_vpssec_repo_root)/modules/fail2ban.sh"
+    _vpssec_absent_command iptables
+    _vpssec_stub nft 0
+    _f2b_jail_actions "The jail sshd has the following actions:" "iptables-multiport"
+    _vpssec_refute _f2b_ssh_jail_bans
+
+    _f2b_jail_actions "The jail sshd has the following actions:" \
+        "nftables-multiport, iptables-allports"
+    _vpssec_refute _f2b_ssh_jail_bans
+}
+
+@test "fail2ban: an action whose tool is present bans, and so does one vpssec cannot judge" {
+    source "$(_vpssec_repo_root)/modules/fail2ban.sh"
+    _vpssec_stub nft 0
+    _f2b_jail_actions "The jail sshd has the following actions:" "nftables-multiport"
+    _f2b_ssh_jail_bans
+
+    # A ban that is not a local firewall rule (a CDN, a mail) is the operator's.
+    _f2b_jail_actions "The jail sshd has the following actions:" "cloudflare"
+    _f2b_ssh_jail_bans
+}
+
+@test "fail2ban.enable_ssh_jail: a loaded jail that bans no one is not enabled" {
+    source "$(_vpssec_repo_root)/modules/fail2ban.sh"
+    _f2b_ssh_jail_enabled() { return 0; }
+    _f2b_ssh_jail_bans() { return 1; }
+    _vpssec_refute _f2b_ssh_jail_working
+    [ "${FIX_VERIFY[fail2ban.enable_ssh_jail]}" = "_f2b_ssh_jail_working" ]
 }
 
 # ---- ssh.harden_algorithms ---------------------------------------------------

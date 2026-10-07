@@ -289,16 +289,19 @@ SH
     done
 }
 
-@test "rollback reload: a running fail2ban is reloaded, since fixes write its jail drop-in" {
+@test "rollback reload: a running fail2ban restarts its jails, since fixes write its jail drop-in" {
     # Without it the drop-in is gone from disk while fail2ban keeps enforcing
-    # it, and the audit reads its runtime jails until the next restart.
+    # it. A plain reload is not enough: restoring the distro's banaction renames
+    # it, and fail2ban then keeps the jail with no action until it restarts.
     source "$(_vpssec_repo_root)/core/engine.sh"
     i18n_load en_US
     _vpssec_stub systemctl 0
+    _vpssec_stub fail2ban-client 0
 
     run _rollback_reload_services
     [ "$status" -eq 0 ]
-    _vpssec_stub_called systemctl 'reload fail2ban'
+    _vpssec_stub_called fail2ban-client 'reload --restart$'
+    _vpssec_refute _vpssec_stub_called systemctl 'reload fail2ban'
 }
 
 @test "a declined rollback exits 0 and restores nothing (deprecated: 1 at the next major)" {

@@ -29,7 +29,7 @@ are not part of the contract.
 | `rollback` | 0 | the requested restore completed (also: cancelled at the prompt) |
 | `rollback` | 2 | the restore ran but skipped some entries (counted in the output, named in `logs/vpssec.log`); services were still reloaded |
 | any | 1 | error — not root, bad arguments, a failed fix, nothing restored, … |
-| `run.sh <cmd>` | 2 | `guide`/`rollback` refused under the run-once entry point |
+| `run.sh` | 2 | `guide`/`rollback` refused under the run-once entry point, whether named on its command line, picked in the mode menu, or set through `VPSSEC_MODE` |
 
 Never "fix" a red CI by mapping 3 or 4 back to 0: they exist so that an
 incomplete scan or an unsupported capability cannot read as success.

@@ -186,10 +186,6 @@ ufw_audit() {
                 title="$(i18n 'ufw.firewall_active' "type=nftables")" \
                 desc="$(i18n 'ufw.other_firewall_note')"
             print_ok "$(i18n 'ufw.firewall_active' "type=nftables")"
-            # Lynis FIRE-4540 cross-check: "firewall active" via kernel
-            # module is necessary but not sufficient — an empty ruleset
-            # is functionally equivalent to no firewall. Surface that.
-            _ufw_audit_ruleset_empty "nftables"
             return
             ;;
         iptables)
@@ -197,8 +193,6 @@ ufw_audit() {
                 title="$(i18n 'ufw.firewall_active' "type=iptables")" \
                 desc="$(i18n 'ufw.other_firewall_note')"
             print_ok "$(i18n 'ufw.firewall_active' "type=iptables")"
-            # Lynis FIRE-4512 cross-check (same rationale as nftables above).
-            _ufw_audit_ruleset_empty "iptables"
             return
             ;;
         none)
@@ -276,73 +270,6 @@ ufw_audit() {
     fi
 }
 
-# A ruleset that cannot be listed is not an empty one: say so instead of
-# reporting a missing firewall (or, for nft, saying nothing at all).
-_ufw_ruleset_unreadable() {
-    local backend="$1"
-    check_emit "ufw.ruleset_unreadable" low failed \
-        title="$(i18n 'ufw.ruleset_unreadable' "backend=$backend")" \
-        desc="$(i18n 'ufw.ruleset_unreadable_desc' "backend=$backend")"
-    print_severity "low" "$(i18n 'ufw.ruleset_unreadable' "backend=$backend")"
-}
-
-# Does the backend enforce HOST INGRESS filtering? Signal is the INPUT HOOK
-# only: a count across all chains calls any container host firewalled.
-# A parse failure returns WITHOUT flagging; a listing that fails is unreadable.
-_ufw_audit_ruleset_empty() {
-    local backend="$1"
-    local ingress_rules=0
-    local default_drop=0
-
-    case "$backend" in
-        nftables)
-            command -v nft >/dev/null 2>&1 || return 0
-            local nft_out
-            nft_out=$(nft --stateless list ruleset 2>/dev/null) \
-                || { _ufw_ruleset_unreadable "$backend"; return 0; }
-            [[ -z "$nft_out" ]] && return 0
-            # Count rules only inside chains hooked to `input`. The close
-            # test needs a LONE `}` so an inline anonymous set does not end
-            # the chain. [ \t] rather than [[:space:]] keeps this mawk-safe.
-            read -r ingress_rules default_drop <<<"$(awk '
-                /^[ \t]*chain[ \t]/ { inchain=1; isinput=0; next }
-                inchain && /^[ \t]*[}][ \t]*$/ { inchain=0; isinput=0; next }
-                inchain && /hook[ \t]+input/ {
-                    isinput=1
-                    if ($0 ~ /policy[ \t]+(drop|reject)/) pol=1
-                    next
-                }
-                inchain && isinput && $0 !~ /^[ \t]*$/ { r++ }
-                END { print r+0, pol+0 }
-            ' <<<"$nft_out")"
-            ;;
-        iptables)
-            command -v iptables >/dev/null 2>&1 || return 0
-            local ipt_input pol
-            ipt_input=$(iptables -S INPUT 2>/dev/null) \
-                || { _ufw_ruleset_unreadable "$backend"; return 0; }
-            pol=$(awk '/^-P INPUT /{print $3; exit}' <<<"$ipt_input")
-            [[ "$pol" == "DROP" || "$pol" == "REJECT" ]] && default_drop=1
-            # Count INPUT-chain rules only (host ingress); a jump to a
-            # custom chain counts as a rule, so split firewalls still pass.
-            ingress_rules=$(grep -cEv '^(-P|-N|$)' <<<"$ipt_input" || true)
-            ;;
-        *)
-            return 0
-            ;;
-    esac
-
-    # Protected if the input hook drops by default or carries any rule.
-    if (( default_drop == 1 )) || (( ingress_rules > 0 )); then
-        return 0
-    fi
-
-    check_emit "ufw.firewall_empty" medium failed \
-        title="$(i18n 'ufw.firewall_empty' "type=$backend")" \
-        desc="$(i18n 'ufw.firewall_empty_desc' "backend=$backend")" \
-        suggestion="$(i18n 'ufw.fix_firewall_empty')"
-    print_severity "medium" "$(i18n 'ufw.firewall_empty' "type=$backend")"
-}
 
 _ufw_audit_enabled() {
     if _ufw_enabled; then

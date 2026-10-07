@@ -35,7 +35,8 @@ setup() {
     [[ "$output" == *"sudo vpssec guide"* ]]
 }
 
-@test "audit and status are untouched" {
+@test "audit, status and no mode word pass the pre-download check" {
+    # No mode word is decided downstream, by vpssec itself — see the tests below.
     for m in audit status ""; do
         run _refuse_stateful_mode "$m"
         [ "$status" -eq 0 ]
@@ -54,4 +55,49 @@ setup() {
 
     [ -n "$refuse_line" ] && [ -n "$download_line" ]
     [ "$refuse_line" -lt "$download_line" ]
+}
+
+# ---- refusing on the mode vpssec settles on, not the words run.sh saw ----
+# A bare `curl … | sudo bash` reaches guide through the mode menu, and an
+# environment can set VPSSEC_MODE; neither puts a mode word on run.sh's line.
+
+@test "with no mode word the runner still marks the run one-shot for vpssec" {
+    local src work
+    src="$(_vpssec_repo_root)/run.sh"
+    work="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$work"
+    eval "$(awk '/^main\(\)/,/^}/' "$src")"
+    print_banner() { :; }; print_info() { :; }; cleanup() { :; }
+    check_requirements() { :; }; resolve_version() { :; }; download_and_verify() { :; }
+    printf '#!/bin/sh\necho "marker=${VPSSEC_ONESHOT:-} args=$*"\n' > "$work/vpssec"
+    chmod +x "$work/vpssec"
+
+    cd "$work"
+    run main
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"marker=1 args="* ]]
+}
+
+@test "vpssec refuses guide and rollback under the marker, however the mode was set" {
+    [ "$(id -u)" = "0" ] || skip "the root check runs first and exits 1 for non-root"
+    local m
+    for m in guide rollback; do
+        # --fix with an id nothing offers: were the gate missing, guide would audit and exit 1.
+        run env VPSSEC_ONESHOT=1 VPSSEC_MODE="$m" VPSSEC_MODE_SET=1 \
+            "$(_vpssec_repo_root)/vpssec" --lang=en_US --include=ssh --fix=oneshot.none --yes
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"not available through the one-line runner"* ]]
+        [[ "$output" == *"sudo vpssec $m"* ]]
+    done
+}
+
+@test "the mode menu is not offered under the marker, even with a terminal" {
+    _tty_readable() { return 0; }
+    _noninteractive() { return 1; }
+    unset VPSSEC_MODE VPSSEC_MODE_SET
+    export VPSSEC_ONESHOT=1
+
+    select_mode > "$BATS_TEST_TMPDIR/menu" </dev/null
+    [ "$VPSSEC_MODE" = "audit" ]
+    ! grep -q 'Hardening Guide' "$BATS_TEST_TMPDIR/menu"
 }

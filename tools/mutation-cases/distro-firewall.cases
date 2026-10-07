@@ -20,41 +20,42 @@ run_case "firewall/failure-still-reads-none" 1 \
     '    (( failed == 0 )) || return 1' \
     '    :'
 
-# With ufw installed but off, tables that filter nothing on input read as an
-# nftables firewall again, and ufw.disabled goes unreported.
-run_case "firewall/ufw-off-ignored" 1 \
-    '            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then' \
-    '            if [[ -n "$out" ]]; then'
+# A drop policy on the input hook no longer counts as filtering (nft, iptables).
+run_case "firewall/nft-drop-policy-ignored" 1 \
+    '            if (input && $0 ~ /policy[ \t]+(drop|reject)/) f = 1' \
+    '            if (0) f = 1'
 
-run_case "firewall/ufw-off-never-set" 1 \
-    '            ufw_off=1' \
-    '            :'
+run_case "firewall/iptables-drop-policy-ignored" 1 \
+    '        /^-P INPUT (DROP|REJECT)/ { f = 1; next }' \
+    '        /^-P INPUT (DROP|REJECT)/ { next }'
 
-# A ufw whose status query failed is treated as off, and an unknown state
-# decides the backend.
-run_case "firewall/ufw-state-unknown-trusted" 1 \
-    '            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then' \
-    '            if [[ -n "$out" ]] && { false || _fw_nft_input_filters; }; then'
+# fail2ban's table, or the chains of fail2ban, ufw and tailscale, read as a
+# firewall again: ufw.disabled and ufw.no_firewall go unreported.
+run_case "firewall/f2b-table-filters" 1 \
+    '            input = !f2b' \
+    '            input = 1'
 
-# A drop policy on the input hook no longer counts as filtering.
-run_case "firewall/drop-policy-ignored" 1 \
-    '        /hook[ \t]+input/ { input = 1; if ($0 ~ /policy[ \t]+(drop|reject)/) f = 1; next }' \
-    '        /hook[ \t]+input/ { input = 1; next }'
+run_case "firewall/nft-component-jumps-filter" 1 \
+    '        /(jump|goto)[ \t]+(f2b-|ufw6?-|ts-)/ { next }' \
+    '        /(jump|goto)[ \t]+(nomatch-)/ { next }'
 
-# Jumps into ufw's emptied chains count as filtering again.
-run_case "firewall/ufw-jumps-filter" 1 \
-    '        input && /jump[ \t]+ufw6?-/ { next }' \
-    '        input && /jump[ \t]+nomatch-/ { next }'
+run_case "firewall/iptables-component-jumps-filter" 1 \
+    '            if (t == "" || t ~ /^(f2b-|ufw6?-|ts-)/) next' \
+    '            if (t == "") next'
 
-# A real input rule no longer counts as filtering.
-run_case "firewall/real-rule-ignored" 1 \
-    '        input && !/^[ \t]*$/ { f = 1 }' \
-    '        input && 0 { f = 1 }'
+# Any rule counts again, so accept-only rules under an accept policy pass.
+run_case "firewall/nft-accept-filters" 1 \
+    '        tolower($0) ~ /(^|[^a-z_-])(drop|reject|queue|jump|goto)([^a-z_-]|$)/ { f = 1 }' \
+    '        !/^[ \t]*$/ { f = 1 }'
 
-# A ruleset that cannot be listed reads as unfiltered, turning an error into none.
-run_case "firewall/listing-failure-unfiltered" 1 \
-    '    ruleset=$(nft list ruleset 2>/dev/null) || return 0' \
-    '    ruleset=$(nft list ruleset 2>/dev/null) || return 1'
+run_case "firewall/iptables-accept-filters" 1 \
+    '            if (t !~ /^(ACCEPT|RETURN|LOG|NFLOG|ULOG|MARK|CONNMARK|CT|TRACE|AUDIT|SET|CLASSIFY|TCPMSS)$/) f = 1' \
+    '            f = 1'
+
+# A real drop rule no longer counts as filtering.
+run_case "firewall/nft-drop-rule-ignored" 1 \
+    '        tolower($0) ~ /(^|[^a-z_-])(drop|reject|queue|jump|goto)([^a-z_-]|$)/ { f = 1 }' \
+    '        0 { f = 1 }'
 
 # firewalld installed but unqueryable is read as not running: an error answers
 # the question. (The `failed=1` indexes above count only the 12-space probes.)

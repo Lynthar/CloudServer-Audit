@@ -57,6 +57,7 @@ run_case "jail-d/every-name-is-exempted" 1 \
 # The default answer.
 # ---------------------------------------------------------------------------
 
-run_case "default/answers-custom-when-nothing-found" 1 \
+# Occurrence 2: #1 ends _f2b_detect_banaction, earlier in the file.
+run_case "default/answers-custom-when-nothing-found" 2 \
     '    return 1' \
     '    return 0'

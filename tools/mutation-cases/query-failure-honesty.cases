@@ -16,3 +16,16 @@ run_case "update/error-branch-removed" 1 \
 run_case "update/unknown-state-folded-into-disabled" 1 \
     "    if [[ \"\$status\" == \"unknown\" ]]; then" \
     "    if false; then"
+
+# Zero read from an index that cannot know passes as "up to date" again.
+run_case "update/unknown-index-age-trusted" 1 \
+    '        if [[ -z "$age" ]]; then' \
+    '        if false; then'
+
+run_case "update/stale-index-trusted" 1 \
+    '        elif (( age > UPDATE_INDEX_STALE_DAYS )); then' \
+    '        elif false; then'
+
+run_case "update/stale-limit-off-by-one" 1 \
+    '        elif (( age > UPDATE_INDEX_STALE_DAYS )); then' \
+    '        elif (( age >= UPDATE_INDEX_STALE_DAYS )); then'

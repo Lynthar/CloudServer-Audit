@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_run_modes.bats against the vpssec entry script.
+# mutate-suite: vpssec tests/test_run_modes.bats
+#
+# vpssec's own refusal under run.sh's marker. It sees the settled mode, which a
+# menu choice or VPSSEC_MODE can set without run.sh ever seeing a mode word.
+
+run_case "oneshot/gate-removed" 1 \
+    '    if [[ -n "${VPSSEC_ONESHOT:-}" ]] \' \
+    '    if false \'
+
+run_case "oneshot/rollback-let-through" 1 \
+    '       && [[ "${VPSSEC_MODE:-}" == "guide" || "${VPSSEC_MODE:-}" == "rollback" ]]; then' \
+    '       && [[ "${VPSSEC_MODE:-}" == "guide" ]]; then'

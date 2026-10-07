@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_fix_fail2ban.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_fix_fail2ban.bats
+#
+# A plain reload across a banaction rename leaves the jail with no action at all.
+
+run_case "f2b-reload/plain-reload" 1 \
+    '    fail2ban-client reload --restart >/dev/null 2>&1' \
+    '    fail2ban-client reload >/dev/null 2>&1'

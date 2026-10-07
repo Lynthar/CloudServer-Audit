@@ -11,5 +11,28 @@ run_case "maxretry/bound-loosened" 1 \
 
 # configure_ssh_jail also answers default_config: vpssec's own drop-in counts.
 run_case "configured/custom-config-not-required" 1 \
-    '    _f2b_ssh_jail_enabled && _f2b_maxretry_ok && _f2b_has_custom_config' \
-    '    _f2b_ssh_jail_enabled && _f2b_maxretry_ok'
+    '    _f2b_ssh_jail_working && _f2b_maxretry_ok && _f2b_has_custom_config' \
+    '    _f2b_ssh_jail_working && _f2b_maxretry_ok'
+
+# A jail that bans no one passes both fixes' predicates again.
+run_case "working/bans-not-required" 1 \
+    '    _f2b_ssh_jail_enabled && _f2b_ssh_jail_bans' \
+    '    _f2b_ssh_jail_enabled'
+
+run_case "bans/no-action-bans" 1 \
+    '    [[ -n "$actions" ]] || return 1' \
+    '    :'
+
+run_case "bans/missing-tool-ignored" 1 \
+    '        check_command "$tool" || return 1' \
+    '        :'
+
+run_case "bans/iptables-family-unchecked" 1 \
+    '            iptables*|ip6tables*) tool=iptables ;;' \
+    '            iptables*|ip6tables*) continue ;;'
+
+# The action list is on the line after the header; reading the header line as
+# an action makes "No actions for jail sshd" read as one.
+run_case "bans/header-read-as-action" 1 \
+    "    actions=\$(awk '/has the following actions/ { on = 1; next } on' <<<\"\$out\" \\" \
+    "    actions=\$(awk '1' <<<\"\$out\" \\"

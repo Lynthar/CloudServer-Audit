@@ -78,12 +78,15 @@ run_case "restore/not-called-after-bad-config" 1 \
 # The postcondition. errexit is off inside a fix, so this is the only thing
 # standing between a failed reload and a reported success.
 
-# Occurrence 2, not 1: the same line at the same indentation opens
-# _f2b_audit_ssh_jail, which this suite never runs, so #1 reads as a coverage
-# gap in a postcondition that is in fact covered.
-run_case "postcondition/always-succeeds" 2 \
-    '    if _f2b_ssh_jail_enabled; then' \
+run_case "postcondition/always-succeeds" 1 \
+    '    if _f2b_ssh_jail_working; then' \
     '    if true; then'
+
+# The postcondition asks only whether the jail loaded: a jail without a working
+# action passes again.
+run_case "postcondition/loaded-is-enough" 1 \
+    '    if _f2b_ssh_jail_working; then' \
+    '    if _f2b_ssh_jail_enabled; then'
 
 run_case "enable_ssh_jail/does-nothing" 1 \
     '    _f2b_fix_configure_ssh_jail' \
@@ -126,6 +129,21 @@ run_case "ignoreip/loopback-dropped" 1 \
 run_case "ignoreip/operator-address-dropped" 1 \
     '    [[ -n "$f2b_current_ip" ]] && f2b_ignoreip+=" $f2b_current_ip"' \
     '    :'
+
+# ---------------------------------------------------------------------------
+# The ban action. A choice by "nft has tables" sent nft-only hosts to iptables.
+
+run_case "banaction/nft-needs-a-table" 1 \
+    '    if check_command nft && nft list tables >/dev/null 2>&1; then' \
+    '    if check_command nft && [[ -n "$(nft list tables 2>/dev/null)" ]]; then'
+
+run_case "banaction/iptables-assumed" 1 \
+    '    if check_command iptables; then' \
+    '    if true; then'
+
+run_case "banaction/no-tool-not-a-failure" 1 \
+    '    if ! f2b_banaction=$(_f2b_detect_banaction); then' \
+    '    if ! f2b_banaction=$(_f2b_detect_banaction || echo iptables-multiport); then'
 
 run_case "banaction/hardcoded-iptables" 1 \
     'banaction = $f2b_banaction' \

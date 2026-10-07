@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_run_modes.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_run_modes.bats
+#
+# Under run.sh's marker the mode menu would offer only a choice vpssec refuses.
+
+run_case "oneshot/menu-offers-guide" 1 \
+    '    if _noninteractive || ! _tty_readable || [[ -n "${VPSSEC_ONESHOT:-}" ]]; then' \
+    '    if _noninteractive || ! _tty_readable; then'

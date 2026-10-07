@@ -16,8 +16,23 @@ KERNEL_COREDUMP_CONF="/etc/systemd/coredump.conf"
 KERNEL_COREDUMP_D="/etc/systemd/coredump.conf.d"
 KERNEL_COREDUMP_DROPIN="${KERNEL_COREDUMP_D}/99-vpssec.conf"
 
+# The perf_event_paranoid level that blocks all unprivileged perf_event_open()
+# is a distro kernel patch: Ubuntu's needs >= 4, Debian's > 2. Mainline (RHEL,
+# Arch) has no such level, so 2 is its strictest and higher values equal 2.
+_kernel_perf_paranoid_min() {
+    if [[ "${VPSSEC_DISTRO_ID:-}" == "ubuntu" ]]; then
+        echo 4
+    elif [[ "${VPSSEC_DISTRO_FAMILY:-}" == "debian" ]]; then
+        echo 3
+    else
+        echo 2
+    fi
+}
+
 # Recommended sysctl settings with descriptions
 # Format: parameter:recommended_value:severity:description
+# recommended_value is one value, a |-set, or >=N for a param where a higher
+# value is stricter; the fix writes the first token, so it never lowers one.
 declare -ga KERNEL_SECURITY_PARAMS=(
     # Network security - IPv4
     "net.ipv4.ip_forward:0:medium:IP forwarding (should be disabled unless routing)"
@@ -36,7 +51,7 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv4.icmp_echo_ignore_broadcasts:1:low:Ignore ICMP broadcast"
     "net.ipv4.icmp_ignore_bogus_error_responses:1:low:Ignore bogus ICMP errors"
     "net.ipv4.tcp_syncookies:1:high:SYN flood protection"
-    "net.ipv4.tcp_timestamps:1:low:TCP timestamps"
+    "net.ipv4.tcp_timestamps:1|0:low:TCP timestamps (on or off; 2 drops the random offset and exposes uptime)"
     # Niche-but-default-off IPv4 features (Lynis KRNL-6000 cross-check)
     "net.ipv4.conf.all.bootp_relay:0:low:BOOTP relay (default off; enable = relay agent role)"
     "net.ipv4.conf.all.mc_forwarding:0:low:Multicast forwarding (default off; enable = mrouted role)"
@@ -66,7 +81,7 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     # too double-counts ASLR-off in the score.
     "kernel.dmesg_restrict:1:medium:Restrict dmesg access"
     "kernel.kptr_restrict:2:medium:Restrict kernel pointer exposure"
-    "kernel.yama.ptrace_scope:1:medium:Restrict ptrace"
+    "kernel.yama.ptrace_scope:>=1:medium:Restrict ptrace"
     "fs.suid_dumpable:0:medium:Disable SUID core dumps"
     "fs.protected_hardlinks:1:medium:Hardlink protection"
     "fs.protected_symlinks:1:medium:Symlink protection"
@@ -76,12 +91,12 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     # containers, snap and browser sandboxes, and Debian ships =1 by default.
     # A real mitigation, but not one worth driving users into that loop.
     "kernel.unprivileged_userns_clone:0:medium:Disable unprivileged user namespaces (defence-in-depth; breaks Docker rootless / podman / snap / Chrome sandbox if enabled)"
-    # Worth doing on hardened hosts but not a default-broken
-    # kernel — keep at medium.
-    "kernel.unprivileged_bpf_disabled:1:medium:Disable unprivileged BPF (exploit prevention)"
+    # 2 (the Debian/Ubuntu default) and 1 both deny unprivileged BPF; the fix
+    # writes 2 because 1 locks the value until reboot, beyond any rollback.
+    "kernel.unprivileged_bpf_disabled:2|1:medium:Disable unprivileged BPF (exploit prevention)"
     "net.core.bpf_jit_harden:2:medium:BPF JIT hardening"
     "kernel.sysrq:0|176:medium:Disable Magic SysRq key (0, or 176 for the safe subset)"
-    "kernel.perf_event_paranoid:3:medium:Restrict perf events"
+    "kernel.perf_event_paranoid:>=$(_kernel_perf_paranoid_min):medium:Restrict perf events"
     "fs.protected_fifos:2:low:FIFO protection"
     "fs.protected_regular:2:low:Regular file protection"
     # Console/console-equivalent attack surface (Lynis KRNL-6000 cross-check)
@@ -175,16 +190,25 @@ _kernel_check_param() {
     fi
 
     # `expected` may be a |-separated set of acceptable values, e.g. sysrq
-    # "0|176" where both the disabled and the safe-subset value are fine.
-    # A single value splits into one token, so other params are unaffected.
+    # "0|176", and a token may be >=N. A non-integer never meets >=N.
     local exp
     local IFS='|'
     for exp in $expected; do
-        [[ "$actual" == "$exp" ]] && return 0  # Correct
+        if [[ "$exp" == ">="* ]]; then
+            [[ "$actual" =~ ^-?[0-9]+$ ]] && (( actual >= ${exp#>=} )) && return 0
+        elif [[ "$actual" == "$exp" ]]; then
+            return 0
+        fi
     done
 
     echo "$actual"
     return 1  # Incorrect
+}
+
+# The value a fix writes for an expected spec: its first token, >= stripped.
+_kernel_param_target() {
+    local first="${1%%|*}"
+    echo "${first#>=}"
 }
 
 # Check ASLR status
@@ -1006,7 +1030,7 @@ _kernel_fix_network_params() {
         params_to_set=()
         while read -r kind _ param expected _; do
             case "$kind" in
-                bad) params_to_set+=("$param=${expected%%|*}") ;;
+                bad) params_to_set+=("$param=$(_kernel_param_target "$expected")") ;;
                 ra)  ra_skipped=true ;;
             esac
         done <<<"$(_kernel_param_scan "$KERNEL_NET_SCOPE")"
@@ -1049,7 +1073,7 @@ _kernel_fix_kernel_params() {
 
     local params_to_set=() kind param expected
     while read -r kind _ param expected _; do
-        [[ "$kind" == "bad" ]] && params_to_set+=("$param=${expected%%|*}")
+        [[ "$kind" == "bad" ]] && params_to_set+=("$param=$(_kernel_param_target "$expected")")
     done <<<"$(_kernel_param_scan "$KERNEL_SYS_SCOPE")"
 
     if [[ ${#params_to_set[@]} -eq 0 ]]; then

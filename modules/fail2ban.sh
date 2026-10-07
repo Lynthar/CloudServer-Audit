@@ -98,26 +98,25 @@ _f2b_detect_backend() {
     echo "auto"
 }
 
-# The banaction must match the host's ACTIVE firewall. A hardcoded
-# iptables-multiport silently no-ops on nftables: the jail loads and reports
-# active while every ban fails against a filter that is not in use.
+# The ban action this host can execute, chosen by the tools present: ufw while
+# it manages the firewall (bans then show in `ufw status`); else nftables, whose
+# actions keep their own table and so work beside any ruleset; else iptables.
 _f2b_detect_banaction() {
-    # Prefer ufw when it manages the firewall. LC_ALL=C is load-bearing: a
-    # translated "Status: active" makes this pick nftables and write bans
-    # into a table that bypasses the live ufw rules.
-    if command -v ufw &>/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
+    if [[ "$(fw_backend 2>/dev/null)" == "ufw" ]]; then
         echo "ufw"
-        return
+        return 0
     fi
-
-    # Native nftables (no UFW wrapper) has its own multiport action.
-    if command -v nft &>/dev/null && [[ -n "$(nft list tables 2>/dev/null)" ]]; then
+    # An empty ruleset is the common case (nftables.service is off by default),
+    # and still a working nft: only a failing one is not.
+    if check_command nft && nft list tables >/dev/null 2>&1; then
         echo "nftables-multiport"
-        return
+        return 0
     fi
-
-    # Fall back to the legacy iptables action.
-    echo "iptables-multiport"
+    if check_command iptables; then
+        echo "iptables-multiport"
+        return 0
+    fi
+    return 1
 }
 
 # Check if SSH jail is enabled
@@ -131,6 +130,35 @@ _f2b_ssh_jail_enabled() {
     fail2ban-client status ssh &>/dev/null
 }
 
+# The SSH jail can ban: it has an action, and each firewall action finds its
+# tool. Both failures are silent in fail2ban — a jail reloaded across a banaction
+# rename has no action, and iptables rules on an nft-only host fail every ban.
+_f2b_ssh_jail_bans() {
+    local out="" jail a tool
+    for jail in sshd ssh; do
+        out=$(fail2ban-client get "$jail" actions 2>/dev/null) && break
+    done
+    local actions
+    actions=$(awk '/has the following actions/ { on = 1; next } on' <<<"$out" \
+        | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+    [[ -n "$actions" ]] || return 1
+    while read -r a; do
+        case "$a" in
+            iptables*|ip6tables*) tool=iptables ;;
+            nftables*)            tool=nft ;;
+            ufw*)                 tool=ufw ;;
+            firewallcmd*)         tool=firewall-cmd ;;
+            *)                    continue ;;
+        esac
+        check_command "$tool" || return 1
+    done <<<"$actions"
+}
+
+# The SSH jail is loaded and bans: what enable_ssh_jail must leave behind.
+_f2b_ssh_jail_working() {
+    _f2b_ssh_jail_enabled && _f2b_ssh_jail_bans
+}
+
 # Pass condition of fail2ban.maxretry_high: at most 5. $1 is the value already
 # read; omitted, fail2ban is asked. A non-numeric value is not judged.
 _f2b_maxretry_ok() {
@@ -138,10 +166,10 @@ _f2b_maxretry_ok() {
     ! { [[ "$v" =~ ^[0-9]+$ ]] && (( v > 5 )); }
 }
 
-# Every check that offers configure_ssh_jail passes: the SSH jail is up with
-# maxretry at most 5, from configuration someone wrote (default_config).
+# Every check that offers configure_ssh_jail passes: the SSH jail is up and bans,
+# with maxretry at most 5, from configuration someone wrote (default_config).
 _f2b_ssh_jail_configured() {
-    _f2b_ssh_jail_enabled && _f2b_maxretry_ok && _f2b_has_custom_config
+    _f2b_ssh_jail_working && _f2b_maxretry_ok && _f2b_has_custom_config
 }
 
 # Currently-active jails, whitespace-separated. Empty means the service is up
@@ -367,9 +395,19 @@ _f2b_audit_ssh_jail() {
         local maxretry=$(_f2b_get_maxretry)
         local bantime=$(_f2b_get_bantime)
 
-        check_emit "fail2ban.ssh_jail_enabled" low passed \
-            desc="$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")"
-        print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
+        # Loaded is not protecting: a jail that cannot ban still counts its
+        # "Currently banned", with no firewall rule behind any of them.
+        if _f2b_ssh_jail_bans; then
+            check_emit "fail2ban.ssh_jail_enabled" low passed \
+                desc="$(i18n 'fail2ban.ssh_jail_enabled_desc' "current=$current_banned" "total=$total_banned" "maxretry=$maxretry" "bantime=$bantime")"
+            print_ok "$(i18n 'fail2ban.ssh_jail_enabled') (banned: $current_banned, total: $total_banned)"
+        else
+            check_emit "fail2ban.ssh_jail_not_banning" low failed \
+                desc="$(i18n 'fail2ban.ssh_jail_not_banning_desc')" \
+                suggestion="$(i18n 'fail2ban.ssh_jail_not_banning_suggestion')" \
+                fix="fail2ban.configure_ssh_jail"
+            print_severity "low" "$(i18n 'fail2ban.ssh_jail_not_banning')"
+        fi
 
         if ! _f2b_maxretry_ok "$maxretry"; then
             check_emit "fail2ban.maxretry_high" low failed \
@@ -508,7 +546,11 @@ _f2b_fix_configure_ssh_jail() {
     local ssh_port=$(get_ssh_port)
     local ssh_logpath=$(_f2b_detect_ssh_logpath)
     local f2b_backend=$(_f2b_detect_backend)
-    local f2b_banaction=$(_f2b_detect_banaction)
+    local f2b_banaction
+    if ! f2b_banaction=$(_f2b_detect_banaction); then
+        print_error "$(i18n 'fail2ban.no_banaction')"
+        return 1
+    fi
     # The "-allports" variant for banaction_allports uses the same base
     # name except for `ufw` which has a single action handling both.
     local f2b_banaction_allports
@@ -611,18 +653,17 @@ EOF
         return 1
     fi
 
-    # Reload fail2ban
     if _f2b_service_active; then
-        fail2ban-client reload 2>/dev/null
+        fail2ban_reload_jails
     else
         systemctl start fail2ban 2>/dev/null
     fi
 
-    # Verify SSH jail is now enabled
+    # Verify the SSH jail is up and can ban
     if [[ "$F2B_RELOAD_SETTLE" -gt 0 ]]; then
         sleep "$F2B_RELOAD_SETTLE"   # give fail2ban time to load the jail
     fi
-    if _f2b_ssh_jail_enabled; then
+    if _f2b_ssh_jail_working; then
         print_ok "$(i18n 'fail2ban.ssh_jail_configured')"
         return 0
     fi
@@ -633,7 +674,7 @@ EOF
     if _f2b_service_active; then
         print_warn "$(i18n 'fail2ban.dropin_rolled_back')"
         _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"
-        fail2ban-client reload 2>/dev/null
+        fail2ban_reload_jails
     fi
     print_error "$(i18n 'fail2ban.ssh_jail_config_failed')"
     return 1

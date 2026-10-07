@@ -1,0 +1,32 @@
+# Plant: UMASK 027 in /etc/login.defs and no pam_umask in the session stack —
+# stock Debian 12, after someone hardened login.defs by hand.
+# Expect: filesystem.pam_umask_disabled failed and no umask verdict. No session
+# reads login.defs here, so a pass (or a fix_umask offer) would be a false claim.
+TEST_DESC="UMASK 027 without pam_umask is reported as not applied, not as secure"
+EXPECT_ID="filesystem.pam_umask_disabled"
+EXPECT_STATUS="failed"
+MODULE="filesystem"
+
+_LOGIN_DEFS="/etc/login.defs"
+_SAVED="/tmp/vpssec-mutation-login.defs"
+
+precheck() {
+    [[ -f "$_LOGIN_DEFS" ]] || return 1
+    ! grep -qsE '^[[:space:]]*session[[:space:]].*pam_umask\.so' \
+        /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive
+}
+
+mutate() {
+    cp -p "$_LOGIN_DEFS" "$_SAVED" || return 1
+    if grep -qE '^UMASK' "$_LOGIN_DEFS"; then
+        sed -i 's/^UMASK.*/UMASK\t\t027/' "$_LOGIN_DEFS"
+    else
+        printf 'UMASK\t\t027\n' >> "$_LOGIN_DEFS"
+    fi
+    return 0
+}
+
+restore() {
+    cp -p "$_SAVED" "$_LOGIN_DEFS" && rm -f "$_SAVED"
+    return 0
+}

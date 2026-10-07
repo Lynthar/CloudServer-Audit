@@ -53,19 +53,13 @@ run_case "umask/postcondition-removed" 1 \
     '    if ! _fs_umask_is_strict "$effective"; then' \
     '    if false; then'
 
-# Occurrence 1 IS the fix-side line these two are aimed at. _fs_audit_umask used
-# to open its pam_umask branch with the same line verbatim; c8e9c77 rewrote the
-# audit's copy as `_fs_check_pam_umask_enabled && pam_umask_on=1`, leaving the
-# fix's copy as the only occurrence.
-run_case "umask/pam-warning-dropped" 1 \
-    '    if ! _fs_check_pam_umask_enabled; then' \
-    '    if false; then'
-
-run_case "umask/pam-warning-always" 1 \
-    '    if ! _fs_check_pam_umask_enabled; then' \
-    '    if true; then'
-
 # ---- the predicate the fix's postcondition shares with the audit -----
+
+# The verify predicate reads login.defs alone again, and reports the fix done on
+# a host with no pam_umask, where no session gets the value.
+run_case "predicate/pam-umask-not-required" 1 \
+    '    _fs_check_pam_umask_enabled && _fs_umask_is_strict "$(_fs_umask_effective)"' \
+    '    _fs_umask_is_strict "$(_fs_umask_effective)"'
 
 run_case "predicate/first-umask-line-not-taken" 1 \
     '        umask_value=$(awk '"'"'/^UMASK/ { print $2; exit }'"'"' "$FS_LOGIN_DEFS" 2>/dev/null)' \

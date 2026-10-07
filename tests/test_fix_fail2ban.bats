@@ -32,17 +32,31 @@ setup() {
     # grepping the real /etc/ssh/sshd_config — an unstubbed sshd would let the
     # test host decide what lands in the drop-in.
     _vpssec_stub sshd 0 'port 2222'
+    # A host with nftables and no firewall front-end: what most of these tests
+    # need, so banaction detection does not depend on the test machine.
+    fw_backend() { echo none; }
+    _vpssec_stub nft 0
 }
 
-# The postcondition (_f2b_ssh_jail_enabled) needs the client to answer for the
-# sshd jail AND the service to be active. Both go through stubs.
+# fail2ban-client as fail2ban 1.0 and 1.1 behave, with the sshd jail up on the
+# distro's `nftables` action. The jail follows the drop-in's banaction, except
+# that a plain `reload` across a banaction rename leaves it with NO action.
 _f2b_jail_comes_up() {
-    _vpssec_stub_script fail2ban-client <<'SH'
-case "$*" in
-    "status sshd") exit 0 ;;
-    -t)            exit 0 ;;
-    *)             exit 0 ;;
+    printf 'nftables\n' > "$BATS_TEST_TMPDIR/f2b-action"
+    _vpssec_stub_script fail2ban-client <<SH
+state="$BATS_TEST_TMPDIR/f2b-action"
+want=\$(sed -n 's/^banaction = //p' "$F2B_DROPIN" 2>/dev/null)
+case "\$*" in
+    "reload --restart") [[ -n "\$want" ]] && echo "\$want" > "\$state" ;;
+    reload) [[ -n "\$want" && "\$want" != "\$(cat "\$state")" ]] && : > "\$state" ;;
+    "get sshd actions")
+        if [[ -s "\$state" ]]; then
+            printf 'The jail sshd has the following actions:\n%s\n' "\$(cat "\$state")"
+        else
+            echo "No actions for jail sshd"
+        fi ;;
 esac
+exit 0
 SH
 }
 
@@ -57,12 +71,15 @@ esac
 SH
 }
 
+# Only the config test fails: were it skipped, the jail would come up and ban,
+# so a test of the -t branch cannot pass through the later postcondition.
 _f2b_config_test_fails() {
     _vpssec_stub_script fail2ban-client <<'SH'
 case "$*" in
     -t) exit 1 ;;
-    *)  exit 0 ;;
+    "get sshd actions") printf 'The jail sshd has the following actions:\nnftables-multiport\n' ;;
 esac
+exit 0
 SH
 }
 
@@ -180,17 +197,68 @@ EOF
     grep -qE '^backend = systemd' "$F2B_DROPIN"
 }
 
-@test "configure: the detected banaction is what gets written" {
-    # A hardcoded iptables-multiport silently no-ops on an nftables host:
-    # fail2ban loads the jail and reports it active while every ban fails.
-    _vpssec_stub_script ufw <<'SH'
-echo "Status: active"
-SH
+@test "configure: with ufw managing the firewall, bans go through ufw" {
+    fw_backend() { echo ufw; }
+    _vpssec_stub ufw 0
     _f2b_jail_comes_up
     run _f2b_fix_configure_ssh_jail
     [ "$status" -eq 0 ]
     grep -qE '^banaction = ufw' "$F2B_DROPIN"
     grep -qE '^banaction_allports = ufw' "$F2B_DROPIN"
+}
+
+@test "configure: a host with nft and no iptables bans through nftables" {
+    # Debian 12 and 13 install nftables and no iptables, and nftables.service is
+    # off, so nft lists no table at all. iptables-multiport there failed every
+    # ban with "iptables: not found" while the fix and the audit stayed green.
+    _vpssec_absent_command iptables
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    grep -qxF 'banaction = nftables-multiport' "$F2B_DROPIN"
+    grep -qxF 'banaction_allports = nftables-allports' "$F2B_DROPIN"
+}
+
+@test "configure: iptables is the fallback when nft cannot be used" {
+    _vpssec_stub nft 1
+    _vpssec_stub iptables 0
+    _vpssec_stub_script fail2ban-client <<'SH'
+[[ "$*" == "get sshd actions" ]] && printf 'The jail sshd has the following actions:\niptables-multiport\n'
+exit 0
+SH
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    grep -qxF 'banaction = iptables-multiport' "$F2B_DROPIN"
+}
+
+@test "configure: with no tool to ban with, the fix fails and writes nothing" {
+    _vpssec_absent_command nft
+    _vpssec_absent_command iptables
+    _f2b_jail_comes_up
+    VPSSEC_QUIET_SCAN=0
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 1 ]
+    [ ! -e "$F2B_DROPIN" ]
+    grep -q 'Install nftables' <<<"$output"
+}
+
+@test "configure: a renamed banaction still leaves the jail with an action" {
+    # Every stock host renames it (distro nftables -> nftables-multiport), and a
+    # plain reload then drops the jail's action: bans counted, none carried out.
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/f2b-action")" = "nftables-multiport" ]
+}
+
+@test "configure: a jail that comes up unable to ban is a failure, and is withdrawn" {
+    _vpssec_stub_script fail2ban-client <<'SH'
+[[ "$*" == "get sshd actions" ]] && echo "No actions for jail sshd"
+exit 0
+SH
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 1 ]
+    [ ! -e "$F2B_DROPIN" ]
 }
 
 # ==============================================================================
@@ -377,6 +445,7 @@ SH
 
 @test "install: a failing apt-get is not reported as success" {
     _vpssec_stub apt-get 100
+    _f2b_jail_comes_up   # so only apt's failure can fail it
     run _f2b_fix_install
     [ "$status" -eq 1 ]
     _vpssec_refute test -e "$F2B_DROPIN"

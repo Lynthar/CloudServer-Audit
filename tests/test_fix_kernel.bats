@@ -7,20 +7,8 @@ load helpers.bash
 
 setup() {
     _vpssec_load
-    # shellcheck source=/dev/null
-    source "$(_vpssec_repo_root)/modules/kernel.sh"
-
     etc=$(_vpssec_fake_etc)
-
-    # Module path variables. VPSSEC_SYSCTL_CONF and KERNEL_COREDUMP_DROPIN
-    # are derived at source time, so overriding only their parent
-    # directories would leave them pointing at the real /etc.
-    SYSCTL_D="$etc/sysctl.d"
-    VPSSEC_SYSCTL_CONF="$SYSCTL_D/99-vpssec-hardening.conf"
-    KERNEL_LIMITS_CONF="$etc/security/limits.conf"
-    KERNEL_COREDUMP_CONF="$etc/systemd/coredump.conf"
-    KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
-    KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
+    _kernel_source
     mkdir -p "$etc/security" "$etc/systemd"
 
     export TMPDIR="$BATS_TEST_TMPDIR"
@@ -29,6 +17,30 @@ setup() {
 
     _sysctl_stub
     _no_forwarding_daemons
+}
+
+# Source the module, then repoint its paths at the fake /etc. The param table
+# is built at source time from the detected distro, so a test that changes
+# VPSSEC_DISTRO_* re-sources through here — never directly, or /etc is live.
+_kernel_source() {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/modules/kernel.sh"
+
+    # VPSSEC_SYSCTL_CONF and KERNEL_COREDUMP_DROPIN are derived at source time,
+    # so overriding only their parent directories would leave them on /etc.
+    SYSCTL_D="$etc/sysctl.d"
+    VPSSEC_SYSCTL_CONF="$SYSCTL_D/99-vpssec-hardening.conf"
+    KERNEL_LIMITS_CONF="$etc/security/limits.conf"
+    KERNEL_COREDUMP_CONF="$etc/systemd/coredump.conf"
+    KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
+    KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
+}
+
+# Rebuild the param table as the module builds it on distro $1 (family $2).
+_kernel_on() {
+    VPSSEC_DISTRO_ID="$1"
+    VPSSEC_DISTRO_FAMILY="$2"
+    _kernel_source
 }
 
 # ---- stubs ----------------------------------------------------------
@@ -392,6 +404,95 @@ SH
     [ "$status" -eq 0 ]
     run _kernel_check_core_dump
     [ -z "$output" ]
+}
+
+# ==============================================================================
+# Thresholds: a stricter value than required is a pass, and is never lowered
+# ==============================================================================
+
+# Runtime value of one param in the stub, after whatever the fix wrote.
+_runtime() { cat "$sysctl_store/$1"; }
+
+@test "kernel params: stricter-than-required values pass and the fix leaves them" {
+    _kernel_on ubuntu debian
+    _sysctl_seed kernel.yama.ptrace_scope 3
+    _sysctl_seed kernel.perf_event_paranoid 4
+    _sysctl_seed kernel.unprivileged_bpf_disabled 2
+
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"ok - kernel.yama.ptrace_scope"* ]]
+    [[ "$output" == *"ok - kernel.perf_event_paranoid"* ]]
+    [[ "$output" == *"ok - kernel.unprivileged_bpf_disabled"* ]]
+
+    _kernel_fix_kernel_params
+    [ "$(_runtime kernel.yama.ptrace_scope)" = 3 ]
+    [ "$(_runtime kernel.perf_event_paranoid)" = 4 ]
+    [ "$(_runtime kernel.unprivileged_bpf_disabled)" = 2 ]
+}
+
+@test "kernel params: a value below the minimum is raised to exactly the minimum" {
+    _sysctl_seed kernel.yama.ptrace_scope 0
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"bad medium kernel.yama.ptrace_scope >=1 0"* ]]
+
+    _kernel_fix_kernel_params
+    _dropin_has kernel.yama.ptrace_scope 1
+    [ "$(_runtime kernel.yama.ptrace_scope)" = 1 ]
+}
+
+@test "kernel params: a value that is not a plain integer never meets a minimum" {
+    # Bash arithmetic would read 0x10 as 16 — and evaluate any other text it was given.
+    _sysctl_seed kernel.yama.ptrace_scope "0x10"
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"bad medium kernel.yama.ptrace_scope >=1 0x10"* ]]
+}
+
+@test "perf_event_paranoid: on Ubuntu 3 is weak, because only 4 blocks unprivileged perf" {
+    _kernel_on ubuntu debian
+    _sysctl_seed kernel.perf_event_paranoid 3
+
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"bad medium kernel.perf_event_paranoid >=4 3"* ]]
+    _kernel_fix_kernel_params
+    _dropin_has kernel.perf_event_paranoid 4
+}
+
+@test "perf_event_paranoid: Debian's default 3 already blocks it" {
+    _kernel_on debian debian
+    _sysctl_seed kernel.perf_event_paranoid 3
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"ok - kernel.perf_event_paranoid"* ]]
+
+    _sysctl_seed kernel.perf_event_paranoid 2
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"bad medium kernel.perf_event_paranoid >=3 2"* ]]
+}
+
+@test "perf_event_paranoid: a mainline kernel's 2 is its strictest level" {
+    _kernel_on rocky rhel
+    _sysctl_seed kernel.perf_event_paranoid 2
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"ok - kernel.perf_event_paranoid"* ]]
+}
+
+@test "unprivileged_bpf_disabled: the fix writes 2, not the value that locks until reboot" {
+    _sysctl_seed kernel.unprivileged_bpf_disabled 0
+    _kernel_fix_kernel_params
+    _dropin_has kernel.unprivileged_bpf_disabled 2
+
+    _sysctl_seed kernel.unprivileged_bpf_disabled 1
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [[ "$output" == *"ok - kernel.unprivileged_bpf_disabled"* ]]
+}
+
+@test "tcp_timestamps: off is a deliberate choice, and only 2 is re-enabled to 1" {
+    _sysctl_seed net.ipv4.tcp_timestamps 0
+    run _kernel_param_scan "$KERNEL_NET_SCOPE"
+    [[ "$output" == *"ok - net.ipv4.tcp_timestamps"* ]]
+
+    _sysctl_seed net.ipv4.tcp_timestamps 2
+    _kernel_fix_network_params
+    _dropin_has net.ipv4.tcp_timestamps 1
 }
 
 # ==============================================================================

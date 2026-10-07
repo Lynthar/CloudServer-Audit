@@ -1153,9 +1153,11 @@ _rollback_reload_services() {
     local svc
     for svc in ssh nginx fail2ban; do
         systemctl is-active --quiet "$svc" 2>/dev/null || continue
-        if ! systemctl reload "$svc" 2>/dev/null; then
-            print_warn "$(i18n 'backup.reload_failed' "service=$svc")"
-        fi
+        if [[ "$svc" == "fail2ban" ]]; then
+            fail2ban_reload_jails
+        else
+            systemctl reload "$svc" 2>/dev/null
+        fi || print_warn "$(i18n 'backup.reload_failed' "service=$svc")"
     done
 }
 

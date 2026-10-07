@@ -343,6 +343,10 @@ main() {
     resolve_version
     download_and_verify
 
+    # vpssec refuses guide and rollback under this marker. The mode menu and
+    # VPSSEC_MODE reach them with no mode word for the check above to see.
+    export VPSSEC_ONESHOT=1
+
     if [[ -n "$mode" ]]; then
         print_info "Running vpssec $mode..."
         echo "" >&2

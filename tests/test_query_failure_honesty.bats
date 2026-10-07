@@ -32,12 +32,46 @@ setup() {
     source "$(_vpssec_repo_root)/modules/update.sh"
     pkg_update_count() { echo 0; }
     pkg_security_update_count() { echo 0; }
+    pkg_index_age_days() { echo 1; }
 
     _update_audit_available
 
-    run jq -r '.[] | select(.id == "update.no_updates") | .status' \
+    run jq -r '.[] | select(.id == "update.no_updates") | "\(.status) \(.desc)"' \
         "$VPSSEC_STATE/checks.json"
-    [ "$output" = "passed" ]
+    [ "$output" = "passed Package index refreshed 1 day(s) ago" ]
+}
+
+# A fresh VPS often has no apt lists at all, and an apt query on them succeeds
+# with nothing to install: zero from an index that cannot know is not "up to date".
+@test "update: zero from an index never refreshed is unknown, not no_updates" {
+    source "$(_vpssec_repo_root)/modules/update.sh"
+    pkg_update_count() { echo 0; }
+    pkg_security_update_count() { echo 0; }
+    pkg_index_age_days() { return 0; }
+
+    _update_audit_available
+
+    run jq -r '[.[] | "\(.id) \(.status)"] | join(",")' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "update.index_stale failed" ]
+    [ "${CHECK_SCORE_CATEGORY[update.index_stale]}" = "info" ]
+}
+
+@test "update: zero from an index older than the stale limit is unknown too" {
+    source "$(_vpssec_repo_root)/modules/update.sh"
+    pkg_update_count() { echo 0; }
+    pkg_security_update_count() { echo 0; }
+    pkg_index_age_days() { echo $(( UPDATE_INDEX_STALE_DAYS + 1 )); }
+
+    _update_audit_available
+
+    run jq -r '.[] | "\(.id) \(.desc)"' "$VPSSEC_STATE/checks.json"
+    [[ "$output" == "update.index_stale "*"$(( UPDATE_INDEX_STALE_DAYS + 1 )) days ago"* ]]
+
+    rm -f "$VPSSEC_STATE/checks.json"; state_init
+    pkg_index_age_days() { echo "$UPDATE_INDEX_STALE_DAYS"; }
+    _update_audit_available
+    run jq -r '.[].id' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "update.no_updates" ]
 }
 
 # ---- logging -----------------------------------------------------------
@@ -210,32 +244,6 @@ setup() {
     [ -z "$output" ]
 }
 
-# ---- ufw: host ingress ruleset ------------------------------------------
-
-@test "ufw: an iptables listing that fails is unreadable, not an empty ruleset" {
-    source "$(_vpssec_repo_root)/modules/ufw.sh"
-    _vpssec_stub iptables 1
-
-    _ufw_audit_ruleset_empty iptables
-
-    run jq -r '.[] | select(.id == "ufw.ruleset_unreadable") | .status' \
-        "$VPSSEC_STATE/checks.json"
-    [ "$output" = "failed" ]
-    run jq -r '.[] | select(.id == "ufw.firewall_empty") | .id' "$VPSSEC_STATE/checks.json"
-    [ -z "$output" ]
-}
-
-@test "ufw: an nft listing that fails is unreadable, not silence" {
-    source "$(_vpssec_repo_root)/modules/ufw.sh"
-    _vpssec_stub nft 1
-
-    _ufw_audit_ruleset_empty nftables
-
-    run jq -r '.[] | select(.id == "ufw.ruleset_unreadable") | .status' \
-        "$VPSSEC_STATE/checks.json"
-    [ "$output" = "failed" ]
-}
-
 # ---- ufw: which firewall is active --------------------------------------
 
 # Every probe answers: UFW installed but inactive, no nft tables, iptables per $1.
@@ -312,22 +320,26 @@ _fw_probes_answer() {
     [ "$output" = "none" ]
 }
 
+# nft answering `list ruleset` with one line per argument.
+_nft_ruleset() {
+    printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/nft.ruleset"
+    _vpssec_stub_script nft <<SH
+[[ "\$*" == "list ruleset" ]] && cat "$BATS_TEST_TMPDIR/nft.ruleset"
+exit 0
+SH
+}
+
 # nft answering like a host where `ufw disable` left its skeleton behind: base
 # chains with policy $1, jumping into emptied ufw chains, plus $2 as an extra
 # line in the INPUT chain.
 _nft_ufw_skeleton() {
     NFT_POLICY="$1" NFT_EXTRA="$2"
     _vpssec_stub_script nft <<SH
-case "\$*" in
-    "list tables") echo "table ip filter" ;;
-    "list ruleset")
-        printf '%s\n' 'table ip filter {' '	chain INPUT {' \
-            '		type filter hook input priority filter; policy $NFT_POLICY;' \
-            '		counter packets 3 bytes 180 jump ufw-before-input' \
-            '		$NFT_EXTRA' '	}' '	chain ufw-before-input {' '	}' '}'
-        ;;
-esac
-exit 0
+[[ "\$*" == "list ruleset" ]] || exit 0
+printf '%s\n' 'table ip filter {' '	chain INPUT {' \
+    '		type filter hook input priority filter; policy $NFT_POLICY;' \
+    '		counter packets 3 bytes 180 jump ufw-before-input' \
+    '		$NFT_EXTRA' '	}' '	chain ufw-before-input {' '	}' '}'
 SH
 }
 
@@ -347,36 +359,23 @@ SH
 
 @test "ufw: bare accepting base chains, as a never-enabled ufw's disable leaves them, are none too" {
     _fw_probes_answer 'exit 0'
-    _vpssec_stub_script nft <<'SH'
-case "$*" in
-    "list tables") echo "table ip filter" ;;
-    "list ruleset")
-        printf '%s\n' 'table ip filter {' '	chain INPUT {' \
-            '		type filter hook input priority filter; policy accept;' '	}' '}'
-        ;;
-esac
-exit 0
-SH
+    _nft_ruleset 'table ip filter {' '	chain INPUT {' \
+        '		type filter hook input priority filter; policy accept;' '	}' '}'
     run fw_backend
     [ "$output" = "none" ]
 }
 
-@test "ufw: an nft ruleset that cannot be listed is not taken for an unfiltered one" {
+@test "ufw: an nft ruleset that cannot be listed is unknown, neither a firewall nor none" {
     _fw_probes_answer 'exit 0'
-    _vpssec_stub_script nft <<'SH'
-case "$*" in
-    "list tables") echo "table ip filter" ;;
-    "list ruleset") exit 1 ;;
-esac
-exit 0
-SH
+    _vpssec_stub nft 1
     run fw_backend
-    [ "$output" = "nftables" ]
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
 }
 
-@test "ufw: a real rule or a drop policy beside that skeleton is still nftables" {
+@test "ufw: a drop rule or a drop policy beside that skeleton is still nftables" {
     _fw_probes_answer 'exit 0'
-    _nft_ufw_skeleton accept "tcp dport 22 accept"
+    _nft_ufw_skeleton accept "tcp dport 23 drop"
     run fw_backend
     [ "$output" = "nftables" ]
 
@@ -385,12 +384,106 @@ SH
     [ "$output" = "nftables" ]
 }
 
+@test "ufw: accept rules under an accept policy filter nothing" {
+    # The forgotten "policy drop": every port is still open.
+    _fw_probes_answer 'exit 0'
+    _nft_ufw_skeleton accept "tcp dport 22 accept"
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
 @test "ufw: a backend found by a later probe wins over an earlier failed query" {
     _fw_probes_answer 'exit 0'
     _vpssec_stub ufw 1
-    _vpssec_stub nft 0 "table inet filter"
+    _nft_ruleset 'table inet filter {' '	chain input {' \
+        '		type filter hook input priority 0; policy drop;' '	}' '}'
 
     run fw_backend
     [ "$status" -eq 0 ]
     [ "$output" = "nftables" ]
+}
+
+# ---- what fail2ban, tailscale and a container runtime leave in the ruleset ----
+# None of them filters host ingress. fail2ban only rejects the IPs it banned,
+# and it is what vpssec itself installs, so reading it as a firewall hid
+# ufw.disabled / ufw.no_firewall on exactly the hosts that lack one.
+
+# fail2ban's nftables actions: their own table, a chain on the input hook.
+_nft_f2b_table() {
+    _nft_ruleset 'table inet f2b-table {' \
+        '	set addr-set-sshd {' '		type ipv4_addr' '		elements = { 198.51.100.7 }' '	}' \
+        '	chain f2b-chain {' \
+        '		type filter hook input priority filter - 1; policy accept;' \
+        '		tcp dport 22 ip saddr @addr-set-sshd reject with icmp port-unreachable' \
+        '	}' '}'
+}
+
+@test "fail2ban: its own nft table is not a firewall" {
+    _fw_probes_answer 'exit 0'
+    _nft_f2b_table
+    VPSSEC_DISTRO_FAMILY=debian
+
+    run fw_backend
+    [ "$output" = "none" ]
+    run ufw_audit
+    run jq -r '[.[] | .id] | join(",")' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "ufw.disabled" ]
+}
+
+@test "fail2ban: its iptables jump, as iptables-nft lists it, is not a firewall" {
+    _fw_probes_answer 'exit 0'
+    _nft_ruleset 'table ip filter {' '	chain f2b-sshd {' \
+        '		ip saddr 198.51.100.7 counter packets 0 bytes 0 reject' \
+        '		counter packets 0 bytes 0 return' '	}' '	chain INPUT {' \
+        '		type filter hook input priority filter; policy accept;' \
+        '		meta l4proto tcp tcp dport 22 counter packets 9 bytes 540 jump f2b-sshd' \
+        '	}' '}'
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
+@test "fail2ban: its iptables jump and ban lines are not a firewall either" {
+    # Any number of bans: the old probe counted REJECT lines in every chain.
+    _fw_probes_answer 'printf "%s\n" "-P INPUT ACCEPT" "-N f2b-sshd" \
+        "-A INPUT -p tcp -m multiport --dports 22 -j f2b-sshd" \
+        "-A f2b-sshd -s 198.51.100.1/32 -j REJECT" "-A f2b-sshd -s 198.51.100.2/32 -j REJECT" \
+        "-A f2b-sshd -s 198.51.100.3/32 -j REJECT" "-A f2b-sshd -s 198.51.100.4/32 -j REJECT" \
+        "-A f2b-sshd -j RETURN"'
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
+@test "tailscale: its anti-spoofing chain is not a firewall" {
+    _fw_probes_answer 'printf "%s\n" "-P INPUT ACCEPT" "-N ts-input" "-A INPUT -j ts-input"'
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
+@test "a container runtime's forward and nat chains are not a firewall" {
+    _fw_probes_answer 'exit 0'
+    _nft_ruleset 'table ip nat {' '	chain POSTROUTING {' \
+        '		type nat hook postrouting priority srcnat; policy accept;' \
+        '		oifname != "docker0" ip saddr 172.17.0.0/16 counter masquerade' '	}' '}' \
+        'table ip filter {' '	chain FORWARD {' \
+        '		type filter hook forward priority filter; policy drop;' \
+        '		counter jump DOCKER-USER' '	}' '}'
+    run fw_backend
+    [ "$output" = "none" ]
+}
+
+@test "iptables: a drop policy, a drop rule or a jump into an own chain is a firewall" {
+    local rules
+    for rules in '"-P INPUT DROP"' \
+                 '"-P INPUT ACCEPT" "-A INPUT -p tcp --dport 23 -j REJECT"' \
+                 '"-P INPUT ACCEPT" "-A INPUT -j my-firewall"'; do
+        _fw_probes_answer "printf '%s\n' $rules"
+        run fw_backend
+        [ "$output" = "iptables" ] || { echo "$rules -> $output"; false; }
+    done
+}
+
+@test "iptables: accept rules under an accept policy filter nothing" {
+    _fw_probes_answer 'printf "%s\n" "-P INPUT ACCEPT" "-A INPUT -p tcp --dport 22 -j ACCEPT" "-A INPUT -i lo -j ACCEPT"'
+    run fw_backend
+    [ "$output" = "none" ]
 }

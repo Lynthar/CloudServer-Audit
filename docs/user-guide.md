@@ -17,7 +17,7 @@
 > （`AllowTcpForwarding` / `IgnoreRhosts` / `StrictModes` /
 > `PermitTunnel` / `GatewayPorts` 等共 11 项），filesystem 新增的
 > sensitive 文件清单（`/etc/shadow-`、`/boot/grub/grub.cfg` 等），
-> kernel 的 8 条新 sysctl，ufw 的 `firewall_empty`，docker 的
+> kernel 的 8 条新 sysctl，docker 的
 > `host_network_used` / `secrets_in_env` / `unlimited_memory` 等。
 > 上述新增项**没有**在本指南详细展开，但每条检查的 Recommendations
 > 字段已自带具体修复命令，可直接在审计报告里看到。设计依据
@@ -1106,7 +1106,7 @@ preflight/cloud/timezone 会自动随任何 `--include` 一起运行，无需手
 |---|---|
 | `users` | 用户安全（UID 0、空密码、重复 UID、NOPASSWD sudo、哈希方法、faillog、sudoers 语法） |
 | `ssh` | SSH 加固（密码认证、root 登录、SSH-7408 全量选项） |
-| `ufw` | 防火墙（UFW/firewalld/iptables/nftables）+ 空 ruleset 检测 |
+| `ufw` | 防火墙（UFW/firewalld/iptables/nftables；只认真正在过滤入站的规则集） |
 | `fail2ban` | Fail2ban 服务 + SSH jail + 活动 jail 清单 |
 | `networking` | 监听端口（公网/loopback 区分、危险端口黑名单、混杂模式接口） |
 | `update` | 系统更新（安全更新、自动更新、内核版本不匹配 reboot 检测） |

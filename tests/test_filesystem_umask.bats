@@ -210,28 +210,33 @@ _emitted_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSE
     _vpssec_refute grep -q 'rewrites group bits' <<<"$d"
 }
 
-@test "audit umask: with pam_umask absent the report says the value is not applied" {
-    # Stock Debian 12 ships no pam_umask line, so this is the common case.
-    # Claiming any effective value here would describe a path that does not
-    # exist on the host.
-    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
-    rm -f "${FS_PAM_SESSION_FILES[0]}" "${FS_PAM_SESSION_FILES[1]}"
+@test "audit umask: with pam_umask absent no umask is judged, and no fix is offered" {
+    # Stock Debian 12 ships no pam_umask line, so this is the common case. A
+    # strict login.defs used to pass here, and 022 to offer a fix that changes
+    # no session at all.
+    local value ids
+    for value in 022 027; do
+        rm -f "$VPSSEC_STATE/checks.json"; state_init
+        printf 'UMASK\t\t%s\nUSERGROUPS_ENAB\tyes\n' "$value" > "$FS_LOGIN_DEFS"
+        rm -f "${FS_PAM_SESSION_FILES[0]}" "${FS_PAM_SESSION_FILES[1]}"
 
-    _fs_audit_umask
-    local d
-    d=$(_emitted_desc filesystem.umask_default)
-    grep -q 'not applied at PAM session start' <<<"$d"
-    _vpssec_refute grep -q 'possibly effective' <<<"$d"
+        _fs_audit_umask
+        ids=$(_emitted_ids)
+        [ "$ids" = "filesystem.pam_umask_disabled" ] || { echo "$value: $ids"; false; }
+    done
+    run jq -r '.[0] | "\(.status) \(.fix_id)"' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed " ] || [ "$output" = "failed null" ]
 }
 
-@test "audit umask: pam_umask absent still emits its own info check" {
-    printf 'UMASK\t\t022\nUSERGROUPS_ENAB\tyes\n' > "$FS_LOGIN_DEFS"
+@test "audit umask: pam_umask absent says what a session gets and names the PAM line" {
+    printf 'UMASK\t\t027\n' > "$FS_LOGIN_DEFS"
     rm -f "${FS_PAM_SESSION_FILES[0]}" "${FS_PAM_SESSION_FILES[1]}"
 
     _fs_audit_umask
-    _emitted_ids | grep -qx 'filesystem.pam_umask_disabled'
-    # Same finding as before this change: the info check is not new.
-    _emitted_ids | grep -qx 'filesystem.umask_default'
+    grep -q 'keep 0022' <<<"$(_emitted_desc filesystem.pam_umask_disabled)"
+    run jq -r '.[] | select(.id == "filesystem.pam_umask_disabled") | .suggestion' \
+        "$VPSSEC_STATE/checks.json"
+    [[ "$output" == *"session optional pam_umask.so"*"${FS_PAM_SESSION_FILES[0]}"* ]]
 }
 
 @test "audit umask: pam_umask present emits no pam info check" {

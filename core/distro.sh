@@ -145,6 +145,25 @@ pkg_manager_locked() {
     esac
 }
 
+# `apt upgrade`, simulated without writing (a bare -s rebuilds stale caches and
+# overwrites eipp.log.xz). --with-new-pkgs: a kernel ABI bump is not kept back
+# unseen. Only Inst lines with a [current version] are upgrades.
+_distro_apt_simulate_upgrade() {
+    apt-get -s -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= \
+        -o Dir::Log::Planner=/dev/null upgrade --with-new-pkgs
+}
+
+# A cache-only dnf query (-C: a read-only audit must not refresh metadata),
+# with dnf's own logs sent to a throwaway directory instead of /var/log.
+# Returns dnf's status, so check-update's 100 ("updates exist") survives.
+_distro_dnf_query() {
+    local logdir rc=0
+    logdir=$(mktemp -d) || return 1
+    LC_ALL=C dnf -q -C --setopt=logdir="$logdir" "$@" || rc=$?
+    rm -rf "$logdir"
+    return "$rc"
+}
+
 # Count of pending updates. Echoes an integer, or returns NON-ZERO AND PRINTS
 # NOTHING when the query failed. Never conflate those: one digit cannot mean
 # both "up to date" and "could not ask". Call in a tested context.
@@ -154,15 +173,14 @@ pkg_update_count() {
         apt)
             # Capture first: the query's own failure (exit 100 on broken
             # sources/lock) must be distinguishable from "zero Inst lines".
-            out=$(apt-get -s upgrade 2>/dev/null) || return 1
-            n=$(grep -c '^Inst ' <<<"$out") || n=0
+            out=$(_distro_apt_simulate_upgrade 2>/dev/null) || return 1
+            n=$(grep -c '^Inst [^ ]* \[' <<<"$out") || n=0
             ;;
         dnf)
             # rc 100 = updates, 0 = none, else error; captured in an `if` so
             # set -e does not abort on 100. Only column-0 lines are packages.
-            # -C is required: a read-only audit must not refresh metadata.
             local rc=0
-            if out=$(LC_ALL=C dnf -q -C check-update 2>/dev/null); then rc=0; else rc=$?; fi
+            if out=$(_distro_dnf_query check-update 2>/dev/null); then rc=0; else rc=$?; fi
             case "$rc" in
                 100) n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out") ;;
                 0)   n=0 ;;
@@ -195,14 +213,14 @@ pkg_security_update_count() {
             # Anchored on "^Inst " because apt prints Inst and Conf per
             # package. "security" must appear inside the origin parenthetical,
             # so a package merely NAMED *security* is not counted.
-            out=$(apt-get -s upgrade 2>/dev/null) || return 1
-            n=$(grep -ciE '^Inst .*\(.*security' <<<"$out") || n=0
+            out=$(_distro_apt_simulate_upgrade 2>/dev/null) || return 1
+            n=$(grep -ciE '^Inst [^ ]* \[.*\(.*security' <<<"$out") || n=0
             ;;
         dnf)
             # UPPER BOUND, not a count: updateinfo lists every package named
             # in an applicable advisory, so on real hosts it can exceed the
             # total. Use as ">0?" only and clamp any displayed figure.
-            out=$(LC_ALL=C dnf -q -C updateinfo list --security --available 2>/dev/null) || return 1
+            out=$(_distro_dnf_query updateinfo list --security --available 2>/dev/null) || return 1
             n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || n=0
             ;;
         pacman)
@@ -228,17 +246,22 @@ _distro_newest_mtime() {
     [[ -n "$newest" ]] && echo "$newest"
 }
 
+# Where apt keeps its index and apt-daily its success stamp. Variables rather
+# than literals so the age predicate below is reachable from a test.
+DISTRO_APT_LISTS="${DISTRO_APT_LISTS:-/var/lib/apt/lists}"
+DISTRO_APT_STAMP="${DISTRO_APT_STAMP:-/var/lib/apt/periodic/update-success-stamp}"
+
 # How many days since the package index was last refreshed, or empty if
 # we cannot tell. Used as an "is the operator paying attention" signal.
 pkg_index_age_days() {
     local mtime="" now age
     case "$VPSSEC_PKG_MGR" in
         apt)
-            if [[ -f /var/lib/apt/periodic/update-success-stamp ]]; then
-                mtime=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null) || mtime=""
-            elif [[ -d /var/lib/apt/lists ]]; then
-                mtime=$(_distro_newest_mtime find /var/lib/apt/lists -maxdepth 1 -type f -name '*Packages*')
-            fi
+            # The stamp is apt-daily's alone; a manual `apt-get update` refreshes
+            # only lists/, where InRelease changes with every archive publish.
+            mtime=$(_distro_newest_mtime find "$DISTRO_APT_STAMP" "$DISTRO_APT_LISTS" \
+                -maxdepth 1 -type f \( -path "$DISTRO_APT_STAMP" \
+                -o -name '*Release' -o -name '*Packages*' \))
             ;;
         dnf)
             # Newest cache metadata under the dnf cache tree.
@@ -524,20 +547,40 @@ distro_integrity_package() {
 
 # --- Firewall primitives (read-only) ---
 
-# True when an nft input hook filters: a drop/reject policy, or any rule other
-# than a jump into ufw's chains (which ufw empties when it is off). A listing
-# that fails counts as filtering, so an error never turns nftables into none.
+# True when an nft input hook (ruleset on stdin) can drop: a drop/reject policy,
+# a drop/reject/queue verdict, or a jump into a chain. fail2ban (bans), ufw
+# (emptied while off) and tailscale (anti-spoofing) chains are no firewall.
 _fw_nft_input_filters() {
-    local ruleset
-    ruleset=$(nft list ruleset 2>/dev/null) || return 0
     awk '
+        /^[ \t]*table[ \t]/ { f2b = ($0 ~ /[ \t]f2b-table[ \t]*[{]/); next }
         /^[ \t]*chain[ \t]/ { input = 0; next }
-        /hook[ \t]+input/ { input = 1; if ($0 ~ /policy[ \t]+(drop|reject)/) f = 1; next }
+        /hook[ \t]+input/ {
+            input = !f2b
+            if (input && $0 ~ /policy[ \t]+(drop|reject)/) f = 1
+            next
+        }
         /^[ \t]*[}][ \t]*$/ { input = 0; next }
-        input && /jump[ \t]+ufw6?-/ { next }
-        input && !/^[ \t]*$/ { f = 1 }
+        !input { next }
+        /(jump|goto)[ \t]+(f2b-|ufw6?-|ts-)/ { next }
+        tolower($0) ~ /(^|[^a-z_-])(drop|reject|queue|jump|goto)([^a-z_-]|$)/ { f = 1 }
         END { exit !f }
-    ' <<<"$ruleset"
+    '
+}
+
+# The same question, of `iptables -S INPUT` on stdin. A rule filters when its
+# target can drop: DROP, REJECT, a queue, or a chain other than those above.
+_fw_iptables_input_filters() {
+    awk '
+        /^-P INPUT (DROP|REJECT)/ { f = 1; next }
+        !/^-A INPUT / { next }
+        {
+            t = ""
+            for (i = 1; i < NF; i++) if ($i == "-j" || $i == "-g") t = $(i + 1)
+            if (t == "" || t ~ /^(f2b-|ufw6?-|ts-)/) next
+            if (t !~ /^(ACCEPT|RETURN|LOG|NFLOG|ULOG|MARK|CONNMARK|CT|TRACE|AUDIT|SET|CLASSIFY|TCPMSS)$/) f = 1
+        }
+        END { exit !f }
+    '
 }
 
 # firewalld's own CLI ships with it; a seam of its own so tests decide it.
@@ -546,17 +589,17 @@ _fw_firewalld_installed() {
 }
 
 # Active firewall backend: ufw|firewalld|nftables|iptables|none, first match in
-# that order. "none" needs every installed tool to have answered: when a query
-# fails and no backend was found, returns 1 and prints nothing.
+# that order; nftables and iptables count only while their input hook filters.
+# "none" needs every installed tool to have answered: when a query fails and no
+# backend was found, returns 1 and prints nothing.
 fw_backend() {
-    local out failed=0 ufw_off=0
+    local out failed=0
     # LC_ALL=C: ufw gettext-translates "Status: active" under a non-C locale
     # (e.g. zh_CN "状态： 激活"); without it an active UFW is misdetected and
     # the probe falls through to "nftables" (ufw's chains make nft non-empty).
     if command -v ufw >/dev/null 2>&1; then
         if out=$(LC_ALL=C ufw status 2>/dev/null); then
             grep -q "Status: active" <<<"$out" && { echo "ufw"; return 0; }
-            ufw_off=1
         else
             failed=1
         fi
@@ -571,20 +614,15 @@ fw_backend() {
         failed=1
     fi
     if command -v nft >/dev/null 2>&1; then
-        if out=$(nft list tables 2>/dev/null); then
-            # With ufw installed but off, tables that filter nothing on input
-            # (what `ufw disable` leaves) are not the firewall; ufw being off is.
-            if [[ -n "$out" ]] && { (( ufw_off == 0 )) || _fw_nft_input_filters; }; then
-                echo "nftables"; return 0
-            fi
+        if out=$(nft list ruleset 2>/dev/null); then
+            _fw_nft_input_filters <<<"$out" && { echo "nftables"; return 0; }
         else
             failed=1
         fi
     fi
     if command -v iptables >/dev/null 2>&1; then
-        if out=$(iptables -L -n 2>/dev/null); then
-            (( $(grep -cE '^(ACCEPT|DROP|REJECT)' <<<"$out" || true) > 3 )) \
-                && { echo "iptables"; return 0; }
+        if out=$(iptables -S INPUT 2>/dev/null); then
+            _fw_iptables_input_filters <<<"$out" && { echo "iptables"; return 0; }
         else
             failed=1
         fi

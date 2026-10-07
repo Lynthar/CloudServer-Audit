@@ -11,6 +11,10 @@
 UPDATE_AUTO_UPGRADES_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
 UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"
 
+# An index older than this cannot vouch for "no updates", and lagging this far
+# behind pending security updates escalates them to high.
+UPDATE_INDEX_STALE_DAYS=30
+
 # --- Update Helper Functions ---
 
 # There is deliberately no local lock / count / index-age predicate here:
@@ -170,8 +174,25 @@ _update_audit_available() {
     fi
 
     if ((update_count == 0)); then
-        check_emit "update.no_updates" low passed
-        print_ok "$(i18n 'update.no_updates')"
+        # Zero read from an index never refreshed, or refreshed long ago, is not
+        # "up to date": that data cannot answer the question.
+        local age
+        age=$(pkg_index_age_days)
+        if [[ -z "$age" ]]; then
+            check_emit "update.index_stale" low failed \
+                desc="$(i18n 'update.index_never_refreshed_desc')" \
+                suggestion="$(i18n 'update.check_failed_fix')"
+            print_severity "low" "$(i18n 'update.index_stale')"
+        elif (( age > UPDATE_INDEX_STALE_DAYS )); then
+            check_emit "update.index_stale" low failed \
+                desc="$(i18n 'update.index_stale_desc' "days=$age")" \
+                suggestion="$(i18n 'update.check_failed_fix')"
+            print_severity "low" "$(i18n 'update.index_stale')"
+        else
+            check_emit "update.no_updates" low passed \
+                desc="$(i18n 'update.index_age_desc' "days=$age")"
+            print_ok "$(i18n 'update.no_updates')"
+        fi
     else
         # low for routine packages, medium once security updates are pending,
         # high when the index is also stale — the lag IS the finding.
@@ -190,7 +211,7 @@ _update_audit_available() {
 
             local stale_days
             stale_days=$(pkg_index_age_days)
-            if [[ -n "$stale_days" ]] && (( stale_days > 30 )); then
+            if [[ -n "$stale_days" ]] && (( stale_days > UPDATE_INDEX_STALE_DAYS )); then
                 severity="high"
             fi
         fi

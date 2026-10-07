@@ -520,9 +520,10 @@ _fs_umask_effective() {
     _fs_compute_effective_umask "$(_fs_check_umask)" "$(_fs_get_usergroups_enab)"
 }
 
-# The pass condition of _fs_audit_umask.
+# The pass condition of _fs_audit_umask. login.defs UMASK reaches a session
+# only through pam_umask; without it no value written there is in effect.
 _fs_umask_ok() {
-    _fs_umask_is_strict "$(_fs_umask_effective)"
+    _fs_check_pam_umask_enabled && _fs_umask_is_strict "$(_fs_umask_effective)"
 }
 
 # Is pam_umask enabled in the session stack? It is what makes the
@@ -993,23 +994,31 @@ _fs_audit_tmp_mount() {
 
 _fs_audit_umask() {
     local configured usergroups effective
+
+    # Without pam_umask no session gets the login.defs value, so none is judged
+    # and fix_umask is not offered: writing it would change no session. No fix
+    # for the PAM line either — PAM stack edits are not auto-safe.
+    if ! _fs_check_pam_umask_enabled; then
+        local pam_file="${FS_PAM_SESSION_FILES[0]:-$(pam_session_files | head -1)}"
+        check_emit "filesystem.pam_umask_disabled" low failed \
+            desc="$(i18n 'filesystem.pam_umask_disabled_desc')" \
+            suggestion="$(i18n 'filesystem.pam_umask_disabled_suggestion' "file=$pam_file")"
+        print_severity "low" "$(i18n 'filesystem.pam_umask_disabled')"
+        return 0
+    fi
+
     configured=$(_fs_check_umask)
     usergroups=$(_fs_get_usergroups_enab)
     effective=$(_fs_umask_effective)
 
-    local pam_umask_on=0
-    _fs_check_pam_umask_enabled && pam_umask_on=1
-
     # Severity keys on the EFFECTIVE umask, not the login.defs literal.
-    # The wording qualifies two claims the operator could disprove by typing
+    # The wording qualifies a claim the operator could disprove by typing
     # `umask` (see the design notes), and compares NORMALISED values.
     local normalized
     normalized=$(_fs_compute_effective_umask "$configured" "no")
 
     local desc="configured=$configured"
-    if (( pam_umask_on == 0 )); then
-        desc="$desc$(i18n 'filesystem.umask_pam_not_applied')"
-    elif [[ "$normalized" != "$effective" ]]; then
+    if [[ "$normalized" != "$effective" ]]; then
         desc="$desc$(i18n 'filesystem.umask_possibly_effective' "effective=$effective" "usergroups=$usergroups")"
     fi
 
@@ -1031,13 +1040,6 @@ _fs_audit_umask() {
             suggestion="$(i18n 'filesystem.umask_weak_suggestion')" \
             fix="filesystem.fix_umask"
         print_severity "low" "$(i18n 'filesystem.umask_weak') ($desc)"
-    fi
-
-    # Informational: without pam_umask the login.defs UMASK may never apply
-    # at session start. No fix offered — PAM stack edits are not auto-safe.
-    if (( pam_umask_on == 0 )); then
-        check_emit "filesystem.pam_umask_disabled" info passed \
-            desc="$(i18n 'filesystem.pam_umask_disabled_desc')"
     fi
 }
 
@@ -1260,13 +1262,6 @@ _fs_fix_umask() {
     # World access is still denied.
     if [[ "$usergroups" == "yes" ]]; then
         print_info "$(i18n 'filesystem.umask_usergroups_note')"
-    fi
-
-    # Without pam_umask the value just written only reaches shell login
-    # sessions — the difference between "hardened" and "hardened for
-    # interactive bash users". No fix: PAM stack edits are not auto-safe.
-    if ! _fs_check_pam_umask_enabled; then
-        print_warn "$(i18n 'filesystem.umask_pam_missing')"
     fi
 
     return 0

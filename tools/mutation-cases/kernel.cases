@@ -57,3 +57,26 @@ run_case "rollback/backup-failure-swallowed" 1 \
 run_case "network/single-pass" 1 \
     '    for pass in 1 2; do' \
     '    for pass in 1; do'
+
+# A higher value is stricter for >=N params; exact matching flags them and the fix lowers them.
+run_case "threshold/minimum-read-as-exact" 1 \
+    '            [[ "$actual" =~ ^-?[0-9]+$ ]] && (( actual >= ${exp#>=} )) && return 0' \
+    '            [[ "$actual" == "${exp#>=}" ]] && return 0'
+
+run_case "threshold/arithmetic-on-any-text" 1 \
+    '            [[ "$actual" =~ ^-?[0-9]+$ ]] && (( actual >= ${exp#>=} )) && return 0' \
+    '            (( actual >= ${exp#>=} )) && return 0'
+
+run_case "threshold/fix-writes-the-operator" 1 \
+    '    echo "${first#>=}"' \
+    '    echo "$first"'
+
+# Ubuntu's kernel blocks unprivileged perf only at 4; 3 there is mainline's 2.
+run_case "perf/ubuntu-floor-lowered" 1 \
+    '        echo 4' \
+    '        echo 3'
+
+# 1 locks the value until reboot, so a rollback could not undo it.
+run_case "bpf/fix-writes-the-lock" 1 \
+    '    "kernel.unprivileged_bpf_disabled:2|1:medium:Disable unprivileged BPF (exploit prevention)"' \
+    '    "kernel.unprivileged_bpf_disabled:1|2:medium:Disable unprivileged BPF (exploit prevention)"'

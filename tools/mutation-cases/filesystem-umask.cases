@@ -45,16 +45,8 @@ run_case "report/rewrite-stated-as-fact" 1 \
     '        desc="$desc, effective=$effective (USERGROUPS_ENAB=$usergroups rewrites group bits)"'
 
 run_case "report/raw-comparison-restored" 1 \
-    '    elif [[ "$normalized" != "$effective" ]]; then' \
-    '    elif [[ "$configured" != "$effective" ]]; then'
-
-run_case "report/pam-gate-removed" 1 \
-    '    if (( pam_umask_on == 0 )); then' \
-    '    if false; then'
-
-run_case "report/pam-info-check-always" 2 \
-    '    if (( pam_umask_on == 0 )); then' \
-    '    if true; then'
+    '    if [[ "$normalized" != "$effective" ]]; then' \
+    '    if [[ "$configured" != "$effective" ]]; then'
 
 # The severity branch must NOT move — these two prove the suite would catch it.
 run_case "report/branch-keyed-on-configured" 1 \
@@ -64,3 +56,14 @@ run_case "report/branch-keyed-on-configured" 1 \
 run_case "report/default-branch-widened" 1 \
     '    elif [[ "$effective" == "0022" || "$effective" == "0002" ]]; then' \
     '    elif true; then'
+
+# Without pam_umask the audit judges the login.defs value again: a strict one
+# passes and 022 offers fix_umask, though no session gets either.
+run_case "audit/pam-absent-judged" 1 \
+    '    if ! _fs_check_pam_umask_enabled; then' \
+    '    if false; then'
+
+# The missing pam_umask is a passed info line again: a green tick on a negative.
+run_case "audit/pam-absent-passes" 1 \
+    '        check_emit "filesystem.pam_umask_disabled" low failed \' \
+    '        check_emit "filesystem.pam_umask_disabled" info passed \'

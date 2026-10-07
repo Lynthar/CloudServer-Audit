@@ -170,35 +170,21 @@ SH
     grep -q 'effective umask' <<<"$output"
 }
 
-@test "umask fix: the operator is warned when pam_umask is not enabled" {
-    # Without pam_umask the value this fix just wrote reaches shell login
-    # sessions only, which is the difference between "hardened" and "hardened
-    # for interactive bash users". The container itself ships this way.
-    VPSSEC_QUIET_SCAN=0
-    _login_defs "$(printf 'UMASK\t\t022')"
-    rm -f "$etc/pam.d/common-session"
-
-    run _fs_fix_umask
-    [ "$status" -eq 0 ]
-    # "not enabled in the PAM session stack", not just "pam_umask": the
-    # USERGROUPS_ENAB note printed a few lines earlier also names the module,
-    # so the looser pattern passed with this whole branch deleted.
-    grep -q 'not enabled in the PAM session stack' <<<"$output"
-}
-
-@test "umask fix: no pam warning when pam_umask is enabled" {
-    VPSSEC_QUIET_SCAN=0
-    _login_defs "$(printf 'UMASK\t\t022')"
-    _pam_umask_enabled
-
-    run _fs_fix_umask
-    [ "$status" -eq 0 ]
-    _vpssec_refute grep -q 'pam_umask is not enabled' <<<"$output"
-}
-
 # ==============================================================================
 # The predicate the fix's postcondition shares with the audit
 # ==============================================================================
+
+@test "verify predicate: a strict UMASK is not in effect without pam_umask" {
+    # Debian 12 ships no pam_umask: no session reads login.defs UMASK, so a
+    # predicate that reads only the file reported the fix done on a host
+    # where every SSH, console and su session still got 0022.
+    _login_defs "$(printf 'UMASK\t\t027')"
+    rm -f "$etc/pam.d/common-session"
+    _vpssec_refute _fs_umask_ok
+
+    _pam_umask_enabled
+    _fs_umask_ok
+}
 
 @test "umask read: a duplicated UMASK line reads as the first, not both" {
     # The regression: every matching line was collected, so this returned

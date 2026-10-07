@@ -924,6 +924,13 @@ apt_refresh_index() {
     DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
 }
 
+# Apply changed fail2ban configuration to the running server. A plain reload
+# leaves a jail whose banaction was renamed with NO action (fail2ban 1.0, 1.1);
+# --restart restarts the affected jails in-process, bans restored from its db.
+fail2ban_reload_jails() {
+    fail2ban-client reload --restart >/dev/null 2>&1
+}
+
 # --- Network Utilities ---
 
 get_current_ssh_ip() {
@@ -1250,9 +1257,10 @@ select_mode() {
         return 0
     fi
 
-    # Non-interactive run, or no terminal to read from: default to the
-    # read-only audit. Never silently escalate to `guide`, which mutates.
-    if _noninteractive || ! _tty_readable; then
+    # Non-interactive run, no terminal to read from, or the one-line runner
+    # (which refuses guide): default to the read-only audit. Never silently
+    # escalate to `guide`, which mutates.
+    if _noninteractive || ! _tty_readable || [[ -n "${VPSSEC_ONESHOT:-}" ]]; then
         VPSSEC_MODE="audit"
         export VPSSEC_MODE
         return 0

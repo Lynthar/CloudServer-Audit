@@ -214,6 +214,16 @@ main() {
     # Show mode selection if not specified (only for audit/guide, not rollback/status)
     select_mode
 
+    # run.sh deletes its tree on exit, backups included: guide would change /etc
+    # and lose its only undo. Checked on the settled mode, which a menu or
+    # VPSSEC_MODE can set; exit 2 like run.sh's own refusal.
+    if [[ -n "${VPSSEC_ONESHOT:-}" ]] \
+       && [[ "${VPSSEC_MODE:-}" == "guide" || "${VPSSEC_MODE:-}" == "rollback" ]]; then
+        i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
+        print_error "$(i18n 'error.oneshot_stateful' "cmd=$VPSSEC_MODE")"
+        exit 2
+    fi
+
     # Interactive path: the command is now known — enforce root before
     # we display the module menu so the user doesn't pick modules only
     # to be rejected.

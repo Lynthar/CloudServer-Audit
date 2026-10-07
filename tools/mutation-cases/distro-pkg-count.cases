@@ -1,0 +1,38 @@
+# Mutation cases: tests/test_distro_pkg_count.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_distro_pkg_count.bats
+
+# A plain simulation keeps back an upgrade that needs a new package: the kernel
+# security update (an ABI bump) disappears from both counts.
+run_case "apt/kept-back-hidden" 1 \
+    '        -o Dir::Log::Planner=/dev/null upgrade --with-new-pkgs' \
+    '        -o Dir::Log::Planner=/dev/null upgrade'
+
+run_case "apt/planner-log-written" 1 \
+    '        -o Dir::Log::Planner=/dev/null upgrade --with-new-pkgs' \
+    '        upgrade --with-new-pkgs'
+
+run_case "apt/binary-caches-rebuilt" 1 \
+    '    apt-get -s -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= \' \
+    '    apt-get -s \'
+
+# New packages an upgrade pulls in are counted as updates.
+run_case "apt/new-packages-counted" 1 \
+    "            n=\$(grep -c '^Inst [^ ]* \\[' <<<\"\$out\") || n=0" \
+    "            n=\$(grep -c '^Inst ' <<<\"\$out\") || n=0"
+
+run_case "apt/new-packages-counted-security" 1 \
+    "            n=\$(grep -ciE '^Inst [^ ]* \\[.*\\(.*security' <<<\"\$out\") || n=0" \
+    "            n=\$(grep -ciE '^Inst .*\\(.*security' <<<\"\$out\") || n=0"
+
+run_case "dnf/logs-to-var-log" 1 \
+    '    LC_ALL=C dnf -q -C --setopt=logdir="$logdir" "$@" || rc=$?' \
+    '    LC_ALL=C dnf -q -C "$@" || rc=$?'
+
+run_case "dnf/log-dir-left-behind" 1 \
+    '    rm -rf "$logdir"' \
+    '    :'
+
+# Only apt-daily's stamp is believed while it exists, ageing a host updated by hand.
+run_case "index-age/lists-ignored" 1 \
+    "                -o -name '*Release' -o -name '*Packages*' \\))" \
+    "                -o -name 'nomatch' \\))"
