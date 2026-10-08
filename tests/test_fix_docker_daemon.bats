@@ -182,16 +182,16 @@ _completed_fixes() {
     jq -e '.["live-restore"] == null' "${VPSSEC_BACKUP_SESSION}${DOCKER_DAEMON_JSON}"
 }
 
-@test "daemon.json: no leftover .tmp file on the refusal path" {
+@test "daemon.json: no staging file is left beside it on the refusal path" {
     _daemon_reports true
     confirm_critical() { return 0; }
     printf 'not json' > "$DOCKER_DAEMON_JSON"
 
     run _docker_fix_enable_daemon_setting "live-restore" true
-    [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
+    [ "$(ls -A "$(dirname "$DOCKER_DAEMON_JSON")")" = "daemon.json" ]
 }
 
-@test "daemon.json: a merge that fails leaves no .tmp file and no half-written file" {
+@test "daemon.json: a merge that fails leaves no staging file and no half-written file" {
     # The refusal path above never reaches the merge, so it cannot cover the
     # cleanup there. `[]` separates them: valid JSON passes the refusal guard,
     # but `.["live-restore"] = true` cannot index an array, so the merge fails.
@@ -202,9 +202,30 @@ _completed_fixes() {
     run _docker_fix_enable_daemon_setting "live-restore" true
 
     [ "$status" -ne 0 ]
-    [ ! -e "${DOCKER_DAEMON_JSON}.tmp" ]
+    [ "$(ls -A "$(dirname "$DOCKER_DAEMON_JSON")")" = "daemon.json" ]
     # The operator's file is exactly as they left it.
     [ "$(cat "$DOCKER_DAEMON_JSON")" = "[]" ]
+}
+
+@test "daemon.json: a 0600 file keeps its mode and owner through the merge" {
+    # daemon.json can hold registry or proxy credentials; an operator who
+    # locked it down must not find it world-readable after a fix.
+    _daemon_picks_up_on_restart
+    confirm_critical() { return 0; }
+    printf '{"proxies": {"http-proxy": "http://u:p@proxy.invalid:3128"}}\n' > "$DOCKER_DAEMON_JSON"
+    chmod 600 "$DOCKER_DAEMON_JSON"
+    local owner
+    owner=$(stat -c '%u:%g' "$DOCKER_DAEMON_JSON")
+    if (( EUID == 0 )); then
+        chown 65534:65534 "$DOCKER_DAEMON_JSON"
+        owner="65534:65534"
+    fi
+
+    run _docker_fix_enable_daemon_setting "live-restore" true
+    [ "$status" -eq 0 ]
+    [ "$(stat -c '%a' "$DOCKER_DAEMON_JSON")" = "600" ]
+    [ "$(stat -c '%u:%g' "$DOCKER_DAEMON_JSON")" = "$owner" ]
+    jq -e '.proxies["http-proxy"] and .["live-restore"] == true' "$DOCKER_DAEMON_JSON"
 }
 
 @test "daemon.json: a refused file is not snapshotted into the backup session" {

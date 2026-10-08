@@ -47,24 +47,16 @@ run_case "created/validity-check-disabled" 1 \
 
 # ---- the write branches themselves ----------------------------------------
 
-# The create branch must actually produce the file. Occurrence 2 on purpose —
-# `mv "$tmp_file" "$DOCKER_DAEMON_JSON"` appears identically in both branches and
-# the first one is the update path.
-run_case "created/create-branch-skips-write" 2 \
-    '        mv "$tmp_file" "$DOCKER_DAEMON_JSON"' \
-    '        rm -f "$tmp_file"'
-
-# Occurrence 1, the update path. Killed ONLY by the restore round-trip test,
-# which skips on a host without GNU `realpath -m` — so on a macOS checkout this
-# case survives for a reason unrelated to coverage. Run it in the verification
-# container.
-run_case "created/update-branch-skips-write" 1 \
-    '        mv "$tmp_file" "$DOCKER_DAEMON_JSON"' \
-    '        rm -f "$tmp_file"'
+# Both branches share one write, and it must happen: skipping it leaves the
+# fix reporting success over a daemon.json that was never created or changed.
+run_case "created/write-skipped" 1 \
+    '    if [[ -z "$merged" ]] || ! write_file_atomic "$DOCKER_DAEMON_JSON" "$merged"$'"'"'\n'"'"'; then' \
+    '    if [[ -z "$merged" ]] || ! true; then'
 
 # The update branch must not silently become a create: overwriting an existing
 # daemon.json instead of merging into it drops the operator's own settings.
-# Same host caveat as the case above.
+# Killed ONLY by the restore round-trip test, which skips on a host without GNU
+# `realpath -m`; run it in the verification container.
 run_case "created/update-branch-clobbers" 1 \
-    '        if ! jq --arg key "$setting" --argjson val "$value" '"'"'.[$key] = $val'"'"' \' \
-    '        if ! jq -n --arg key "$setting" --argjson val "$value" '"'"'{($key): $val}'"'"' \'
+    '        merged=$(jq --arg key "$setting" --argjson val "$value" '"'"'.[$key] = $val'"'"' \' \
+    '        merged=$(jq -n --arg key "$setting" --argjson val "$value" '"'"'{($key): $val}'"'"' \'

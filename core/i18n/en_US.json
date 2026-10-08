@@ -902,7 +902,7 @@
   },
   "scheduling": {
     "at_jobs_present_desc": "at-job IDs: {list}",
-    "cron_fetches_internet_desc": "Sample: {sample}",
+    "cron_fetches_internet_desc": "Location(s): {list}",
     "title": "Scheduling",
     "desc": "cron / at job inventory and anomaly detection",
     "check_at_jobs": "Checking at jobs",
@@ -912,8 +912,7 @@
     "cron_fetches_internet": "{count} cron entry(ies) pipe remote downloads to a shell",
     "cron_clean": "No suspicious cron patterns detected",
     "at_jobs_present_suggestion": "Inspect with 'at -c <jobid>'; remove with 'atrm <jobid>'. at jobs are uncommon on servers — verify each is intentional",
-    "cron_fetches_internet_suggestion": "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern",
-    "src_user_crontab": "user crontab ({user})"
+    "cron_fetches_internet_suggestion": "Review each entry; piping curl/wget output to sh is a classic backdoor / supply-chain pattern"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR is disabled (randomize_va_space=0)",
@@ -1310,7 +1309,8 @@
     "legend": "Legend",
     "save_failed": "Report files could not be written: {files}. Any of them already in {dir} is from an earlier run (see logs/vpssec.log)",
     "not_saved": "Reports not saved.",
-    "not_saved_previous": "Reports not saved; {dir} still holds the ones written {time}."
+    "not_saved_previous": "Reports not saved; {dir} still holds the ones written {time}.",
+    "share_notice": "Reports contain details of this host (accounts, ports, processes, paths, containers). Review them before sharing."
   },
   "category": {
     "basics": "System Basics",

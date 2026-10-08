@@ -286,3 +286,54 @@ setup() {
     [ "$status" -eq 0 ]
     _vpssec_refute test -f "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
 }
+
+# ---- the generated library, executed ----------------------------------
+
+# Generate the hooks, give them a config holding URL, and source the library
+# the way the monitors do.
+_load_generated_lib() {
+    _alerts_fix_generate_templates >/dev/null
+    jq -n --arg url "$1" '{webhook_url: $url}' > "$ALERTS_CONFIG_FILE"
+    # shellcheck source=/dev/null
+    source "$ALERTS_TEMPLATES_DIR/alert-lib.sh"
+}
+
+@test "alert-lib: the webhook URL reaches curl on stdin, never on its argv" {
+    # argv is readable by every local user through /proc; the URL is the
+    # webhook's credential.
+    _vpssec_stub_script curl <<SH
+cat > "$BATS_TEST_TMPDIR/curl-stdin"
+exit 0
+SH
+    _load_generated_lib "https://hooks.example.invalid/services/T0/B0/SECRET-TOKEN"
+
+    run vpssec_alert_webhook "SSH Login: root" "from 203.0.113.9" warning
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called curl
+    _vpssec_refute grep -qF SECRET-TOKEN "$VPSSEC_STUB_LOG"
+    grep -qxF 'url = "https://hooks.example.invalid/services/T0/B0/SECRET-TOKEN"' \
+        "$BATS_TEST_TMPDIR/curl-stdin"
+}
+
+@test "alert-lib: a URL with a quote and a backslash survives curl's config quoting" {
+    command -v curl >/dev/null 2>&1 || skip "curl not installed"
+    local target="$BATS_TEST_TMPDIR/hook\"in\\box"
+    printf 'ok' > "$target"
+    _load_generated_lib "file://$target"
+    run vpssec_alert_webhook "t" "m"
+    [ "$status" -eq 0 ]
+
+    # The same call against a path that does not exist fails: success above
+    # was curl opening that exact file, not curl ignoring the URL.
+    _load_generated_lib "file://$BATS_TEST_TMPDIR/absent"
+    run vpssec_alert_webhook "t" "m"
+    [ "$status" -ne 0 ]
+}
+
+@test "alert-lib: a URL with a control character is refused, never split into config lines" {
+    _vpssec_stub curl
+    _load_generated_lib $'https://hooks.example.invalid/x\noutput = /tmp/vpssec-test-pwn'
+    run vpssec_alert_webhook "t" "m"
+    [ "$status" -ne 0 ]
+    _vpssec_refute _vpssec_stub_called curl
+}

@@ -173,6 +173,8 @@ report_generate_markdown() {
     cat <<EOF
 # $(i18n 'report.title')
 
+> $(i18n 'report.share_notice')
+
 **$(i18n 'preflight.virtualization' "type=$(detect_virtualization)")**
 
 | $(i18n 'common.info') | |
@@ -825,6 +827,7 @@ report_generate_all() {
         print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.json")"
         print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.md")"
         print_msg "  $(i18n 'report.report_saved' "path=${VPSSEC_REPORTS}/summary.sarif")"
+        print_warn "$(i18n 'report.share_notice')"
         print_msg ""
     else
         # Regenerate ALL three files, or a CI job shipping the Markdown or

@@ -1,7 +1,8 @@
 # Mutation cases: tests/test_fix_alerts.bats against modules/alerts.sh.
 # mutate-suite: modules/alerts.sh tests/test_fix_alerts.bats
 #
-# The only suite naming this module, so this is its only cases file. Every anchor
+# The fix suite's file; test_secret_canary.bats also names this module and has
+# its own, secret-canary-alerts.cases. Every anchor
 # is unique (`grep -cxF` == 1), so the occurrence index is 1 throughout — the rule
 # itself is in tools/mutate-suite.sh's header. Writes
 # stay inside vpssec's own state/templates trees, so no mutation here can
@@ -142,3 +143,25 @@ run_case "dispatch/unknown-fix-succeeds" 1 \
 # chmods it to 600. What the umask buys is that the world-readable window never
 # opens at all, which no single-process test can see. The chmod half is pinned
 # by config/existing-mode-not-tightened instead.
+
+# ---- the generated library at run time --------------------------------------
+
+# The URL back on curl's argv, where every local user can read it from /proc.
+run_case "lib/url-on-argv" 1 \
+    '        -d "$payload" >/dev/null 2>&1' \
+    '        -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1'
+
+# Without the refusal a newline in the URL starts a second curl config line.
+run_case "lib/control-character-accepted" 1 \
+    '    [[ "$WEBHOOK_URL" == *[[:cntrl:]]* ]] && return 1' \
+    '    :'
+
+# The two config-quoting escapes. Killed by the real-curl test, which skips where
+# curl is not installed: run them in the verification container.
+run_case "lib/quote-not-escaped" 1 \
+    '    url="${url//\"/\\\"}"' \
+    '    :'
+
+run_case "lib/backslash-not-escaped" 1 \
+    '    local url="${WEBHOOK_URL//\\/\\\\}"' \
+    '    local url="$WEBHOOK_URL"'

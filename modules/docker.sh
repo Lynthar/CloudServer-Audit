@@ -698,7 +698,6 @@ _docker_fix_enable_daemon_setting() {
     local value="$2"
     # No postcondition here: FIX_VERIFY declares the audit predicate for each
     # daemon setting, and execute_fix runs it after this returns.
-    local tmp_file="${DOCKER_DAEMON_JSON}.tmp"
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
@@ -715,35 +714,22 @@ _docker_fix_enable_daemon_setting() {
     # delete it. Docker ships no daemon.json, so create is the common case.
     backup_file "$DOCKER_DAEMON_JSON" >/dev/null || return 1
 
-    # Create or update daemon.json
+    # Merge into an existing file, or create one.
+    local merged=""
     if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
-        if ! jq --arg key "$setting" --argjson val "$value" '.[$key] = $val' \
-               "$DOCKER_DAEMON_JSON" > "$tmp_file" 2>/dev/null; then
-            rm -f "$tmp_file"
-            print_error "$(i18n 'docker.daemon_update_failed')"
-            return 1
-        fi
-
-        # Double-check the produced file is non-empty valid JSON before
-        # overwriting the original.
-        if [[ ! -s "$tmp_file" ]] || ! jq empty "$tmp_file" 2>/dev/null; then
-            rm -f "$tmp_file"
-            print_error "$(i18n 'docker.daemon_update_failed')"
-            return 1
-        fi
-
-        mv "$tmp_file" "$DOCKER_DAEMON_JSON"
+        merged=$(jq --arg key "$setting" --argjson val "$value" '.[$key] = $val' \
+                   "$DOCKER_DAEMON_JSON" 2>/dev/null) || merged=""
     else
-        # Derived from the path variable, never hardcoded: a literal makes
-        # this write outside whatever tree a caller pointed it at.
-        mkdir -p "$(dirname "$DOCKER_DAEMON_JSON")"
-        if ! jq -n --arg key "$setting" --argjson val "$value" \
-               '{($key): $val}' > "$tmp_file" 2>/dev/null; then
-            rm -f "$tmp_file"
-            print_error "$(i18n 'docker.daemon_update_failed')"
-            return 1
-        fi
-        mv "$tmp_file" "$DOCKER_DAEMON_JSON"
+        merged=$(jq -n --arg key "$setting" --argjson val "$value" \
+                   '{($key): $val}' 2>/dev/null) || merged=""
+    fi
+
+    # write_file_atomic keeps the file's mode and owner: daemon.json can hold
+    # registry or proxy credentials, so a 0600 file must not come back 0644.
+    # Keep the -z test: the appended newline slips an empty merge past its check.
+    if [[ -z "$merged" ]] || ! write_file_atomic "$DOCKER_DAEMON_JSON" "$merged"$'\n'; then
+        print_error "$(i18n 'docker.daemon_update_failed')"
+        return 1
     fi
 
     print_ok "$(i18n 'docker.daemon_updated')"

@@ -902,7 +902,7 @@
   },
   "scheduling": {
     "at_jobs_present_desc": "at 任务 ID：{list}",
-    "cron_fetches_internet_desc": "样例：{sample}",
+    "cron_fetches_internet_desc": "位置：{list}",
     "title": "计划任务",
     "desc": "cron 与 at 任务清单和异常检测",
     "check_at_jobs": "检查 at 任务",
@@ -912,8 +912,7 @@
     "cron_fetches_internet": "{count} 条 cron 条目通过管道下载并执行远程内容",
     "cron_clean": "未发现可疑的 cron 模式",
     "at_jobs_present_suggestion": "用 'at -c <jobid>' 查看，用 'atrm <jobid>' 删除。服务器上很少使用 at 任务——请逐一确认是否有意为之",
-    "cron_fetches_internet_suggestion": "逐条检查；将 curl/wget 的输出直接管道给 sh 执行，是典型的后门 / 供应链投毒手法",
-    "src_user_crontab": "用户 crontab（{user}）"
+    "cron_fetches_internet_suggestion": "逐条检查；将 curl/wget 的输出直接管道给 sh 执行，是典型的后门 / 供应链投毒手法"
   },
   "kernel": {
     "aslr_disabled_desc": "ASLR 已禁用（randomize_va_space=0）",
@@ -1310,7 +1309,8 @@
     "legend": "图例",
     "save_failed": "报告文件写入失败：{files}。{dir} 中已有的同名文件来自更早的一次运行（详见 logs/vpssec.log）",
     "not_saved": "报告未保存。",
-    "not_saved_previous": "报告未保存；{dir} 里仍是 {time} 写出的旧报告。"
+    "not_saved_previous": "报告未保存；{dir} 里仍是 {time} 写出的旧报告。",
+    "share_notice": "报告含本机取证信息（账号、端口、进程、路径、容器），分享前请先过目。"
   },
   "category": {
     "basics": "系统基础",

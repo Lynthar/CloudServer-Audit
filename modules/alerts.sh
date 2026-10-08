@@ -296,12 +296,20 @@ vpssec_alert_webhook() {
           fields: [{title: "Host", value: $host, short: true},
                    {title: "Time", value: $time, short: true}]}]}') || return 1
 
+    # The URL is the webhook's credential, so it reaches curl as a config line
+    # on stdin (-K -), never argv: any local user can read argv from /proc.
+    # Config quoting escapes only \\ and \"; a control character could end the line.
+    [[ "$WEBHOOK_URL" == *[[:cntrl:]]* ]] && return 1
+    local url="${WEBHOOK_URL//\\/\\\\}"
+    url="${url//\"/\\\"}"
+
     # --fail: a 4xx/5xx from the webhook endpoint is a delivery failure, not
     # a success with an error page; timeouts keep a dead endpoint from
     # hanging the monitoring cron.
-    curl --fail -sS -X POST -H "Content-Type: application/json" \
+    printf 'url = "%s"\n' "$url" | curl --fail -sS -K - -X POST \
+        -H "Content-Type: application/json" \
         --connect-timeout 5 --max-time 15 \
-        -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1
+        -d "$payload" >/dev/null 2>&1
 }
 
 # Send email notification. Returns non-zero when no channel is configured

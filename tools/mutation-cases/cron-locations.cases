@@ -1,0 +1,26 @@
+# Mutation cases: tests/test_cron_spool.bats against modules/scheduling.sh.
+# mutate-suite: modules/scheduling.sh tests/test_cron_spool.bats
+#
+# Cron findings name file:line and never the entry, read every file whatever its
+# name, and match the entry rather than the path that holds it.
+
+# Keep the whole grep -n record: the entry, tokens and all, is printed.
+run_case "locations/entry-echoed" 1 \
+    "                     | grep -vE '^[0-9]+:[[:space:]]*#' | cut -d: -f1)" \
+    "                     | grep -vE '^[0-9]+:[[:space:]]*#')"
+
+# A commented-out entry is not scheduled and must not be reported.
+run_case "locations/comments-matched" 1 \
+    "                     | grep -vE '^[0-9]+:[[:space:]]*#' | cut -d: -f1)" \
+    "                     | cut -d: -f1)"
+
+# The shape the sed defect shipped in: the file name spliced into a sed program.
+run_case "locations/name-spliced-into-sed" 1 \
+    "            printf '%s:%s\\n' \"\$f\" \"\$n\"" \
+    "            printf '%s\\n' \"\$n\" | sed \"s|^|\$f:|\""
+
+# Matching against "<path>: <entry>" lets a file named curl-* turn any piped
+# command into a fetch.
+run_case "locations/name-in-match" 1 \
+    '        done < <(grep -nE "$_SCHED_FETCH_TO_SHELL" "$f" 2>/dev/null \' \
+    '        done < <(sed "s|^|$f: |" "$f" | grep -nE "$_SCHED_FETCH_TO_SHELL" 2>/dev/null \'

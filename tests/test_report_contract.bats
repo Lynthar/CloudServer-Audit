@@ -102,6 +102,20 @@ _fail_writes_to() {
     [ -z "$(ls -A "$VPSSEC_REPORTS")" ]
 }
 
+@test "interactive save: a reminder to review before sharing follows the saved paths" {
+    confirm() { return 0; }
+    VPSSEC_QUIET_SCAN=0
+    run report_generate_all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(i18n 'report.report_saved' "path=$VPSSEC_REPORTS/summary.sarif")"*"$(i18n 'report.share_notice')"* ]]
+}
+
+@test "markdown: the reminder to review before sharing sits under the title" {
+    report_generate_markdown "$VPSSEC_REPORTS/summary.md"
+    [ "$(sed -n 1p "$VPSSEC_REPORTS/summary.md")" = "# $(i18n 'report.title')" ]
+    [ "$(sed -n 3p "$VPSSEC_REPORTS/summary.md")" = "> $(i18n 'report.share_notice')" ]
+}
+
 @test "json and sarif carry a checks array past the 128 KiB argv limit" {
     local long
     long=$(head -c 140000 /dev/zero | tr '\0' a)

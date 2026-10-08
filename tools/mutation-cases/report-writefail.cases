@@ -47,3 +47,13 @@ run_case "report/scope-always-all" 1 \
 run_case "sarif/suggestion-dropped" 1 \
     '                  "properties": { "suggestion": (.suggestion // "") }' \
     '                  "properties": {}'
+
+# The reminder to review a report before sharing it, in the terminal after a
+# save and under the Markdown title.
+run_case "share/terminal-notice-dropped" 1 \
+    "        print_warn \"\$(i18n 'report.share_notice')\"" \
+    '        :'
+
+run_case "share/markdown-notice-dropped" 1 \
+    "> \$(i18n 'report.share_notice')" \
+    ''

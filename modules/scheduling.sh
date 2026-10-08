@@ -5,57 +5,37 @@
 
 # --- Helpers ---
 
-# Enumerate every cron entry vpssec can see. Output one entry per line,
-# tagged with its source. The source tag is part of the line so anomaly
-# detection downstream can point at the right file.
-_sched_list_cron_entries() {
-    local f
-
-    # System crontab
-    if [[ -f /etc/crontab ]]; then
-        # Strip comments + blank lines.
-        grep -Ev '^[[:space:]]*(#|$)' /etc/crontab 2>/dev/null \
-            | sed "s|^|/etc/crontab: |"
-    fi
-
-    # /etc/cron.d/ — files dropped here are full crontab format
-    if [[ -d /etc/cron.d ]]; then
-        for f in /etc/cron.d/*; do
-            [[ -f "$f" ]] || continue
-            grep -Ev '^[[:space:]]*(#|$)' "$f" 2>/dev/null \
-                | sed "s|^|${f}: |"
-        done
-    fi
-
-    # /etc/cron.{daily,hourly,weekly,monthly}/ — these are run-parts
-    # scripts. We don't inspect script contents (too broad), only
-    # list their names so the operator can audit.
-    local dir
-    for dir in /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly; do
-        [[ -d "$dir" ]] || continue
-        for f in "$dir"/*; do
-            [[ -f "$f" || -L "$f" ]] || continue
-            printf '%s: run-parts script (contents not inspected)\n' "$f"
-        done
+# Every cron table vpssec reads, one path per line: the system crontab,
+# /etc/cron.d, and the per-user spool (its directory differs by distro family).
+_sched_cron_files() {
+    local f spool
+    [[ -f /etc/crontab ]] && printf '%s\n' /etc/crontab
+    for f in /etc/cron.d/*; do
+        [[ -f "$f" ]] || continue
+        printf '%s\n' "$f"
     done
-
-    # Per-user crontabs; the spool directory differs by distro family.
-    local spool tag
     spool=$(cron_spool_dir)
     for f in "$spool"/*; do
         [[ -f "$f" ]] || continue
-        tag=$(i18n 'scheduling.src_user_crontab' "user=$(basename "$f")")
-        grep -Ev '^[[:space:]]*(#|$)' "$f" 2>/dev/null | sed "s|^|${tag}: |"
+        printf '%s\n' "$f"
     done
 }
 
-# Pattern-match cron entries that fetch arbitrary content from the
-# network and pipe to a shell. This is the canonical supply-chain /
-# persistence trigger.
+# A network fetch piped into a shell: the canonical supply-chain / persistence
+# trigger. Matched against the entry only, never its file name.
+_SCHED_FETCH_TO_SHELL='(curl|wget|fetch|http_proxy)[^|]*\|[[:space:]]*(sh|bash|zsh|ash|dash)([[:space:]]|$)'
+
+# "<file>:<line>" of every active entry that pipes a fetch into a shell. Never
+# the entry itself: cron lines carry tokens (Authorization headers, URL
+# userinfo), and this output lands in every report format.
 _sched_find_internet_fetch_in_cron() {
-    _sched_list_cron_entries | grep -E \
-        '(curl|wget|fetch|http_proxy)[^|]*\|[[:space:]]*(sh|bash|zsh|ash|dash)([[:space:]]|$)' \
-        || true
+    local f n
+    while IFS= read -r f; do
+        while IFS= read -r n; do
+            printf '%s:%s\n' "$f" "$n"
+        done < <(grep -nE "$_SCHED_FETCH_TO_SHELL" "$f" 2>/dev/null \
+                     | grep -vE '^[0-9]+:[[:space:]]*#' | cut -d: -f1)
+    done < <(_sched_cron_files)
 }
 
 # Return at-job IDs (one per line). `atq` columns: id  date  queue  user
@@ -104,17 +84,12 @@ _sched_audit_cron_anomalies() {
     hits=$(_sched_find_internet_fetch_in_cron)
 
     if [[ -n "$hits" ]]; then
-        # Show up to 3 examples in the report — the full list goes to
-        # the log file via log_info below.
-        local sample
-        sample=$(echo "$hits" | head -3 | tr '\n' ';' | sed 's|;$||')
         local count
         count=$(echo "$hits" | wc -l)
         check_emit "scheduling.cron_fetches_internet" low failed \
             title="$(i18n 'scheduling.cron_fetches_internet' "count=$count")" \
-            desc="$(i18n 'scheduling.cron_fetches_internet_desc' "sample=${sample}")" \
+            desc="$(i18n 'scheduling.cron_fetches_internet_desc' "list=${hits//$'\n'/; }")" \
             suggestion="$(i18n 'scheduling.cron_fetches_internet_suggestion')"
-        log_info "Cron internet-fetch entries: $hits"
         print_severity "low" "$(i18n 'scheduling.cron_fetches_internet' "count=$count")"
     else
         check_emit "scheduling.cron_clean" low passed
