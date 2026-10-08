@@ -36,3 +36,8 @@ run_case "dnf/log-dir-left-behind" 1 \
 run_case "index-age/lists-ignored" 1 \
     "                -o -name '*Release' -o -name '*Packages*' \\))" \
     "                -o -name 'nomatch' \\))"
+
+# The security count read from the same query as the total.
+run_case "dnf/security-filter-dropped" 1 \
+    '            n=$(_distro_dnf_update_count --security) || return 1' \
+    '            n=$(_distro_dnf_update_count) || return 1'

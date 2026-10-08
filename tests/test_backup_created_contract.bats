@@ -331,6 +331,7 @@ _RECORDS_UNDO=(
     ufw.install
     ufw.set_default_deny
     update.apply_security
+    update.enable_unattended
     update.install_unattended
 )
 

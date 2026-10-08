@@ -10,6 +10,8 @@
 # either, so these belong to the fix alone.
 UPDATE_AUTO_UPGRADES_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
 UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"
+# apt's main config file, read after every apt.conf.d part (see apply_security).
+UPDATE_APT_MAIN_CONF="/etc/apt/apt.conf"
 
 # An index older than this cannot vouch for "no updates", and lagging this far
 # behind pending security updates escalates them to high.
@@ -17,11 +19,9 @@ UPDATE_INDEX_STALE_DAYS=30
 
 # --- Update Helper Functions ---
 
-# There is deliberately no local lock / count / index-age predicate here:
-# they were apt-only copies of distro.sh primitives with zero callers.
-# Ask distro.sh — a second copy only grows a second version of the truth.
-
-# (Same rule as above: no local duplicates of the distro.sh count primitives.)
+# There is deliberately no local lock / count / index-age / reboot predicate
+# here: they were apt-only copies of distro.sh primitives. Ask distro.sh — a
+# second copy only grows a second version of the truth.
 
 # Whether automatic updates are installed / effective. Both delegate to
 # core/distro.sh, which is what the AUDIT asks, so the fix's success gate and
@@ -42,69 +42,14 @@ _update_no_security_pending() {
     (( n <= 0 ))
 }
 
-# Pure-data variant for tests. 0 when needrestart reports a pending kernel
-# reboot: NEEDRESTART-KSTA in {2,3}. 2 is included on purpose — an
-# ABI-compatible kernel still needs a reboot to actually run.
-_update_needrestart_kernel_pending() {
-    local ksta
-    ksta=$(awk -F': ' '/^NEEDRESTART-KSTA:/ {print $2; exit}' <<<"$1")
-    [[ "$ksta" =~ ^[0-9]+$ ]] && (( ksta >= 2 ))
-}
-
-# Latest installed linux-image package version (e.g. 6.12.88+deb13-amd64).
-# Empty string if dpkg unavailable or no kernel package installed.
-_update_latest_installed_kernel() {
-    command -v dpkg-query >/dev/null 2>&1 || return 0
-    dpkg-query -W -f='${Status}\t${Package}\n' 'linux-image-[0-9]*' 2>/dev/null \
-        | awk -F'\t' '$1 == "install ok installed" {sub(/^linux-image-/, "", $2); print $2}' \
-        | sort -V | tail -1
-}
-
-# True when the running kernel version differs from the latest installed
-# linux-image package.
-_update_running_kernel_outdated() {
-    local running latest
-    running="$(uname -r)"
-    latest="$(_update_latest_installed_kernel)"
-    [[ -n "$running" && -n "$latest" && "$running" != "$latest" ]]
-}
-
-# Is a reboot required? Three signals, none universal: reboot-required exists
-# only with update-notifier-common, needrestart is the portable preference,
-# and the kernel comparison catches a host that has neither.
-_update_reboot_required() {
-    [[ -f /var/run/reboot-required ]] && return 0
-    if command -v needrestart >/dev/null 2>&1; then
-        local out
-        if out=$(needrestart -k -b 2>/dev/null); then
-            _update_needrestart_kernel_pending "$out" && return 0
-        fi
-    fi
-    _update_running_kernel_outdated
-}
-
-# Get reboot required packages
-_update_reboot_packages() {
-    if [[ -f /var/run/reboot-required.pkgs ]]; then
-        cat /var/run/reboot-required.pkgs 2>/dev/null
-        return
-    fi
-    # needrestart fallback: surface the kernel-version delta as
-    # informational context (no per-package list available).
-    if command -v needrestart >/dev/null 2>&1; then
-        local nr_out kcur kexp
-        if nr_out=$(needrestart -k -b 2>/dev/null); then
-            kcur=$(awk -F': ' '/^NEEDRESTART-KCUR:/ {print $2; exit}' <<<"$nr_out")
-            kexp=$(awk -F': ' '/^NEEDRESTART-KEXP:/ {print $2; exit}' <<<"$nr_out")
-            if [[ -n "$kcur" && -n "$kexp" && "$kcur" != "$kexp" ]]; then
-                echo "kernel: ${kcur} → ${kexp}"
-                return
-            fi
-        fi
-    fi
-    # Direct dpkg fallback when no other source is available.
-    if _update_running_kernel_outdated; then
-        echo "kernel: $(uname -r) → $(_update_latest_installed_kernel)"
+# The refresh command for this host's package manager; a generic line when
+# there is none to name.
+_update_refresh_suggestion() {
+    local cmd
+    if cmd=$(pkg_refresh_hint); then
+        i18n 'update.check_failed_fix' "cmd=$cmd"
+    else
+        i18n 'update.check_failed_fix_generic'
     fi
 }
 
@@ -163,12 +108,12 @@ _update_audit_available() {
     # NEVER refresh the index here: an audit must not mutate state, and it
     # would defeat the index-age signal below. Both primitives return non-zero
     # when the QUERY failed, which is not "no updates".
-    local update_count security_count sec_shown
+    local update_count security_count
     if ! update_count=$(pkg_update_count) || \
        ! security_count=$(pkg_security_update_count); then
         check_emit "update.check_failed" low failed \
             desc="$(i18n 'update.check_failed_desc')" \
-            suggestion="$(i18n 'update.check_failed_fix')"
+            suggestion="$(_update_refresh_suggestion)"
         print_severity "low" "$(i18n 'update.check_failed')"
         return 0
     fi
@@ -181,12 +126,12 @@ _update_audit_available() {
         if [[ -z "$age" ]]; then
             check_emit "update.index_stale" low failed \
                 desc="$(i18n 'update.index_never_refreshed_desc')" \
-                suggestion="$(i18n 'update.check_failed_fix')"
+                suggestion="$(_update_refresh_suggestion)"
             print_severity "low" "$(i18n 'update.index_stale')"
         elif (( age > UPDATE_INDEX_STALE_DAYS )); then
             check_emit "update.index_stale" low failed \
                 desc="$(i18n 'update.index_stale_desc' "days=$age")" \
-                suggestion="$(i18n 'update.check_failed_fix')"
+                suggestion="$(_update_refresh_suggestion)"
             print_severity "low" "$(i18n 'update.index_stale')"
         else
             check_emit "update.no_updates" low passed \
@@ -205,9 +150,7 @@ _update_audit_available() {
             severity="medium"
             fix_id="update.apply_security"
 
-            sec_shown=$security_count
-            if ((sec_shown > update_count)); then sec_shown=$update_count; fi
-            sec_desc="$(i18n 'update.security_updates_count' "count=$sec_shown")"
+            sec_desc="$(i18n 'update.security_updates_count' "count=$security_count")"
 
             local stale_days
             stale_days=$(pkg_index_age_days)
@@ -223,7 +166,7 @@ _update_audit_available() {
             fix="$fix_id"
 
         if ((security_count > 0)); then
-            print_severity "$severity" "$(i18n 'update.security_updates' "count=$sec_shown")"
+            print_severity "$severity" "$(i18n 'update.security_updates' "count=$security_count")"
         else
             print_severity "low" "$(i18n 'update.updates_available' "count=$update_count")"
         fi
@@ -269,6 +212,8 @@ _update_audit_unattended() {
         case "$status" in
             service_disabled)
                 reason_desc="$(i18n 'update.unattended_service_disabled')" ;;
+            refresh_disabled)
+                reason_desc="$(i18n 'update.unattended_refresh_disabled')" ;;
             periodic_off)
                 reason_desc="$(i18n 'update.unattended_periodic_off')" ;;
             no_origins)
@@ -286,21 +231,31 @@ _update_audit_unattended() {
 }
 
 _update_audit_reboot() {
-    if pkg_reboot_required; then
-        local packages=$(_update_reboot_packages)
-        local pkg_list=""
-        if [[ -n "$packages" ]]; then
-            pkg_list=$(echo "$packages" | head -5 | tr '\n' ', ')
-            pkg_list="${pkg_list%, }"
-        fi
+    # Three-way, like the lock: a host nothing can answer for (a container
+    # with no kernel package) is not "no reboot required".
+    local reasons rc=0
+    reasons=$(pkg_reboot_required) || rc=$?
 
+    if (( rc == 0 )); then
+        local -a shown=()
+        local desc="" list
+        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")
+        if (( ${#shown[@]} )); then
+            printf -v list '%s, ' "${shown[@]}"
+            desc="$(i18n 'update.reboot_required_desc' "list=${list%, }")"
+        fi
         check_emit "update.reboot_required" medium failed \
-            desc="$(i18n 'update.reboot_required_desc' "list=$pkg_list")" \
+            desc="$desc" \
             suggestion="$(i18n 'update.reboot_required_suggestion')"
         print_severity "medium" "$(i18n 'update.reboot_required')"
-    else
+    elif (( rc == 1 )); then
         check_emit "update.no_reboot" low passed
         print_ok "$(i18n 'update.no_reboot')"
+    else
+        # failed + info, for the reasons given at the lock check above.
+        check_emit "update.reboot_state_unknown" low failed \
+            desc="$(i18n 'update.reboot_state_unknown_desc')"
+        print_severity "low" "$(i18n 'update.reboot_state_unknown')"
     fi
 }
 
@@ -349,7 +304,15 @@ _update_fix_apply_security() {
         installed_uu=1
     fi
 
-    if unattended-upgrade -d 2>/dev/null; then
+    # The operator's origins can include the main archive (Debian's default
+    # does), so the run gets the security ones only, through a throwaway
+    # APT_CONFIG: nothing under /etc changes.
+    local cfg rc=0
+    cfg=$(_update_security_only_apt_config) || { print_error "$(i18n 'update.updates_failed')"; return 1; }
+    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?
+    rm -rf "$cfg"
+
+    if (( rc == 0 )); then
         print_ok "$(i18n 'update.updates_applied')"
         # rollback restores config FILES, so installed packages are invisible
         # to it. This message is the operator's only pointer to what changed.
@@ -361,6 +324,44 @@ _update_fix_apply_security() {
 
     print_error "$(i18n 'update.updates_failed')"
     print_info "$(i18n 'update.check_uu_log')"
+    return 1
+}
+
+# The apt.conf lines that leave unattended-upgrade the security origins only.
+# MUST be Origins-Pattern with codename=/label=: Allowed-Origins matches on
+# Suite, and Debian's is "stable-security", so it matches NOTHING.
+_update_security_origins_conf() {
+    local origins
+    if [[ "$(detect_os)" == "ubuntu" ]]; then
+        origins='    "origin=${distro_id},archive=${distro_codename}-security";
+    "origin=${distro_id}ESMApps,archive=${distro_codename}-apps-security";
+    "origin=${distro_id}ESM,archive=${distro_codename}-infra-security";'
+    else
+        origins='    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
+    fi
+    # The placeholders were single-quoted: unattended-upgrades expands them.
+    printf '%s\n' '#clear Unattended-Upgrade::Allowed-Origins;' \
+        '#clear Unattended-Upgrade::Origins-Pattern;' \
+        'Unattended-Upgrade::Origins-Pattern {' "$origins" '};'
+}
+
+# A throwaway APT_CONFIG naming the security origins as apt's main config file,
+# which apt reads after every apt.conf.d part, so its #clear wins. Echoes the
+# directory; the caller removes it.
+_update_security_only_apt_config() {
+    local dir
+    dir=$(mktemp -d) || return 1
+    # The real main file is still read, through #include — only when it exists:
+    # including a missing file is a syntax error.
+    if {
+        [[ -f "$UPDATE_APT_MAIN_CONF" ]] && printf '#include "%s";\n' "$UPDATE_APT_MAIN_CONF"
+        _update_security_origins_conf
+    } > "$dir/security.conf" && printf 'Dir::Etc::main "%s";\n' "$dir/security.conf" > "$dir/apt.conf"; then
+        echo "$dir"
+        return 0
+    fi
+    rm -rf "$dir"
     return 1
 }
 
@@ -410,38 +411,20 @@ APT::Periodic::AutocleanInterval "7";'; then
     fi
 
     # A 52- fragment read AFTER 50, never an overwrite of the distro conffile.
-    # MUST be Origins-Pattern with codename=/label=: Allowed-Origins matches on
-    # Suite, and Debian's is "stable-security", so it matches NOTHING.
     local uu_dropin="$UPDATE_UU_DROPIN"
-    local origins
-    if [[ "$(detect_os)" == "ubuntu" ]]; then
-        origins='    "origin=${distro_id},archive=${distro_codename}-security";
-    "origin=${distro_id}ESMApps,archive=${distro_codename}-apps-security";
-    "origin=${distro_id}ESM,archive=${distro_codename}-infra-security";'
-    else
-        origins='    "origin=Debian,codename=${distro_codename},label=Debian-Security";
-    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
-    fi
 
     # Unconditional, for the reason given above: this drop-in is vpssec's own
     # file, so it never exists on a first run and the rollback needs it
     # recorded as created.
     backup_file "$uu_dropin" >/dev/null || return 1
-    # Double-quoted so ${origins} interpolates. The ${distro_id} placeholders
-    # inside it were single-quoted at assignment, so bash's single expansion
-    # pass inserts them verbatim with no set -u risk.
-    if ! write_file_atomic "$uu_dropin" "// vpssec: automatic SECURITY upgrades only.
-// Dropped after 50unattended-upgrades so the distro conffile and operator
-// settings (Mail, Package-Blacklist, ...) in it are preserved; #clear resets
-// the inherited origin lists so only the security patterns below are active.
-#clear Unattended-Upgrade::Allowed-Origins;
-#clear Unattended-Upgrade::Origins-Pattern;
-Unattended-Upgrade::Origins-Pattern {
-${origins}
-};
-Unattended-Upgrade::Remove-Unused-Dependencies \"true\";
-Unattended-Upgrade::Automatic-Reboot \"false\";
-Unattended-Upgrade::SyslogEnable \"true\";"; then
+    # Origins only: any other key here would override what the operator set
+    # in 50 (Automatic-Reboot, Remove-Unused-Dependencies...).
+    local dropin_text
+    dropin_text="// vpssec: automatic SECURITY upgrades only.
+// Read after 50unattended-upgrades and sets nothing but the origin lists, so
+// the operator's settings there (Mail, Package-Blacklist, ...) still apply.
+$(_update_security_origins_conf)"
+    if ! write_file_atomic "$uu_dropin" "$dropin_text"; then
         print_error "$(i18n 'update.uu_dropin_write_failed' "file=$uu_dropin")"
         return 1
     fi
@@ -453,13 +436,23 @@ Unattended-Upgrade::SyslogEnable \"true\";"; then
             || print_warn "$(i18n 'update.unattended_dryrun_warn')"
     fi
 
-    # The TIMER runs unattended-upgrade on a schedule; the service only flushes
-    # at shutdown, so enabling it alone hides a masked timer. FIX_VERIFY
+    # The TIMERS run on a schedule: apt-daily refreshes the index, apt-daily-
+    # upgrade installs from it. The service only flushes at shutdown. FIX_VERIFY
     # (_update_unattended_enabled, the audit's own predicate) decides the outcome.
-    systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true
+    local timer
+    local -a turned_on=()
+    for timer in apt-daily.timer apt-daily-upgrade.timer; do
+        if systemctl is-enabled "$timer" &>/dev/null; then
+            systemctl enable --now "$timer" 2>/dev/null || true
+        elif systemctl enable --now "$timer" 2>/dev/null; then
+            turned_on+=("$timer")
+        fi
+    done
     systemctl enable unattended-upgrades 2>/dev/null || true
     systemctl start unattended-upgrades 2>/dev/null || true
 
+    # Switched-on timers are state a rollback cannot reach.
+    (( ${#turned_on[@]} )) && record_undo update.enable_unattended "systemctl disable --now ${turned_on[*]}"
     print_ok "$(i18n 'update.unattended_configured')"
     return 0
 }

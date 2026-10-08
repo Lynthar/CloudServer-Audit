@@ -87,10 +87,14 @@ _no_packages_installed() { _vpssec_stub dpkg-query 1; }
     grep -qF 'Unattended-Upgrade::Origins-Pattern {' "$UPDATE_UU_DROPIN"
 }
 
-@test "enable: the drop-in does not reboot the host on its own" {
+@test "enable: the drop-in sets the origin lists and nothing the operator owns" {
+    # It is read after 50unattended-upgrades, so any other key here would
+    # silently override the operator's own Automatic-Reboot and the like.
     run _update_fix_enable_unattended
     [ "$status" -eq 0 ]
-    grep -qF 'Unattended-Upgrade::Automatic-Reboot "false";' "$UPDATE_UU_DROPIN"
+    run grep -vE '^(//|#clear Unattended-Upgrade::(Allowed-Origins|Origins-Pattern);$|Unattended-Upgrade::Origins-Pattern \{$|    "origin=[^"]*";$|\};$)' "$UPDATE_UU_DROPIN"
+    [ -z "$output" ]
+    grep -qF 'Unattended-Upgrade::Origins-Pattern {' "$UPDATE_UU_DROPIN"
 }
 
 @test "enable: 50unattended-upgrades is left alone" {
@@ -142,6 +146,46 @@ SH
     run _update_fix_enable_unattended
     [ "$status" -eq 0 ]
     _vpssec_stub_called systemctl 'enable --now apt-daily-upgrade.timer'
+}
+
+@test "enable: the index refresh timer is enabled too" {
+    # apt-daily-upgrade only installs from the index apt-daily refreshes;
+    # without it every run reads the same frozen index.
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called systemctl 'enable --now apt-daily\.timer'
+}
+
+@test "enable: a timer it switched on is named in the logged undo command" {
+    # Rollback restores files; a timer left on after it would keep the host
+    # refreshing or upgrading on a schedule the operator had turned off.
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$1 $2" == "is-enabled apt-daily.timer" ]] && exit 1
+exit 0
+SH
+
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    grep -q 'Undo for update.enable_unattended: systemctl disable --now apt-daily.timer$' \
+        "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "enable: timers that were already on leave no undo command" {
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q 'Undo for update.enable_unattended' "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "audit: an index that is never refreshed is the reason given" {
+    _uu_installed
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$1 $2" == "is-enabled apt-daily.timer" ]] && exit 1
+exit 0
+SH
+
+    _update_audit_unattended
+    run jq -r '.[] | select(.id == "update.unattended_disabled") | .desc' "$VPSSEC_STATE/checks.json"
+    [[ "$output" == *"apt-daily.timer"* ]]
 }
 
 @test "enable: a first run records both created files so rollback deletes them" {
@@ -314,6 +358,102 @@ SH
     [ "$status" -eq 0 ]
     _vpssec_stub_called unattended-upgrade
     _vpssec_refute _vpssec_stub_called apt-get 'upgrade'
+}
+
+# unattended-upgrade as a recorder: it keeps the APT_CONFIG it was run with, and
+# the main file that config names, for the test to read afterwards.
+_uu_records_config() {
+    _vpssec_stub_script unattended-upgrade <<SH
+echo "\$APT_CONFIG" > "$BATS_TEST_TMPDIR/uu-apt-config"
+main=\$(sed -n 's/^Dir::Etc::main "\\(.*\\)";\$/\\1/p' "\$APT_CONFIG")
+cp "\$main" "$BATS_TEST_TMPDIR/uu-main.conf"
+exit 0
+SH
+}
+
+@test "apply: unattended-upgrade gets the security origins as apt's main config" {
+    # Debian's own origins include the main archive, so a point release used to
+    # ride along. apt reads Dir::Etc::main after every apt.conf.d part, which is
+    # what lets its #clear win.
+    _uu_installed
+    _uu_records_config
+    detect_os() { echo debian; }
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    grep -qF '#clear Unattended-Upgrade::Origins-Pattern;' "$BATS_TEST_TMPDIR/uu-main.conf"
+    grep -qF '#clear Unattended-Upgrade::Allowed-Origins;' "$BATS_TEST_TMPDIR/uu-main.conf"
+    grep -qF 'label=Debian-Security' "$BATS_TEST_TMPDIR/uu-main.conf"
+    _vpssec_refute grep -qE 'label=Debian";' "$BATS_TEST_TMPDIR/uu-main.conf"
+}
+
+@test "apply: the throwaway config is removed and nothing under /etc is written" {
+    _uu_installed
+    _uu_records_config
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    [ ! -e "$(dirname "$(cat "$BATS_TEST_TMPDIR/uu-apt-config")")" ]
+    [ ! -e "$UPDATE_UU_DROPIN" ]
+    [ ! -e "$UPDATE_AUTO_UPGRADES_CONF" ]
+}
+
+@test "apply: an operator's apt.conf is still read, and only when it exists" {
+    # Pointing Dir::Etc::main elsewhere would drop it; including a file that is
+    # not there is a syntax error that stops apt.
+    _uu_installed
+    _uu_records_config
+    UPDATE_APT_MAIN_CONF="$etc/apt/apt.conf"
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q '#include' "$BATS_TEST_TMPDIR/uu-main.conf"
+
+    printf 'Acquire::Retries "7";\n' > "$UPDATE_APT_MAIN_CONF"
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    grep -qxF "#include \"$UPDATE_APT_MAIN_CONF\";" "$BATS_TEST_TMPDIR/uu-main.conf"
+}
+
+@test "apply: under that config, apt itself sees only the security origins" {
+    # The real apt-config, with the parts directory pointed at a stand-in for
+    # /etc/apt/apt.conf.d that carries Debian's stock origins and an operator's
+    # setting: the origins must be replaced, the setting kept.
+    local real
+    real=$(PATH=/usr/bin:/bin command -v apt-config) || skip "no apt-config on this host"
+    detect_os() { echo debian; }
+    mkdir -p "$etc/parts"
+    cat > "$etc/parts/50unattended-upgrades" <<'CONF'
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename},label=Debian";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+Unattended-Upgrade::Mail "ops";
+CONF
+    UPDATE_APT_MAIN_CONF="$etc/apt/apt.conf"
+    printf 'Acquire::Retries "7";\n' > "$UPDATE_APT_MAIN_CONF"
+
+    local cfg dump
+    cfg=$(_update_security_only_apt_config)
+    printf 'Dir::Etc::parts "%s";\n' "$etc/parts" >> "$cfg/apt.conf"
+    dump=$(APT_CONFIG="$cfg/apt.conf" "$real" dump)
+    rm -rf "$cfg"
+    run grep -c '^Unattended-Upgrade::Origins-Pattern:: .*label=Debian-Security";$' <<<"$dump"
+    [ "$output" = "2" ]
+    run grep -c '^Unattended-Upgrade::Origins-Pattern:: ' <<<"$dump"
+    [ "$output" = "2" ]
+    [[ "$dump" == *'Unattended-Upgrade::Mail "ops";'* ]]
+    [[ "$dump" == *'Acquire::Retries "7";'* ]]
+}
+
+@test "apply: a config that cannot be built fails before anything runs" {
+    _uu_installed
+    _vpssec_stub unattended-upgrade 0
+    _vpssec_stub mktemp 1
+
+    run _update_fix_apply_security
+    [ "$status" -eq 1 ]
+    _vpssec_refute _vpssec_stub_called unattended-upgrade
 }
 
 @test "apply: a missing unattended-upgrades is installed first" {

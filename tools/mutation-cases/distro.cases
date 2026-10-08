@@ -1,22 +1,54 @@
 # Mutation cases: tests/test_update_unattended.bats against core/distro.sh.
 # mutate-suite: core/distro.sh tests/test_update_unattended.bats
 #
-# These two parsers live here so that auto_update_status — which both the audit
-# and the unattended-upgrades fix's postcondition ask — is the only implementation
-# of the predicate. These cases are what shows the suite still asserts something
-# in that home.
+# auto_update_status is the one predicate the audit and the unattended-upgrades
+# fix's postcondition both ask, and its readers live here. Each mechanism has more
+# than one way to say "on" (an interval, a boolean, a second timer); these cases
+# put back the narrower reading each used to have.
 
-run_case "periodic/value-not-compared" 1 \
-    '    [[ "$val" == "1" ]]' \
-    '    [[ -n "$val" ]]'
+# ---- reading one key out of an apt-config dump --------------------------
 
-run_case "periodic/first-match-not-taken" 1 \
-    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2; exit}' <<<\"\$1\")" \
-    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2}' <<<\"\$1\")"
+run_case "dump/first-match-not-taken" 1 \
+    "    awk -F'\"' -v key=\"\$2 \" 'index(\$0, key) == 1 {print \$2; exit}' <<<\"\$1\"" \
+    "    awk -F'\"' -v key=\"\$2 \" 'index(\$0, key) == 1 {print \$2}' <<<\"\$1\""
 
-run_case "periodic/prefix-match-too-loose" 1 \
-    "    val=\$(awk -F'\"' '/^APT::Periodic::Unattended-Upgrade /{print \$2; exit}' <<<\"\$1\")" \
-    "    val=\$(awk -F'\"' '/^APT::Periodic::/{print \$2; exit}' <<<\"\$1\")"
+run_case "dump/prefix-match-too-loose" 1 \
+    "    awk -F'\"' -v key=\"\$2 \" 'index(\$0, key) == 1 {print \$2; exit}' <<<\"\$1\"" \
+    "    awk -F'\"' -v key=\"\$2\" 'index(\$0, key) == 1 {print \$2; exit}' <<<\"\$1\""
+
+# ---- what apt.systemd.daily runs on ---------------------------------------
+
+# The original defect: only "1" counted, so "7" and "always" read as off.
+run_case "interval/only-one-is-on" 1 \
+    '    [[ "$1" == "always" ]] || { [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]; }' \
+    '    [[ "$1" == "1" ]]'
+
+run_case "interval/any-value-is-on" 1 \
+    '    [[ "$1" == "always" ]] || { [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]; }' \
+    '    [[ -n "$1" ]]'
+
+run_case "interval/zero-is-on" 1 \
+    '    [[ "$1" == "always" ]] || { [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]; }' \
+    '    [[ "$1" == "always" ]] || [[ "$1" =~ ^[0-9]+[smhd]?$ ]]'
+
+run_case "interval/always-is-off" 1 \
+    '    [[ "$1" == "always" ]] || { [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]; }' \
+    '    [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]'
+
+run_case "periodic/enable-switch-ignored" 1 \
+    '    [[ "$enable" =~ ^[0-9]+$ ]] && (( 10#$enable == 0 )) && return 1' \
+    '    :'
+
+# "00" stops the script too: the test there is numeric.
+run_case "periodic/enable-compared-as-text" 1 \
+    '    [[ "$enable" =~ ^[0-9]+$ ]] && (( 10#$enable == 0 )) && return 1' \
+    '    [[ "$enable" == "0" ]] && return 1'
+
+run_case "refresh/reads-the-install-key" 1 \
+    '    _auto_update_apt_interval_on "$(_auto_update_apt_dump_value "$1" APT::Periodic::Update-Package-Lists)"' \
+    '    _auto_update_apt_interval_on "$(_auto_update_apt_dump_value "$1" APT::Periodic::Unattended-Upgrade)"'
+
+# ---- origins ----------------------------------------------------------------
 
 run_case "origins/empty-anchor-accepted" 1 \
     "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]+\";' <<<\"\$1\"" \
@@ -29,3 +61,37 @@ run_case "origins/list-element-form-ignored" 1 \
 run_case "origins/anchored-match-dropped" 1 \
     "    grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]+\";' <<<\"\$1\"" \
     "    grep -qE 'Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: \"[^\"]*\";' <<<\"\$1\""
+
+# ---- dnf-automatic's apply_updates ---------------------------------------
+
+# The original defect: only "yes" counted, not libdnf's other true values.
+run_case "dnf/only-yes-is-true" 1 \
+    '    [[ "${val,,}" =~ ^(1|yes|true|on)$ ]]' \
+    '    [[ "$val" =~ ^[Yy]es$ ]]'
+
+run_case "dnf/first-line-wins" 1 \
+    "    val=\$(awk -F= '/^[[:space:]]*apply_updates[[:space:]]*=/ {v=\$2} END {print v}' <<<\"\$1\")" \
+    "    val=\$(awk -F= '/^[[:space:]]*apply_updates[[:space:]]*=/ {print \$2; exit}' <<<\"\$1\")"
+
+run_case "dnf/commented-line-read" 1 \
+    "    val=\$(awk -F= '/^[[:space:]]*apply_updates[[:space:]]*=/ {v=\$2} END {print v}' <<<\"\$1\")" \
+    "    val=\$(awk -F= '/apply_updates[[:space:]]*=/ {v=\$2} END {print v}' <<<\"\$1\")"
+
+# ---- the timers auto_update_status asks ------------------------------------
+
+run_case "status/refresh-timer-not-asked" 1 \
+    '            if ! systemctl is-enabled apt-daily.timer &>/dev/null; then' \
+    '            if false; then'
+
+run_case "status/refresh-interval-not-asked" 1 \
+    '            _auto_update_apt_refresh_from_dump "$dump"  || { echo "refresh_disabled"; return 1; }' \
+    '            :'
+
+run_case "status/install-timer-not-asked" 1 \
+    '            systemctl is-enabled dnf-automatic-install.timer &>/dev/null && { echo "ok"; return 0; }' \
+    '            :'
+
+# A timer that only downloads or notifies installs nothing.
+run_case "status/download-timer-counts" 1 \
+    '            systemctl is-enabled dnf-automatic-install.timer &>/dev/null && { echo "ok"; return 0; }' \
+    '            systemctl is-enabled dnf-automatic-download.timer &>/dev/null && { echo "ok"; return 0; }'

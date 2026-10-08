@@ -164,6 +164,19 @@ _distro_dnf_query() {
     return "$rc"
 }
 
+# Packages `check-update [args]` lists, or non-zero when the query failed. Its
+# rc 100 means "some" and is captured in an `if`, so set -e does not abort on
+# it. Only column-0 lines are packages; "Obsoleting Packages" ends the list.
+_distro_dnf_update_count() {
+    local out rc=0
+    if out=$(_distro_dnf_query check-update "$@" 2>/dev/null); then rc=0; else rc=$?; fi
+    case "$rc" in
+        100) awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out" ;;
+        0)   echo 0 ;;
+        *)   return 1 ;;
+    esac
+}
+
 # Count of pending updates. Echoes an integer, or returns NON-ZERO AND PRINTS
 # NOTHING when the query failed. Never conflate those: one digit cannot mean
 # both "up to date" and "could not ask". Call in a tested context.
@@ -177,15 +190,7 @@ pkg_update_count() {
             n=$(grep -c '^Inst [^ ]* \[' <<<"$out") || n=0
             ;;
         dnf)
-            # rc 100 = updates, 0 = none, else error; captured in an `if` so
-            # set -e does not abort on 100. Only column-0 lines are packages.
-            local rc=0
-            if out=$(_distro_dnf_query check-update 2>/dev/null); then rc=0; else rc=$?; fi
-            case "$rc" in
-                100) n=$(awk '/^Obsoleting Packages/{exit} /^[^[:space:]]/ && NF>=3 {c++} END{print c+0}' <<<"$out") ;;
-                0)   n=0 ;;
-                *)   return 1 ;;
-            esac
+            n=$(_distro_dnf_update_count) || return 1
             ;;
         pacman)
             # `pacman -Qu` exits 1 for BOTH "no updates" and errors; only
@@ -217,11 +222,9 @@ pkg_security_update_count() {
             n=$(grep -ciE '^Inst [^ ]* \[.*\(.*security' <<<"$out") || n=0
             ;;
         dnf)
-            # UPPER BOUND, not a count: updateinfo lists every package named
-            # in an applicable advisory, so on real hosts it can exceed the
-            # total. Use as ">0?" only and clamp any displayed figure.
-            out=$(_distro_dnf_query updateinfo list --security --available 2>/dev/null) || return 1
-            n=$(awk 'NF>=3 {print $NF}' <<<"$out" | sort -u | grep -c .) || n=0
+            # Installed packages with a pending security update. Not updateinfo:
+            # it names every package in an applicable advisory, installed or not.
+            n=$(_distro_dnf_update_count --security) || return 1
             ;;
         pacman)
             echo "-1"; return 0
@@ -278,9 +281,15 @@ pkg_index_age_days() {
     echo $(( age / 86400 ))
 }
 
+# Where installed kernels and Ubuntu's reboot flag live. Variables rather than
+# literals so the reboot answers below are reachable from a test.
+DISTRO_MODULES_DIR="${DISTRO_MODULES_DIR:-/usr/lib/modules}"
+DISTRO_REBOOT_FLAG="${DISTRO_REBOOT_FLAG:-/var/run/reboot-required}"
+
 # Latest installed kernel-package version, in a form comparable to
-# `uname -r`. Empty if the query tool is unavailable.
+# `uname -r`. Empty if the query tool is unavailable or no kernel is installed.
 pkg_installed_kernel() {
+    local out
     case "$VPSSEC_PKG_MGR" in
         apt)
             command -v dpkg-query >/dev/null 2>&1 || return 0
@@ -290,75 +299,116 @@ pkg_installed_kernel() {
             ;;
         dnf)
             command -v rpm >/dev/null 2>&1 || return 0
+            # "package kernel is not installed" goes to STDOUT, with rc 1, so
+            # only a query that succeeded has a version in it.
+            out=$(rpm -q --last kernel 2>/dev/null) || return 0
             # `kernel-5.14.0-503.el9.x86_64` -> `5.14.0-503.el9.x86_64`,
             # which is exactly what `uname -r` reports on RHEL.
-            rpm -q --last kernel 2>/dev/null | awk 'NR==1{sub(/^kernel-/,"",$1); print $1}'
+            awk 'NR==1{sub(/^kernel-/,"",$1); print $1}' <<<"$out"
             ;;
         pacman)
-            # Arch's kernel package name varies, so read /usr/lib/modules/
+            # Arch's kernel package name varies, so read the modules dir
             # instead: each dir name matches `uname -r` exactly.
-            [[ -d /usr/lib/modules ]] || return 0
-            ls -1 /usr/lib/modules/ 2>/dev/null | sort -V | tail -1
+            [[ -d "$DISTRO_MODULES_DIR" ]] || return 0
+            ls -1 "$DISTRO_MODULES_DIR"/ 2>/dev/null | sort -V | tail -1
             ;;
         *) return 0 ;;
     esac
 }
 
+# needrestart's batch-mode kernel state: 0 = a newer kernel awaits a reboot
+# (KSTA 2, ABI-compatible, or 3), 1 = the running kernel is the newest,
+# 2 = no answer (KSTA 0 is needrestart's own detection failure).
 _distro_needrestart_kernel_pending() {
     local ksta
     ksta=$(awk -F': ' '/^NEEDRESTART-KSTA:/ {print $2; exit}' <<<"$1")
-    [[ "$ksta" =~ ^[0-9]+$ ]] && (( ksta >= 2 ))
+    [[ "$ksta" =~ ^[0-9]+$ ]] || return 2
+    (( ksta >= 2 )) && return 0
+    (( ksta == 1 )) && return 1
+    return 2
 }
 
-# True when the running kernel differs from the latest installed one.
-_distro_running_kernel_outdated() {
+# Running kernel against the newest installed one: 0 = they differ (the change
+# is printed), 1 = the same, 2 = nothing to compare with — no kernel package,
+# as in a container, whose kernel belongs to the host.
+_distro_kernel_reboot_check() {
     local running latest
-    running="$(uname -r)"
-    latest="$(pkg_installed_kernel)"
-    [[ -z "$running" || -z "$latest" ]] && return 1
-    # All branches return a version in `uname -r` format (apt: linux-image
-    # NEVRA; rhel: rpm -q --last kernel; arch: /usr/lib/modules dir name),
-    # so a direct string compare is correct — no normalisation needed.
-    [[ "$running" != "$latest" ]]
+    running=$(uname -r)
+    latest=$(pkg_installed_kernel) || latest=""
+    [[ -n "$running" && -n "$latest" ]] || return 2
+    [[ "$running" == "$latest" ]] && return 1
+    echo "kernel: $running → $latest"
 }
 
-# Does the system need a reboot? Returns 0 = reboot required.
+# Does the host need a reboot? 0 = yes, reasons (packages, or the kernel change)
+# on stdout one per line, possibly none; 1 = no; 2 = could not tell. Capture
+# with `|| rc=$?`: under a bare `if`, "could not tell" reads as "no".
 pkg_reboot_required() {
+    local out rc=0
     case "$VPSSEC_DISTRO_FAMILY" in
         debian)
-            [[ -f /var/run/reboot-required ]] && return 0
-            if command -v needrestart >/dev/null 2>&1; then
-                local out
-                if out=$(needrestart -k -b 2>/dev/null); then
-                    _distro_needrestart_kernel_pending "$out" && return 0
-                fi
+            # The flag comes with update-notifier-common (Ubuntu). Debian does
+            # not ship it, so its absence alone proves nothing.
+            if [[ -f "$DISTRO_REBOOT_FLAG" ]]; then
+                cat "$DISTRO_REBOOT_FLAG.pkgs" 2>/dev/null
+                return 0
             fi
-            _distro_running_kernel_outdated
+            if command -v needrestart >/dev/null 2>&1 && out=$(needrestart -k -b 2>/dev/null); then
+                _distro_needrestart_kernel_pending "$out" || rc=$?
+                if (( rc == 0 )); then
+                    awk -F': ' '/^NEEDRESTART-KCUR:/ && !c {c=$2} /^NEEDRESTART-KEXP:/ && !e {e=$2}
+                        END {if (c != "" && e != "" && c != e) print "kernel: " c " → " e}' <<<"$out"
+                    return 0
+                fi
+                (( rc == 1 )) && return 1
+            fi
+            _distro_kernel_reboot_check
             ;;
         rhel)
-            # `needs-restarting -r` (dnf-plugins-core, default-installed):
-            # exit 0 = no reboot needed, 1 = reboot needed.
-            if command -v needs-restarting >/dev/null 2>&1; then
-                local rc=0
-                needs-restarting -r >/dev/null 2>&1 || rc=$?
-                [[ "$rc" -eq 1 ]] && return 0
+            # Read the text, not the rc: dnf exits 1 both for "reboot required"
+            # and for "No such command" when dnf-plugins-core is missing.
+            out=$(_distro_dnf_query needs-restarting -r 2>/dev/null) || true
+            if grep -q '^Reboot is required' <<<"$out"; then
+                sed -n 's/^ *\* //p' <<<"$out"
+                return 0
             fi
-            _distro_running_kernel_outdated
+            grep -q '^Reboot should not be necessary' <<<"$out" && return 1
+            _distro_kernel_reboot_check
             ;;
         arch)
-            _distro_running_kernel_outdated
+            _distro_kernel_reboot_check
             ;;
-        *) return 1 ;;
+        *) return 2 ;;
     esac
 }
 
 # Parse one answer out of a merged `apt-config dump`; pure functions of their
 # argument, so they test without an apt host. auto_update_status below is the
 # SINGLE implementation both the audit and the fix's postcondition must use.
+_auto_update_apt_dump_value() {
+    awk -F'"' -v key="$2 " 'index($0, key) == 1 {print $2; exit}' <<<"$1"
+}
+
+# An APT::Periodic interval as apt.systemd.daily reads it: "always", or days
+# with an optional s/m/h/d suffix. Only a bare "0" is off; a word such as "yes"
+# makes the script abort, so it is off too.
+_auto_update_apt_interval_on() {
+    [[ "$1" == "always" ]] || { [[ "$1" =~ ^[0-9]+[smhd]?$ ]] && [[ "$1" != "0" ]]; }
+}
+
+# The install half. APT::Periodic::Enable at numeric 0 stops apt.systemd.daily
+# altogether, the refresh half included.
 _auto_update_apt_periodic_from_dump() {
-    local val
-    val=$(awk -F'"' '/^APT::Periodic::Unattended-Upgrade /{print $2; exit}' <<<"$1")
-    [[ "$val" == "1" ]]
+    local enable
+    enable=$(_auto_update_apt_dump_value "$1" APT::Periodic::Enable)
+    [[ "$enable" =~ ^[0-9]+$ ]] && (( 10#$enable == 0 )) && return 1
+    _auto_update_apt_interval_on "$(_auto_update_apt_dump_value "$1" APT::Periodic::Unattended-Upgrade)"
+}
+
+# The refresh half, run by apt-daily.service; the install half never refreshes,
+# so without it unattended-upgrade keeps reading the index of the last refresh.
+_auto_update_apt_refresh_from_dump() {
+    _auto_update_apt_interval_on "$(_auto_update_apt_dump_value "$1" APT::Periodic::Update-Package-Lists)"
 }
 
 # Match list elements (`Key:: "value";`) only; skip the empty-list anchor
@@ -366,6 +416,15 @@ _auto_update_apt_periodic_from_dump() {
 # "origins are configured".
 _auto_update_apt_origins_from_dump() {
     grep -qE '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins):: "[^"]+";' <<<"$1"
+}
+
+# dnf-automatic's switch from download-only to install: libdnf reads a boolean
+# as 1/yes/true/on, in any case. Pure, like the apt readers above.
+_auto_update_dnf_applies() {
+    local val
+    val=$(awk -F= '/^[[:space:]]*apply_updates[[:space:]]*=/ {v=$2} END {print v}' <<<"$1")
+    val=${val//[[:space:]]/}
+    [[ "${val,,}" =~ ^(1|yes|true|on)$ ]]
 }
 
 # Is an unattended-update mechanism installed? 0 = yes.
@@ -378,33 +437,40 @@ auto_update_installed() {
     esac
 }
 
-# Effective auto-update state. Echoes one of
-# ok|service_disabled|periodic_off|no_origins|unsupported|unknown;
+DISTRO_DNF_AUTOMATIC_CONF="${DISTRO_DNF_AUTOMATIC_CONF:-/etc/dnf/automatic.conf}"
+
+# Effective auto-update state. Echoes one of ok|service_disabled|
+# refresh_disabled|periodic_off|no_origins|unsupported|unknown;
 # returns 0 iff "ok".
 auto_update_status() {
     case "$VPSSEC_PKG_MGR" in
         apt)
-            # The timer is the periodic driver; the service only flushes at
-            # shutdown, so checking it lets a masked timer read as enabled.
+            # Timers, not services: the u-u service only flushes at shutdown.
+            # apt-daily-upgrade installs; apt-daily refreshes the index it reads.
             if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
                 echo "service_disabled"; return 1
+            fi
+            if ! systemctl is-enabled apt-daily.timer &>/dev/null; then
+                echo "refresh_disabled"; return 1
             fi
             command -v apt-config >/dev/null 2>&1 || { echo "unknown"; return 1; }
             local dump
             dump=$(apt-config dump 2>/dev/null) || { echo "unknown"; return 1; }
             _auto_update_apt_periodic_from_dump "$dump" || { echo "periodic_off"; return 1; }
+            _auto_update_apt_refresh_from_dump "$dump"  || { echo "refresh_disabled"; return 1; }
             _auto_update_apt_origins_from_dump "$dump"  || { echo "no_origins"; return 1; }
             echo "ok"; return 0
             ;;
         dnf)
             command -v systemctl >/dev/null 2>&1 || { echo "unknown"; return 1; }
+            # The -install timer installs whatever automatic.conf says; the
+            # plain one only when apply_updates is true.
+            systemctl is-enabled dnf-automatic-install.timer &>/dev/null && { echo "ok"; return 0; }
             if ! systemctl is-enabled dnf-automatic.timer &>/dev/null; then
                 echo "service_disabled"; return 1
             fi
-            local conf=/etc/dnf/automatic.conf
-            [[ -r "$conf" ]] || { echo "unknown"; return 1; }
-            # apply_updates=yes is the switch from download-only to install.
-            grep -qE '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*[Yy]es' "$conf" \
+            [[ -r "$DISTRO_DNF_AUTOMATIC_CONF" ]] || { echo "unknown"; return 1; }
+            _auto_update_dnf_applies "$(<"$DISTRO_DNF_AUTOMATIC_CONF")" \
                 || { echo "periodic_off"; return 1; }
             echo "ok"; return 0
             ;;
@@ -508,6 +574,17 @@ pkg_install_hint() {
         dnf)    echo "dnf install $*" ;;
         pacman) echo "pacman -S $*" ;;
         zypper) echo "zypper install $*" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Never `pacman -Sy` alone: Arch does not support partial upgrades.
+pkg_refresh_hint() {
+    case "$VPSSEC_PKG_MGR" in
+        apt)    echo "apt-get update" ;;
+        dnf)    echo "dnf makecache" ;;
+        pacman) echo "pacman -Syu" ;;
+        zypper) echo "zypper refresh" ;;
         *)      return 1 ;;
     esac
 }

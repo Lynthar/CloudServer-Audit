@@ -29,3 +29,12 @@ run_case "update/stale-index-trusted" 1 \
 run_case "update/stale-limit-off-by-one" 1 \
     '        elif (( age > UPDATE_INDEX_STALE_DAYS )); then' \
     '        elif (( age >= UPDATE_INDEX_STALE_DAYS )); then'
+
+# The suggestion names this host's refresh command, never all three managers'.
+run_case "update/refresh-hint-not-asked" 1 \
+    '    if cmd=$(pkg_refresh_hint); then' \
+    '    if false; then'
+
+run_case "update/unknown-manager-gets-apt" 1 \
+    "        i18n 'update.check_failed_fix_generic'" \
+    "        i18n 'update.check_failed_fix' \"cmd=apt-get update\""

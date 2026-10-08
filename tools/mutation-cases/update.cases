@@ -48,8 +48,8 @@ run_case "write/auto-upgrades-status-unchecked" 1 \
     "APT::Periodic::AutocleanInterval \"7\";' && false; then"
 
 run_case "write/dropin-status-unchecked" 1 \
-    'Unattended-Upgrade::SyslogEnable \"true\";"; then' \
-    'Unattended-Upgrade::SyslogEnable \"true\";" && false; then'
+    '    if ! write_file_atomic "$uu_dropin" "$dropin_text"; then' \
+    '    if ! write_file_atomic "$uu_dropin" "$dropin_text" && false; then'
 
 # ---- what the drop-in must say ---------------------------------------
 
@@ -66,12 +66,13 @@ run_case "config/writes-the-50-conffile" 1 \
     '    local uu_dropin="${UPDATE_UU_DROPIN%/*}/50unattended-upgrades"'
 
 run_case "config/inherited-origins-not-cleared" 1 \
-    '#clear Unattended-Upgrade::Allowed-Origins;' \
-    '// no clear'
+    "    printf '%s\\n' '#clear Unattended-Upgrade::Allowed-Origins;' \\" \
+    "    printf '%s\\n' '// no clear' \\"
 
-run_case "config/automatic-reboot-enabled" 1 \
-    'Unattended-Upgrade::Automatic-Reboot \"false\";' \
-    'Unattended-Upgrade::Automatic-Reboot \"true\";'
+# Read after 50, any other key overrides what the operator set there.
+run_case "config/overrides-operator-reboot" 1 \
+    "\$(_update_security_origins_conf)\"" \
+    "\$(_update_security_origins_conf; echo 'Unattended-Upgrade::Automatic-Reboot \"false\";')\""
 
 run_case "config/debian-pattern-on-ubuntu" 1 \
     '    if [[ "$(detect_os)" == "ubuntu" ]]; then' \
@@ -83,9 +84,22 @@ run_case "config/ubuntu-pattern-everywhere" 1 \
 
 # ---- the periodic driver ---------------------------------------------
 
-run_case "service/timer-not-enabled" 1 \
-    '    systemctl enable --now apt-daily-upgrade.timer 2>/dev/null || true' \
+run_case "service/upgrade-timer-not-enabled" 1 \
+    '    for timer in apt-daily.timer apt-daily-upgrade.timer; do' \
+    '    for timer in apt-daily.timer; do'
+
+run_case "service/refresh-timer-not-enabled" 1 \
+    '    for timer in apt-daily.timer apt-daily-upgrade.timer; do' \
+    '    for timer in apt-daily-upgrade.timer; do'
+
+run_case "service/timer-undo-not-recorded" 1 \
+    '    (( ${#turned_on[@]} )) && record_undo update.enable_unattended "systemctl disable --now ${turned_on[*]}"' \
     '    :'
+
+# Every timer named, on or not: the undo would turn off what the operator had on.
+run_case "service/undo-names-timers-already-on" 1 \
+    '            systemctl enable --now "$timer" 2>/dev/null || true' \
+    '            systemctl enable --now "$timer" 2>/dev/null && turned_on+=("$timer")'
 
 # ---- postconditions (FIX_VERIFY asks these; the fixes no longer do) --
 
@@ -132,12 +146,43 @@ run_case "apply/installed-check-inverted" 1 \
     '    if false; then'
 
 run_case "apply/upgrade-failure-swallowed" 1 \
-    '    if unattended-upgrade -d 2>/dev/null; then' \
-    '    if unattended-upgrade -d 2>/dev/null || true; then'
+    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
+    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || true'
 
 run_case "apply/falls-back-to-full-upgrade" 1 \
-    '    if unattended-upgrade -d 2>/dev/null; then' \
-    '    if apt-get upgrade -y 2>/dev/null; then'
+    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
+    '    apt-get upgrade -y 2>/dev/null || rc=$?'
+
+# ---- apply_security: the security origins only, for this one run ----------
+
+# The original defect: unattended-upgrade on the operator's origins, which on
+# Debian include the main archive's point releases.
+run_case "apply/operator-origins" 1 \
+    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
+    '    unattended-upgrade -d 2>/dev/null || rc=$?'
+
+# APT_CONFIG is read BEFORE apt.conf.d, so its #clear is undone by 50's list;
+# only as Dir::Etc::main is it read after.
+run_case "apply/origins-read-first" 1 \
+    "    } > \"\$dir/security.conf\" && printf 'Dir::Etc::main \"%s\";\\n' \"\$dir/security.conf\" > \"\$dir/apt.conf\"; then" \
+    "    } > \"\$dir/security.conf\" && cp \"\$dir/security.conf\" \"\$dir/apt.conf\"; then"
+
+run_case "apply/operator-apt-conf-dropped" 1 \
+    "        [[ -f \"\$UPDATE_APT_MAIN_CONF\" ]] && printf '#include \"%s\";\\n' \"\$UPDATE_APT_MAIN_CONF\"" \
+    '        :'
+
+# Including a file that is not there is a syntax error that stops apt.
+run_case "apply/missing-apt-conf-included" 1 \
+    "        [[ -f \"\$UPDATE_APT_MAIN_CONF\" ]] && printf '#include \"%s\";\\n' \"\$UPDATE_APT_MAIN_CONF\"" \
+    "        printf '#include \"%s\";\\n' \"\$UPDATE_APT_MAIN_CONF\""
+
+run_case "apply/throwaway-config-left" 1 \
+    '    rm -rf "$cfg"' \
+    '    :'
+
+run_case "apply/config-failure-ignored" 1 \
+    '    cfg=$(_update_security_only_apt_config) || { print_error "$(i18n '"'"'update.updates_failed'"'"')"; return 1; }' \
+    '    cfg=$(_update_security_only_apt_config) || true'
 
 run_case "apply/history-hint-dropped" 1 \
     "        print_info \"\$(i18n 'update.security_applied_revert_hint')\"" \
@@ -172,3 +217,8 @@ run_case "install/no-refresh" 1 \
 run_case "apply/no-refresh" 1 \
     '        apt_refresh_index' \
     '        :'
+
+# The audit names the refresh timer as the reason, not a generic "not effective".
+run_case "audit/refresh-reason-dropped" 1 \
+    '            refresh_disabled)' \
+    '            refresh_disabled_unmatched)'

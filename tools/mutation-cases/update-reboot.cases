@@ -1,0 +1,28 @@
+# Mutation cases: tests/test_update_reboot.bats against modules/update.sh.
+# mutate-suite: modules/update.sh tests/test_update_reboot.bats
+#
+# The audit's half of the reboot check: three answers in, three checks out, and
+# the reasons listed the way the operator reads them.
+
+# "Could not tell" folded into "no reboot required" — the defect on every
+# container that has no kernel package of its own.
+run_case "audit/unknown-read-as-no" 1 \
+    '    reasons=$(pkg_reboot_required) || rc=$?' \
+    '    reasons=$(pkg_reboot_required) || rc=1'
+
+run_case "audit/unknown-passes" 1 \
+    '    elif (( rc == 1 )); then' \
+    '    elif (( rc != 0 )); then'
+
+run_case "audit/list-not-capped" 1 \
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")' \
+    '        [[ -n "$reasons" ]] && mapfile -t shown <<<"$reasons"'
+
+# A here-string of nothing is one empty line: "Packages requiring reboot: ".
+run_case "audit/empty-list-listed" 1 \
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")' \
+    '        mapfile -t shown < <(head -5 <<<"$reasons")'
+
+run_case "audit/trailing-separator" 1 \
+    "            desc=\"\$(i18n 'update.reboot_required_desc' \"list=\${list%, }\")\"" \
+    "            desc=\"\$(i18n 'update.reboot_required_desc' \"list=\$list\")\""

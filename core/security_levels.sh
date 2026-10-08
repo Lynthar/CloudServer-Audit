@@ -174,7 +174,7 @@ declare -gA FIX_ALERT_ONLY=(
     ["ssh.authkeys_permissions"]="Fix permissions manually"
 
     # Update - APT lock
-    ["update.apt_locked"]="Wait for other process or remove lock manually"
+    ["update.apt_locked"]="Wait for the other package operation to finish; never delete the lock files"
 
     # Logging - info only
     ["logging.ssh_many_failures"]="Consider fail2ban or firewall rules"
@@ -748,6 +748,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ufw.ipv6_managed"]="recommended"
     ["update.reboot_required"]="recommended"
     ["update.no_reboot"]="recommended"
+    ["update.reboot_state_unknown"]="info"    # not measured: no score either way
 )
 
 # --- Fix Safety Helper Functions ---

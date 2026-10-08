@@ -1,0 +1,24 @@
+# Plant: nothing — a container has no kernel package of its own, no needrestart
+# and no reboot flag, so nothing on it can say whether a reboot is pending.
+# Expect: update.reboot_state_unknown, where update.no_reboot used to pass.
+# Severity: low, failed, and unscored (info) — it reports a question unanswered.
+#
+# Safety: changes nothing; precheck skips a host where some signal does answer.
+TEST_DESC="No kernel package and no reboot signal: reboot state unknown, not 'no reboot required'"
+EXPECT_ID="update.reboot_state_unknown"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="update"
+
+precheck() {
+    [[ ! -e /var/run/reboot-required ]] && ! command -v needrestart >/dev/null 2>&1 &&
+        ! dpkg-query -W -f='${Status}\n' 'linux-image-[0-9]*' 2>/dev/null | grep -q 'install ok installed'
+}
+
+mutate() {
+    return 0
+}
+
+restore() {
+    return 0
+}

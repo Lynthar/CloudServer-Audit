@@ -28,6 +28,24 @@ setup() {
     [ -z "$output" ]
 }
 
+@test "update: the refresh it suggests is this host's command, or none is named" {
+    # Listing all three managers told Arch hosts `pacman -Sy`, a partial upgrade.
+    source "$(_vpssec_repo_root)/core/distro.sh"
+    source "$(_vpssec_repo_root)/modules/update.sh"
+    pkg_update_count() { return 1; }
+    pkg_security_update_count() { return 1; }
+
+    VPSSEC_PKG_MGR=pacman
+    _update_audit_available
+    run jq -r '.[] | select(.id == "update.check_failed") | .suggestion' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "Refresh the package index (pacman -Syu) and re-run the audit" ]
+
+    VPSSEC_PKG_MGR=unknown
+    _update_audit_available
+    run jq -r '[.[] | select(.id == "update.check_failed")] | last | .suggestion' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "Refresh the package index with the system package manager and re-run the audit" ]
+}
+
 @test "update: a real zero still passes as no_updates" {
     source "$(_vpssec_repo_root)/modules/update.sh"
     pkg_update_count() { echo 0; }

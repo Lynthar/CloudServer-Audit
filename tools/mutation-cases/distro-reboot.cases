@@ -1,0 +1,63 @@
+# Mutation cases: tests/test_update_reboot.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_update_reboot.bats
+#
+# pkg_reboot_required and what it reads: each family's own signal first, the
+# kernel comparison after, and "could not tell" when neither answers.
+
+# rpm's "package kernel is not installed" is on stdout; its first word became
+# the kernel version and every container reported a pending reboot.
+run_case "rpm/error-read-as-version" 1 \
+    '            out=$(rpm -q --last kernel 2>/dev/null) || return 0' \
+    '            out=$(rpm -q --last kernel 2>/dev/null) || true'
+
+run_case "needrestart/no-answer-read-as-current" 1 \
+    '    [[ "$ksta" =~ ^[0-9]+$ ]] || return 2' \
+    '    [[ "$ksta" =~ ^[0-9]+$ ]] || return 1'
+
+run_case "needrestart/failure-read-as-current" 1 \
+    '    (( ksta == 1 )) && return 1' \
+    '    (( ksta <= 1 )) && return 1'
+
+run_case "needrestart/current-not-believed" 1 \
+    '                (( rc == 1 )) && return 1' \
+    '                :'
+
+run_case "needrestart/kernels-not-named" 1 \
+    "                        END {if (c != \"\" && e != \"\" && c != e) print \"kernel: \" c \" → \" e}' <<<\"\$out\"" \
+    "                        END {}' <<<\"\$out\""
+
+run_case "flag/not-read" 1 \
+    '            if [[ -f "$DISTRO_REBOOT_FLAG" ]]; then' \
+    '            if false; then'
+
+run_case "flag/packages-not-listed" 1 \
+    '                cat "$DISTRO_REBOOT_FLAG.pkgs" 2>/dev/null' \
+    '                :'
+
+# The original defect: a separate binary from yum-utils, absent on a stock host.
+run_case "dnf/standalone-binary" 1 \
+    '            out=$(_distro_dnf_query needs-restarting -r 2>/dev/null) || true' \
+    '            out=$(needs-restarting -r 2>/dev/null) || true'
+
+# Reading dnf's rc: "No such command" exits 1 too.
+run_case "dnf/rc-read-as-answer" 1 \
+    '            out=$(_distro_dnf_query needs-restarting -r 2>/dev/null) || true' \
+    '            out=$(_distro_dnf_query needs-restarting -r 2>/dev/null) || out="Reboot is required"'
+
+run_case "dnf/packages-not-listed" 1 \
+    "                sed -n 's/^ *\\* //p' <<<\"\$out\"" \
+    '                :'
+
+# Its "no" used to be thrown away for the kernel comparison.
+run_case "dnf/no-not-believed" 1 \
+    "            grep -q '^Reboot should not be necessary' <<<\"\$out\" && return 1" \
+    '            :'
+
+run_case "kernel/nothing-to-compare-read-as-same" 1 \
+    '    [[ -n "$running" && -n "$latest" ]] || return 2' \
+    '    [[ -n "$running" && -n "$latest" ]] || return 1'
+
+# Occurrence 2: pkg_manager_locked ends with the same line.
+run_case "family/unknown-read-as-no" 2 \
+    '        *) return 2 ;;' \
+    '        *) return 1 ;;'

@@ -36,6 +36,17 @@ _as_distro() {
     _as_distro arch   pacman && [ "$(pkg_remove_hint rsh)" = "pacman -Rns rsh" ]
 }
 
+@test "refresh hint: each manager's own command, and never pacman -Sy alone" {
+    _as_distro debian apt    && [ "$(pkg_refresh_hint)" = "apt-get update" ]
+    _as_distro rhel   dnf    && [ "$(pkg_refresh_hint)" = "dnf makecache" ]
+    # Arch does not support partial upgrades: refresh and upgrade together.
+    _as_distro arch   pacman && [ "$(pkg_refresh_hint)" = "pacman -Syu" ]
+    _as_distro unknown unknown
+    run pkg_refresh_hint
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
 @test "hints: several packages arrive as one command" {
     _as_distro debian apt
     [ "$(pkg_install_hint jq iproute2)" = "apt install jq iproute2" ]

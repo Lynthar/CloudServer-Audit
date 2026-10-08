@@ -83,23 +83,45 @@ for a in "\$@"; do [[ "\$a" == --setopt=logdir=* ]] && logdir="\${a#--setopt=log
 mkdir -p "\$logdir" && echo query >> "\$logdir/dnf.log"
 echo "\$logdir" >> "$BATS_TEST_TMPDIR/logdirs"
 case " \$* " in
-    *" check-update "*) printf '%s\n' "openssl.x86_64  1:3.0.7-28.el9  baseos"; exit 100 ;;
-    *" updateinfo "*)   printf '%s\n' "RLSA-2026:1 Important/Sec. openssl-1:3.0.7-28.el9.x86_64" ;;
+    *" check-update --security "*)
+        printf '%s\n' "openssl.x86_64  1:3.0.7-28.el9  baseos"; exit 100 ;;
+    *" check-update "*)
+        printf '%s\n' "openssl.x86_64  1:3.0.7-28.el9  baseos" "vim-data.noarch  2:9.1-9.el9  baseos"
+        exit 100 ;;
 esac
-exit 0
+exit 1
 SH
 }
 
 @test "dnf: queries leave no log behind, in /var/log or anywhere else" {
     _dnf_logging
     run pkg_update_count
-    [ "$output" = "1" ]
+    [ "$output" = "2" ]
     run pkg_security_update_count
     [ "$output" = "1" ]
 
     [ ! -e "$written/var-log" ]
     local d
     while read -r d; do [ ! -e "$d" ]; done < "$BATS_TEST_TMPDIR/logdirs"
+}
+
+@test "dnf: the security count is the installed packages with a security update" {
+    # Not updateinfo's list, which names every package in an applicable
+    # advisory: on Rocky 9 that was 155 against 45 packages to update.
+    _dnf_logging
+    run pkg_security_update_count
+    [ "$status" -eq 0 ]
+    [ "$output" = "1" ]
+    _vpssec_stub_called dnf 'check-update --security'
+    _vpssec_refute _vpssec_stub_called dnf 'updateinfo'
+}
+
+@test "dnf: a security query that fails is a failure, not zero" {
+    VPSSEC_PKG_MGR=dnf
+    _vpssec_stub dnf 1
+    run pkg_security_update_count
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
 }
 
 # ---- how old the apt index is -------------------------------------------

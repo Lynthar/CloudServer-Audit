@@ -39,9 +39,19 @@ run_case "remove/pacman-leaves-dependencies" 1 \
     '        pacman) echo "pacman -Rns $*" ;;' \
     '        pacman) echo "pacman -R $*" ;;'
 
-run_case "remove/unknown-manager-guesses" 3 \
+run_case "remove/unknown-manager-guesses" 4 \
     '        *)      return 1 ;;' \
     '        *)      echo "apt purge $*" ;;'
+
+# Occurrence 3 is pkg_refresh_hint, between the install and remove hints.
+run_case "refresh/unknown-manager-guesses" 3 \
+    '        *)      return 1 ;;' \
+    '        *)      echo "apt-get update" ;;'
+
+# A partial upgrade, which Arch does not support.
+run_case "refresh/pacman-partial-upgrade" 1 \
+    '        pacman) echo "pacman -Syu" ;;' \
+    '        pacman) echo "pacman -Sy" ;;'
 
 # An empty package list produces a bare "apt install" — a command that runs
 # and does nothing, which is worse than one that visibly fails.
