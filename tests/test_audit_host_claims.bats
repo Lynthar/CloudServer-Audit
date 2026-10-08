@@ -151,6 +151,7 @@ SH
     NGINX_CONF="$etc/nginx/nginx.conf"
     APACHE_CONF="$etc/apache2/apache2.conf"
     APACHE_CONF_ALT="$etc/httpd/conf/httpd.conf"
+    _vpssec_absent_command nginx
     _vpssec_stub caddy 0
 
     run webapp_audit

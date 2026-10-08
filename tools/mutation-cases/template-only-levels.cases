@@ -68,8 +68,8 @@ run_case "map/docker-generator-dropped" 1 \
     '    ["docker.generate_proxy_template_disabled"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"'
 
 run_case "map/webapp-ciphers-dropped" 1 \
-    '    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"' \
-    '    ["webapp.nginx_ssl_ciphers_disabled"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"'
+    '    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf'"'"'s http block instead"' \
+    '    ["webapp.nginx_ssl_ciphers_disabled"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf'"'"'s http block instead"'
 
 run_case "map/webapp-hsts-dropped" 1 \
     '    ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"' \

@@ -175,7 +175,7 @@ module_available() {
             check_command docker || check_command podman || return 1
             ;;
         nginx)
-            check_command nginx || return 1
+            nginx_present || return 1
             ;;
         cloudflared)
             check_command cloudflared || return 1

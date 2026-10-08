@@ -1,8 +1,8 @@
 # Mutation cases: tests/test_fix_nginx_catchall.bats against modules/nginx.sh.
 # mutate-suite: modules/nginx.sh tests/test_fix_nginx_catchall.bats
 #
-# ONE of three files naming this module — nginx-state.cases and nginx-fallback.cases
-# pair with the two audit-side suites.
+# ONE of two files naming this module — nginx-state.cases pairs with the parser
+# suite; this one with the fix suite, which also holds the audit and probe cases.
 #
 # The path cases are pinned through READ-ONLY call sites — backup_file, the -d/-f
 # guards — never through write_file_atomic, `openssl -out` or `mkdir -p`. The
@@ -86,8 +86,8 @@ run_case "skip/include-hint-not-printed" 1 \
 # spans four lines, so it is broken at the CLOSING line.
 
 run_case "status/config-write-unchecked" 1 \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)"; then' \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)" && false; then'
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then' \
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")" && false; then'
 
 run_case "status/ssl-mkdir-unchecked" 1 \
     '    if ! mkdir -p "$NGINX_SSL_DIR" 2>/dev/null; then' \
@@ -144,14 +144,59 @@ run_case "cleanup/dangling-link-kept" 1 \
 # competing default_server, leaves the answer where it was.
 
 run_case "postcondition/removed" 1 \
-    '    if [[ "$state" != "both" ]]; then' \
+    '    if ! _nginx_catchall_covered "${coverage:-}"; then' \
     '    if false; then'
 
 run_case "postcondition/accepts-partial-coverage" 1 \
-    '    if [[ "$state" != "both" ]]; then' \
-    '    if [[ "$state" == "none" ]]; then'
+    '    if ! _nginx_catchall_covered "${coverage:-}"; then' \
+    '    if [[ "${coverage#* }" == none ]]; then'
+
+# ---- what the fix writes, and what it asks the running nginx ------------------
+
+# The 443 server and its certificate only where nginx already serves 443.
+run_case "needed/443-always-written" 1 \
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then' \
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config both)"; then'
+
+run_case "needed/cert-always-made" 1 \
+    '    if [[ "$needed" == both ]] && ! _nginx_ensure_catchall_cert; then' \
+    '    if ! _nginx_ensure_catchall_cert; then'
+
+# Occurrence 2 is the fix; 1 is the audit. A config nginx rejects must stop the
+# fix before anything is staged.
+run_case "unreadable/fix-not-refused" 2 \
+    '    if ! nginx_dump_load; then' \
+    '    if false; then'
+
+run_case "unreadable/audit-grades-anyway" 1 \
+    '    if ! nginx_dump_load; then' \
+    '    if false; then'
+
+# The files and the running server can differ: the probe is the only thing that
+# notices a reload whose new config failed to bind.
+run_case "probe/not-consulted" 1 \
+    '    _nginx_catchall_live || live=$?' \
+    '    :'
+
+run_case "probe/hang-read-as-live" 1 \
+    '        0) return 0 ;;' \
+    '        0|2) return 0 ;;'
+
+run_case "probe/answer-read-as-live" 1 \
+    '            IFS= read -r -n 1 -t 3 _ <&3 && exit 1' \
+    '            IFS= read -r -n 1 -t 3 _ <&3 && exit 0'
+
+# Port 80 alone is enough only where nginx serves nothing on 443.
+run_case "covered/80-only-never-enough" 1 \
+    '        "both both"|"80 both"|"80 80only") return 0 ;;' \
+    '        "both both"|"80 both") return 0 ;;'
 
 # A swallowed backup failure lets the fix rewrite /etc with no way back.
 run_case "rollback/backup-failure-swallowed" 1 \
     '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1' \
     '    backup_file "$NGINX_CATCHALL_CONF" >/dev/null 2>&1 || true'
+
+# A connection held open is neither the 444 close nor an answer.
+run_case "probe/hold-read-as-closed" 1 \
+    '            (( $? > 128 )) && exit 2' \
+    '            (( $? > 128 )) && exit 0'

@@ -195,3 +195,36 @@ server {
     [ "$status" -eq 0 ]
     [ "$output" = "80only" ]
 }
+
+@test "catchall: a server returning 444 without default_server is no catchall" {
+    run _nginx_catchall_state_from_text 'server { listen 80; server_name x.example; return 444; }'
+    [ "$output" = "none" ]
+}
+
+@test "coverage: ssl_reject_handshake counts as the 443 catchall" {
+    run _nginx_catchall_state_from_text 'server { listen 80 default_server; return 444; }
+server { listen 443 ssl default_server; ssl_reject_handshake on; }'
+    [ "$output" = "both" ]
+}
+
+@test "coverage: 443 is owed only when nginx serves it" {
+    run _nginx_catchall_coverage_from_text 'http { server { listen 80; } server { listen 80 default_server; return 444; } }'
+    [ "$output" = "80 80only" ]
+    _nginx_catchall_covered "$output"
+
+    run _nginx_catchall_coverage_from_text 'http { server { listen 443 ssl; } server { listen 80 default_server; return 444; } }'
+    [ "$output" = "both 80only" ]
+    _vpssec_refute _nginx_catchall_covered "$output"
+}
+
+@test "coverage: a 443 catchall alone does not make nginx serve 443" {
+    run _nginx_catchall_coverage_from_text 'http { server { listen 80; }
+server { listen 80 default_server; listen 443 ssl default_server; return 444; } }'
+    [ "$output" = "80 both" ]
+}
+
+@test "coverage: a stream server on 443 is not nginx serving HTTPS" {
+    run _nginx_catchall_coverage_from_text 'stream { server { listen 443 ssl; } }
+http { server { listen 80 default_server; return 444; } }'
+    [ "$output" = "80 80only" ]
+}

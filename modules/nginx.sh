@@ -16,93 +16,59 @@ NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/default.key"
 
 # --- Nginx Helper Functions ---
 
-_nginx_installed() {
-    check_command nginx
-}
-
-# Catchall coverage from a full nginx config dump: both | 80only | 443only |
-# none. Tracks brace depth to scope server blocks, requiring a default_server
-# listen AND a `return 444;` in the SAME block. Inline comments are stripped.
-_nginx_catchall_state_from_text() {
-    awk '
-        function reset_block() { d80=0; d443=0; ret=0 }
-        BEGIN { depth=0; in_server=0; c80=0; c443=0; reset_block() }
-        {
-            sub(/[[:space:]]*#.*$/, "")
-            if ($0 ~ /^[[:space:]]*$/) next
-
-            opens  = gsub(/[{]/, "&")
-            closes = gsub(/[}]/, "&")
-            pre_depth = depth
-
-            if (!in_server && /[[:space:]]*server[[:space:]]*[{]/) {
-                in_server = 1
-                close_depth = pre_depth
-                reset_block()
-            }
-
-            if (in_server) {
-                if (/listen/ && /default_server/) {
-                    # Colon-or-whitespace boundary, so bare, IPv4, IPv6 and
-                    # wildcard listen forms all match. The trailing class is
-                    # what stops 8080 and 4430.
-                    if ($0 ~ /:80([[:space:]]|;)/    || $0 ~ /[[:space:]]80([[:space:]]|;)/)  d80  = 1
-                    if ($0 ~ /:443([[:space:]]|;)/   || $0 ~ /[[:space:]]443([[:space:]]|;)/) d443 = 1
-                }
-                # Line-start or after { ; whitespace, so a one-line server
-                # block parses while something_return does not match.
-                if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1
-            }
-
-            depth += opens - closes
-
-            if (in_server && depth <= close_depth) {
-                if (ret) {
-                    if (d80)  c80  = 1
-                    if (d443) c443 = 1
-                }
-                in_server = 0
-            }
+# Catchall coverage of a config text, as "<needed> <have>". needed is "both" when
+# nginx itself serves 443 and "80" when it does not; have is both | 80only |
+# 443only | none, a port counting when a default_server there answers 444.
+_nginx_catchall_coverage_from_text() {
+    nginx_statements <<<"$1" | awk -F'\t' '
+        function port(a,   r) {
+            if (a ~ /^unix:/) return ""
+            if (a ~ /^\[/) { r = substr(a, index(a, "]") + 1); return (r ~ /^:/) ? substr(r, 2) : "80" }
+            if (a ~ /:/) { r = a; sub(/.*:/, "", r); return r }
+            return (a ~ /^[0-9]+$/) ? a : "80"
         }
+        $1 == 0 || $2 ~ /^(stream|mail)(\/|$)/ { next }
+        $3 == "listen" {
+            n = split($4, w, " ")
+            p = port(w[1]); dflt = 0
+            for (i = 2; i <= n; i++) if (w[i] == "default_server" || w[i] == "default") dflt = 1
+            if (p == "80" && dflt) d80[$1] = 1
+            if (p == "443") { on443[$1] = 1; if (dflt) d443[$1] = 1 }
+        }
+        $3 == "return" && $4 ~ /^444( |$)/ { ret[$1] = 1 }
+        # nginx >= 1.19.4 refuses an unknown SNI outright; that covers 443 too.
+        $3 == "ssl_reject_handshake" && $4 == "on" { rej[$1] = 1 }
         END {
-            if (c80 && c443) print "both"
-            else if (c80)    print "80only"
-            else if (c443)   print "443only"
-            else             print "none"
+            for (s in d80) if (s in ret) c80 = 1
+            for (s in d443) if ((s in ret) || (s in rej)) c443 = 1
+            for (s in on443) if (!((s in d443) && ((s in ret) || (s in rej)))) serves = 1
+            have = (c80 && c443) ? "both" : c80 ? "80only" : c443 ? "443only" : "none"
+            print (serves ? "both" : "80") " " have
         }
-    ' <<<"$1"
+    '
 }
 
-_nginx_catchall_state() {
-    local effective
-    if effective=$(nginx -T 2>/dev/null) && [[ -n "$effective" ]]; then
-        _nginx_catchall_state_from_text "$effective"
-        return 0
-    fi
-
-    # Fallback when nginx -T is unavailable, and file-level imprecise: block
-    # scope cannot be tracked across files, so any file with both a
-    # default_server listen and a `return 444;` counts.
-    local f found_80=0 found_443=0
-    while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        grep -qE "^[[:space:]]*return[[:space:]]+444[[:space:]]*;" "$f" 2>/dev/null || continue
-        grep -qE "listen[^;]*(:80([[:space:]]|;)|[[:space:]]80([[:space:]]|;))[^;]*default_server" "$f" 2>/dev/null && found_80=1
-        grep -qE "listen[^;]*(:443([[:space:]]|;)|[[:space:]]443([[:space:]]|;))[^;]*default_server" "$f" 2>/dev/null && found_443=1
-    done < <(grep -rlE "listen.*default_server" "$NGINX_CONF_DIR" 2>/dev/null)
-
-    if   [[ $found_80 -eq 1 && $found_443 -eq 1 ]]; then echo "both"
-    elif [[ $found_80 -eq 1 ]];                      then echo "80only"
-    elif [[ $found_443 -eq 1 ]];                     then echo "443only"
-    else                                                  echo "none"
-    fi
+_nginx_catchall_state_from_text() {
+    local coverage
+    coverage=$(_nginx_catchall_coverage_from_text "$1")
+    printf '%s\n' "${coverage#* }"
 }
 
-# Backwards-compat boolean wrapper. Returns 0 only when both 80 and 443
-# have catchalls — partial coverage is treated as missing because that's
-# the behavior change M7 was about.
+# Does "<needed> <have>" cover what is needed? Port 443 needs a catchall only
+# where nginx serves it: adding one elsewhere opens 443 to the world, or fails
+# to bind next to whatever already holds it.
+_nginx_catchall_covered() {
+    case "$1" in
+        "both both"|"80 both"|"80 80only") return 0 ;;
+    esac
+    return 1
+}
+
+# FIX_VERIFY predicate for nginx.add_catchall: the audit's own rule, re-read.
 _nginx_has_catchall() {
-    [[ "$(_nginx_catchall_state)" == "both" ]]
+    nginx_dump_reset
+    nginx_dump_load || return 1
+    _nginx_catchall_covered "$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")"
 }
 
 # Validate the merged config. Returns nginx's own diagnostic on stdout as well
@@ -112,36 +78,22 @@ _nginx_test_config() {
     nginx -t 2>&1
 }
 
-# --- DoS hardening. nginx -T flattens every include into one stream, so one
-# awk pass finds a directive's effective last value. Any occurrence past the
-# threshold is the finding: one served location weaker than policy. ---
+# --- DoS hardening. nginx_statements inlines every include, so one pass finds a
+# directive's effective last value. Any occurrence past the threshold is the
+# finding: one served location weaker than policy. ---
 
-# Read the effective value of a directive from a `nginx -T` dump. If the
-# directive doesn't appear anywhere, return the supplied default.
+# The last value of a directive in nginx_statements output, or the default when
+# nothing sets it.
 _nginx_get_directive_value() {
-    local config="$1" key="$2" default="$3"
+    local stmts="$1" key="$2" default="$3"
     local value
-    value=$(awk -v k="$key" '
-        # Strip inline comments first so a commented-out line never matches.
-        { sub(/[[:space:]]*#.*$/, "") }
-        $1 == k {
-            sub("^[[:space:]]*" k "[[:space:]]+", "")
-            sub(/[[:space:]]*;.*$/, "")
-            last = $0
-        }
-        END { if (last != "") print last }
-    ' <<<"$config")
+    value=$(awk -F'\t' -v k="$key" '$3 == k { last = $4 } END { if (last != "") print last }' <<<"$stmts")
     echo "${value:-$default}"
 }
 
-# Does the directive appear at least once in the effective config?
+# Does the directive appear at least once in nginx_statements output?
 _nginx_has_directive() {
-    local config="$1" key="$2"
-    awk -v k="$key" '
-        { sub(/[[:space:]]*#.*$/, "") }
-        $1 == k { found = 1; exit }
-        END { exit !found }
-    ' <<<"$config"
+    awk -F'\t' -v k="$2" '$3 == k { found = 1; exit } END { exit !found }' <<<"$1"
 }
 
 # nginx time values: a bare integer of seconds, or an ms/s/m/h suffix. The
@@ -174,9 +126,20 @@ nginx_audit() {
 
     # Check if Nginx is installed
     print_item "$(i18n 'nginx.check_installed')"
-    if ! _nginx_installed; then
+    if ! nginx_present; then
         check_emit "nginx.not_installed" low passed
         print_ok "$(i18n 'nginx.not_installed')"
+        return
+    fi
+
+    # Re-read: a fix since the last audit may have rewritten the config. A config
+    # nginx itself rejects gets one finding, not a grade read from its files.
+    nginx_dump_reset
+    if ! nginx_dump_load; then
+        check_emit "nginx.config_unreadable" info failed \
+            desc="$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")" \
+            suggestion="$(i18n 'nginx.config_unreadable_fix')"
+        print_warn "$(i18n 'nginx.config_unreadable')"
         return
     fi
 
@@ -191,15 +154,18 @@ nginx_audit() {
 }
 
 _nginx_audit_catchall() {
-    local state
-    state=$(_nginx_catchall_state)
+    local coverage
+    coverage=$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")
 
-    case "$state" in
-        both)
-            check_emit "nginx.catchall_exists" low passed \
-                desc="$(i18n 'nginx.catchall_both_desc')"
-            print_ok "$(i18n 'nginx.catchall_exists')"
-            ;;
+    if _nginx_catchall_covered "$coverage"; then
+        local desc_key='nginx.catchall_both_desc'
+        [[ "$coverage" == 80\ * ]] && desc_key='nginx.catchall_80_desc'
+        check_emit "nginx.catchall_exists" low passed desc="$(i18n "$desc_key")"
+        print_ok "$(i18n 'nginx.catchall_exists')"
+        return
+    fi
+
+    case "${coverage#* }" in
         80only)
             check_emit "nginx.catchall_partial_80" low failed \
                 desc="$(i18n 'nginx.catchall_partial_80_desc')" \
@@ -225,13 +191,8 @@ _nginx_audit_catchall() {
 }
 
 _nginx_audit_dos_hardening() {
-    # Pull the effective config once; every sub-check awk-scans the same
-    # blob instead of re-running nginx -T.
     local effective
-    if ! effective=$(nginx -T 2>/dev/null) || [[ -z "$effective" ]]; then
-        log_warn "nginx -T returned no output; skipping DoS hardening audit"
-        return 0
-    fi
+    effective=$(nginx_statements <<<"$NGINX_DUMP")
 
     local issues=()
 
@@ -329,9 +290,9 @@ nginx_fix() {
     esac
 }
 
-# The catchall config text, as a function so the certificate paths come from
-# the module variables and the fix is testable against a scratch tree. The
-# heredoc EXPANDS, so no backslash continuations: they glue lines together.
+# The catchall config text; with "both", the 443 server as well. A function so
+# the certificate paths come from the module variables. The heredoc EXPANDS, so
+# no backslash continuations: they glue lines together.
 _nginx_catchall_config() {
     cat <<EOF
 # vpssec - Nginx catchall configuration
@@ -345,6 +306,9 @@ server {
     # Return 444 (connection closed without response)
     return 444;
 }
+EOF
+    [[ "${1:-}" == both ]] || return 0
+    cat <<EOF
 
 server {
     listen 443 ssl default_server;
@@ -375,6 +339,18 @@ _nginx_fix_add_catchall() {
         return 1
     fi
 
+    # Whether nginx serves 443 decides what to write, so a config nginx cannot
+    # read is refused here, before anything is staged.
+    nginx_dump_reset
+    if ! nginx_dump_load; then
+        print_error "$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")"
+        return 1
+    fi
+    local needed
+    needed=$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")
+    needed=${needed%% *}
+    [[ "$needed" == both ]] || print_info "$(i18n 'nginx.catchall_80_only')"
+
     # Decides what the validation-failure path may delete. A dangling link here
     # (what an older version's rollback left) counts as absent: the write
     # replaces it, and all it ever did was fail nginx -t.
@@ -387,12 +363,12 @@ _nginx_fix_add_catchall() {
     backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1
     # write_file_atomic creates the parent directory and reports its own
     # failures, so no separate mkdir with a status to discard.
-    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config)"; then
+    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then
         print_error "$(i18n 'nginx.catchall_write_failed' "file=$NGINX_CATCHALL_CONF")"
         return 1
     fi
 
-    if ! _nginx_ensure_catchall_cert; then
+    if [[ "$needed" == both ]] && ! _nginx_ensure_catchall_cert; then
         return 1
     fi
 
@@ -424,16 +400,47 @@ _nginx_fix_add_catchall() {
     fi
     print_ok "$(i18n 'nginx.nginx_reloaded')"
 
-    # Postcondition via the audit's own question: `nginx -t` says the config
-    # parses and the reload says it loaded, but neither says this host now
-    # has a catchall on both ports.
-    local state
-    state=$(_nginx_catchall_state)
-    if [[ "$state" != "both" ]]; then
-        print_error "$(i18n 'nginx.catchall_postcondition_failed' "state=$state")"
+    # Two postconditions, because the files and the running server can differ:
+    # nginx -t passes and the reload signal returns 0 even when the new config
+    # then fails to bind and the old one keeps serving.
+    local coverage
+    nginx_dump_reset
+    nginx_dump_load && coverage=$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")
+    if ! _nginx_catchall_covered "${coverage:-}"; then
+        print_error "$(i18n 'nginx.catchall_postcondition_failed' "state=${coverage#* }")"
         return 1
     fi
-    return 0
+    local live=0
+    _nginx_catchall_live || live=$?
+    case "$live" in
+        0) return 0 ;;
+        2) print_error "$(i18n 'nginx.catchall_unverified')" ;;
+        *) print_error "$(i18n 'nginx.catchall_not_live')" ;;
+    esac
+    return 1
+}
+
+# Ask the running nginx, not its files: an unknown Host on 127.0.0.1:<port, 80>
+# must get no answer. 0 = closed unanswered, 1 = answered or refused, 2 = held
+# open. An answer is retried briefly: a reload hands over to new workers async.
+_nginx_catchall_live() {
+    local port="${1:-80}" host="vpssec-$RANDOM$RANDOM.invalid" try rc=1
+    for try in 1 2 3 4 5; do
+        # A subshell: a peer that closes before the request is written raises
+        # SIGPIPE there, not in vpssec, and 141 is exactly that unanswered close.
+        (
+            exec 3<>"/dev/tcp/127.0.0.1/$port" || exit 1
+            printf 'GET / HTTP/1.0\r\nHost: %s\r\n\r\n' "$host" >&3
+            IFS= read -r -n 1 -t 3 _ <&3 && exit 1
+            (( $? > 128 )) && exit 2
+            exit 0
+        ) 2>/dev/null
+        rc=$?
+        (( rc == 141 )) && rc=0
+        (( rc == 1 )) || break
+        (( try < 5 )) && sleep 0.5
+    done
+    return "$rc"
 }
 
 # Create the SSL directory and self-signed certificate the 443 catchall needs.

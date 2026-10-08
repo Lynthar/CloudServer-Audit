@@ -9,7 +9,9 @@
 #   5. when the case names FIX_ID, runs `vpssec guide --fix=<id> --yes`
 #      through the real CLI, re-audits and asserts EXPECT_FIXED_ID has
 #      EXPECT_FIXED_STATUS ("absent" = the id must not appear at all),
-#      and that guide itself exited 0 on the host it converged. A risky
+#      and that guide itself exited 0 on the host it converged — and, when
+#      the case defines postfix(), that it returns 0 (what the service makes
+#      of the change, which the audit reads from files). A risky
 #      fix asks on /dev/tty and ignores --yes: the case lists what to type
 #      in FIX_TTY_ANSWERS, one line per prompt, fed through a pseudo-terminal
 #   6. then runs `vpssec rollback <that session>` (answering its
@@ -120,7 +122,7 @@ run_case() {
 
     # Reset per-case state — case files set these, but a missing
     # field in case N must not leak from case N-1.
-    unset -f mutate restore precheck postrollback 2>/dev/null || true
+    unset -f mutate restore precheck postfix postrollback 2>/dev/null || true
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
           EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC \
@@ -290,6 +292,11 @@ run_fix_and_rollback() {
         echo "  $(color red '[FAIL]') $EXPECT_FIXED_ID converged, but guide --fix=$FIX_ID exited $guide_rc"
         tail -n 15 "$STAGE_LOG" | sed 's/^/         | /'
         results+=("FAIL  | $case_name | converged, yet guide rc $guide_rc")
+        return 1
+    fi
+    if declare -f postfix >/dev/null && ! postfix; then
+        echo "  $(color red '[FAIL]') after $FIX_ID: the case's postfix() check failed"
+        results+=("FAIL  | $case_name | postfix check failed")
         return 1
     fi
 

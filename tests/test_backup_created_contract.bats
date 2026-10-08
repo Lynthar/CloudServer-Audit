@@ -185,10 +185,11 @@ exit 0
 SH
     _vpssec_stub_script nginx <<SH
 case "\$*" in
-    *-T*) cat "$NGINX_SITES_ENABLED"/*.conf; exit 0 ;;
+    *-T*) echo 'http { }'; cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null; exit 0 ;;
 esac
 exit 0
 SH
+    _nginx_catchall_live() { return 0; }
     snap=$(_vpssec_tree_snapshot "$etc")
 
     run _nginx_fix_add_catchall

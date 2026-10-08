@@ -67,55 +67,50 @@ setup() {
 # --- HSTS ---
 
 @test "HSTS: commented-out add_header is reported as missing" {
-    _webapp_nginx_dump() {
-        cat <<'EOF'
+    NGINX_DUMP=$(cat <<'EOF'
 # add_header Strict-Transport-Security "max-age=31536000" always;
 EOF
-    }
+)
     run _webapp_nginx_hsts
     [ "$status" -eq 0 ]
     [ "$output" = "missing" ]
 }
 
 @test "HSTS: bare mention without add_header is reported as missing" {
-    _webapp_nginx_dump() {
-        cat <<'EOF'
+    NGINX_DUMP=$(cat <<'EOF'
 # Note: Strict-Transport-Security recommended for HTTPS sites
 EOF
-    }
+)
     run _webapp_nginx_hsts
     [ "$status" -eq 0 ]
     [ "$output" = "missing" ]
 }
 
 @test "HSTS: add_header without 'always' is reported as weak" {
-    _webapp_nginx_dump() {
-        cat <<'EOF'
+    NGINX_DUMP=$(cat <<'EOF'
 add_header Strict-Transport-Security "max-age=31536000";
 EOF
-    }
+)
     run _webapp_nginx_hsts
     [ "$status" -eq 0 ]
     [ "$output" = "weak" ]
 }
 
 @test "HSTS: add_header with 'always' is reported as configured" {
-    _webapp_nginx_dump() {
-        cat <<'EOF'
+    NGINX_DUMP=$(cat <<'EOF'
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 EOF
-    }
+)
     run _webapp_nginx_hsts
     [ "$status" -eq 0 ]
     [ "$output" = "configured" ]
 }
 
 @test "HSTS: indented add_header is still detected" {
-    _webapp_nginx_dump() {
-        cat <<'EOF'
+    NGINX_DUMP=$(cat <<'EOF'
     add_header Strict-Transport-Security "max-age=63072000" always;
 EOF
-    }
+)
     run _webapp_nginx_hsts
     [ "$status" -eq 0 ]
     [ "$output" = "configured" ]

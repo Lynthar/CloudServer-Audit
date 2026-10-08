@@ -1220,6 +1220,152 @@ sudo_nopasswd_admin() {
     grep -qxF "$1 1" <<<"$grants"
 }
 
+# --- nginx configuration: one reading shared by the nginx and webapp modules ---
+# Two modules with two answers to "is nginx here" and "what does it say" told
+# the same host opposite things; both now ask these.
+
+# The binary alone, as the engine's module gate does: `nginx -T` finds its own
+# configuration, so a build whose config is not under /etc/nginx is still nginx.
+nginx_present() {
+    check_command nginx
+}
+
+# The resolved config (`nginx -T`) into NGINX_DUMP, once; call it in this shell,
+# never in $(...). Returns 1 when the config fails nginx -t (first emerg line in
+# NGINX_DUMP_ERROR): report that and skip, never grade the files nginx refuses.
+NGINX_DUMP=""
+NGINX_DUMP_ERROR=""
+_NGINX_DUMP_STATE=""
+nginx_dump_load() {
+    case "$_NGINX_DUMP_STATE" in
+        ok) return 0 ;;
+        failed) return 1 ;;
+    esac
+    if NGINX_DUMP=$(nginx -T 2>/dev/null) && [[ -n "$NGINX_DUMP" ]]; then
+        _NGINX_DUMP_STATE=ok
+        return 0
+    fi
+    NGINX_DUMP=""
+    NGINX_DUMP_ERROR=$(nginx -t 2>&1 | awk '/\[(emerg|alert|crit)\]/ { print; exit }') || true
+    _NGINX_DUMP_STATE=failed
+    return 1
+}
+
+# After rewriting the config and before reading it again: the cache hands back the old one.
+nginx_dump_reset() {
+    NGINX_DUMP=""
+    NGINX_DUMP_ERROR=""
+    _NGINX_DUMP_STATE=""
+}
+
+# `nginx -T` text on stdin -> "<server id>\t<context>\t<name>\t<args>" per directive,
+# includes inlined where they occur. Server ids count server{} blocks from 1 (0 = none),
+# context reads "http/server/...", args are space-joined and unquoted.
+nginx_statements() {
+    # -T prints each file once, under "# configuration file <path>:", in the order
+    # nginx first read it; relative includes resolve against the main file's dir.
+    LC_ALL=C awk '
+        /^# configuration file .*:$/ {
+            hdr = 1
+            cur = ++nfiles
+            order[cur] = substr($0, 22, length($0) - 22)
+            next
+        }
+        {
+            if (!cur) { cur = ++nfiles; order[cur] = "" }
+            L[cur, ++nl[cur]] = $0
+        }
+        END {
+            if (!nfiles) exit
+            confdir = order[1]
+            sub(/\/[^\/]*$/, "", confdir)
+            depth = 0; sids[0] = 0; nserver = 0
+            run(1)
+        }
+        function glob_re(p,   r, i, n, c, inb) {
+            r = "^"; n = length(p); inb = 0
+            for (i = 1; i <= n; i++) {
+                c = substr(p, i, 1)
+                if (inb) { r = r c; if (c == "]") inb = 0; continue }
+                if (c == "*") r = r "[^/]*"
+                else if (c == "?") r = r "[^/]"
+                else if (c == "[") { inb = 1; if (substr(p, i + 1, 1) == "!") { r = r "[^"; i++ } else r = r "[" }
+                else if (index("\\.^$+(){}|", c)) r = r "\\" c
+                else r = r c
+            }
+            return r "$"
+        }
+        function include(pat,   re, f) {
+            if (substr(pat, 1, 1) != "/") pat = confdir "/" pat
+            re = glob_re(pat)
+            for (f = 1; f <= nfiles; f++)
+                if (!active[f] && order[f] ~ re) run(f)
+        }
+        function statement(toks, nt,   i, args, ctx) {
+            if (nt == 0) return
+            if (toks[1] == "include" && hdr) {
+                for (i = 2; i <= nt; i++) include(toks[i])
+                return
+            }
+            args = ""
+            for (i = 2; i <= nt; i++) args = args (i > 2 ? " " : "") toks[i]
+            ctx = ""
+            for (i = 1; i <= depth; i++) ctx = ctx (i > 1 ? "/" : "") names[i]
+            print sids[depth] "\t" ctx "\t" toks[1] "\t" args
+        }
+        # nginx tokenizing: `#` starts a comment only between tokens, quotes group
+        # (backslash escapes inside them), and `${` opens a variable, not a block.
+        function run(f,   k, i, n, c, line, tok, intok, inq, esc, invar, nt, toks) {
+            active[f] = 1
+            nt = 0; tok = ""; intok = 0; inq = ""; esc = 0; invar = 0
+            for (k = 1; k <= nl[f]; k++) {
+                line = L[f, k]; n = length(line)
+                for (i = 1; i <= n; i++) {
+                    c = substr(line, i, 1)
+                    if (inq != "") {
+                        if (esc) { tok = tok c; esc = 0; continue }
+                        if (c == "\\") { esc = 1; continue }
+                        if (c == inq) { inq = ""; toks[++nt] = tok; tok = ""; intok = 0; continue }
+                        tok = tok c
+                        continue
+                    }
+                    if (c == "#" && !intok) break
+                    if (invar) { tok = tok c; if (c == "}") invar = 0; continue }
+                    if (c == " " || c == "\t" || c == "\r") {
+                        if (intok) { toks[++nt] = tok; tok = ""; intok = 0 }
+                        continue
+                    }
+                    if (c == ";") {
+                        if (intok) { toks[++nt] = tok; tok = ""; intok = 0 }
+                        statement(toks, nt); nt = 0
+                        continue
+                    }
+                    if (c == "{") {
+                        if (intok && substr(tok, length(tok)) == "$") { tok = tok c; invar = 1; continue }
+                        if (intok) { toks[++nt] = tok; tok = ""; intok = 0 }
+                        depth++
+                        names[depth] = (nt > 0 ? toks[1] : "")
+                        sids[depth] = (names[depth] == "server") ? ++nserver : sids[depth - 1]
+                        nt = 0
+                        continue
+                    }
+                    if (c == "}") {
+                        if (intok) { tok = ""; intok = 0 }
+                        nt = 0
+                        if (depth > 0) depth--
+                        continue
+                    }
+                    if ((c == "\"" || c == "\047") && !intok) { inq = c; intok = 1; tok = ""; continue }
+                    tok = tok c; intok = 1
+                }
+                if (inq != "") tok = tok "\n"
+                else if (intok) { toks[++nt] = tok; tok = ""; intok = 0 }
+            }
+            active[f] = 0
+        }
+    '
+}
+
 # --- JSON Utilities ---
 
 # Create a check result JSON. Serialised by jq so the full U+0000..U+001F

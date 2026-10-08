@@ -25,18 +25,20 @@ setup() {
     _vpssec_stub systemctl
     _nginx_openssl_works
     _nginx_effective_reads_sites_enabled
+    # The running nginx answers as a live catchall would; tests of the probe
+    # itself replace this.
+    _nginx_catchall_live() { return 0; }
 }
 
 # ---- stubs -----------------------------------------------------------------
 
 # The stub reads sites-enabled, as Debian's nginx.conf does. The baseline vhost
-# keeps the dump non-empty, or _nginx_catchall_state falls back to the tree and
-# reports a catchall that is not live.
+# serves 443, so the fix owes a catchall on both ports.
 _nginx_effective_reads_sites_enabled() {
     _vpssec_stub_script nginx <<SH
 case "\$*" in
     *-T*)
-        echo 'server { listen 8080; server_name app.example.com; return 200 "ok"; }'
+        echo 'http { server { listen 443 ssl; server_name app.example.com; return 200 "ok"; } }'
         cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null
         exit 0
         ;;
@@ -52,7 +54,7 @@ _nginx_effective_ignores_sites_enabled() {
     _vpssec_stub_script nginx <<'SH'
 case "$*" in
     *-T*)
-        echo 'server { listen 8080; server_name app.example.com; return 200 "ok"; }'
+        echo 'http { server { listen 443 ssl; server_name app.example.com; return 200 "ok"; } }'
         exit 0
         ;;
 esac
@@ -67,7 +69,7 @@ _nginx_test_rejects() {
     _vpssec_stub_script nginx <<SH
 case "\$*" in
     *-T*)
-        echo 'server { listen 8080; server_name app.example.com; return 200 "ok"; }'
+        echo 'http { server { listen 443 ssl; server_name app.example.com; return 200 "ok"; } }'
         cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null
         exit 0
         ;;
@@ -347,16 +349,17 @@ SH
 
     run _nginx_fix_add_catchall
     [ "$status" -eq 1 ]
-    grep -q 'still is not in force on both ports' <<<"$output"
+    grep -q 'is still not in force' <<<"$output"
 }
 
 @test "catchall: the postcondition rejects a catchall that only covers port 80" {
-    # Partial coverage is what the audit calls 80only; the fix must not accept
-    # it as done either, or the two disagree about the same host.
+    # Partial coverage is what the audit calls 80only; on a host whose nginx
+    # serves 443 the fix must not accept it as done either.
     VPSSEC_QUIET_SCAN=0
     _vpssec_stub_script nginx <<'SH'
 case "$*" in
     *-T*)
+        echo 'http { server { listen 443 ssl; server_name app.example.com; } }'
         echo 'server { listen 80 default_server; return 444; }'
         exit 0
         ;;
@@ -373,8 +376,8 @@ SH
     run _nginx_fix_add_catchall
     [ "$status" -eq 0 ]
     [ -f "$NGINX_CATCHALL_CONF" ]
-    run _nginx_catchall_state
-    [ "$output" = "both" ]
+    run _nginx_has_catchall
+    [ "$status" -eq 0 ]
 }
 
 # ---- the generated config --------------------------------------------------
@@ -419,4 +422,147 @@ SH
     run _nginx_fix_add_catchall
     [ "$status" -ne 0 ]
     [ "$(cat "$NGINX_CATCHALL_CONF")" = "original" ]
+}
+
+# ---- what the catchall must cover ------------------------------------------
+
+@test "catchall: a host serving nothing on 443 gets the port-80 server only, and no certificate" {
+    # Writing a 443 listener there opens 443 to the world, or, where another
+    # daemon holds 443, makes the reload fail while nginx -t still passes.
+    _vpssec_stub_script nginx <<SH
+case "\$*" in
+    *-T*)
+        echo 'http { server { listen 80; server_name app.example.com; } }'
+        cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null
+        ;;
+esac
+exit 0
+SH
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    grep -q 'listen 80 default_server;' "$NGINX_CATCHALL_CONF"
+    _vpssec_refute grep -q '443' "$NGINX_CATCHALL_CONF"
+    [ ! -e "$NGINX_CATCHALL_CERT" ]
+    _vpssec_refute _vpssec_stub_called openssl
+}
+
+@test "catchall: a config nginx -t rejects is refused before anything is written" {
+    VPSSEC_QUIET_SCAN=0
+    _vpssec_stub_script nginx <<'SH'
+case "$*" in
+    *-T*) exit 1 ;;
+esac
+echo 'nginx: [emerg] unknown directive "sevrer" in /etc/nginx/sites-enabled/x:1' >&2
+exit 1
+SH
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'unknown directive "sevrer"'* ]]
+    [ ! -e "$NGINX_CATCHALL_CONF" ]
+}
+
+@test "catchall: a running nginx that still answers an unknown host fails the fix" {
+    VPSSEC_QUIET_SCAN=0
+    _nginx_catchall_live() { return 1; }
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$(i18n 'nginx.catchall_not_live')"* ]]
+}
+
+@test "catchall: a probe left hanging fails the fix with its own message" {
+    VPSSEC_QUIET_SCAN=0
+    _nginx_catchall_live() { return 2; }
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$(i18n 'nginx.catchall_unverified')"* ]]
+}
+
+# ---- the audit ---------------------------------------------------------------
+
+_nginx_audit_with_dump() {
+    _vpssec_stub_script nginx <<SH
+case "\$*" in
+    *-T*) printf '%s\n' '$1' ;;
+esac
+exit 0
+SH
+    state_init
+    nginx_audit
+}
+
+_emitted() { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
+
+@test "audit: a port-80 catchall passes where nginx serves nothing on 443" {
+    _nginx_audit_with_dump 'http { server { listen 80; } server { listen 80 default_server; return 444; } }'
+    grep -qxF nginx.catchall_exists <<<"$(_emitted)"
+}
+
+@test "audit: serving 443 without a 443 catchall is still partial" {
+    _nginx_audit_with_dump 'http { server { listen 443 ssl; } server { listen 80 default_server; return 444; } }'
+    grep -qxF nginx.catchall_partial_80 <<<"$(_emitted)"
+}
+
+@test "audit: a config nginx -t rejects is one finding, with no catchall or DoS verdicts" {
+    _vpssec_stub_script nginx <<'SH'
+case "$*" in
+    *-T*) exit 1 ;;
+esac
+echo 'nginx: [emerg] unknown directive "sevrer" in /etc/nginx/sites-enabled/x:1' >&2
+exit 1
+SH
+    state_init
+    nginx_audit
+    [ "$(_emitted)" = "nginx.config_unreadable" ]
+}
+
+# ---- the live probe, against a real socket ----------------------------------
+
+# A listener on a free local port: "close" reads the request and hangs up
+# unanswered, as `return 444` does; "answer" sends a response; "hold" says nothing.
+_listen() {
+    command -v perl >/dev/null 2>&1 || skip "perl not installed"
+    PROBE_PORT=$(( 20000 + RANDOM % 20000 ))
+    perl -MIO::Socket::INET -e '
+        my $s = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $ARGV[0],
+                                      Listen => 5, ReuseAddr => 1) or exit 1;
+        open my $r, ">", $ARGV[2]; close $r;
+        while (my $c = $s->accept) {
+            my $l = <$c>;
+            print $c "HTTP/1.0 200 OK\r\n\r\nok" if $ARGV[1] eq "answer";
+            sleep 10 if $ARGV[1] eq "hold";
+            close $c;
+        }' "$PROBE_PORT" "$1" "$BATS_TEST_TMPDIR/ready" </dev/null >/dev/null 2>&1 &
+    LISTENER=$!
+    local i
+    for ((i = 0; i < 50; i++)); do [[ -e "$BATS_TEST_TMPDIR/ready" ]] && return 0; sleep 0.1; done
+    return 1
+}
+
+teardown() {
+    [[ -n "${LISTENER:-}" ]] && kill "$LISTENER" 2>/dev/null
+    return 0
+}
+
+@test "probe: a connection closed unanswered reads as live" {
+    unset -f _nginx_catchall_live
+    source "$(_vpssec_repo_root)/modules/nginx.sh"
+    _listen close
+    run _nginx_catchall_live "$PROBE_PORT"
+    [ "$status" -eq 0 ]
+}
+
+@test "probe: an answer reads as not live" {
+    unset -f _nginx_catchall_live
+    source "$(_vpssec_repo_root)/modules/nginx.sh"
+    _listen answer
+    run _nginx_catchall_live "$PROBE_PORT"
+    [ "$status" -eq 1 ]
+}
+
+@test "probe: a connection held open without an answer cannot be confirmed" {
+    unset -f _nginx_catchall_live
+    source "$(_vpssec_repo_root)/modules/nginx.sh"
+    _listen hold
+    run _nginx_catchall_live "$PROBE_PORT"
+    [ "$status" -eq 2 ]
 }

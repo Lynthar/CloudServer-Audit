@@ -1,0 +1,57 @@
+# Plant: the stock default site moved out of sites-enabled, and another daemon
+# holding :443 while nginx serves :80 (xray / trojan / sslh in practice; perl here).
+# Expect: nginx.no_catchall → nginx.add_catchall writes the :80 server only, and
+# postfix checks nginx still RESTARTS — a 443 listener there passes nginx -t and
+# the reload signal, then fails to bind and takes :80 down at the next restart.
+TEST_DESC="443 held by another daemon: the catchall covers :80 only and nginx still restarts"
+EXPECT_ID="nginx.no_catchall"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="nginx"
+FIX_ID="nginx.add_catchall"
+EXPECT_FIXED_ID="nginx.catchall_exists"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="nginx.no_catchall"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DEFAULT="/etc/nginx/sites-enabled/default"
+_SAVED="/tmp/vpssec-mutation-default-site-443"
+_CATCHALL="/etc/nginx/sites-enabled/99-catchall.conf"
+_HOLDER_PID="/tmp/vpssec-mutation-443-holder.pid"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null \
+        && command -v perl >/dev/null 2>&1 \
+        && [[ -e "$_DEFAULT" ]] && [[ ! -e "$_CATCHALL" && ! -L "$_CATCHALL" ]] \
+        && ! (exec 3<>/dev/tcp/127.0.0.1/443) 2>/dev/null
+}
+
+mutate() {
+    mv "$_DEFAULT" "$_SAVED" || return 1
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || return 1
+    perl -MIO::Socket::INET -e '
+        IO::Socket::INET->new(LocalAddr => "0.0.0.0", LocalPort => 443,
+                              Listen => 5, ReuseAddr => 1) or exit 1;
+        sleep 1 while 1;' </dev/null >/dev/null 2>&1 &
+    echo "$!" > "$_HOLDER_PID"
+    sleep 1
+    kill -0 "$(cat "$_HOLDER_PID")" 2>/dev/null
+}
+
+postfix() {
+    ! grep -q 443 "$_CATCHALL" && systemctl restart nginx >/dev/null 2>&1 \
+        && systemctl is-active --quiet nginx
+}
+
+postrollback() {
+    nginx -t >/dev/null 2>&1
+}
+
+restore() {
+    [[ -f "$_HOLDER_PID" ]] && kill "$(cat "$_HOLDER_PID")" 2>/dev/null
+    rm -f "$_HOLDER_PID" "$_CATCHALL"
+    [[ -e "$_SAVED" || -L "$_SAVED" ]] && mv "$_SAVED" "$_DEFAULT"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}

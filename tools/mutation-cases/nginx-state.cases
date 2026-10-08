@@ -1,79 +1,64 @@
 # Mutation cases: tests/test_nginx_catchall_state.bats against modules/nginx.sh.
 # mutate-suite: modules/nginx.sh tests/test_nginx_catchall_state.bats
 #
-# One of three files naming this module. This one pairs with the suite covering
-# _nginx_catchall_state_from_text — the awk parser that reads a `nginx -T` dump —
-# and nothing else; nginx.cases pairs with the fix suite, nginx-fallback.cases with
-# the file-scan suite.
-#
-# Every case here mutates the awk program, so every anchor is inside a
-# single-quoted awk body — no host path is touched and nothing is written.
+# One of two files naming this module. This one pairs with the suite covering
+# _nginx_catchall_coverage_from_text, the reading of a config into "<needed>
+# <have>"; nginx.cases pairs with the fix and audit suite. Tokenizing (comments,
+# quotes, includes) is core's nginx_statements, mutated in nginx-statements.cases.
 
-# ---- what makes a line count ----------------------------------------------
+# ---- what makes a server a catchall ---------------------------------------
 
-# The parser strips inline comments before matching, so a commented-out
-# `return 444;` is not a catchall.
-run_case "parse/comments-not-stripped" 1 \
-    '            sub(/[[:space:]]*#.*$/, "")' \
-    '            $0 = $0'
-
-# default_server is half the definition: a listen directive without it is a
-# named vhost, not the block unknown hostnames fall through to.
+# default_server is half the definition: a server answering 444 to the names it
+# hosts is not a catchall for the names it does not.
 run_case "parse/default-server-not-required" 1 \
-    '                if (/listen/ && /default_server/) {' \
-    '                if (/listen/) {'
+    '            if (p == "80" && dflt) d80[$1] = 1' \
+    '            if (p == "80") d80[$1] = 1'
 
-# `return 444;` is the other half.
 run_case "parse/return-444-loosened" 1 \
-    '                if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1' \
-    '                if ($0 ~ /return/) ret = 1'
-
-# The (^|[{;[:space:]]) boundary is what lets a one-liner server block parse;
-# anchoring at line start alone drops it.
-run_case "parse/return-444-anchored-at-line-start" 1 \
-    '                if ($0 ~ /(^|[{;[:space:]])return[[:space:]]+444[[:space:]]*;/) ret = 1' \
-    '                if ($0 ~ /^[[:space:]]*return[[:space:]]+444[[:space:]]*;/) ret = 1'
-
-# ---- port boundaries -------------------------------------------------------
-# The trailing character class is the whole reason 8080 does not read as 80 and
-# 4430 does not read as 443.
+    '        $3 == "return" && $4 ~ /^444( |$)/ { ret[$1] = 1 }' \
+    '        $3 == "return" { ret[$1] = 1 }'
 
 run_case "parse/port-80-substring-match" 1 \
-    '                    if ($0 ~ /:80([[:space:]]|;)/    || $0 ~ /[[:space:]]80([[:space:]]|;)/)  d80  = 1' \
-    '                    if ($0 ~ /80/)  d80  = 1'
+    '            if (p == "80" && dflt) d80[$1] = 1' \
+    '            if (p ~ /80/ && dflt) d80[$1] = 1'
 
 run_case "parse/port-443-substring-match" 1 \
-    '                    if ($0 ~ /:443([[:space:]]|;)/   || $0 ~ /[[:space:]]443([[:space:]]|;)/) d443 = 1' \
-    '                    if ($0 ~ /443/) d443 = 1'
+    '            if (p == "443") { on443[$1] = 1; if (dflt) d443[$1] = 1 }' \
+    '            if (p ~ /443/) { on443[$1] = 1; if (dflt) d443[$1] = 1 }'
 
-# ---- server-block scope ----------------------------------------------------
-# The parser this replaced saw `default_server` anywhere and `return 444` anywhere
-# and called that covered. Everything below keeps the two facts inside one block.
+run_case "parse/reject-handshake-ignored" 1 \
+    '        $3 == "ssl_reject_handshake" && $4 == "on" { rej[$1] = 1 }' \
+    '        $3 == "ssl_reject_handshake" && $4 == "on" { }'
 
-run_case "scope/block-never-closes-on-depth" 1 \
-    '            if (in_server && depth <= close_depth) {' \
-    '            if (in_server) {'
+# ---- scope: one server's directives stay in that server --------------------
 
-run_case "scope/closing-braces-not-counted" 1 \
-    '            depth += opens - closes' \
-    '            depth += opens'
+run_case "scope/return-444-shared-across-servers" 1 \
+    '        $3 == "return" && $4 ~ /^444( |$)/ { ret[$1] = 1 }' \
+    '        $3 == "return" && $4 ~ /^444( |$)/ { ret[1] = 1 }'
 
-run_case "scope/state-not-reset-between-blocks" 1 \
-    '                reset_block()' \
-    '                ;'
-
-run_case "scope/return-444-not-required-at-close" 1 \
-    '                if (ret) {' \
-    '                if (1) {'
-
-# ---- what the four states mean ---------------------------------------------
-# "both" is deliberately strict: partial coverage is a finding, because an
-# HTTPS-only catchall still leaks certificates on port 80 and vice versa.
+# ---- the answer ------------------------------------------------------------
 
 run_case "state/both-satisfied-by-either-port" 1 \
-    '            if (c80 && c443) print "both"' \
-    '            if (c80 || c443) print "both"'
+    '            have = (c80 && c443) ? "both" : c80 ? "80only" : c443 ? "443only" : "none"' \
+    '            have = (c80 || c443) ? "both" : c80 ? "80only" : c443 ? "443only" : "none"'
 
 run_case "state/80only-mislabelled" 1 \
-    '            else if (c80)    print "80only"' \
-    '            else if (c80)    print "443only"'
+    '            have = (c80 && c443) ? "both" : c80 ? "80only" : c443 ? "443only" : "none"' \
+    '            have = (c80 && c443) ? "both" : c80 ? "443only" : c443 ? "443only" : "none"'
+
+# 443 is owed only where nginx serves it; a catchall alone on 443 is not serving.
+run_case "needed/443-always-owed" 1 \
+    '            print (serves ? "both" : "80") " " have' \
+    '            print "both " have'
+
+run_case "needed/catchall-counts-as-serving" 1 \
+    '            for (s in on443) if (!((s in d443) && ((s in ret) || (s in rej)))) serves = 1' \
+    '            for (s in on443) serves = 1'
+
+run_case "needed/stream-counts-as-serving" 1 \
+    '        $1 == 0 || $2 ~ /^(stream|mail)(\/|$)/ { next }' \
+    '        $1 == 0 { next }'
+
+run_case "covered/80-only-never-enough" 1 \
+    '        "both both"|"80 both"|"80 80only") return 0 ;;' \
+    '        "both both"|"80 both") return 0 ;;'

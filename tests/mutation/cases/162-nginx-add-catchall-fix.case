@@ -1,10 +1,10 @@
 # Plant: the stock default site moved out of sites-enabled. It already claims
 # default_server on :80, and the fix does not edit another site's config, so with
 # it in place nginx -t rejects the catchall by design.
-# Expect: nginx.no_catchall → nginx.add_catchall → nginx.catchall_exists.
-# Rollback deletes the catchall and the certificate and key it generated (rc 0),
-# and postrollback checks nginx still accepts its config — the audit cannot see
-# that, because it falls back to scanning files when nginx -T fails.
+# Expect: nginx.no_catchall → nginx.add_catchall → nginx.catchall_exists. Nothing
+# then serves 443, so only the :80 server is written. Rollback deletes it (rc 0),
+# and postrollback checks nginx still accepts its config — the audit would only
+# say nginx.config_unreadable, not which file broke it.
 TEST_DESC="no catchall: nginx.add_catchall converges; rollback removes it and nginx -t still passes"
 EXPECT_ID="nginx.no_catchall"
 EXPECT_STATUS="failed"

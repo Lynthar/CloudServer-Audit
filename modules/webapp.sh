@@ -5,11 +5,10 @@
 
 # --- Configuration ---
 
-# Nginx configuration paths
+# Nginx configuration paths the fixes write to. The audit reads nginx -T
+# (core nginx_dump_load), which finds the config wherever nginx keeps it.
 NGINX_CONF="/etc/nginx/nginx.conf"
 NGINX_CONFD="/etc/nginx/conf.d"
-NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
-NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
 # Snippets are NOT auto-included, unlike conf.d/*. SSL directives belong in a
 # server{} block, and writing them to conf.d duplicates what nginx.conf already
 # sets in http{} — a "duplicate directive" emerg on the next reload.
@@ -44,7 +43,6 @@ SENSITIVE_PATHS=(
     ".git"
     ".svn"
     ".env"
-    ".htaccess"
     ".htpasswd"
     "wp-config.php.bak"
     "config.php.bak"
@@ -59,7 +57,9 @@ SENSITIVE_PATHS=(
     "Thumbs.db"
     # No composer.json / package.json: dependency manifests are not secrets
     # and are routine in a web root, so flagging them as HIGH diluted the
-    # genuinely dangerous entries above.
+    # genuinely dangerous entries above. No .htaccess, for the same reason:
+    # rewrite rules that every WordPress / Laravel site ships, and deleting
+    # it as the old suggestion said breaks the site's routes on Apache.
     ".env.local"
     ".env.production"
 )
@@ -124,11 +124,6 @@ PHP_DANGEROUS_FUNCTIONS=(
 CERT_EXPIRY_WARNING_DAYS=30
 
 # --- Helper Functions ---
-
-# Check if Nginx is installed
-_webapp_nginx_installed() {
-    command -v nginx &>/dev/null && [[ -f "$NGINX_CONF" ]]
-}
 
 # Web servers this module does NOT audit, but whose presence makes "no web
 # server detected" a false statement about the host. Detected by binary only:
@@ -197,61 +192,6 @@ _webapp_read_pool_directive() {
         sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
 }
 
-# Legacy file-list fallback for when `nginx -T` fails, e.g. a syntax-broken
-# config. Detection helpers must prefer _webapp_nginx_dump, which reflects
-# the real effective configuration.
-_webapp_get_nginx_configs() {
-    local configs=()
-
-    [[ -f "$NGINX_CONF" ]] && configs+=("$NGINX_CONF")
-
-    # Add conf.d files
-    if [[ -d "$NGINX_CONFD" ]]; then
-        for f in "$NGINX_CONFD"/*.conf; do
-            [[ -f "$f" ]] && configs+=("$f")
-        done
-    fi
-
-    # Add sites-enabled
-    if [[ -d "$NGINX_SITES_ENABLED" ]]; then
-        for f in "$NGINX_SITES_ENABLED"/*; do
-            [[ -f "$f" ]] && configs+=("$f")
-        done
-    fi
-
-    printf '%s\n' "${configs[@]}"
-}
-
-# The resolved nginx configuration via `nginx -T`, the authoritative source:
-# a hardcoded file list misses anything pulled in by `include`. Cached so
-# nginx forks at most once per audit; falls back to the file list.
-_WEBAPP_NGINX_DUMP_CACHED=0
-_WEBAPP_NGINX_DUMP=""
-_webapp_nginx_dump() {
-    if (( _WEBAPP_NGINX_DUMP_CACHED )); then
-        printf '%s\n' "$_WEBAPP_NGINX_DUMP"
-        return 0
-    fi
-
-    local dump=""
-    if command -v nginx &>/dev/null; then
-        dump=$(nginx -T 2>/dev/null)
-    fi
-
-    if [[ -z "$dump" ]]; then
-        # Fallback: concatenate the hardcoded file list.
-        local f
-        while IFS= read -r f; do
-            [[ -z "$f" ]] && continue
-            [[ -f "$f" ]] && dump+="$(cat "$f" 2>/dev/null)"$'\n'
-        done < <(_webapp_get_nginx_configs)
-    fi
-
-    _WEBAPP_NGINX_DUMP="$dump"
-    _WEBAPP_NGINX_DUMP_CACHED=1
-    printf '%s\n' "$_WEBAPP_NGINX_DUMP"
-}
-
 # Effective PHP value for a directive. NEVER read it from `php -i`: that is
 # the CLI SAPI, independent of the FPM SAPI that serves web requests. With FPM
 # present this walks each FPM php.ini, then conf.d, then pool.d, last winning.
@@ -299,144 +239,143 @@ _webapp_get_php_ini() {
 }
 
 # --- Nginx Security Check Functions ---
+# Each reads NGINX_DUMP, which webapp_audit (or the predicate) has loaded.
 
-# Check server_tokens setting
+# server{} blocks whose effective server_tokens is not off, by name: their own
+# value, else the http{} one, else nginx's default of on; or on in a location.
 _webapp_nginx_server_tokens() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-    local findings=()
-
-    if echo "$dump" | grep -qE '^[[:space:]]*server_tokens[[:space:]]+on\b'; then
-        findings+=("server_tokens set to 'on' (exposes version)")
-    fi
-
-    if ! echo "$dump" | grep -qE '^[[:space:]]*server_tokens[[:space:]]+off\b'; then
-        findings+=("server_tokens not explicitly disabled")
-    fi
-
-    printf '%s\n' "${findings[@]}"
+    nginx_statements <<<"$NGINX_DUMP" | awk -F'\t' '
+        $1 == 0 && $2 == "http" && $3 == "server_tokens" { top = $4; next }
+        $1 == 0 || $2 !~ /^http\/server/ { next }
+        { srv[$1] = 1 }
+        $2 == "http/server" && $3 == "server_name" && !($1 in name) { split($4, w, " "); name[$1] = w[1] }
+        $2 == "http/server" && $3 == "server_tokens" { own[$1] = $4; next }
+        $3 == "server_tokens" && $4 != "off" { leak[$1] = 1 }
+        END {
+            for (s in srv) {
+                v = (s in own) ? own[s] : (top != "" ? top : "on")
+                if (v != "off" || (s in leak)) print s "\t" ((s in name) ? name[s] : "_")
+            }
+        }
+    ' | sort -n | cut -f2
 }
 
-# Check security headers
+# Security headers with no uncommented add_header anywhere.
 _webapp_nginx_security_headers() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-    local missing_headers=()
-
+    local stmts header missing=()
+    stmts=$(nginx_statements <<<"$NGINX_DUMP")
     for header in "${!NGINX_SECURITY_HEADERS[@]}"; do
-        if ! echo "$dump" | grep -qiE "add_header[[:space:]]+${header}\b"; then
-            missing_headers+=("$header")
-        fi
+        awk -F'\t' -v h="${header,,}" '
+            $3 == "add_header" { split($4, w, " "); if (tolower(w[1]) == h) { found = 1; exit } }
+            END { exit !found }
+        ' <<<"$stmts" || missing+=("$header")
     done
-
-    printf '%s\n' "${missing_headers[@]}"
+    printf '%s\n' "${missing[@]}"
 }
 
-# Pass conditions of the two checks above. The cache is dropped first: a
-# re-check after a fix must see the new config, not an audit-time dump.
+# Pass conditions of the two checks above, re-read: a re-check after a fix must
+# see the new config, not the audit-time dump.
 _webapp_nginx_server_tokens_ok() {
-    _WEBAPP_NGINX_DUMP_CACHED=0
+    nginx_dump_reset
+    nginx_dump_load || return 1
     [[ -z "$(_webapp_nginx_server_tokens)" ]]
 }
 
 _webapp_nginx_security_headers_ok() {
-    _WEBAPP_NGINX_DUMP_CACHED=0
+    nginx_dump_reset
+    nginx_dump_load || return 1
     [[ -z "$(_webapp_nginx_security_headers)" ]]
 }
 
-# HSTS must be an UNCOMMENTED add_header directive: a bare grep accepts the
-# commented template this module's own fix writes. Whether `always` is
-# present is surfaced too — without it the header is omitted on errors.
+# HSTS: missing / weak (no `always`, so error responses go without it) /
+# configured. Asked only where a TLS server exists: HSTS on plain HTTP is ignored.
 _webapp_nginx_hsts() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-
-    # Strip comments first. Use awk to remove `# ...` from each line —
-    # a quoted `#` inside a header value is rare and not present in
-    # any standard HSTS directive, so this stays safe.
-    local stripped
-    stripped=$(printf '%s\n' "$dump" | awk '{ sub(/#.*/, ""); print }')
-
-    if ! echo "$stripped" | \
-        grep -qiE '^[[:space:]]*add_header[[:space:]]+Strict-Transport-Security'; then
-        echo "missing"
-        return
-    fi
-
-    # `always` ensures the header is sent on every response code,
-    # not just 200/201/204/206/301/302/303/304/307/308 (nginx's
-    # implicit add_header response-code list).
-    if echo "$stripped" | \
-        grep -qiE '^[[:space:]]*add_header[[:space:]]+Strict-Transport-Security.*[[:space:]]always[[:space:]]*;'; then
-        echo "configured"
-    else
-        echo "weak"
-    fi
+    nginx_statements <<<"$NGINX_DUMP" | awk -F'\t' '
+        $3 == "add_header" {
+            n = split($4, w, " ")
+            if (tolower(w[1]) == "strict-transport-security") { seen = 1; if (w[n] == "always") always = 1 }
+        }
+        END { print (!seen ? "missing" : always ? "configured" : "weak") }
+    '
 }
 
-# Check directory listing
 _webapp_nginx_directory_listing() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-    local findings=()
-
-    if echo "$dump" | grep -qE '^[[:space:]]*autoindex[[:space:]]+on\b'; then
-        findings+=("autoindex on")
-    fi
-
-    printf '%s\n' "${findings[@]}"
+    nginx_statements <<<"$NGINX_DUMP" | awk -F'\t' '$3 == "autoindex" && $4 == "on" { print "autoindex on"; exit }'
 }
 
-# Check SSL protocols
-_webapp_nginx_ssl_protocols() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-    local weak=()
+# Servers speaking TLS (a listen with ssl or quic, or the old `ssl on`), one per
+# line: "<name>\t<protocols>\t<from>\t<ciphers>\t<from>", <from> being where the
+# value is set (server, http, stream); "-" stands for unset in either field.
+_webapp_nginx_tls_servers() {
+    nginx_statements <<<"$NGINX_DUMP" | awk -F'\t' '
+        $1 == 0 && ($2 == "http" || $2 == "stream") && ($3 == "ssl_protocols" || $3 == "ssl_ciphers") { top[$2, $3] = $4; next }
+        $1 == 0 || $2 !~ /^(http|stream)\/server/ { next }
+        { kind[$1] = substr($2, 1, index($2, "/") - 1) }
+        $2 !~ /\/server$/ { next }
+        $3 == "listen" && (" " $4 " ") ~ / (ssl|quic) / { tls[$1] = 1 }
+        $3 == "ssl" && $4 == "on" { tls[$1] = 1 }
+        $3 == "server_name" && !($1 in name) { split($4, w, " "); name[$1] = w[1] }
+        $3 == "ssl_protocols" || $3 == "ssl_ciphers" { own[$1, $3] = $4 }
+        END {
+            split("ssl_protocols ssl_ciphers", keys, " ")
+            for (s in tls) {
+                line = s "\t" ((s in name) ? name[s] : "_")
+                for (d = 1; d <= 2; d++) {
+                    if ((s, keys[d]) in own)               line = line "\t" own[s, keys[d]] "\tserver"
+                    else if ((kind[s], keys[d]) in top)    line = line "\t" top[kind[s], keys[d]] "\t" kind[s]
+                    else                                   line = line "\t-\t-"
+                }
+                print line
+            }
+        }
+    ' | sort -n | cut -f2-
+}
 
-    local protocols
-    # `ssl_protocols` can appear multiple times (per server{}). Collect
-    # every occurrence and scan for weak entries.
-    while IFS= read -r protocols; do
-        [[ -z "$protocols" ]] && continue
+# One finding line per TLS server: what it allows, and where that is set when
+# the server inherits it, since that is the line the operator must change.
+_webapp_tls_finding() {
+    local server="$1" items="$2" from="$3"
+    if [[ "$from" == server ]]; then
+        i18n 'webapp.f_tls_server' "server=$server" "items=$items"
+    else
+        i18n 'webapp.f_tls_inherited' "server=$server" "items=$items" "block=$from"
+    fi
+}
+
+# TLS servers allowing a protocol in WEAK_SSL_PROTOCOLS, one finding line each.
+_webapp_nginx_ssl_protocols() {
+    local name protos pfrom _c _cf tok wl weak
+    while IFS=$'\t' read -r name protos pfrom _c _cf; do
+        [[ "$protos" == - ]] && continue
+        weak=()
         # Each token compared EXACTLY: a substring match makes the weak
-        # "TLSv1" match "TLSv1.2", flagging every correctly hardened server
-        # on a required-category check.
-        local tok wl
-        for tok in $protocols; do
+        # "TLSv1" match "TLSv1.2", flagging every correctly hardened server.
+        for tok in $protos; do
             for wl in "${WEAK_SSL_PROTOCOLS[@]}"; do
-                if [[ "${tok,,}" == "${wl,,}" ]]; then
-                    weak+=("$(i18n 'webapp.f_proto_enabled' "proto=$wl")")
-                fi
+                [[ "${tok,,}" == "${wl,,}" ]] && weak+=("$wl")
             done
         done
-    done < <(echo "$dump" | grep -oP '^[^#]*ssl_protocols\s+\K[^;]+')
-
-    printf '%s\n' "${weak[@]}" | sort -u
+        (( ${#weak[@]} )) || continue
+        _webapp_tls_finding "$name" "$(printf '%s, ' "${weak[@]}" | sed 's/, $//')" "$pfrom"
+    done < <(_webapp_nginx_tls_servers)
 }
 
-# Check SSL ciphers
+# TLS servers whose cipher list offers a WEAK_CIPHER_PATTERNS entry.
 _webapp_nginx_ssl_ciphers() {
-    local dump
-    dump=$(_webapp_nginx_dump)
-    local weak=()
-
-    local ciphers
-    while IFS= read -r ciphers; do
-        [[ -z "$ciphers" ]] && continue
+    local name _p _pf ciphers cfrom filtered pat weak
+    while IFS=$'\t' read -r name _p _pf ciphers cfrom; do
+        [[ "$ciphers" == - ]] && continue
         # Excluded tokens are dropped first: OpenSSL uses `!FOO` / `-FOO` to
         # REMOVE a cipher, so a hardened list that disables MD5 and RC4 would
         # otherwise match as though it offered them.
-        local filtered
-        filtered=$(echo "$ciphers" | tr ':' '\n' | grep -vE '^[!-]' | paste -sd':' -)
-        local weak_cipher
-        for weak_cipher in "${WEAK_CIPHER_PATTERNS[@]}"; do
-            if echo "$filtered" | grep -qi "$weak_cipher"; then
-                weak+=("$weak_cipher")
-            fi
+        filtered=$(tr ':' '\n' <<<"$ciphers" | grep -vE '^[!-]' | paste -sd':' -)
+        weak=()
+        for pat in "${WEAK_CIPHER_PATTERNS[@]}"; do
+            grep -qi -- "$pat" <<<"$filtered" && weak+=("$pat")
         done
-    done < <(echo "$dump" | grep -oP '^[^#]*ssl_ciphers\s+["\047]?\K[^"\047;]+')
-
-    printf '%s\n' "${weak[@]}" | sort -u
+        (( ${#weak[@]} )) || continue
+        _webapp_tls_finding "$name" "$(printf '%s, ' "${weak[@]}" | sed 's/, $//')" "$cfrom"
+    done < <(_webapp_nginx_tls_servers)
 }
 
 # --- Apache Security Check Functions ---
@@ -773,6 +712,95 @@ _webapp_backup_files() {
 
 # --- Audit Function ---
 
+# The nginx half of the audit, against the NGINX_DUMP webapp_audit loaded.
+_webapp_audit_nginx() {
+    # 1. Server tokens
+    local server_tokens=$(_webapp_nginx_server_tokens)
+    local tokens_count=$(count_lines "$server_tokens")
+
+    if [[ -n "$server_tokens" && "$tokens_count" -gt 0 ]]; then
+        check_emit "webapp.nginx_server_tokens" low failed \
+            title="$(i18n 'webapp.nginx_version_exposed')" \
+            desc="$(i18n 'webapp.nginx_server_tokens_desc')" \
+            suggestion="$(i18n 'webapp.add_server_tokens_off')" \
+            fix="webapp.nginx_server_tokens"
+    else
+        check_emit "webapp.nginx_server_tokens_ok" info passed \
+            title="$(i18n 'webapp.nginx_version_hidden')" \
+            desc="$(i18n 'webapp.nginx_server_tokens_ok_desc')"
+    fi
+
+    # 2. Security headers
+    local missing_headers=$(_webapp_nginx_security_headers)
+    local missing_count=$(count_lines "$missing_headers")
+
+    if [[ -n "$missing_headers" && "$missing_count" -gt 0 ]]; then
+        check_emit "webapp.nginx_security_headers" low failed \
+            title="$(i18n 'webapp.missing_security_headers'): $missing_count" \
+            desc="$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
+            suggestion="$(i18n 'webapp.add_security_headers')" \
+            fix="webapp.nginx_security_headers"
+    else
+        check_emit "webapp.nginx_security_headers_ok" info passed \
+            title="$(i18n 'webapp.security_headers_ok')" \
+            desc="$(i18n 'webapp.nginx_security_headers_ok_desc')"
+    fi
+
+    # 3. Directory listing
+    local dir_listing=$(_webapp_nginx_directory_listing)
+    if [[ -n "$dir_listing" ]]; then
+        check_emit "webapp.nginx_directory_listing" medium failed \
+            title="$(i18n 'webapp.directory_listing_on')" \
+            desc="$dir_listing" \
+            suggestion="$(i18n 'webapp.disable_autoindex')"
+    fi
+
+    # TLS checks only where nginx serves TLS: Debian 12 and Ubuntu 22.04 / 24.04
+    # ship weak protocols at http{} level, which matters only to a server that
+    # inherits them, and HSTS means nothing on plain HTTP.
+    [[ -n "$(_webapp_nginx_tls_servers)" ]] || return 0
+
+    # 4. HSTS — three-way: missing / weak (no `always`) / configured.
+    local hsts=$(_webapp_nginx_hsts)
+    if [[ "$hsts" == "missing" ]]; then
+        check_emit "webapp.nginx_hsts_missing" low failed \
+            title="$(i18n 'webapp.hsts_missing')" \
+            desc="$(i18n 'webapp.nginx_hsts_missing_desc')" \
+            suggestion="$(i18n 'webapp.add_hsts')" \
+            fix="webapp.nginx_hsts"
+    elif [[ "$hsts" == "weak" ]]; then
+        check_emit "webapp.nginx_hsts_weak" low failed \
+            title="$(i18n 'webapp.hsts_weak')" \
+            desc="$(i18n 'webapp.nginx_hsts_weak_desc')" \
+            suggestion="$(i18n 'webapp.fix_hsts_always')" \
+            fix="webapp.nginx_hsts"
+    fi
+
+    # 5. SSL protocols, per TLS server
+    local weak_ssl=$(_webapp_nginx_ssl_protocols)
+    local weak_ssl_count=$(count_lines "$weak_ssl")
+
+    if [[ -n "$weak_ssl" && "$weak_ssl_count" -gt 0 ]]; then
+        check_emit "webapp.nginx_weak_ssl" medium failed \
+            title="$(i18n 'webapp.weak_ssl_protocols'): $weak_ssl_count" \
+            desc="$(echo "$weak_ssl" | tr '\n' ';' | sed 's/;$//; s/;/; /g')" \
+            suggestion="$(i18n 'webapp.disable_weak_ssl')" \
+            fix="webapp.nginx_ssl_protocols"
+    fi
+
+    # 6. SSL ciphers, per TLS server
+    local weak_ciphers=$(_webapp_nginx_ssl_ciphers)
+    local weak_cipher_count=$(count_lines "$weak_ciphers")
+
+    if [[ -n "$weak_ciphers" && "$weak_cipher_count" -gt 0 ]]; then
+        check_emit "webapp.nginx_weak_ciphers" medium failed \
+            title="$(i18n 'webapp.weak_ciphers'): $weak_cipher_count" \
+            desc="$(echo "$weak_ciphers" | tr '\n' ';' | sed 's/;$//; s/;/; /g')" \
+            suggestion="$(i18n 'webapp.update_ciphers')" \
+            fix="webapp.nginx_ssl_ciphers"
+    fi
+}
+
 webapp_audit() {
     log_info "Running web application security audit"
 
@@ -780,93 +808,18 @@ webapp_audit() {
     _FS_CUT_WALKS=()
 
     # === Nginx Security ===
-    if _webapp_nginx_installed; then
+    # The binary alone says nginx is here, as for the nginx module: its config
+    # may live anywhere, and nginx -T finds it.
+    if nginx_present; then
         has_webserver=true
         print_item "$(i18n 'webapp.checking_nginx')"
-
-        # 1. Server tokens
-        local server_tokens=$(_webapp_nginx_server_tokens)
-        local tokens_count=$(count_lines "$server_tokens")
-
-        if [[ -n "$server_tokens" && "$tokens_count" -gt 0 ]]; then
-            check_emit "webapp.nginx_server_tokens" low failed \
-                title="$(i18n 'webapp.nginx_version_exposed')" \
-                desc="$(i18n 'webapp.nginx_server_tokens_desc')" \
-                suggestion="$(i18n 'webapp.add_server_tokens_off')" \
-                fix="webapp.nginx_server_tokens"
+        nginx_dump_reset
+        if nginx_dump_load; then
+            _webapp_audit_nginx
         else
-            check_emit "webapp.nginx_server_tokens_ok" info passed \
-                title="$(i18n 'webapp.nginx_version_hidden')" \
-                desc="$(i18n 'webapp.nginx_server_tokens_ok_desc')"
-        fi
-
-        # 2. Security headers
-        local missing_headers=$(_webapp_nginx_security_headers)
-        local missing_count=$(count_lines "$missing_headers")
-
-        if [[ -n "$missing_headers" && "$missing_count" -gt 0 ]]; then
-            check_emit "webapp.nginx_security_headers" low failed \
-                title="$(i18n 'webapp.missing_security_headers'): $missing_count" \
-                desc="$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
-                suggestion="$(i18n 'webapp.add_security_headers')" \
-                fix="webapp.nginx_security_headers"
-        else
-            check_emit "webapp.nginx_security_headers_ok" info passed \
-                title="$(i18n 'webapp.security_headers_ok')" \
-                desc="$(i18n 'webapp.nginx_security_headers_ok_desc')"
-        fi
-
-        # 3. HSTS — three-way: missing / weak (no `always`) / configured.
-        local hsts=$(_webapp_nginx_hsts)
-        if [[ "$hsts" == "missing" ]]; then
-            check_emit "webapp.nginx_hsts_missing" low failed \
-                title="$(i18n 'webapp.hsts_missing')" \
-                desc="$(i18n 'webapp.nginx_hsts_missing_desc')" \
-                suggestion="$(i18n 'webapp.add_hsts')" \
-                fix="webapp.nginx_hsts"
-        elif [[ "$hsts" == "weak" ]]; then
-            # Present but without `always`, so it is sent only on the codes
-            # nginx implicitly applies add_header to. Error responses leak.
-            check_emit "webapp.nginx_hsts_weak" low failed \
-                title="$(i18n 'webapp.hsts_weak')" \
-                desc="$(i18n 'webapp.nginx_hsts_weak_desc')" \
-                suggestion="$(i18n 'webapp.fix_hsts_always')" \
-                fix="webapp.nginx_hsts"
-        fi
-
-        # 4. Directory listing
-        local dir_listing=$(_webapp_nginx_directory_listing)
-        local dir_count=$(count_lines "$dir_listing")
-
-        if [[ -n "$dir_listing" && "$dir_count" -gt 0 ]]; then
-            check_emit "webapp.nginx_directory_listing" medium failed \
-                title="$(i18n 'webapp.directory_listing_on')" \
-                desc="$(echo "$dir_listing" | tr '\n' '; ' | sed 's/;$//')" \
-                suggestion="$(i18n 'webapp.disable_autoindex')"
-        fi
-
-        # 5. SSL protocols
-        local weak_ssl=$(_webapp_nginx_ssl_protocols)
-        local weak_ssl_count=$(count_lines "$weak_ssl")
-
-        if [[ -n "$weak_ssl" && "$weak_ssl_count" -gt 0 ]]; then
-            check_emit "webapp.nginx_weak_ssl" medium failed \
-                title="$(i18n 'webapp.weak_ssl_protocols'): $weak_ssl_count" \
-                desc="$(echo "$weak_ssl" | head -3 | tr '\n' '; ' | sed 's/;$//')" \
-                suggestion="$(i18n 'webapp.disable_weak_ssl')" \
-                fix="webapp.nginx_ssl_protocols"
-        fi
-
-        # 6. SSL ciphers
-        local weak_ciphers=$(_webapp_nginx_ssl_ciphers)
-        local weak_cipher_count=$(count_lines "$weak_ciphers")
-
-        if [[ -n "$weak_ciphers" && "$weak_cipher_count" -gt 0 ]]; then
-            check_emit "webapp.nginx_weak_ciphers" medium failed \
-                title="$(i18n 'webapp.weak_ciphers'): $weak_cipher_count" \
-                desc="$(echo "$weak_ciphers" | tr '\n' ', ' | sed 's/,$//')" \
-                suggestion="$(i18n 'webapp.update_ciphers')" \
-                fix="webapp.nginx_ssl_ciphers"
+            check_emit "webapp.nginx_config_unreadable" info failed \
+                desc="$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")" \
+                suggestion="$(i18n 'nginx.config_unreadable_fix')"
         fi
     fi
 

@@ -107,7 +107,7 @@ SH
     mkdir -p "$etc/nginx"
     printf 'http {\n    server_tokens off;\n}\n' > "$NGINX_CONF"
     _vpssec_stub_script nginx <<'SH'
-[[ "$*" == *-T* ]] && printf 'http {\n    server_tokens off;\n}\nserver {\n    server_tokens on;\n}\n'
+[[ "$*" == *-T* ]] && printf 'http {\n    server_tokens off;\n    server {\n        server_tokens on;\n    }\n}\n'
 exit 0
 SH
 

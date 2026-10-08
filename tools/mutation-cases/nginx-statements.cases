@@ -1,0 +1,34 @@
+# Mutation cases: tests/test_nginx_statements.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_nginx_statements.bats
+#
+# nginx_statements must tokenize as nginx does and put included files back where
+# they are included. The include cycle guard is not mutated here: without it a
+# self-include recurses until awk dies, which hangs the run instead of failing it.
+
+run_case "tokens/comments-kept" 1 \
+    '                    if (c == "#" && !intok) break' \
+    '                    if (0) break'
+
+run_case "tokens/hash-mid-token-is-comment" 1 \
+    '                    if (c == "#" && !intok) break' \
+    '                    if (c == "#") break'
+
+run_case "tokens/quotes-not-grouped" 1 \
+    '                    if ((c == "\"" || c == "\047") && !intok) { inq = c; intok = 1; tok = ""; continue }' \
+    '                    if (0) { inq = c; intok = 1; tok = ""; continue }'
+
+run_case "tokens/variable-brace-opens-block" 1 \
+    '                        if (intok && substr(tok, length(tok)) == "$") { tok = tok c; invar = 1; continue }' \
+    '                        if (0) { tok = tok c; invar = 1; continue }'
+
+run_case "include/relative-not-resolved" 1 \
+    '            if (substr(pat, 1, 1) != "/") pat = confdir "/" pat' \
+    '            pat = pat'
+
+run_case "dump/cache-ignored" 1 \
+    '        ok) return 0 ;;' \
+    '        ok) ;;'
+
+run_case "dump/error-dropped" 1 \
+    '    NGINX_DUMP_ERROR=$(nginx -t 2>&1 | awk '"'"'/\[(emerg|alert|crit)\]/ { print; exit }'"'"') || true' \
+    '    NGINX_DUMP_ERROR=""'

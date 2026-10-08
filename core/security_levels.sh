@@ -117,7 +117,7 @@ declare -gA FIX_CONFIRM=(
     ["alerts.setup_config"]="Asks for a webhook URL and an email address, then writes the alert config and monitor scripts"
 
     # Modifies web server config
-    ["nginx.add_catchall"]="Modifies Nginx configuration"
+    ["nginx.add_catchall"]="Adds a default server that closes requests for unknown hostnames and bare-IP requests on port 80, and on 443 when nginx already serves 443"
 
     # Could break old SSH clients
     ["ssh.harden_algorithms"]="May break connections from older SSH clients"
@@ -264,8 +264,8 @@ declare -gA FIX_TEMPLATE_ONLY=(
     ["cloudflared.generate_config"]="A tunnel config template was written; copy it to /etc/cloudflared and create the tunnel to finish"
     ["backup.generate_templates"]="Backup script templates were written; no backup tool is installed and nothing is scheduled yet"
     ["alerts.setup_config"]="The alert config and monitor scripts were written; schedule them and set a webhook to start receiving alerts"
-    ["webapp.nginx_ssl_protocols"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"
-    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in your server block"
+    ["webapp.nginx_ssl_protocols"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf's http block instead"
+    ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf's http block instead"
     ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
 )
 
@@ -718,6 +718,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["_internal.module_failed"]="info"
     ["filesystem.scan_incomplete"]="info"
     ["webapp.scan_incomplete"]="info"
+    ["nginx.config_unreadable"]="info"
+    ["webapp.nginx_config_unreadable"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"
     ["preflight.network_ok"]="info"
