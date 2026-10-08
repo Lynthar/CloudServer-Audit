@@ -517,8 +517,9 @@ SH
 
 # ---- the live probe, against a real socket ----------------------------------
 
-# A listener on a free local port: "close" reads the request and hangs up
-# unanswered, as `return 444` does; "answer" sends a response; "hold" says nothing.
+# A listener on a free local port: "close" hangs up unanswered (as `return 444`),
+# "answer" responds, "hold" says nothing. Each reads the whole header first, as
+# nginx does: a close with request lines unread resets and can drop the answer.
 _listen() {
     command -v perl >/dev/null 2>&1 || skip "perl not installed"
     PROBE_PORT=$(( 20000 + RANDOM % 20000 ))
@@ -527,7 +528,7 @@ _listen() {
                                       Listen => 5, ReuseAddr => 1) or exit 1;
         open my $r, ">", $ARGV[2]; close $r;
         while (my $c = $s->accept) {
-            my $l = <$c>;
+            while (my $l = <$c>) { last if $l =~ /^\r?\n$/ }
             print $c "HTTP/1.0 200 OK\r\n\r\nok" if $ARGV[1] eq "answer";
             sleep 10 if $ARGV[1] eq "hold";
             close $c;

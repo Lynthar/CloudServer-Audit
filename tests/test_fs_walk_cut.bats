@@ -167,7 +167,7 @@ SH
 # ---- webapp_audit ------------------------------------------------------------
 
 @test "webapp audit: cut web-root walks withhold sensitive_files_ok and mark the module incomplete" {
-    _webapp_nginx_installed() { return 1; }
+    nginx_present() { return 1; }
     _webapp_apache_installed() { return 1; }
     _webapp_php_installed() { return 1; }
     _webapp_ssl_cert_expiry() { :; }

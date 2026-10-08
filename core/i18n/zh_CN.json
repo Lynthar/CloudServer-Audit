@@ -1506,6 +1506,7 @@
     "unusual_outbound_hint": "意外的出站连接可能表示数据外泄或 C2 通信",
     "no_threats": "未发现恶意软件指标",
     "system_clean": "轻量级扫描完成 - 未发现明显威胁",
+    "scan_incomplete": "恶意软件扫描不完整",
     "investigate_hidden": "调查隐藏进程 - 可能表明存在 Rootkit",
     "investigate_ports": "调查隐藏端口 - 可能表明存在 Rootkit",
     "remove_ld_preload": "移除 LD_PRELOAD 条目 - 可能是库注入攻击",

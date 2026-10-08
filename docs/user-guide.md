@@ -851,9 +851,9 @@ grep -r "LD_PRELOAD" /etc/profile* /etc/environment
 **检测内容**: 检测加密货币挖矿进程和矿池连接
 
 **检测特征**:
-- 进程名: xmrig, minerd, kswapd0(伪装)
-- 高 CPU 使用率
-- 连接到已知矿池端口 (3333, 4444, 5555 等)
+- 进程名: xmrig, minerd, kinsing 等
+- 高 CPU 使用率（按可执行文件名跳过 apt、python、java 等已知的高负载程序）
+- 本机向公网地址的已知矿池端口 (3333, 4444, 5555 等) 发起的连接；回环、私网、链路本地、100.64/10 与 IPv6 ULA 上的连接是本机或内网服务，不算
 
 **修复方法**:
 ```bash
@@ -875,9 +875,9 @@ systemctl list-units --type=service
 
 ### 4. WebShell 检测
 
-**检测内容**: 在 Web 目录中检测可疑的 PHP 文件
+**检测内容**: 读 Web 目录（`/var/www`、`/home/*/public_html` 等）下每一个 `.php` 文件的内容，不限深度与数量；整次遍历受 `VPSSEC_FS_TIMEOUT` 约束，超时则报「恶意软件扫描不完整」，不报「未发现恶意软件指标」
 
-**检测模式**:
+**检测模式**（只看内容，文件名与权限不作为证据）:
 - `eval($_POST[...])`
 - `base64_decode + eval`
 - `system($_GET[...])`

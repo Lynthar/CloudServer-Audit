@@ -718,6 +718,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["_internal.module_failed"]="info"
     ["filesystem.scan_incomplete"]="info"
     ["webapp.scan_incomplete"]="info"
+    ["malware.scan_incomplete"]="info"
     ["nginx.config_unreadable"]="info"
     ["webapp.nginx_config_unreadable"]="info"
     ["preflight.os_supported"]="info"

@@ -27,17 +27,17 @@ setup() {
     _vpssec_stub systemctl
 }
 
-# One sshd stub for every invocation shape, driven by files so a test can change
-# its mind mid-run: sshd-t-f.rc is `sshd -t -f <file>`, sshd-t.rc `sshd -t`,
-# sshd-T.out what `sshd -T` prints, sshd-TC.out (if any) what `sshd -T -C` does.
+# One sshd stub per invocation shape, each answer read from a file a test can
+# change mid-run (case below). It dispatches on the flags, never on "$*": the -f
+# path sits in a bats temp dir whose random name can contain "-T".
 _stub_sshd() {
     _vpssec_stub_script sshd <<'SH'
 d="${VPSSEC_TEST_SSHD_DIR:-/nonexistent}"
-case "$*" in
-    *"-T -C"*) if [[ -f "$d/sshd-TC.out" ]]; then cat "$d/sshd-TC.out"; else cat "$d/sshd-T.out" 2>/dev/null; fi; exit 0 ;;
-    *-T*)      cat "$d/sshd-T.out" 2>/dev/null; exit 0 ;;
-    *"-t -f"*) exit "$(cat "$d/sshd-t-f.rc" 2>/dev/null || echo 0)" ;;
-    *-t*)      exit "$(cat "$d/sshd-t.rc" 2>/dev/null || echo 0)" ;;
+case "$1 ${2:-}" in
+    "-T -C") if [[ -f "$d/sshd-TC.out" ]]; then cat "$d/sshd-TC.out"; else cat "$d/sshd-T.out" 2>/dev/null; fi; exit 0 ;;
+    "-T "*)  cat "$d/sshd-T.out" 2>/dev/null; exit 0 ;;
+    "-t -f") exit "$(cat "$d/sshd-t-f.rc" 2>/dev/null || echo 0)" ;;
+    "-t "*)  exit "$(cat "$d/sshd-t.rc" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
 SH
