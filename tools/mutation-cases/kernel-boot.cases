@@ -1,0 +1,71 @@
+# Mutation cases: tests/test_kernel_boot_params.bats against modules/kernel.sh.
+# mutate-suite: modules/kernel.sh tests/test_kernel_boot_params.bats
+#
+# Each case makes the boot-time value differ from what systemd-sysctl applies,
+# or makes the check judge, or stay silent on, a parameter it must not.
+
+# ---- which files, in which order -------------------------------------------
+
+run_case "dirs/later-dir-wins" 1 \
+    '            [[ -n "${owner[$name]:-}" ]] || owner[$name]="$f"' \
+    '            owner[$name]="$f"'
+
+run_case "order/reverse-name-order" 1 \
+    "    printf '%s\\n' \"\${!owner[@]}\" | LC_ALL=C sort | while IFS= read -r name; do" \
+    "    printf '%s\\n' \"\${!owner[@]}\" | LC_ALL=C sort -r | while IFS= read -r name; do"
+
+run_case "dirs/precedence-swapped" 1 \
+    'declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d)' \
+    'declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/usr/local/lib/sysctl.d /run/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d)'
+
+# ---- how lines combine -------------------------------------------------------
+
+run_case "globs/old-systemd-expands" 1 \
+    '    if [[ "$ver" =~ ^[0-9]+$ ]] && (( ver < 245 )); then' \
+    '    if false; then'
+
+run_case "glob/star-crosses-separator" 1 \
+    '                if (c == "*") re = re "[^/]*"' \
+    '                if (c == "*") re = re ".*"'
+
+run_case "glob/negative-match-ignored" 1 \
+    '                if (substr(line, 1, 1) != "-" || !globs) next' \
+    '                next'
+
+run_case "order/same-value-moves" 1 \
+    '            if ((k in seq) && has[k] == hasv && val[k] == v) next' \
+    '            if (0) next'
+
+run_case "glob/explicit-key-ignored" 1 \
+    '                if (key in seq) {' \
+    '                if (0) {'
+
+run_case "value/whole-line-judged" 1 \
+    '                split(val[hit], w, /[ \t]+/)' \
+    '                w[1] = val[hit]'
+
+# ---- what is judged and reported --------------------------------------------
+
+run_case "judge/every-set-value-reported" 1 \
+    '            _kernel_value_meets "${boot_value[$param]}" "${expects[$i]}" ||' \
+    '            false ||'
+
+run_case "runtime/failing-param-compared" 1 \
+    '        [[ "$kind" == "ok" ]] || continue' \
+    '        [[ "$kind" == "ok" || "$kind" == "bad" ]] || continue'
+
+run_case "aslr/not-compared" 1 \
+    '    if _kernel_aslr_full; then' \
+    '    if false; then'
+
+run_case "unreadable/judged-anyway" 1 \
+    '        [[ -r "$f" ]] || unreadable+=("$f")' \
+    '        :'
+
+run_case "conf/unread-file-silent" 1 \
+    '        elif [[ -n "${conf_at[$param]+x}" ]]; then' \
+    '        elif false; then'
+
+run_case "conf/link-not-followed" 1 \
+    '            [[ "$(readlink -f "$f")" == "$real" ]] && { linked=1; break; }' \
+    '            :'

@@ -397,7 +397,7 @@ RHEL 系的 sshd 算法列表来自系统的 crypto-policies，在 drop-in 里�
 
 ## 内核安全检测 (kernel)
 
-本模块的检查读的都是**运行时**的值（`sysctl -n <参数>`）。
+第 1–4 项读的都是**运行时**的值（`sysctl -n <参数>`），第 5 项再看这些值开机后保不保得住。
 手工持久化时注意顺序：开机时
 `/etc/sysctl.d` 等目录里的文件按文件名顺序应用，同一个参数**后应用的覆盖先应用的**
 （与 sshd 正好相反）。vpssec 自己写的是 `/etc/sysctl.d/99-vpssec-hardening.conf`。
@@ -546,6 +546,55 @@ cat > /etc/systemd/coredump.conf.d/disable.conf << 'EOF'
 Storage=none
 ProcessSizeMax=0
 EOF
+```
+
+---
+
+### 5. 开机配置检查（重启后保不保得住）
+
+**检测内容**: 上面几项读的都是运行时的值。这一项只看其中**现在已经达标**的参数（两组参数
+扫描里通过的，以及完全开启的 ASLR），按 systemd-sysctl 开机时的读法，算出下次开机它们会被
+设成什么：`/etc/sysctl.d`、`/run/sysctl.d`、`/usr/local/lib/sysctl.d`、`/usr/lib/sysctl.d`
+里的 `*.conf`，同名文件只认靠前目录里的那份，全部按文件名排序依次套用，同一个参数后写的胜出。
+结论是三条之一：
+
+- `kernel.boot_params_revert`（失败）：某个 sysctl.d 文件开机时会把参数设回不达标的值，描述里
+  给出文件、行号和那个值；或者参数只写在 `/etc/sysctl.conf` 里，而本机 sysctl.d 里没有链接
+  指向这个文件——Debian 13 与 Ubuntu 26.04 原装就没有这条 `99-sysctl.conf` 链接，开机时
+  systemd-sysctl 根本不读 `/etc/sysctl.conf`。
+- `kernel.boot_params_ok`（通过）：没有 sysctl.d 文件在开机时改回已加固的参数。
+- `kernel.boot_params_unreadable`（失败）：有 sysctl.d 文件读不到，不下任何结论。
+
+没有任何 sysctl.d 文件设置的参数，开机时取内核默认值，而运行时读不出默认值是多少：这类参数
+只在描述里列出，不判通过，也不判回退。运行时就不达标的参数由上面几项负责，这里不重复比。
+内核命令行上的 `sysctl.*=`、开机后别的服务（tuned、cloud-init、Docker 打开的 `ip_forward`）
+再改的值，都不在本项的判断之内。RHEL 8 的 systemd（239）不认通配写法，本项也照此忽略通配行。
+
+**为什么重要**: `sysctl -w`、`sysctl -p` 只改正在运行的内核。加固值没写进开机会读的文件，
+或者被一个文件名排得更靠后的文件改回去，重启之后就悄悄失效，而重启前的审计看不出来。
+
+**评分**: 三条都是 `info`，不计分。
+
+**自动修复**: 无（仅告警）。vpssec 的内核修复写在 `/etc/sysctl.d/99-vpssec-hardening.conf`，
+开机时会被读到；回滚删掉了这个文件、而运行时还是加固值时，这一项会报出来。
+
+**修复方法**:
+```bash
+# 1. 看开机时 systemd-sysctl 读到的全部内容（按套用顺序拼在一起，每段标着来源文件）
+systemd-analyze cat-config sysctl.d
+# RHEL 8 的 systemd 239 不支持这条命令，就逐个目录看
+ls -l /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
+
+# 2. 描述里点名的那一行：改成达标的值，或者删掉。要另外写的加固值放进 /etc/sysctl.d，
+#    文件名排在会把它改回去的那个文件之后（后写的胜出），例如
+echo "net.ipv4.conf.all.rp_filter = 1" >> /etc/sysctl.d/99-zz-local.conf
+
+# 3. 只写在 /etc/sysctl.conf 里的参数：先看有没有链接，没有就把那几行挪进 /etc/sysctl.d
+ls -l /etc/sysctl.d/99-sysctl.conf
+
+# 4. 按开机的方式重新套用一遍，再审计核对
+systemctl restart systemd-sysctl
+sudo vpssec audit --include=kernel
 ```
 
 ---

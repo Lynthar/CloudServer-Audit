@@ -1,0 +1,24 @@
+# Plant: the runtime value is hardened (log_martians=1) while a sysctl.d file
+# sorting after every other one sets it back to 0, so a reboot undoes it.
+# A net.* key, because it lives in the container's own network namespace.
+TEST_DESC="a later sysctl.d file undoing a hardened value surfaces in kernel.boot_params_revert"
+EXPECT_ID="kernel.boot_params_revert"
+EXPECT_STATUS="failed"
+EXPECT_DESC_CONTAINS="net.ipv4.conf.all.log_martians is set to 0 at boot by /etc/sysctl.d/zz-vpssec-case.conf:1"
+MODULE="kernel"
+
+_PARAM="net.ipv4.conf.all.log_martians"
+_FILE="/etc/sysctl.d/zz-vpssec-case.conf"
+_ORIG=""
+
+mutate() {
+    _ORIG=$(sysctl -n "$_PARAM" 2>/dev/null || echo "")
+    sysctl -w "${_PARAM}=1" >/dev/null 2>&1 || return 1
+    printf '%s = 0\n' "$_PARAM" > "$_FILE"
+}
+
+restore() {
+    rm -f "$_FILE"
+    [[ -n "$_ORIG" ]] && sysctl -w "${_PARAM}=${_ORIG}" >/dev/null 2>&1
+    return 0
+}

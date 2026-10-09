@@ -81,11 +81,11 @@ no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 
-`vpssec audit` runs 336 checks across 21 modules:
+`vpssec audit` runs 339 checks across 21 modules:
 
 | Area | Checks | What it covers |
 |---|---|---|
-| System and kernel | 78 | `sysctl` network and memory settings, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
+| System and kernel | 81 | `sysctl` network and memory settings and whether they survive a reboot, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
 | SSH and accounts | 68 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
 | Containers and web apps | 55 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
 | Detection and logging | 49 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |

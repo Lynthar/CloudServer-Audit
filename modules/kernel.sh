@@ -9,6 +9,11 @@ SYSCTL_CONF="/etc/sysctl.conf"
 SYSCTL_D="/etc/sysctl.d"
 VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 
+# The directories systemd-sysctl reads at boot after SYSCTL_D, in precedence
+# order: a file name found in an earlier one hides the same name in later ones.
+# SYSCTL_CONF is read at boot only through a link from one of them.
+declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d)
+
 # Variables, not literals, so the audit predicate and the fix read the SAME
 # locations, and so the fix is reachable from a test.
 KERNEL_LIMITS_CONF="/etc/security/limits.conf"
@@ -168,6 +173,22 @@ _kernel_get_sysctl() {
     sysctl -n "$param" 2>/dev/null
 }
 
+# True when value $1 meets expected spec $2: a |-separated set of acceptable
+# values, e.g. sysrq "0|176", where a token may be >=N. A non-integer never
+# meets >=N. The runtime and the boot-time checks both judge through this.
+_kernel_value_meets() {
+    local actual="$1" expected="$2" exp
+    local IFS='|'
+    for exp in $expected; do
+        if [[ "$exp" == ">="* ]]; then
+            [[ "$actual" =~ ^-?[0-9]+$ ]] && (( actual >= ${exp#>=} )) && return 0
+        elif [[ "$actual" == "$exp" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Check if parameter matches expected value
 _kernel_check_param() {
     local param="$1"
@@ -181,20 +202,22 @@ _kernel_check_param() {
         return 2  # Parameter not available
     fi
 
-    # `expected` may be a |-separated set of acceptable values, e.g. sysrq
-    # "0|176", and a token may be >=N. A non-integer never meets >=N.
-    local exp
-    local IFS='|'
-    for exp in $expected; do
-        if [[ "$exp" == ">="* ]]; then
-            [[ "$actual" =~ ^-?[0-9]+$ ]] && (( actual >= ${exp#>=} )) && return 0
-        elif [[ "$actual" == "$exp" ]]; then
-            return 0
-        fi
-    done
+    _kernel_value_meets "$actual" "$expected" && return 0
 
     echo "$actual"
     return 1  # Incorrect
+}
+
+# The expected spec KERNEL_SECURITY_PARAMS gives parameter $1.
+_kernel_param_expected() {
+    local entry rest
+    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
+        [[ "${entry%%:*}" == "$1" ]] || continue
+        rest="${entry#*:}"
+        echo "${rest%%:*}"
+        return 0
+    done
+    return 1
 }
 
 # The value a fix writes for an expected spec: its first token, >= stripped.
@@ -466,6 +489,9 @@ kernel_audit() {
     # Check rarely-used network protocol modules (Lynis NETW-3200)
     print_item "$(i18n 'kernel.check_unused_protocols')"
     _kernel_audit_unused_protocols
+
+    print_item "$(i18n 'kernel.check_boot_params')"
+    _kernel_audit_boot_params
 }
 
 # Are the rarely-used protocol modules blacklisted? dccp/sctp/rds/tipc ship
@@ -837,6 +863,211 @@ _kernel_audit_core_dump() {
             suggestion="$(i18n 'kernel.fix_core_dump')" \
             fix="kernel.disable_core_dump"
         print_severity "low" "$(i18n 'kernel.core_dump_enabled')"
+    fi
+}
+
+# --- Boot-time sysctl ---
+
+# The sysctl.d files systemd-sysctl applies at boot, one path per line in the
+# order it applies them: by file name, C collation. A masked name comes out as
+# its /dev/null link, which reads empty.
+_kernel_boot_sysctl_files() {
+    local -A owner=()
+    local dir f name
+    for dir in "$SYSCTL_D" "${KERNEL_SYSCTL_BOOT_DIRS[@]}"; do
+        for f in "$dir"/*.conf; do
+            [[ -e "$f" || -L "$f" ]] && [[ ! -d "$f" ]] || continue
+            name="${f##*/}"
+            [[ -n "${owner[$name]:-}" ]] || owner[$name]="$f"
+        done
+    done
+    (( ${#owner[@]} > 0 )) || return 0
+    printf '%s\n' "${!owner[@]}" | LC_ALL=C sort | while IFS= read -r name; do
+        printf '%s\n' "${owner[$name]}"
+    done
+}
+
+# 1 when this systemd-sysctl expands glob keys (systemd 245 and later), else 0.
+# An unreadable version counts as 1: every supported host but RHEL 8 (239) is.
+_kernel_sysctl_globs() {
+    local ver
+    ver=$(systemctl --version 2>/dev/null | awk 'NR == 1 { print $2 }') || true
+    if [[ "$ver" =~ ^[0-9]+$ ]] && (( ver < 245 )); then
+        echo 0
+    else
+        echo 1
+    fi
+}
+
+# For each parameter on stdin, "<param>\t<value>\t<file:line>": the value
+# (first word) systemd-sysctl leaves it at after files $2...; no line when none
+# sets it. $1 is _kernel_sysctl_globs.
+_kernel_boot_values() {
+    local globs="$1"
+    shift
+    # A re-assignment with a different value moves the key to the end, as do
+    # globs in that order; an explicit key, or `-key` with no `=`, is never
+    # matched by a glob. Keys compare in slash form, where * stops at a slash.
+    KERNEL_BOOT_TARGETS="$(cat)" KERNEL_BOOT_GLOBS="$globs" awk '
+        function strip(s) { sub(/^[ \t\r\n]+/, "", s); sub(/[ \t\r\n]+$/, "", s); return s }
+        function isglob(k) { return index(k, "*") || index(k, "?") || index(k, "[") }
+        function norm(k,   i, c, out, first) {
+            for (i = 1; i <= length(k); i++) {
+                c = substr(k, i, 1)
+                if (c == "." || c == "/") { first = c; break }
+            }
+            if (first == ".") {
+                out = ""
+                for (i = 1; i <= length(k); i++) {
+                    c = substr(k, i, 1)
+                    out = out (c == "." ? "/" : c == "/" ? "." : c)
+                }
+                k = out
+            }
+            gsub(/\/+/, "/", k); sub(/^\//, "", k); sub(/\/$/, "", k)
+            return k
+        }
+        function glob2re(p,   i, j, c, re, cls) {
+            re = "^"
+            for (i = 1; i <= length(p); i++) {
+                c = substr(p, i, 1)
+                if (c == "*") re = re "[^/]*"
+                else if (c == "?") re = re "[^/]"
+                else if (c == "[" && (j = index(substr(p, i + 1), "]")) > 1) {
+                    cls = substr(p, i + 1, j - 1)
+                    if (substr(cls, 1, 1) == "!") cls = "^" substr(cls, 2)
+                    re = re "[" cls "]"
+                    i += j
+                }
+                else if (index("\\.^$+(){}|[]", c)) re = re "\\" c
+                else re = re c
+            }
+            return re "$"
+        }
+        BEGIN { globs = ENVIRON["KERNEL_BOOT_GLOBS"] + 0 }
+        {
+            line = strip($0)
+            if (line == "" || index("#;", substr(line, 1, 1))) next
+            eq = index(line, "=")
+            if (eq) {
+                k = substr(line, 1, eq - 1); v = strip(substr(line, eq + 1)); hasv = 1
+                if (substr(k, 1, 1) == "-") k = substr(k, 2)
+            } else {
+                if (substr(line, 1, 1) != "-" || !globs) next
+                k = substr(line, 2); v = ""; hasv = 0
+            }
+            k = norm(strip(k))
+            if (!globs && isglob(k)) next
+            if ((k in seq) && has[k] == hasv && val[k] == v) next
+            seq[k] = ++n; val[k] = v; has[k] = hasv; at[k] = FILENAME ":" FNR
+        }
+        END {
+            nt = split(ENVIRON["KERNEL_BOOT_TARGETS"], t, "\n")
+            for (i = 1; i <= nt; i++) {
+                if (t[i] == "") continue
+                key = norm(t[i]); hit = ""
+                if (key in seq) {
+                    if (has[key]) hit = key
+                } else {
+                    best = 0
+                    for (g in seq)
+                        if (has[g] && isglob(g) && seq[g] > best && key ~ glob2re(g)) { best = seq[g]; hit = g }
+                }
+                if (hit == "") continue
+                split(val[hit], w, /[ \t]+/)
+                if (w[1] != "") printf "%s\t%s\t%s\n", t[i], w[1], at[hit]
+            }
+        }' /dev/null "$@"
+}
+
+# Do the hardened runtime values survive a reboot? Only parameters that pass now
+# are compared, against the audit's own expected values. A parameter no sysctl.d
+# file sets keeps the kernel default, which cannot be read: listed, not judged.
+_kernel_audit_boot_params() {
+    local -a params=() expects=()
+    local kind param
+    while read -r kind _ param _; do
+        [[ "$kind" == "ok" ]] || continue
+        params+=("$param")
+        expects+=("$(_kernel_param_expected "$param")")
+    done <<<"$(_kernel_param_scan "$KERNEL_NET_SCOPE"; _kernel_param_scan "$KERNEL_SYS_SCOPE")"
+    if _kernel_aslr_full; then
+        params+=("kernel.randomize_va_space")
+        expects+=("2")
+    fi
+    (( ${#params[@]} > 0 )) || return 0
+
+    local -a files=() unreadable=()
+    local f
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        [[ -r "$f" ]] || unreadable+=("$f")
+        files+=("$f")
+    done < <(_kernel_boot_sysctl_files)
+    if (( ${#unreadable[@]} > 0 )); then
+        check_emit "kernel.boot_params_unreadable" low failed \
+            desc="$(i18n 'kernel.boot_params_unreadable_desc' "files=${unreadable[*]}")"
+        print_severity "low" "$(i18n 'kernel.boot_params_unreadable')"
+        return 0
+    fi
+
+    local targets globs value where
+    local -A boot_value=() boot_at=() conf_at=()
+    targets=$(printf '%s\n' "${params[@]}")
+    globs=$(_kernel_sysctl_globs)
+    while IFS=$'\t' read -r param value where; do
+        boot_value[$param]="$value"
+        boot_at[$param]="$where"
+    done < <(_kernel_boot_values "$globs" "${files[@]}" <<<"$targets")
+
+    # Where nothing in sysctl.d links SYSCTL_CONF (stock Debian 13, Ubuntu
+    # 26.04), `sysctl -p` applies a setting written there and boot does not.
+    if [[ -f "$SYSCTL_CONF" && -r "$SYSCTL_CONF" ]]; then
+        local real linked=0
+        real=$(readlink -f "$SYSCTL_CONF")
+        for f in "${files[@]}"; do
+            [[ "$(readlink -f "$f")" == "$real" ]] && { linked=1; break; }
+        done
+        if (( ! linked )); then
+            while IFS=$'\t' read -r param value where; do
+                conf_at[$param]="$where"
+            done < <(_kernel_boot_values 0 "$SYSCTL_CONF" <<<"$targets")
+        fi
+    fi
+
+    local -a findings=() unpersisted=()
+    local i
+    for i in "${!params[@]}"; do
+        param="${params[$i]}"
+        if [[ -n "${boot_value[$param]+x}" ]]; then
+            _kernel_value_meets "${boot_value[$param]}" "${expects[$i]}" ||
+                findings+=("$(i18n 'kernel.boot_params_weaker_item' "param=$param" \
+                    "value=${boot_value[$param]}" "where=${boot_at[$param]}")")
+        elif [[ -n "${conf_at[$param]+x}" ]]; then
+            findings+=("$(i18n 'kernel.boot_params_ignored_item' "param=$param" \
+                "where=${conf_at[$param]}")")
+        else
+            unpersisted+=("$param")
+        fi
+    done
+
+    local note="" joined
+    if (( ${#unpersisted[@]} > 0 )); then
+        printf -v joined '%s, ' "${unpersisted[@]}"
+        note=$(i18n 'kernel.boot_params_unset_note' "list=${joined%, }")
+    fi
+    if (( ${#findings[@]} > 0 )); then
+        printf -v joined '%s; ' "${findings[@]}"
+        check_emit "kernel.boot_params_revert" low failed \
+            title="$(i18n 'kernel.boot_params_revert' "count=${#findings[@]}")" \
+            desc="$(i18n 'kernel.boot_params_revert_desc' "list=${joined%; }" "unset=$note")" \
+            suggestion="$(i18n 'kernel.boot_params_revert_suggestion')"
+        print_severity "low" "$(i18n 'kernel.boot_params_revert' "count=${#findings[@]}")"
+    else
+        check_emit "kernel.boot_params_ok" low passed \
+            desc="$(i18n 'kernel.boot_params_ok_desc' \
+                "checked=$(( ${#params[@]} - ${#unpersisted[@]} ))" "unset=$note")"
+        print_ok "$(i18n 'kernel.boot_params_ok')"
     fi
 }
 

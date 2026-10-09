@@ -586,6 +586,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.ipv6_firewall_missing"]="required"
     ["kernel.ipv6_firewall_ok"]="recommended"
     ["kernel.ipv6_firewall_unreadable"]="info"   # not measured: no score either way
+    # Whether runtime hardening survives a reboot: advice, never scored.
+    ["kernel.boot_params_ok"]="info"
+    ["kernel.boot_params_revert"]="info"
+    ["kernel.boot_params_unreadable"]="info"
 
     # === Filesystem Module ===
     ["filesystem.suspicious_suid"]="recommended"
