@@ -6,6 +6,12 @@
 # --- Backup Configuration ---
 
 BACKUP_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/backup"
+BACKUP_CRON_ROOT="${BACKUP_CRON_ROOT:-/etc}"
+
+# A backup tool run from a schedule line, as a whole word. A bare "backup"
+# matched dpkg's own database backup (cron.daily/dpkg, dpkg-db-backup.timer),
+# present on every Debian and Ubuntu host.
+BACKUP_TOOL_RE='(^|[^[:alnum:]_-])(restic|borg|borgmatic|rclone|rsnapshot)([^[:alnum:]_-]|$)'
 
 # --- Backup Helper Functions ---
 
@@ -21,18 +27,25 @@ _backup_rclone_installed() {
     check_command rclone
 }
 
+# root's crontab and the system cron locations, comment lines dropped (Debian's
+# crontab template talks about backups). Captured first: grep -q closing the
+# pipe early would fail the producer under pipefail.
 _backup_check_cron_job() {
-    # root's personal crontab...
-    crontab -l 2>/dev/null | grep -qE "(restic|borg|backup)" && return 0
-    # ...and the system cron locations a backup job is at least as likely to
-    # live in (/etc/cron.d, the cron.{daily,weekly,monthly} dirs, /etc/crontab).
-    # Missing paths just make grep skip them (2>/dev/null).
-    grep -rqsE "(restic|borg|backup)" \
-        /etc/crontab /etc/cron.d /etc/cron.daily /etc/cron.weekly /etc/cron.monthly 2>/dev/null
+    local c="$BACKUP_CRON_ROOT" lines
+    lines=$({
+        crontab -l 2>/dev/null
+        grep -rhs '' "$c/crontab" "$c/cron.d" "$c/cron.daily" "$c/cron.weekly" "$c/cron.monthly"
+    } | grep -v '^[[:space:]]*#') || true
+    grep -qE "$BACKUP_TOOL_RE" <<<"$lines"
 }
 
+# Active timers named after a backup tool, or "backup" as vpssec's own
+# template names it; dpkg-db-backup.timer backs up dpkg's database only.
 _backup_check_systemd_timer() {
-    systemctl list-timers 2>/dev/null | grep -qiE "(restic|borg|backup)"
+    local timers
+    timers=$(systemctl list-timers --no-legend 2>/dev/null \
+        | grep -oE '[^[:space:]]+[.]timer' | grep -vx 'dpkg-db-backup[.]timer') || true
+    grep -qiE '(restic|borg|rclone|rsnapshot|backup)' <<<"$timers"
 }
 
 # Single source of truth for "is a backup tool installed?". Both the tools

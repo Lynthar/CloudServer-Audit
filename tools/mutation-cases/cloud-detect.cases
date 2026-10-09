@@ -1,0 +1,38 @@
+# Mutation cases: tests/test_cloud_detect.bats against modules/cloud.sh.
+# mutate-suite: modules/cloud.sh tests/test_cloud_detect.bats
+#
+# DMI and cloud-init live under per-test directories; curl is a stub playing
+# Nova, EC2 or nothing at 169.254.169.254.
+
+# Known OpenStack: the shared-IP guessing must not run at all.
+run_case "openstack/guessing-still-runs" 1 \
+    '    if [[ "$provider" == "unknown" ]] && (( openstack )); then' \
+    '    if false; then'
+
+# ...and must not erase a vendor an offline signal (board vendor, uuid) named.
+run_case "openstack/named-vendor-erased" 1 \
+    '    if [[ "$provider" == "unknown" ]] && (( openstack )); then' \
+    '    if (( openstack )); then'
+
+run_case "openstack/nova-product-ignored" 1 \
+    '            *"OpenStack"*)                   openstack=1 ;;   # Nova'"'"'s default product' \
+    '            *"OpenStack"*)                   ;;'
+
+# Nova's i-%08x ids read as AWS again without the /openstack probe.
+run_case "openstack/i-id-taken-as-aws" 1 \
+    '            if [[ "$provider" == aws* ]] && curl -fs --connect-timeout 1 -m 2 \' \
+    '            if false && curl -fs --connect-timeout 1 -m 2 \'
+
+# Every Hyper-V guest reads as Azure without the asset-tag test.
+run_case "azure/asset-tag-ignored" 1 \
+    '                [[ "$(cat "$CLOUD_DMI_DIR/chassis_asset_tag" 2>/dev/null)" == "$CLOUD_AZURE_ASSET_TAG" ]] \' \
+    '                true \'
+
+# The two generic product names that used to name a provider.
+run_case "dmi/hvm-product-is-aws" 1 \
+    '            # Not "HVM domU" (any Xen guest; EC2'"'"'s uuid prefix decides below)' \
+    '            *"HVM"*) provider="aws" ;;'
+
+run_case "dmi/virtual-machine-is-azure" 1 \
+    '            # nor "Virtual Machine" (any Hyper-V guest).' \
+    '            *"Virtual Machine"*) provider="azure" ;;'

@@ -3,7 +3,7 @@
 
 # The ruling: enabled is enough. Demanding sync fails every fix run at once.
 run_case "ntp-enabled/requires-sync" 1 \
-    '    [[ "$ntp_status" != "unknown" ]]' \
+    '    [[ "$ntp_status" != "none" && "$ntp_status" != "unqueryable" ]]' \
     '    [[ "$ntp_status" == "synced" ]]'
 
 run_case "configured/empty-timezone-passes" 1 \

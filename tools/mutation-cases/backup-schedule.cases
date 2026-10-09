@@ -1,0 +1,32 @@
+# Mutation cases: tests/test_backup_schedule.bats against modules/backup.sh.
+# mutate-suite: modules/backup.sh tests/test_backup_schedule.bats
+#
+# The cron root is a fake /etc holding Debian's stock cron.daily/dpkg and passwd;
+# crontab and systemctl are stubs, restic is installed and borg/rclone are not.
+
+# The old pattern: dpkg's dpkg-db-backup passes on every Debian host, and a word
+# that only contains "borg" counts as well.
+run_case "cron/bare-backup-counts" 1 \
+    "BACKUP_TOOL_RE='(^|[^[:alnum:]_-])(restic|borg|borgmatic|rclone|rsnapshot)([^[:alnum:]_-]|\$)'" \
+    "BACKUP_TOOL_RE='(restic|borg|backup)'"
+
+run_case "cron/comments-count" 1 \
+    "    } | grep -v '^[[:space:]]*#') || true" \
+    '    } | cat) || true'
+
+run_case "cron/system-cron-unread" 1 \
+    '        grep -rhs '"''"' "$c/crontab" "$c/cron.d" "$c/cron.daily" "$c/cron.weekly" "$c/cron.monthly"' \
+    '        :'
+
+run_case "cron/root-crontab-unread" 1 \
+    '        crontab -l 2>/dev/null' \
+    '        :'
+
+# dpkg-db-backup.timer is dpkg's, not a backup of the host.
+run_case "timer/dpkg-db-backup-counts" 1 \
+    "        | grep -oE '[^[:space:]]+[.]timer' | grep -vx 'dpkg-db-backup[.]timer') || true" \
+    "        | grep -oE '[^[:space:]]+[.]timer') || true"
+
+run_case "timer/names-ignored" 1 \
+    "    grep -qiE '(restic|borg|rclone|rsnapshot|backup)' <<<\"\$timers\"" \
+    '    false'

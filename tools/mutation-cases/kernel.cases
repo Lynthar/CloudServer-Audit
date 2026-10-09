@@ -80,3 +80,41 @@ run_case "perf/ubuntu-floor-lowered" 1 \
 run_case "bpf/fix-writes-the-lock" 1 \
     '    "kernel.unprivileged_bpf_disabled:2|1:medium:Disable unprivileged BPF (exploit prevention)"' \
     '    "kernel.unprivileged_bpf_disabled:1|2:medium:Disable unprivileged BPF (exploit prevention)"'
+
+# ---- IPv6 keys: only those that reach an interface, said honestly ----------
+
+# A key that exists only under "all" reaches no interface; listing one again
+# reads and writes a value nothing uses.
+run_case "ipv6/all-only-key-listed" 1 \
+    '    "net.ipv6.conf.default.use_tempaddr:2:low:IPv6 privacy extensions (default)"' \
+    '    "net.ipv6.conf.all.autoconf:0:low:IPv6 stateless autoconfiguration"'
+
+# IPv6 has no send_redirects at all.
+run_case "ipv6/nonexistent-key-listed" 1 \
+    '    "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"' \
+    '    "net.ipv6.conf.all.send_redirects:0:medium:IPv6 ICMP redirects sending"'
+
+run_case "ipv6/all-only-ra-key-written" 1 \
+    '            "net.ipv6.conf.default.accept_ra=0"' \
+    '            "net.ipv6.conf.all.accept_ra_defrtr=0"'
+
+# The pass and the suggested fixes must say existing interfaces are unchanged.
+run_case "ipv6/secure-claims-every-interface" 1 \
+    "                desc=\"\$(i18n 'kernel.ipv6_secure_desc')\"" \
+    '                desc="IPv6 enabled and properly secured"'
+
+run_case "network/ok-claims-every-interface" 1 \
+    "            desc=\"\$(i18n 'kernel.network_params_ok_desc' \"passed=\$passed\")\"" \
+    '            desc="$passed parameters checked"'
+
+run_case "ipv6/fix-suggestion-unqualified" 1 \
+    "                suggestion=\"\$(i18n 'kernel.fix_ipv6')\" \\" \
+    '                suggestion="Harden IPv6 parameters" \'
+
+run_case "network/high-fix-suggestion-unqualified" 1 \
+    "            suggestion=\"\$(i18n 'kernel.fix_network_params')\" \\" \
+    '            suggestion="Harden network parameters" \'
+
+run_case "network/medium-fix-suggestion-unqualified" 2 \
+    "            suggestion=\"\$(i18n 'kernel.fix_network_params')\" \\" \
+    '            suggestion="Harden network parameters" \'

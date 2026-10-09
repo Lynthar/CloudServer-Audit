@@ -57,25 +57,17 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv4.conf.all.mc_forwarding:0:low:Multicast forwarding (default off; enable = mrouted role)"
     "net.ipv4.conf.all.proxy_arp:0:low:Proxy ARP (default off; enable = bridge/router role)"
 
-    # Network security - IPv6 (Enhanced)
+    # Network security - IPv6. accept_ra, accept_redirects and use_tempaddr set
+    # under all/default reach only interfaces created later, not existing ones
+    # (eth0); a key that exists only under "all" reaches none, so none is listed.
     "net.ipv6.conf.all.accept_redirects:0:medium:IPv6 ICMP redirects"
     "net.ipv6.conf.default.accept_redirects:0:medium:IPv6 ICMP redirects (default)"
-    # IPv6 symmetry with the IPv4 send_redirects checks above (Lynis
-    # cross-check; the original list audited IPv4 only).
-    "net.ipv6.conf.all.send_redirects:0:medium:IPv6 ICMP redirects sending"
-    "net.ipv6.conf.default.send_redirects:0:medium:IPv6 ICMP redirects sending (default)"
     "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"
     "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"
     "net.ipv6.conf.all.accept_ra:0:medium:IPv6 Router Advertisements (can be MITM vector)"
     "net.ipv6.conf.default.accept_ra:0:medium:IPv6 Router Advertisements (default)"
     "net.ipv6.conf.all.use_tempaddr:2:low:IPv6 privacy extensions (use temp addresses)"
     "net.ipv6.conf.default.use_tempaddr:2:low:IPv6 privacy extensions (default)"
-    "net.ipv6.conf.all.max_addresses:1:low:Limit IPv6 addresses per interface"
-    "net.ipv6.conf.all.accept_ra_defrtr:0:low:Accept RA default router"
-    "net.ipv6.conf.all.accept_ra_pinfo:0:low:Accept RA prefix info"
-    "net.ipv6.conf.all.accept_ra_rtr_pref:0:low:Accept RA router preference"
-    "net.ipv6.conf.all.autoconf:0:low:IPv6 stateless autoconfiguration"
-    "net.ipv6.conf.all.dad_transmits:0:low:Duplicate address detection transmits"
 
     # ASLR is deliberately absent: it has its own check, and listing it here
     # too double-counts ASLR-off in the score.
@@ -372,43 +364,16 @@ _kernel_ipv6_secure() {
     _kernel_ipv6_issues_ok "$in_use" "$count"
 }
 
-# Check for dual-stack firewall consistency
+# IPv6 firewall state for the audit: filtered | unfiltered | unknown. The
+# backend is fw_backend's answer, so this check and the ufw module agree.
 _kernel_ipv6_firewall_check() {
-    local result="unknown"
-
-    # Only when ufw is ACTIVE: a stock inactive ufw already has IPV6=yes and
-    # filters nothing. Inactive falls through to the raw probes below.
-    if check_command ufw && LC_ALL=C ufw status 2>/dev/null | grep -q "Status: active"; then
-        if grep -q "IPV6=yes" /etc/default/ufw 2>/dev/null; then
-            result="ufw_ipv6_enabled"
-        else
-            result="ufw_ipv6_disabled"
-        fi
-    # Check if ip6tables has rules
-    elif check_command ip6tables; then
-        # A listing that fails (no ip6_tables module, restricted container)
-        # is not an empty ruleset: answer unreadable, not "firewall missing".
-        local ip6_rules rule_count
-        if ip6_rules=$(ip6tables -L -n 2>/dev/null); then
-            rule_count=$(grep -cv "^Chain\|^target\|^$" <<<"$ip6_rules" || true)
-            if (( rule_count > 0 )); then
-                result="ip6tables_configured"
-            else
-                result="ip6tables_empty"
-            fi
-        else
-            result="ip6tables_unreadable"
-        fi
-    # Check nftables
-    elif check_command nft; then
-        if nft list tables 2>/dev/null | grep -q "ip6\|inet"; then
-            result="nftables_ipv6_configured"
-        else
-            result="nftables_ipv6_missing"
-        fi
-    fi
-
-    echo "$result"
+    local rc=0
+    fw_ipv6_filtered || rc=$?
+    case "$rc" in
+        0) echo "filtered" ;;
+        1) echo "unfiltered" ;;
+        *) echo "unknown" ;;
+    esac
 }
 
 # Check core dump settings
@@ -599,18 +564,18 @@ _kernel_audit_ipv6() {
     # Check IPv6 firewall consistency (only if IPv6 is in use)
     if [[ "$ipv6_in_use" == "yes" ]]; then
         case "$ipv6_fw" in
-            ufw_ipv6_disabled|ip6tables_empty|nftables_ipv6_missing)
+            unfiltered)
                 check_emit "kernel.ipv6_firewall_missing" medium failed \
                     desc="$(i18n 'kernel.ipv6_firewall_missing_desc')" \
                     suggestion="$(i18n 'kernel.ipv6_firewall_missing_suggestion')"
                 print_severity "medium" "$(i18n 'kernel.ipv6_firewall_missing')"
                 ;;
-            ufw_ipv6_enabled|ip6tables_configured|nftables_ipv6_configured)
+            filtered)
                 check_emit "kernel.ipv6_firewall_ok" low passed \
                     desc="$(i18n 'kernel.ipv6_firewall_ok_desc')"
                 print_ok "$(i18n 'kernel.ipv6_firewall_ok')"
                 ;;
-            ip6tables_unreadable)
+            unknown)
                 check_emit "kernel.ipv6_firewall_unreadable" low failed \
                     desc="$(i18n 'kernel.ipv6_firewall_unreadable_desc')"
                 print_severity "low" "$(i18n 'kernel.ipv6_firewall_unreadable')"
@@ -961,9 +926,6 @@ _kernel_fix_ipv6() {
         ipv6_params+=(
             "net.ipv6.conf.all.accept_ra=0"
             "net.ipv6.conf.default.accept_ra=0"
-            "net.ipv6.conf.all.accept_ra_defrtr=0"
-            "net.ipv6.conf.all.accept_ra_pinfo=0"
-            "net.ipv6.conf.all.accept_ra_rtr_pref=0"
         )
     fi
 

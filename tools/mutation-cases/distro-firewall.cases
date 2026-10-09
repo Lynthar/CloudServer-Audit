@@ -32,8 +32,8 @@ run_case "firewall/iptables-drop-policy-ignored" 1 \
 # fail2ban's table, or the chains of fail2ban, ufw and tailscale, read as a
 # firewall again: ufw.disabled and ufw.no_firewall go unreported.
 run_case "firewall/f2b-table-filters" 1 \
-    '            input = !f2b' \
-    '            input = 1'
+    '            input = !f2b && !other' \
+    '            input = !other'
 
 run_case "firewall/nft-component-jumps-filter" 1 \
     '        /(jump|goto)[ \t]+(f2b-|ufw6?-|ts-)/ { next }' \
@@ -72,3 +72,48 @@ run_case "firewall/firewalld-absent-flagged" 1 \
 run_case "firewall/firewalld-inactive-flagged" 1 \
     '    if (( fwd_rc != 3 && fwd_rc != 4 )) && _fw_firewalld_installed; then' \
     '    if _fw_firewalld_installed; then'
+
+# ---- fw_ipv6_filtered: does anything filter IPv6 input ------------------
+
+# An IPv4-only table read as filtering IPv6.
+run_case "ipv6/ip-table-counts" 1 \
+    '            input = !f2b && !other' \
+    '            input = !f2b'
+
+# firewalld covers both stacks; distrusting it reports RHEL hosts unprotected.
+run_case "ipv6/firewalld-not-trusted" 1 \
+    '        firewalld) return 0 ;;' \
+    '        firewalld) ;;'
+
+# ufw filters IPv6 only with IPV6=yes, and a commented line is not that.
+run_case "ipv6/ufw-setting-ignored" 1 \
+    "            grep -q '^IPV6=yes' \"\$DISTRO_UFW_DEFAULTS\" && return 0" \
+    '            return 0'
+
+run_case "ipv6/ufw-commented-line-counts" 1 \
+    "            grep -q '^IPV6=yes' \"\$DISTRO_UFW_DEFAULTS\" && return 0" \
+    "            grep -q 'IPV6=yes' \"\$DISTRO_UFW_DEFAULTS\" && return 0"
+
+# An unreadable /etc/default/ufw is no answer, not IPV6=no.
+run_case "ipv6/ufw-defaults-unreadable-reads-off" 1 \
+    '            [[ -r "$DISTRO_UFW_DEFAULTS" ]] || return 2' \
+    '            :'
+
+# An inet table with an input drop (Debian's stock nftables.conf) filters IPv6.
+run_case "ipv6/nft-inet-ignored" 1 \
+    '            _fw_nft_input_filters ip6 <<<"$out" && return 0' \
+    '            :'
+
+run_case "ipv6/ip6tables-input-ignored" 1 \
+    '            _fw_iptables_input_filters <<<"$out" && return 0' \
+    '            :'
+
+# A failed ip6tables listing: no answer, not unfiltered. (Occurrence 5: the
+# 12-space `failed=1` lines are fw_backend's three probes, then nft, ip6tables.)
+run_case "ipv6/ip6tables-failure-ignored" 5 \
+    '            failed=1' \
+    '            :'
+
+run_case "ipv6/failure-reads-unfiltered" 1 \
+    '    (( failed == 0 )) || return 2' \
+    '    :'

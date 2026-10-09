@@ -1,0 +1,21 @@
+# Mutation cases: tests/test_query_failure_honesty.bats against modules/networking.sh.
+# mutate-suite: modules/networking.sh tests/test_query_failure_honesty.bats
+#
+# `ip` and `ss` are stubs; a failed listing must surface as an unscored unknown,
+# never as "no promiscuous interfaces" or as no listener check at all.
+
+run_case "promisc/ip-failure-reads-none" 1 \
+    '    links=$(ip -o link show 2>/dev/null) || return 1' \
+    '    links=$(ip -o link show 2>/dev/null) || true'
+
+run_case "promisc/failure-not-reported" 1 \
+    '    if ! promisc=$(_net_promiscuous_interfaces); then' \
+    '    if ! promisc=$(_net_promiscuous_interfaces || true); then'
+
+run_case "listeners/ss-failure-reads-empty" 1 \
+    '            raw=$(ss -tulnp 2>/dev/null) || return 1' \
+    '            raw=$(ss -tulnp 2>/dev/null) || true'
+
+run_case "listeners/failure-not-reported" 1 \
+    '    if ! listeners=$(_net_list_listeners); then' \
+    '    if ! listeners=$(_net_list_listeners || true); then'

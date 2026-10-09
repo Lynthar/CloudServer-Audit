@@ -1,0 +1,33 @@
+# Mutation cases: tests/test_timezone_ntp.bats against modules/timezone.sh.
+# mutate-suite: modules/timezone.sh tests/test_timezone_ntp.bats
+#
+# systemctl, timedatectl and chronyc are stubs; `is-active` answers per unit, and
+# exit 1 stands for "no systemd to ask".
+
+# The daemon is the unit that runs; naming it any other way is the old defect
+# (chrony and chronyd reported as systemd-timesyncd).
+run_case "ntp/daemon-not-the-running-unit" 1 \
+    '            service="$unit"' \
+    '            service="systemd-timesyncd"'
+
+# A systemctl that cannot answer is not "no NTP daemon".
+run_case "ntp/unanswered-reads-none" 1 \
+    '        (( rc == 2 )) && failed=1' \
+    '        :'
+
+run_case "ntp/unqueryable-never-said" 1 \
+    '        if (( failed )); then echo "unqueryable"; else echo "none"; fi' \
+    '        echo "none"'
+
+run_case "ntp/unqueryable-arm-dead" 1 \
+    '    elif [[ "$ntp_status" == "unqueryable" ]]; then' \
+    '    elif false; then'
+
+# timesyncd running with timedated unreachable is running, not unsynchronised.
+run_case "ntp/timesyncd-unasked-reads-unsynced" 1 \
+    '                *)   echo "active $service" ;;' \
+    '                *)   echo "active_not_synced $service" ;;'
+
+run_case "ntp/chrony-sync-never-read" 1 \
+    '            if grep -qiE '"'"'Leap status[[:space:]]*:[[:space:]]*Normal'"'"' <<<"$tracking"; then' \
+    '            if false; then'

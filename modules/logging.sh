@@ -97,12 +97,22 @@ _logging_check_audit_rules() {
     fi
 }
 
+# journalctl's output for the matches in "$@" over the last 24 hours (count
+# lines matching a pattern, not lines). Fails when journalctl failed or found
+# no journal at all: that only says "No journal files were found.", exit 0.
+_logging_journal_24h() {
+    local out
+    out=$(journalctl "$@" --since "24 hours ago" 2>&1) || return 1
+    grep -q '^No journal files were found' <<<"$out" && return 1
+    printf '%s\n' "$out"
+}
+
 _logging_get_failed_logins() {
     # Filters on _COMM (the unit is ssh.service on Debian) and matches BOTH
     # sshd and sshd-session, since OpenSSH 9.8+ logs auth failures from the
-    # latter. Non-zero with no output = query failed, which is not zero.
+    # latter. A query that failed is not zero.
     local out count
-    out=$(journalctl _COMM=sshd _COMM=sshd-session --since "24 hours ago" 2>/dev/null) || return 1
+    out=$(_logging_journal_24h _COMM=sshd _COMM=sshd-session) || return 1
     # Note: grep -c outputs "0" AND exits 1 when no matches; `|| count=0`
     # (not `|| echo 0`) avoids the historical "0\n0" double-output bug.
     count=$(grep -c "Failed password\|authentication failure" <<<"$out" 2>/dev/null) || count=0
@@ -110,13 +120,10 @@ _logging_get_failed_logins() {
 }
 
 _logging_get_sudo_events() {
-    # Same contract as _logging_get_failed_logins: non-zero when journalctl
-    # itself failed, a real count otherwise.
+    # One event per command sudo ran: its session opened/closed lines are not.
     local out count
-    out=$(journalctl _COMM=sudo --since "24 hours ago" 2>/dev/null) || return 1
-    count=$(wc -l <<<"$out") || count=0
-    # wc -l counts the herestring's trailing newline even when empty.
-    [[ -z "$out" ]] && count=0
+    out=$(_logging_journal_24h _COMM=sudo) || return 1
+    count=$(grep -c 'COMMAND=' <<<"$out" 2>/dev/null) || count=0
     echo "${count:-0}"
 }
 

@@ -65,7 +65,11 @@ case "\$*" in
 esac
 exit 0
 SH
-    _vpssec_stub systemctl 3
+    # set-ntp true starts systemd-timesyncd; the audit asks systemd which runs.
+    _vpssec_stub_script systemctl <<SH
+[[ "\$*" == *"is-active"*"systemd-timesyncd"* && -f "$BATS_TEST_TMPDIR/ntp-on" ]] && exit 0
+exit 3
+SH
 
     run execute_fix timezone.enable_ntp true
     [ "$status" -eq 0 ]

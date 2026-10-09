@@ -1,0 +1,39 @@
+# Mutation cases: tests/test_docker_audit.bats against modules/docker.sh.
+# mutate-suite: modules/docker.sh tests/test_docker_audit.bats
+#
+# `docker` is a stub answering as Docker 29 or as podman-docker's shim; the socket
+# is a real AF_UNIX socket behind a symlink (the suite skips without python3).
+
+# The CLI merges adjacent published ports into one range; a port pattern that
+# takes single numbers only drops the range, and with it the whole finding.
+run_case "ports/range-dropped" 1 \
+    '            if (port ~ /^[0-9]+(-[0-9]+)?$/) print port' \
+    '            if (port ~ /^[0-9]+$/) print port'
+
+# Without the range in the address strip, a loopback range reads as public.
+run_case "ports/loopback-range-public" 1 \
+    '            addr = hp; sub(/:[0-9]+(-[0-9]+)?$/, "", addr); gsub(/[][]/, "", addr)' \
+    '            addr = hp; sub(/:[0-9]+$/, "", addr); gsub(/[][]/, "", addr)'
+
+# A symlink's own mode is 777; the socket behind it is what callers reach.
+run_case "sock/link-mode-read" 1 \
+    '    stat -L -c '"'"'%a'"'"' "$DOCKER_SOCK" 2>/dev/null' \
+    '    stat -c '"'"'%a'"'"' "$DOCKER_SOCK" 2>/dev/null'
+
+# podman-docker answers `docker info`, so only its version string tells it apart.
+run_case "podman/not-detected" 1 \
+    '    [[ "$(docker --version 2>/dev/null)" == [Pp]odman* ]]' \
+    '    false'
+
+run_case "podman/daemon-settings-read" 1 \
+    '    if _docker_is_podman; then' \
+    '    if false; then'
+
+# userns-remap and ICC are dockerd settings too.
+run_case "podman/userns-read" 1 \
+    '    if (( ! podman )); then' \
+    '    if true; then'
+
+run_case "podman/icc-read" 2 \
+    '    if (( ! podman )); then' \
+    '    if true; then'

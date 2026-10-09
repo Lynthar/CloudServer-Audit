@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_security_levels.bats against core/security_levels.sh.
+# mutate-suite: core/security_levels.sh tests/test_security_levels.bats
+#
+# Score categories the suite pins by id.
+
+# sudo logging passes in both of its states, so scoring it scores nothing.
+run_case "score/sudo-logging-ok-scored" 1 \
+    '    ["logging.sudo_logging_ok"]="info"' \
+    '    ["logging.sudo_logging_ok"]="recommended"'
+
+run_case "score/sudo-no-events-scored" 1 \
+    '    ["logging.sudo_no_events"]="info"' \
+    '    ["logging.sudo_no_events"]="recommended"'

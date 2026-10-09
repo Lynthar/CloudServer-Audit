@@ -100,6 +100,13 @@ setup() {
     [ "$output" = "info" ]
 }
 
+@test "get_check_score_category: sudo logging is info, both of its states passing" {
+    run get_check_score_category "logging.sudo_logging_ok"
+    [ "$output" = "info" ]
+    run get_check_score_category "logging.sudo_no_events"
+    [ "$output" = "info" ]
+}
+
 @test "get_check_score_category: unknown defaults to info (fail-safe, non-scoring)" {
     # An unclassified id must NOT move the score until deliberately promoted —
     # a forgotten/heuristic check should never silently penalize a host.

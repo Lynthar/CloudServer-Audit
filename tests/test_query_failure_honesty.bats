@@ -109,14 +109,61 @@ setup() {
 }
 
 @test "logging: working journalctl with zero failures still passes" {
+    # A journal with nothing matching prints this line, never nothing.
     source "$(_vpssec_repo_root)/modules/logging.sh"
-    _vpssec_stub journalctl 0 ""
+    _vpssec_stub journalctl 0 "-- No entries --"
 
     _logging_audit_ssh_logs
 
     run jq -r '.[] | select(.id == "logging.ssh_logs_ok") | .status' \
         "$VPSSEC_STATE/checks.json"
     [ "$output" = "passed" ]
+}
+
+# journalctl as systemd 249-255 answers with no journal files at all: the
+# marker on stdout, the notice on stderr, and exit 0.
+_journal_absent() {
+    _vpssec_stub_script journalctl <<'SH'
+echo "-- No entries --"
+echo "No journal files were found." >&2
+exit 0
+SH
+}
+
+_logging_emitted() {
+    jq -r '[.[] | "\(.id) \(.status)"] | join(",")' "$VPSSEC_STATE/checks.json"
+}
+
+@test "logging: no journal at all is unreadable, not 0 failures and 1 sudo event" {
+    source "$(_vpssec_repo_root)/modules/logging.sh"
+    _journal_absent
+
+    _logging_audit_ssh_logs
+    _logging_audit_sudo_logs
+    [ "$(_logging_emitted)" = "logging.journal_unreadable failed" ]
+}
+
+@test "logging: no sudo entries is no events, not one" {
+    source "$(_vpssec_repo_root)/modules/logging.sh"
+    _vpssec_stub journalctl 0 "-- No entries --"
+
+    _logging_audit_sudo_logs
+    [ "$(_logging_emitted)" = "logging.sudo_no_events passed" ]
+}
+
+@test "logging: one sudo command is one event, not its three journal lines" {
+    source "$(_vpssec_repo_root)/modules/logging.sh"
+    _vpssec_stub_script journalctl <<'SH'
+printf '%s\n' \
+  "Oct 09 10:00:01 host sudo[812]:     root : PWD=/root ; USER=nobody ; COMMAND=/usr/bin/true" \
+  "Oct 09 10:00:01 host sudo[812]: pam_unix(sudo:session): session opened for user nobody(uid=65534) by root(uid=0)" \
+  "Oct 09 10:00:01 host sudo[812]: pam_unix(sudo:session): session closed for user nobody"
+SH
+
+    _logging_audit_sudo_logs
+    [ "$(_logging_emitted)" = "logging.sudo_logging_ok passed" ]
+    run jq -r '.[0].title' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "$(i18n 'logging.sudo_logs_active' 'count=1')" ]
 }
 
 # ---- kernel ------------------------------------------------------------
@@ -186,6 +233,42 @@ setup() {
     _vpssec_refute _net_specific_addr_is_public v6 fd00::1
 }
 
+# ---- networking: a tool that failed is not "nothing found" ----------------
+
+_net_emitted() {
+    jq -r '[.[] | "\(.id) \(.status)"] | join(",")' "$VPSSEC_STATE/checks.json"
+}
+
+@test "networking: ip failing is unknown, not 'no promiscuous interfaces'" {
+    # A sandbox that blocks AF_NETLINK: ip exits 1, ss falls back to /proc.
+    source "$(_vpssec_repo_root)/modules/networking.sh"
+    _vpssec_stub ip 1
+    _vpssec_stub ss 0 ""
+
+    networking_audit >/dev/null
+    [ "$(_net_emitted)" = "networking.promisc_unknown failed" ]
+    [ "${CHECK_SCORE_CATEGORY[networking.promisc_unknown]}" = "info" ]
+}
+
+@test "networking: ss failing both ways is unknown, not silence" {
+    source "$(_vpssec_repo_root)/modules/networking.sh"
+    _vpssec_stub ss 1
+    _vpssec_stub ip 0 "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 state UNKNOWN"
+
+    networking_audit >/dev/null
+    [ "$(_net_emitted)" = "networking.listeners_unknown failed,networking.no_promisc passed" ]
+    [ "${CHECK_SCORE_CATEGORY[networking.listeners_unknown]}" = "info" ]
+}
+
+@test "networking: a promiscuous interface is still reported" {
+    source "$(_vpssec_repo_root)/modules/networking.sh"
+    _vpssec_stub ss 0 ""
+    _vpssec_stub ip 0 "2: eth0: <BROADCAST,MULTICAST,PROMISC,UP,LOWER_UP> mtu 1500 qdisc fq state UP"
+
+    networking_audit >/dev/null
+    [ "$(_net_emitted)" = "networking.promiscuous_interface failed" ]
+}
+
 # ---- backup_file failure propagation -----------------------------------
 
 @test "backup_file: cp failure returns 1 and echoes no path" {
@@ -235,13 +318,98 @@ setup() {
 
 # ---- kernel: IPv6 firewall ----------------------------------------------
 
-@test "kernel: an ip6tables listing that fails is unreadable, not an empty ruleset" {
+# kernel's IPv6 audit on a host using IPv6 with no sysctl findings, so only the
+# firewall line varies; the firewall tools answer as the test stubbed them.
+_kernel_ipv6_fw_emitted() {
     source "$(_vpssec_repo_root)/modules/kernel.sh"
-    _vpssec_absent_command ufw
-    _vpssec_stub ip6tables 1
+    _kernel_ipv6_enabled() { return 0; }
+    _kernel_ipv6_in_use() { return 0; }
+    _kernel_ipv6_get_stats() { echo ""; }
+    _kernel_ipv6_check_security() { echo ""; }
+    _kernel_audit_ipv6 >/dev/null
+    jq -r '[.[] | select(.id | startswith("kernel.ipv6_firewall")) | "\(.id) \(.status)"] | join(",")' \
+        "$VPSSEC_STATE/checks.json"
+}
 
-    run _kernel_ipv6_firewall_check
-    [ "$output" = "ip6tables_unreadable" ]
+# ip6tables with an accepting INPUT chain, answering `-L -n` and `-S INPUT` as
+# the real tool does; with $1 = docker, FORWARD carries Docker's jumps.
+_ip6tables_accepting() {
+    local fwd=""
+    [[ "${1:-}" == docker ]] && fwd='DOCKER-USER  all      ::/0                 ::/0
+DOCKER-FORWARD  all      ::/0                 ::/0'
+    printf '%s\n' "$fwd" > "$BATS_TEST_TMPDIR/ip6.fwd"
+    _vpssec_stub_script ip6tables <<SH
+case "\$*" in
+    "-S INPUT") echo "-P INPUT ACCEPT" ;;
+    "-L -n")
+        printf '%s\n' "Chain INPUT (policy ACCEPT)" "target     prot opt source               destination" ""
+        printf '%s\n' "Chain FORWARD (policy ACCEPT)" "target     prot opt source               destination"
+        cat "$BATS_TEST_TMPDIR/ip6.fwd" ;;
+esac
+exit 0
+SH
+}
+
+@test "kernel: firewalld filters IPv6, though ip6tables' own table is empty" {
+    # RHEL: firewalld's rules live in nft's inet firewalld table, and it pulls
+    # in iptables-nft, so ip6tables is there and lists nothing.
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub systemctl 0
+    _ip6tables_accepting
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_ok passed" ]
+}
+
+@test "kernel: an nftables inet table that drops input filters IPv6" {
+    # Debian's stock /etc/nftables.conf, with ip6tables (xtables-nft) installed.
+    _fw_probes_answer 'exit 0'
+    _nft_ruleset 'table inet filter {' '	chain input {' \
+        '		type filter hook input priority filter; policy drop;' '	}' '}'
+    _ip6tables_accepting
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_ok passed" ]
+}
+
+@test "kernel: Docker's IPv6 forward chains are not an IPv6 firewall" {
+    _fw_probes_answer 'exit 0'
+    _ip6tables_accepting docker
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_missing failed" ]
+}
+
+@test "kernel: an IPv4-only nft table does not filter IPv6" {
+    _fw_probes_answer 'exit 0'
+    _nft_ruleset 'table ip filter {' '	chain input {' \
+        '		type filter hook input priority filter; policy drop;' '	}' '}'
+    _ip6tables_accepting
+    run fw_backend
+    [ "$output" = "nftables" ]
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_missing failed" ]
+}
+
+@test "kernel: an IPv6 INPUT drop in ip6tables filters IPv6" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub_script ip6tables <<<'[[ "$*" == "-S INPUT" ]] && echo "-P INPUT DROP"; exit 0'
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_ok passed" ]
+}
+
+@test "kernel: active ufw filters IPv6 only with IPV6=yes" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub ufw 0 "Status: active"
+    DISTRO_UFW_DEFAULTS="$BATS_TEST_TMPDIR/ufw"
+    printf 'IPV6=no\n#IPV6=yes\n' > "$DISTRO_UFW_DEFAULTS"
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_missing failed" ]
+
+    state_init
+    printf 'IPV6=yes\n' > "$DISTRO_UFW_DEFAULTS"
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_ok passed" ]
+
+    state_init
+    rm -f "$DISTRO_UFW_DEFAULTS"
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_unreadable failed" ]
+}
+
+@test "kernel: an ip6tables listing that fails is unknown, not an empty ruleset" {
+    _fw_probes_answer 'exit 0'
+    _vpssec_stub ip6tables 1
+    [ "$(_kernel_ipv6_fw_emitted)" = "kernel.ipv6_firewall_unreadable failed" ]
 }
 
 @test "kernel: an unreadable IPv6 firewall emits ipv6_firewall_unreadable, not missing" {
@@ -250,7 +418,7 @@ setup() {
     _kernel_ipv6_in_use() { return 0; }
     _kernel_ipv6_get_stats() { echo ""; }
     _kernel_ipv6_check_security() { echo ""; }
-    _kernel_ipv6_firewall_check() { echo "ip6tables_unreadable"; }
+    _kernel_ipv6_firewall_check() { echo "unknown"; }
 
     run _kernel_audit_ipv6
 

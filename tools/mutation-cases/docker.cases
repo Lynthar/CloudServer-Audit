@@ -1,11 +1,10 @@
 # Mutation cases: tests/test_fix_docker_daemon.bats against modules/docker.sh.
 # mutate-suite: modules/docker.sh tests/test_fix_docker_daemon.bats
 #
-# The two defects this suite was written for are the first two groups below. Note
-# the asymmetry it pins: live-restore is observable only through the running
-# daemon, while no-new-privileges is satisfied by daemon.json alone, so "declining
-# the restart" must fail one fix and not the other. Several mutations exist purely
-# to prove the suite still tells those two apart.
+# What it pins: the running daemon's answer is final wherever it gives one
+# (live-restore always, no-new-privileges from Engine 24, ICC through the default
+# bridge), the configuration is read as systemd hands it to dockerd, live-restore
+# is applied by reload and no-new-privileges by restart.
 #
 # Everything runs against the per-test fake /etc; `docker` and `systemctl` are
 # stubs throughout, so no mutation here can reach a real daemon.
@@ -49,11 +48,75 @@ run_case "live-restore/case-sensitive-compare" 1 \
 # The verify gate itself moved to execute_fix (FIX_VERIFY): its mutations are
 # pinned by verify-engine.cases and verify-levels.cases, not here.
 
-# Declining the restart is not a write failure: the setting stays staged and
-# takes effect on the next restart. Bailing out early would lose it.
-run_case "postcondition/declined-restart-skips-write" 1 \
-    '    if confirm_critical "$(i18n '"'"'docker.confirm_restart'"'"')"; then' \
-    '    if ! confirm_critical "$(i18n '"'"'docker.confirm_restart'"'"')"; then'
+# ---- no-new-privileges and ICC: daemon first, then the configuration ------
+
+# Engine 24+ reports the setting; skipping the question trusts a daemon.json
+# the daemon never loaded.
+run_case "nnp/daemon-not-asked" 1 \
+    '    if (( major >= 24 )) && opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
+    '    if false; then'
+
+# An older daemon has no such field: asking it anyway reads "off" everywhere.
+run_case "nnp/older-daemon-asked" 1 \
+    '    if (( major >= 24 )) && opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
+    '    if opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then'
+
+# The flag's value, not its presence: --no-new-privileges=false is off.
+run_case "flag/presence-read-as-true" 1 \
+    '            "--$1="*) val="${tok#*=}"; found=0 ;;' \
+    '            "--$1="*) val=true; found=0 ;;'
+
+# The command line outranks daemon.json.
+run_case "configured/flag-ignored" 1 \
+    '    if val=$(_docker_flag_value "$1"); then' \
+    '    if false; then'
+
+# Debian's docker.io passes DOCKER_OPTS through $DOCKER_OPTS in ExecStart.
+run_case "argv/docker-opts-not-expanded" 1 \
+    '        cmd="${cmd//'"'"'$DOCKER_OPTS'"'"'/$opts}"' \
+    '        :'
+
+# The file's value is quoted; unstripped, the last token is not the flag.
+run_case "argv/quotes-kept" 1 \
+    '        opts="${opts#[\"\'"'"']}"; opts="${opts%[\"\'"'"']}"' \
+    '        :'
+
+# The default bridge's enable_icc is the daemon's own answer.
+run_case "icc/daemon-not-asked" 1 \
+    '    if [[ "$icc" == "true" || "$icc" == "false" ]]; then' \
+    '    if false; then'
+
+# ---- the fix: reload, restart, refuse ---------------------------------------
+
+# A flag already on the command line plus daemon.json stops dockerd starting.
+run_case "fix/flag-on-cmdline-written-too" 1 \
+    '    if _docker_flag_value "$setting" >/dev/null; then' \
+    '    if false; then'
+
+# Restarting for live-restore stops every container; a reload applies it.
+run_case "fix/live-restore-restarts" 1 \
+    '        if systemctl reload docker 2>/dev/null; then' \
+    '        if systemctl restart docker 2>/dev/null; then'
+
+# A failed reload reported as success.
+run_case "fix/reload-failure-swallowed" 5 \
+    '        return 1' \
+    '        return 0'
+
+# The restart prompt must say what a restart does on this host.
+run_case "fix/restart-prompt-ignores-live-restore" 1 \
+    '    _docker_check_live_restore && confirm_key="docker.confirm_restart_live"' \
+    '    :'
+
+# Declining must not restart anyway.
+run_case "fix/declined-restart-restarts" 1 \
+    '    if ! confirm_critical "$(i18n "$confirm_key")"; then' \
+    '    if false; then'
+
+# Declining is not success: the setting is written but not loaded.
+run_case "fix/declined-restart-succeeds" 6 \
+    '        return 1' \
+    '        return 0'
 
 # ---- the writer ----------------------------------------------------------
 

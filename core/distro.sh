@@ -636,15 +636,21 @@ distro_integrity_package() {
 
 # --- Firewall primitives (read-only) ---
 
-# True when an nft input hook (ruleset on stdin) can drop: a drop/reject policy,
-# a drop/reject/queue verdict, or a jump into a chain. fail2ban (bans), ufw
-# (emptied while off) and tailscale (anti-spoofing) chains are no firewall.
+DISTRO_UFW_DEFAULTS="${DISTRO_UFW_DEFAULTS:-/etc/default/ufw}"
+
+# True when an nft input hook (ruleset on stdin) can drop: a drop/reject policy
+# or verdict, a queue, or a jump into a chain; fail2ban, ufw (emptied while off)
+# and tailscale chains are no firewall. $1 = ip6: only ip6/inet tables count.
 _fw_nft_input_filters() {
-    awk '
-        /^[ \t]*table[ \t]/ { f2b = ($0 ~ /[ \t]f2b-table[ \t]*[{]/); next }
+    awk -v v6="${1:-}" '
+        /^[ \t]*table[ \t]/ {
+            f2b = ($0 ~ /[ \t]f2b-table[ \t]*[{]/)
+            other = (v6 != "" && $2 != "inet" && $2 != "ip6")
+            next
+        }
         /^[ \t]*chain[ \t]/ { input = 0; next }
         /hook[ \t]+input/ {
-            input = !f2b
+            input = !f2b && !other
             if (input && $0 ~ /policy[ \t]+(drop|reject)/) f = 1
             next
         }
@@ -717,6 +723,37 @@ fw_backend() {
     fi
     (( failed == 0 )) || return 1
     echo "none"
+}
+
+# Is IPv6 input filtered: 0 yes, 1 no, 2 cannot tell. Built on fw_backend: ufw
+# filters IPv6 only with IPV6=yes and firewalld covers both stacks; otherwise
+# an ip6/inet input hook, or ip6tables' own INPUT chain, has to filter.
+fw_ipv6_filtered() {
+    local backend out failed=0
+    backend=$(fw_backend) || return 2
+    case "$backend" in
+        ufw)
+            [[ -r "$DISTRO_UFW_DEFAULTS" ]] || return 2
+            grep -q '^IPV6=yes' "$DISTRO_UFW_DEFAULTS" && return 0
+            return 1 ;;
+        firewalld) return 0 ;;
+    esac
+    if command -v nft >/dev/null 2>&1; then
+        if out=$(nft list ruleset 2>/dev/null); then
+            _fw_nft_input_filters ip6 <<<"$out" && return 0
+        else
+            failed=1
+        fi
+    fi
+    if command -v ip6tables >/dev/null 2>&1; then
+        if out=$(ip6tables -S INPUT 2>/dev/null); then
+            _fw_iptables_input_filters <<<"$out" && return 0
+        else
+            failed=1
+        fi
+    fi
+    (( failed == 0 )) || return 2
+    return 1
 }
 
 # --- Path / config-location primitives ---

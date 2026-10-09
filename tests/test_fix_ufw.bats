@@ -165,6 +165,16 @@ _call_at() {
     _vpssec_refute _vpssec_stub_called ufw 'enable'
 }
 
+@test "enable: the confirmation lists the rules ufw holds, though ufw is inactive" {
+    # ufw.enable is only offered while ufw is inactive, and an inactive ufw's
+    # `status` prints nothing but "Status: inactive"; `show added` lists them.
+    _tuple "deny tcp 3306 0.0.0.0/0 any 0.0.0.0/0 in"
+    confirm_critical() { echo "CONFIRM-PROMPT" >&2; return 1; }
+
+    run _ufw_fix_enable
+    [[ "$output" == *"deny tcp 3306"*"CONFIRM-PROMPT"* ]]
+}
+
 @test "enable: declining removes every rule the fix added" {
     _operator_at 203.0.113.9
     confirm_critical() { return 1; }

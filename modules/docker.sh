@@ -6,12 +6,81 @@
 # --- Docker Configuration ---
 
 DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
+DOCKER_SOCK="/var/run/docker.sock"
 DOCKER_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/docker"
 
 # --- Docker Helper Functions ---
 
 _docker_installed() {
     check_command docker && docker info &>/dev/null
+}
+
+# podman-docker's `docker` is podman, which has no dockerd behind it: the
+# daemon settings below do not exist there and must not be read as "off".
+_docker_is_podman() {
+    [[ "$(docker --version 2>/dev/null)" == [Pp]odman* ]]
+}
+
+# Major version of the answering dockerd; fails when none answers.
+_docker_server_major() {
+    local v
+    v=$(docker info --format '{{.ServerVersion}}' 2>/dev/null) || return 1
+    [[ "${v%%.*}" =~ ^[0-9]+$ ]] || return 1
+    echo "${v%%.*}"
+}
+
+# dockerd's configured argv, one token per line: the unit's effective ExecStart
+# as systemd merged it (drop-in resets, continuation lines), with $DOCKER_OPTS
+# filled in from the unit's EnvironmentFile as systemd would.
+_docker_dockerd_argv() {
+    local cmd opts="" f val
+    command -v systemctl &>/dev/null || return 1
+    cmd=$(systemctl show -p ExecStart --value docker.service 2>/dev/null \
+        | sed -n '/argv\[\]=/{s/.*argv\[\]=\([^;]*\) ;.*/\1/p;q;}') || cmd=""
+    [[ -n "$cmd" ]] || return 1
+    if [[ "$cmd" == *'$DOCKER_OPTS'* || "$cmd" == *'${DOCKER_OPTS}'* ]]; then
+        while IFS= read -r f; do
+            [[ -r "$f" ]] || continue
+            val=$(sed -n 's/^[[:space:]]*DOCKER_OPTS=//p' "$f" | tail -1)
+            [[ -n "$val" ]] && opts="$val"
+        done < <(systemctl show -p EnvironmentFiles --value docker.service 2>/dev/null \
+            | grep -o '/[^ ]*')
+        opts="${opts#[\"\']}"; opts="${opts%[\"\']}"
+        cmd="${cmd//'${DOCKER_OPTS}'/$opts}"
+        cmd="${cmd//'$DOCKER_OPTS'/$opts}"
+    fi
+    tr -s ' ' '\n' <<<"$cmd"
+}
+
+# Value of dockerd flag --$1 on that command line, as true/false for a Go
+# bool; the last occurrence wins, as in dockerd. Fails when it is not there.
+_docker_flag_value() {
+    local tok val="" found=1
+    while IFS= read -r tok; do
+        case "$tok" in
+            "--$1") val=true; found=0 ;;
+            "--$1="*) val="${tok#*=}"; found=0 ;;
+        esac
+    done < <(_docker_dockerd_argv)
+    (( found == 0 )) || return 1
+    case "$val" in
+        1|t|T|TRUE|true|True) echo true ;;
+        0|f|F|FALSE|false|False) echo false ;;
+        *) echo "$val" ;;
+    esac
+}
+
+# A daemon setting as configured, for a daemon that cannot say: the command-line
+# flag wins (dockerd refuses to start when daemon.json repeats it), else
+# daemon.json. $1 key, $2 the JSON value that passes.
+_docker_configured_setting() {
+    local val
+    if val=$(_docker_flag_value "$1"); then
+        [[ "$val" == "$2" ]]
+        return
+    fi
+    [[ -f "$DOCKER_DAEMON_JSON" ]] && \
+        jq -e --arg k "$1" --argjson w "$2" '.[$k] == $w' "$DOCKER_DAEMON_JSON" &>/dev/null
 }
 
 # A container runtime is present that this module cannot audit. Needed because
@@ -38,16 +107,16 @@ _docker_unaudited_runtime() {
 }
 
 _docker_get_exposed_ports() {
-    # Publicly published ports: the number before "->" on any NON-loopback
-    # binding. Must cover IPv6 wildcard, bracketed IPv6 and specific public
-    # IPs — all reachable off-host. Loopback binds are deliberately excluded.
+    # Publicly published ports: the port or range ("9000-9001", the CLI merges
+    # adjacent ones) before "->" on any NON-loopback binding — IPv6 wildcard,
+    # bracketed IPv6 and specific public IPs included.
     docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | awk '
         /->/ {
             hp = $0; sub(/->.*/, "", hp); gsub(/[[:space:]]/, "", hp)
             port = hp; sub(/.*:/, "", port)
-            addr = hp; sub(/:[0-9]+$/, "", addr); gsub(/[][]/, "", addr)
+            addr = hp; sub(/:[0-9]+(-[0-9]+)?$/, "", addr); gsub(/[][]/, "", addr)
             if (addr ~ /^127\./ || addr == "::1") next
-            if (port ~ /^[0-9]+$/) print port
+            if (port ~ /^[0-9]+(-[0-9]+)?$/) print port
         }
     ' | sort -u
 }
@@ -94,12 +163,11 @@ _docker_check_userns() {
     docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
 }
 
-# Return the numeric mode (e.g. "660") of /var/run/docker.sock if it
-# exists; empty string otherwise.
+# Numeric mode (e.g. "660") of the docker socket, empty when there is none.
+# -L: podman-docker links it to podman.sock, and a link's own mode is 777.
 _docker_sock_mode() {
-    local sock=/var/run/docker.sock
-    [[ -S "$sock" ]] || return 0
-    stat -c '%a' "$sock" 2>/dev/null
+    [[ -S "$DOCKER_SOCK" ]] || return 0
+    stat -L -c '%a' "$DOCKER_SOCK" 2>/dev/null
 }
 
 # Return names of running containers that were started with
@@ -139,25 +207,17 @@ _docker_check_live_restore() {
     fi
 }
 
-# No dedicated `docker info` field, so cross-check three sources: daemon.json,
-# the systemd ExecStart drop-ins, and the legacy DOCKER_OPTS. `systemctl cat`
-# returns the merged unit, so the systemd merge order need not be reproduced.
+# From Engine 24 the daemon lists name=no-new-privileges in SecurityOptions
+# when it is the default, and that answer is final: a written but unloaded
+# setting is not on. Older or stopped daemons fall back to the configuration.
 _docker_check_no_new_privileges() {
-    if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
-        jq -e '.["no-new-privileges"] == true' "$DOCKER_DAEMON_JSON" &>/dev/null; then
-        return 0
+    local major opts
+    major=$(_docker_server_major) || major=0
+    if (( major >= 24 )) && opts=$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null); then
+        [[ "$opts" == *'name=no-new-privileges'* ]]
+        return
     fi
-    if command -v systemctl &>/dev/null && \
-        systemctl cat docker.service 2>/dev/null | \
-        grep -E '^ExecStart=' | grep -q -- '--no-new-privileges'; then
-        return 0
-    fi
-    if [[ -r /etc/default/docker ]] && \
-        grep -E '^[[:space:]]*DOCKER_OPTS=' /etc/default/docker 2>/dev/null | \
-        grep -q -- '--no-new-privileges'; then
-        return 0
-    fi
-    return 1
+    _docker_configured_setting no-new-privileges true
 }
 
 # ----- Network isolation / secrets / resources (CIS additions) -----------------
@@ -210,25 +270,18 @@ _docker_get_containers_with_env_secrets() {
     printf '%s\n' "${hits[@]}"
 }
 
-# Is inter-container communication on the default bridge explicitly disabled?
-# Same three-source pattern as _docker_check_no_new_privileges.
-# 0 = disabled somewhere, 1 = defaults apply, which is the finding state.
+# Is inter-container communication on the default bridge disabled? The bridge
+# network's enable_icc option is the daemon's own answer and is final; a
+# daemon that cannot say falls back to the configuration.
 _docker_check_icc_disabled() {
-    if [[ -f "$DOCKER_DAEMON_JSON" ]] && \
-        jq -e '.icc == false' "$DOCKER_DAEMON_JSON" &>/dev/null; then
-        return 0
+    local icc
+    icc=$(docker network inspect bridge \
+        --format '{{index .Options "com.docker.network.bridge.enable_icc"}}' 2>/dev/null) || icc=""
+    if [[ "$icc" == "true" || "$icc" == "false" ]]; then
+        [[ "$icc" == "false" ]]
+        return
     fi
-    if command -v systemctl &>/dev/null && \
-        systemctl cat docker.service 2>/dev/null | \
-        grep -E '^ExecStart=' | grep -q -- '--icc=false'; then
-        return 0
-    fi
-    if [[ -r /etc/default/docker ]] && \
-        grep -E '^[[:space:]]*DOCKER_OPTS=' /etc/default/docker 2>/dev/null | \
-        grep -q -- '--icc=false'; then
-        return 0
-    fi
-    return 1
+    _docker_configured_setting icc false
 }
 
 # --- Docker Audit ---
@@ -274,9 +327,18 @@ docker_audit() {
     print_item "$(i18n 'docker.check_capabilities')"
     _docker_audit_capabilities
 
-    # Check daemon security settings
-    print_item "$(i18n 'docker.check_daemon_security')"
-    _docker_audit_daemon_settings
+    # Daemon-level settings: dockerd only. Under podman-docker they name
+    # options podman does not have, so say they were not checked.
+    local podman=0
+    if _docker_is_podman; then
+        podman=1
+        check_emit "docker.podman_daemon_not_checked" low failed \
+            desc="$(i18n 'docker.podman_daemon_not_checked_desc')"
+        print_severity "low" "$(i18n 'docker.podman_daemon_not_checked')"
+    else
+        print_item "$(i18n 'docker.check_daemon_security')"
+        _docker_audit_daemon_settings
+    fi
 
     # Check /var/run/docker.sock permissions (world-writable socket =
     # effective root for any local user).
@@ -288,15 +350,19 @@ docker_audit() {
     _docker_audit_seccomp_unconfined
 
     # Check whether userns-remap is actually active (not just available).
-    print_item "$(i18n 'docker.check_userns_remap')"
-    _docker_audit_userns_remap
+    if (( ! podman )); then
+        print_item "$(i18n 'docker.check_userns_remap')"
+        _docker_audit_userns_remap
+    fi
 
     # CIS Docker network / secrets / resources additions:
     print_item "$(i18n 'docker.check_host_network')"
     _docker_audit_host_network
 
-    print_item "$(i18n 'docker.check_default_bridge_icc')"
-    _docker_audit_default_bridge_icc
+    if (( ! podman )); then
+        print_item "$(i18n 'docker.check_default_bridge_icc')"
+        _docker_audit_default_bridge_icc
+    fi
 
     print_item "$(i18n 'docker.check_secrets_in_env')"
     _docker_audit_secrets_in_env
@@ -701,6 +767,13 @@ _docker_fix_enable_daemon_setting() {
 
     print_info "$(i18n 'docker.configuring_daemon' "setting=$setting" "value=$value")"
 
+    # dockerd refuses to start when a setting is both a flag and in daemon.json,
+    # so a flag already on its command line is changed there, by the operator.
+    if _docker_flag_value "$setting" >/dev/null; then
+        print_error "$(i18n 'docker.daemon_flag_set' "flag=--$setting")"
+        return 1
+    fi
+
     # Refuse to edit an existing file that is not valid JSON: a failed jq
     # would write an empty temp file over it. Checked BEFORE the backup, so a
     # file we refuse to touch leaves no trace in the session.
@@ -734,19 +807,28 @@ _docker_fix_enable_daemon_setting() {
 
     print_ok "$(i18n 'docker.daemon_updated')"
 
-    # daemon.json is not auto-reloaded, and a restart briefly pauses every
-    # container. confirm_critical ignores --yes, so no silent restart.
-    if confirm_critical "$(i18n 'docker.confirm_restart')"; then
-        if systemctl restart docker 2>/dev/null; then
-            print_ok "$(i18n 'docker.restarted')"
-        else
-            print_error "$(i18n 'docker.restart_failed')"
-            return 1
+    # live-restore is reloadable: SIGHUP applies it with every container left
+    # running. no-new-privileges needs a restart, which stops every container
+    # unless live-restore is already on; confirm_critical ignores --yes.
+    if [[ "$setting" == "live-restore" ]]; then
+        if systemctl reload docker 2>/dev/null; then
+            print_ok "$(i18n 'docker.reloaded')"
+            return 0
         fi
-    else
-        print_warn "$(i18n 'docker.restart_skipped')"
+        print_error "$(i18n 'docker.reload_failed')"
+        return 1
     fi
-
+    local confirm_key="docker.confirm_restart"
+    _docker_check_live_restore && confirm_key="docker.confirm_restart_live"
+    if ! confirm_critical "$(i18n "$confirm_key")"; then
+        print_warn "$(i18n 'docker.restart_skipped')"
+        return 1
+    fi
+    if ! systemctl restart docker 2>/dev/null; then
+        print_error "$(i18n 'docker.restart_failed')"
+        return 1
+    fi
+    print_ok "$(i18n 'docker.restarted')"
     return 0
 }
 

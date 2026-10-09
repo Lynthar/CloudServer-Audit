@@ -111,69 +111,62 @@ _timezone_check_current() {
     log_info "Timezone: $current_tz (source: $tz_source)"
 }
 
-# Echoes "<status> <service>". status: synced, active (running but no sync
-# query, openntpd), active_not_synced, or unknown when no NTP daemon runs.
+# Is unit $1 running: 0 yes, 1 no (is-active exits 3, or 4 for no such unit),
+# 2 systemctl could not answer (no systemd, or no systemctl at all).
+_timezone_unit_active() {
+    local rc=0
+    systemctl is-active --quiet "$1" 2>/dev/null || rc=$?
+    case "$rc" in
+        0) return 0 ;;
+        3|4) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+# Echoes "<status> <service>". status: synced, active (running, sync not
+# asked: openntpd, or timesyncd without timedated), active_not_synced, none
+# when no NTP daemon runs, or unqueryable when systemctl could not say.
 _timezone_ntp_state() {
-    local ntp_status="unknown"
-    local ntp_service=""
+    # The daemon is whichever unit runs. timedated's NTP=yes means "some unit
+    # in ntp-units.d runs", chrony's included, so it never names the daemon.
+    local unit rc service="" failed=0
+    for unit in systemd-timesyncd chrony chronyd ntpsec ntp ntpd openntpd; do
+        rc=0
+        _timezone_unit_active "$unit" || rc=$?
+        if (( rc == 0 )); then
+            service="$unit"
+            break
+        fi
+        (( rc == 2 )) && failed=1
+    done
+    if [[ -z "$service" ]]; then
+        if (( failed )); then echo "unqueryable"; else echo "none"; fi
+        return 0
+    fi
 
-    # Check timedatectl for systemd-timesyncd
-    if command -v timedatectl &>/dev/null; then
-        local ntp_active=$(timedatectl show --property=NTP --value 2>/dev/null)
-        local ntp_synced=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null)
-
-        if [[ "$ntp_active" == "yes" ]]; then
-            ntp_service="systemd-timesyncd"
-            if [[ "$ntp_synced" == "yes" ]]; then
-                ntp_status="synced"
+    local synced tracking
+    case "$service" in
+        systemd-timesyncd)
+            synced=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null) || synced=""
+            case "$synced" in
+                yes) echo "synced $service" ;;
+                no)  echo "active_not_synced $service" ;;
+                *)   echo "active $service" ;;
+            esac ;;
+        chrony|chronyd)
+            # Unit active but chronyc unqueryable: the daemon IS running, so
+            # never read that as disabled.
+            tracking=$(chronyc tracking 2>/dev/null) || tracking=""
+            if grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal' <<<"$tracking"; then
+                echo "synced chrony"
             else
-                ntp_status="active_not_synced"
-            fi
-        fi
-    fi
-
-    # Both unit names are required: Debian/Ubuntu use chrony.service while
-    # RHEL and some derivatives use chronyd.service.
-    if [[ "$ntp_status" == "unknown" ]] && \
-        ( systemctl is-active chrony &>/dev/null || \
-          systemctl is-active chronyd &>/dev/null ); then
-        ntp_service="chrony"
-        if chronyc tracking &>/dev/null; then
-            local leap=$(chronyc tracking 2>/dev/null | grep -i "Leap status" | grep -i "Normal")
-            if [[ -n "$leap" ]]; then
-                ntp_status="synced"
-            else
-                ntp_status="active_not_synced"
-            fi
-        else
-            # Unit active but chronyc unqueryable. The daemon IS running, so
-            # never fall through to the NTP-disabled branch.
-            ntp_status="active_not_synced"
-        fi
-    fi
-
-    # Debian 12+ replaced the `ntp` package with `ntpsec`; `ntp.service`
-    # survives only on older or non-Debian distros, and `ntpd.service` is a
-    # systemd alias on some images.
-    if [[ "$ntp_status" == "unknown" ]] && \
-        ( systemctl is-active ntpsec &>/dev/null || \
-          systemctl is-active ntp &>/dev/null || \
-          systemctl is-active ntpd &>/dev/null ); then
-        ntp_service="ntpd"
-        if ntpq -p &>/dev/null 2>&1; then
-            ntp_status="synced"
-        else
-            ntp_status="active_not_synced"
-        fi
-    fi
-
-    # Check for openntpd
-    if [[ "$ntp_status" == "unknown" ]] && systemctl is-active openntpd &>/dev/null; then
-        ntp_service="openntpd"
-        ntp_status="active"
-    fi
-
-    echo "$ntp_status $ntp_service"
+                echo "active_not_synced chrony"
+            fi ;;
+        ntpsec|ntp|ntpd)
+            if ntpq -p &>/dev/null; then echo "synced ntpd"; else echo "active_not_synced ntpd"; fi ;;
+        openntpd)
+            echo "active openntpd" ;;
+    esac
 }
 
 # Pass condition of timezone.enable_ntp: some NTP daemon is on. Synced is
@@ -181,7 +174,7 @@ _timezone_ntp_state() {
 _timezone_ntp_enabled() {
     local ntp_status
     read -r ntp_status _ <<<"$(_timezone_ntp_state)"
-    [[ "$ntp_status" != "unknown" ]]
+    [[ "$ntp_status" != "none" && "$ntp_status" != "unqueryable" ]]
 }
 
 # Check NTP synchronization
@@ -198,6 +191,11 @@ _timezone_check_ntp() {
             desc="$(i18n 'timezone.ntp_not_synced_desc' "service=$ntp_service")" \
             suggestion="$(i18n 'timezone.fix_check_ntp')"
         print_warn "$(i18n 'timezone.ntp_not_synced')"
+    elif [[ "$ntp_status" == "unqueryable" ]]; then
+        # Not a "no": nothing could be asked, so no score and no fix.
+        check_emit "timezone.ntp_state_unknown" low failed \
+            desc="$(i18n 'timezone.ntp_state_unknown_desc')"
+        print_warn "$(i18n 'timezone.ntp_state_unknown')"
     else
         check_emit "timezone.ntp_disabled" low failed \
             desc="$(i18n 'timezone.ntp_disabled_desc')" \

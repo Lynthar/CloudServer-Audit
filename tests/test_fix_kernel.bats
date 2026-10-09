@@ -214,7 +214,7 @@ SH
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
     _dropin_has "net.ipv6.conf.all.accept_ra" "0"
-    _dropin_has "net.ipv6.conf.all.accept_ra_defrtr" "0"
+    _dropin_has "net.ipv6.conf.default.accept_ra" "0"
 }
 
 @test "harden_ipv6: an unprobeable host is treated as SLAAC, not as static" {
@@ -246,6 +246,72 @@ SH
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
     _dropin_has "net.ipv6.conf.all.accept_ra" "0"
+}
+
+# ==============================================================================
+# IPv6 keys under all/default: only what reaches an interface, said honestly
+# ==============================================================================
+
+# An IPv6 stack in use, with every net.ipv6 setting the audit reads at $1.
+_ipv6_in_use_at() {
+    source "$(_vpssec_repo_root)/core/state.sh"
+    state_init
+    _kernel_ipv6_enabled() { return 0; }
+    _kernel_ipv6_in_use() { return 0; }
+    _kernel_ipv6_get_stats() { echo ""; }
+    _kernel_ipv6_firewall_check() { echo "filtered"; }
+    local key
+    for key in accept_redirects accept_source_route accept_ra forwarding; do
+        _sysctl_seed "net.ipv6.conf.all.$key" "$1"
+    done
+    _sysctl_seed "net.ipv6.conf.all.use_tempaddr" 2
+}
+
+@test "IPv6 keys that reach no interface, or do not exist, are neither read nor written" {
+    # max_addresses, accept_ra_defrtr/pinfo/rtr_pref, autoconf and dad_transmits
+    # were set under "all" only, which no interface reads; IPv6 has no send_redirects.
+    _host_static_ipv6
+    _ipv6_in_use_at 1
+
+    _kernel_audit_network_params
+    kernel_fix kernel.harden_network
+    kernel_fix kernel.harden_ipv6
+
+    local key
+    for key in max_addresses accept_ra_defrtr accept_ra_pinfo accept_ra_rtr_pref \
+               autoconf dad_transmits send_redirects; do
+        _vpssec_refute grep -q "ipv6\.conf\.[a-z]*\.$key" "$VPSSEC_STUB_LOG"
+        _vpssec_refute grep -q "ipv6\.conf\.[a-z]*\.$key" "$VPSSEC_SYSCTL_CONF"
+    done
+}
+
+_emitted_field() {
+    jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f] // ""' \
+        "$VPSSEC_STATE/checks.json"
+}
+
+@test "the IPv6 and network results say existing interfaces such as eth0 are unchanged" {
+    # all/default reach only interfaces created later, so neither a pass nor
+    # the fix it suggests may read as covering eth0.
+    _host_static_ipv6
+    local lang
+    for lang in en_US zh_CN; do
+        i18n_load "$lang"
+        _ipv6_in_use_at 0
+        _sysctl_seed "net.ipv4.tcp_syncookies" 1
+        _kernel_audit_ipv6
+        _kernel_audit_network_params
+        [[ "$(_emitted_field kernel.ipv6_secure desc)" == *eth0* ]]
+        [[ "$(_emitted_field kernel.network_params_ok desc)" == *eth0* ]]
+
+        _ipv6_in_use_at 1
+        _sysctl_seed "net.ipv4.tcp_syncookies" 0
+        _kernel_audit_ipv6
+        _kernel_audit_network_params
+        [[ "$(_emitted_field kernel.ipv6_insecure suggestion)" == *eth0* ]]
+        [[ "$(_emitted_field kernel.network_params_high suggestion)" == *eth0* ]]
+        [[ "$(_emitted_field kernel.network_params_medium suggestion)" == *eth0* ]]
+    done
 }
 
 # ==============================================================================

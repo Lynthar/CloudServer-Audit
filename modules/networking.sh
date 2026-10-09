@@ -54,17 +54,21 @@ declare -ga NET_PUBLIC_PROCESSES_OK=(
 
 _net_have_ss() { command -v ss >/dev/null 2>&1; }
 
-# Emit TSV: proto, family, ip, port, process per listening socket.
-# Prefers `ss -tulnpH`, falling back to netstat.
-# The family field ("v4" / "v6" / "") keys the downstream checks.
+# Emit TSV: proto, family, ip, port, process per listening socket; fails
+# when no tool could list them, which is not "nothing listens". Prefers
+# `ss -tulnpH`, falling back to netstat. The family field keys the checks.
 _net_list_listeners() {
     local raw
     if _net_have_ss; then
         # -t TCP, -u UDP, -l listening, -n numeric, -p process,
-        # -H suppress header.
-        raw=$(ss -tulnpH 2>/dev/null) || raw=$(ss -tulnp 2>/dev/null | tail -n +2)
+        # -H suppress header (older ss lacks it).
+        if ! raw=$(ss -tulnpH 2>/dev/null); then
+            raw=$(ss -tulnp 2>/dev/null) || return 1
+            raw=$(tail -n +2 <<<"$raw")
+        fi
     elif command -v netstat >/dev/null 2>&1; then
-        raw=$(netstat -tulnp 2>/dev/null | awk '/^(tcp|udp)/')
+        raw=$(netstat -tulnp 2>/dev/null) || return 1
+        raw=$(awk '/^(tcp|udp)/' <<<"$raw")
     else
         return 1
     fi
@@ -176,12 +180,12 @@ _net_proc_in() {
 }
 
 # Interfaces in promiscuous mode, excluding loopback and the virtual/bridge/
-# container families, for which it is the normal mode. veth pairs render as
-# "vethXXXX@ifN", so the @peer suffix is stripped before matching.
+# container families, for which it is the normal mode; fails when `ip` cannot
+# list links. veth pairs render as "vethXXXX@ifN": the @peer suffix is stripped.
 _net_promiscuous_interfaces() {
-    command -v ip >/dev/null 2>&1 || return 0
-    ip -o link show 2>/dev/null \
-        | awk -F': ' '/PROMISC/{print $2}' \
+    local links
+    links=$(ip -o link show 2>/dev/null) || return 1
+    awk -F': ' '/PROMISC/{print $2}' <<<"$links" \
         | awk '{sub(/@.*/, "", $1); print $1}' \
         | grep -vE '^(lo|docker[0-9]*|br-[0-9a-f]+|veth[0-9a-z]*|virbr[0-9]*(-nic)?|cni[0-9]*|flannel\.[0-9]+|kube-[a-z0-9-]+)$' \
         || true
@@ -201,7 +205,12 @@ networking_audit() {
 
 _net_audit_listeners() {
     local listeners
-    listeners=$(_net_list_listeners)
+    if ! listeners=$(_net_list_listeners); then
+        check_emit "networking.listeners_unknown" low failed \
+            desc="$(i18n 'networking.listeners_unknown_desc')"
+        print_severity "low" "$(i18n 'networking.listeners_unknown')"
+        return
+    fi
 
     if [[ -z "$listeners" ]]; then
         # Nothing listening is unusual but not a finding per se —
@@ -324,7 +333,12 @@ _net_audit_listeners() {
 
 _net_audit_promisc() {
     local promisc
-    promisc=$(_net_promiscuous_interfaces)
+    if ! promisc=$(_net_promiscuous_interfaces); then
+        check_emit "networking.promisc_unknown" low failed \
+            desc="$(i18n 'networking.promisc_unknown_desc')"
+        print_severity "low" "$(i18n 'networking.promisc_unknown')"
+        return
+    fi
     promisc=$(echo "$promisc" | grep -v '^$' || true)
 
     if [[ -n "$promisc" ]]; then

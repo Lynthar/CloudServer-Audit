@@ -2,6 +2,12 @@
 # Cloud environment and monitoring-agent detection.
 # Every check here is informational; nothing is modified.
 
+CLOUD_DMI_DIR="${CLOUD_DMI_DIR:-/sys/class/dmi/id}"
+CLOUD_INIT_RUN_DIR="${CLOUD_INIT_RUN_DIR:-/run/cloud-init}"
+# Azure stamps every VM's chassis with this tag; other Hyper-V guests share
+# its "Microsoft Corporation" / "Virtual Machine" DMI strings.
+CLOUD_AZURE_ASSET_TAG="7783-7084-3265-9085-8269-3286-77"
+
 # --- Known Cloud Vendor Agents Database ---
 
 # Format: process_name|service_name|vendor_key|desc_key|can_disable
@@ -167,16 +173,21 @@ _cloud_provider_from_imds() {
 
 _detect_cloud_provider() {
     local provider="unknown"
+    # OpenStack (Nova) answers the EC2 metadata paths with i- instance ids;
+    # once it is known, the shared-IP guessing below would only invent AWS.
+    local openstack=0
 
     # ---------- 1. DMI sys_vendor ----------
-    if [[ -r /sys/class/dmi/id/sys_vendor ]]; then
-        local vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)
+    if [[ -r "$CLOUD_DMI_DIR/sys_vendor" ]]; then
+        local vendor=$(cat "$CLOUD_DMI_DIR/sys_vendor" 2>/dev/null)
         case "$vendor" in
             *"Alibaba"*)     provider="alibaba" ;;
             *"Tencent"*)     provider="tencent" ;;
             *"HUAWEI"*|*"Huawei"*) provider="huawei" ;;
             *"Amazon"*)      provider="aws" ;;
-            *"Microsoft"*)   provider="azure" ;;
+            *"Microsoft"*)
+                [[ "$(cat "$CLOUD_DMI_DIR/chassis_asset_tag" 2>/dev/null)" == "$CLOUD_AZURE_ASSET_TAG" ]] \
+                    && provider="azure" ;;
             *"Google"*)      provider="gcp" ;;
             *"DigitalOcean"*) provider="digitalocean" ;;
             *"Vultr"*|*"Choopa"*) provider="vultr" ;;
@@ -189,13 +200,14 @@ _detect_cloud_provider() {
     fi
 
     # ---------- 2. DMI product_name ----------
-    if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_name ]]; then
-        local product=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
+    if [[ "$provider" == "unknown" && -r "$CLOUD_DMI_DIR/product_name" ]]; then
+        local product=$(cat "$CLOUD_DMI_DIR/product_name" 2>/dev/null)
         case "$product" in
             *"Alibaba"*|*"Aliyun"*|*"ECS"*)  provider="alibaba" ;;
             *"CVM"*|*"Tencent"*)             provider="tencent" ;;
-            *"HVM domU"*|*"HVM"*)            provider="aws" ;;
-            *"Virtual Machine"*)             provider="azure" ;;
+            # Not "HVM domU" (any Xen guest; EC2's uuid prefix decides below)
+            # nor "Virtual Machine" (any Hyper-V guest).
+            *"OpenStack"*)                   openstack=1 ;;   # Nova's default product
             *"Google Compute Engine"*)       provider="gcp" ;;
             *"Droplet"*)                     provider="digitalocean" ;;
             *"Standard PC (Q35"*) ;;  # very generic — KVM default, do not classify
@@ -208,7 +220,7 @@ _detect_cloud_provider() {
     # only stamp these). Only consult if still unknown.
     if [[ "$provider" == "unknown" ]]; then
         local extra
-        for extra in /sys/class/dmi/id/board_vendor /sys/class/dmi/id/bios_vendor /sys/class/dmi/id/chassis_vendor; do
+        for extra in "$CLOUD_DMI_DIR/board_vendor" "$CLOUD_DMI_DIR/bios_vendor" "$CLOUD_DMI_DIR/chassis_vendor"; do
             [[ -r "$extra" ]] || continue
             local val=$(cat "$extra" 2>/dev/null)
             case "$val" in
@@ -224,9 +236,9 @@ _detect_cloud_provider() {
 
     # --- 3. product_uuid prefix: EC2 on Xen, random on Nitro. A tiebreaker
     # for when the DMI vendor is generic. ---
-    if [[ "$provider" == "unknown" && -r /sys/class/dmi/id/product_uuid ]]; then
+    if [[ "$provider" == "unknown" && -r "$CLOUD_DMI_DIR/product_uuid" ]]; then
         # Read may fail with EACCES for non-root; ignore quietly.
-        local uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        local uuid=$(cat "$CLOUD_DMI_DIR/product_uuid" 2>/dev/null | tr '[:upper:]' '[:lower:]')
         if [[ "$uuid" == ec2* ]]; then
             provider="aws"
         fi
@@ -237,13 +249,13 @@ _detect_cloud_provider() {
         local ds=""
 
         # Preferred: cloud-init's resolved cloud-id (single token).
-        if [[ -r /run/cloud-init/cloud-id ]]; then
-            ds=$(head -n1 /run/cloud-init/cloud-id 2>/dev/null | tr -d '[:space:]')
+        if [[ -r "$CLOUD_INIT_RUN_DIR/cloud-id" ]]; then
+            ds=$(head -n1 "$CLOUD_INIT_RUN_DIR/cloud-id" 2>/dev/null | tr -d '[:space:]')
         fi
 
         # Next: ds-identify.log (multi-line; first datasource: line wins).
-        if [[ -z "$ds" && -f /run/cloud-init/ds-identify.log ]]; then
-            ds=$(grep -oP 'datasource: \K\w+' /run/cloud-init/ds-identify.log 2>/dev/null | head -1)
+        if [[ -z "$ds" && -f "$CLOUD_INIT_RUN_DIR/ds-identify.log" ]]; then
+            ds=$(grep -oP 'datasource: \K\w+' "$CLOUD_INIT_RUN_DIR/ds-identify.log" 2>/dev/null | head -1)
         fi
 
         # Persisted datasource (survives reboot, set by cloud-init init).
@@ -284,8 +296,14 @@ _detect_cloud_provider() {
                 # OVH and several Chinese clouds use OpenStack — stays
                 # unknown unless one of the offline signals above
                 # already pinned it.
-                ;;
+                openstack=1 ;;
         esac
+    fi
+
+    # A vendor named offline stands; only an OpenStack host nothing named stops.
+    if [[ "$provider" == "unknown" ]] && (( openstack )); then
+        echo "unknown"
+        return 0
     fi
 
     # ---------- 5. Provider-specific files ----------
@@ -369,6 +387,11 @@ _detect_cloud_provider() {
 
         if [[ -n "$_imds_body" ]]; then
             provider=$(_cloud_provider_from_imds "$_imds_body")
+            # Nova serves i-%08x ids too; its own metadata tree tells it apart.
+            if [[ "$provider" == aws* ]] && curl -fs --connect-timeout 1 -m 2 \
+                http://169.254.169.254/openstack/latest/meta_data.json >/dev/null 2>&1; then
+                provider="unknown"
+            fi
         else
             # Try Azure (header-required path) and GCP (header + path).
             if curl -fs --connect-timeout 1 -m 2 -H "Metadata: true" \

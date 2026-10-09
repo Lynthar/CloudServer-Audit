@@ -104,3 +104,9 @@ run_case "dispatch/unknown-id-succeeds" 1 \
 run_case "enable/rescue-failure-announced-as-done" 1 \
     "            print_warn \"\$(i18n 'ufw.rescue_rule_failed' \"ip=\$current_ip\")\"" \
     "            print_info \"\$(i18n 'ufw.current_ip_whitelisted' \"ip=\$current_ip\")\""
+
+# The confirmation screen: an inactive ufw's `status` lists no rules at all,
+# so the operator confirms blind (it is only offered while ufw is inactive).
+run_case "enable/confirm-screen-shows-status" 1 \
+    '    LC_ALL=C ufw show added 2>/dev/null | head -20 | tty_out' \
+    '    LC_ALL=C ufw status 2>/dev/null | head -20 | tty_out'

@@ -1,0 +1,31 @@
+# Plant: a restic binary (a stub that only prints a version), so the schedule
+# check runs. The host keeps Debian's own cron.daily/dpkg and dpkg-db-backup.timer,
+# which back up dpkg's database, not the host.
+# Expect: backup.no_schedule, where backup.scheduled used to pass on every Debian.
+# Severity: low, failed (info category).
+#
+# Safety: restore removes the stub; precheck skips a host that already has
+# restic or any real backup schedule.
+TEST_DESC="Debian's dpkg-db-backup is not a backup schedule"
+EXPECT_ID="backup.no_schedule"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="backup"
+
+_RESTIC="/usr/local/bin/restic"
+
+precheck() {
+    [[ ! -e "$_RESTIC" ]] && ! command -v restic >/dev/null 2>&1 &&
+        [[ -f /etc/cron.daily/dpkg ]] &&
+        ! grep -rqsE 'restic|borg|rclone|rsnapshot' /etc/crontab /etc/cron.d /etc/cron.daily
+}
+
+mutate() {
+    printf '%s\n' '#!/bin/sh' 'echo "restic 0.16.0"' > "$_RESTIC"
+    chmod 755 "$_RESTIC"
+}
+
+restore() {
+    rm -f "$_RESTIC"
+    return 0
+}

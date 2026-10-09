@@ -48,8 +48,8 @@ declare -gA FIX_SAFE=(
     ["ufw.install"]="true"
     ["ufw.allow_ssh"]="true"
 
-    # enable_live_restore stays CONFIRM: it needs a docker restart, which
-    # pauses every running container.
+    # enable_live_restore stays CONFIRM: its reload applies every pending
+    # reloadable daemon.json change, not only this one.
 
     # Template generation only
     ["docker.generate_proxy_template"]="true"
@@ -107,8 +107,8 @@ declare -gA FIX_CONFIRM=(
     ["update.enable_unattended"]="Enables automatic unattended installation of security updates"
 
     # Requires service restart
-    ["docker.enable_no_new_privileges"]="Requires Docker daemon restart"
-    ["docker.enable_live_restore"]="Requires a Docker daemon restart, which briefly pauses every running container"
+    ["docker.enable_no_new_privileges"]="Restarts the Docker daemon, which stops every running container unless live-restore is on; applies only to containers created afterwards"
+    ["docker.enable_live_restore"]="Reloads the Docker daemon (no restart); any other pending reloadable daemon.json change takes effect too"
 
     # Interactive: prompts for a timezone, and is offered on hosts whose
     # timezone is already correct so the operator can change it on purpose.
@@ -253,7 +253,6 @@ declare -gA FIX_SELF_CONFIRMED=(
     ["ssh.disable_root_login"]="true"           # confirm_critical after admin-user precondition (modules/ssh.sh)
     ["ufw.enable"]="true"                        # confirm_critical after showing current rules (modules/ufw.sh)
     ["docker.enable_no_new_privileges"]="true"  # confirm_critical before daemon restart (modules/docker.sh)
-    ["docker.enable_live_restore"]="true"       # same writer, same confirm_critical (modules/docker.sh)
 )
 
 # Fixes that CANNOT resolve the finding they hang off. They still return 0;
@@ -273,9 +272,8 @@ declare -gA FIX_TEMPLATE_ONLY=(
 # runs after the fix succeeds, so the fix reports what the next audit will
 # see, not merely that its file write worked. Undeclared fixes are untouched.
 declare -gA FIX_VERIFY=(
-    # These two differ on purpose: live-restore is observable only on a
-    # RUNNING daemon (declining the restart fails the fix), while
-    # no-new-privileges is satisfied by daemon.json alone.
+    # Both ask the running daemon when it can answer (no-new-privileges from
+    # Engine 24), so a setting written but not loaded fails the fix.
     ["docker.enable_live_restore"]="_docker_check_live_restore"
     ["docker.enable_no_new_privileges"]="_docker_check_no_new_privileges"
 
@@ -441,6 +439,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # not measure anything, so it must not move the score in either
     # direction — the old behaviour handed such a host a free pass.
     ["docker.daemon_unreachable"]="info"
+    ["docker.podman_daemon_not_checked"]="info"   # not measured: no score either way
     ["docker.exposed_ports"]="conditional"
     ["docker.no_exposed_ports"]="conditional"
     ["docker.privileged_containers"]="conditional"
@@ -517,8 +516,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["logging.journal_unreadable"]="info"
     ["logging.ssh_many_failures"]="info"
     ["logging.ssh_some_failures"]="info"
-    ["logging.sudo_logging_ok"]="recommended"
-    ["logging.sudo_no_events"]="recommended"
+    # Both states pass, so the check measures nothing: never scored.
+    ["logging.sudo_logging_ok"]="info"
+    ["logging.sudo_no_events"]="info"
 
     # === Cloudflared Module - conditional (only if installed) ===
     ["cloudflared.not_installed"]="info"
@@ -544,6 +544,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["networking.listeners_ok"]="recommended"
     ["networking.promiscuous_interface"]="required"
     ["networking.no_promisc"]="recommended"
+    ["networking.listeners_unknown"]="info"      # not measured: no score either way
+    ["networking.promisc_unknown"]="info"        # not measured: no score either way
 
     # === Scheduling Module - recommended (Lynis SCHD-* cross-check) ===
     ["scheduling.at_jobs_present"]="info"
@@ -582,6 +584,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.ipv6_enabled_unused"]="info"
     ["kernel.ipv6_firewall_missing"]="required"
     ["kernel.ipv6_firewall_ok"]="recommended"
+    ["kernel.ipv6_firewall_unreadable"]="info"   # not measured: no score either way
 
     # === Filesystem Module ===
     ["filesystem.suspicious_suid"]="recommended"
@@ -652,6 +655,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["timezone.ntp_synced"]="recommended"
     ["timezone.ntp_not_synced"]="recommended"
     ["timezone.ntp_disabled"]="recommended"
+    ["timezone.ntp_state_unknown"]="info"       # not measured: no score either way
     ["timezone.rtc_local"]="info"
     ["timezone.locale_ok"]="info"
     ["timezone.locale_not_set"]="info"
