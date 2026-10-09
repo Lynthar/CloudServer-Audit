@@ -81,19 +81,19 @@ no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 
-`vpssec audit` runs 323 checks across 21 modules:
+`vpssec audit` runs 336 checks across 21 modules:
 
 | Area | Checks | What it covers |
 |---|---|---|
-| System and kernel | 72 | `sysctl` network and memory settings, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
-| SSH and accounts | 67 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
-| Containers and web apps | 52 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
-| Detection and logging | 47 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
+| System and kernel | 78 | `sysctl` network and memory settings, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
+| SSH and accounts | 68 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
+| Containers and web apps | 55 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
+| Detection and logging | 49 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
 | Network and firewall | 45 | UFW rules and default policy, listening sockets vs what you meant to expose, nginx reverse-proxy exposure, cloudflared tunnels |
-| Baseline and ops | 40 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
+| Baseline and ops | 41 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
 
 **124 of those checks have a fix attached**, graded by how much impact they can
-have: 28 apply straight away, 18 ask before applying, 5 require you to type a
+have: 27 apply straight away, 19 ask before applying, 5 require you to type a
 confirmation, and 73 are registered but never run automatically.
 
 ## Configuration
@@ -130,7 +130,8 @@ State, reports and backups all live under the install tree.
 ## Documentation
 
 - [User guide](docs/user-guide.md) — full command reference, how the score is
-  computed, every module, CI integration. Written in Chinese.
+  computed, what the eight core modules check and how to fix them by hand, CI
+  integration. Written in Chinese.
 - [Compatibility](docs/compatibility.md) — what semantic versioning covers here,
   and what it explicitly doesn't.
 
@@ -147,8 +148,8 @@ the moment you run the command. If you'd rather not, read a release you've
 reviewed and run its scripts instead.
 
 Before disabling password or root SSH login, a second sshd comes up on a spare
-port and you have to confirm you can still connect. Every run writes to
-`backups/<timestamp>/` first.
+port and you have to confirm you can still connect. Before a fix changes a file,
+the original goes into `backups/<timestamp>/`.
 
 There's no private disclosure channel yet. Until there is, please don't file
 sensitive findings as public issues.

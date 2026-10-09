@@ -128,6 +128,18 @@ _alive() {
     [[ -n "$st" && "$st" != Z ]]
 }
 
+# Opening and closing the rescue set and clear EXIT/INT/TERM/HUP traps in the
+# calling shell, which here is bats' test process: put bats' traps back after,
+# or a failed assertion that follows is never reported and the test vanishes.
+_keeping_bats_traps() {
+    local saved rc=0
+    saved=$(trap -p EXIT INT TERM HUP)
+    "$@" || rc=$?
+    trap - EXIT INT TERM HUP
+    eval "$saved"
+    return "$rc"
+}
+
 # A stand-in vpssec in its own process: it arms the watchdog over a fake rescue
 # daemon ($1) and then blocks, as it would at the confirmation prompt. $2 and
 # $3 override the confirmation window and the grace period.
@@ -178,7 +190,7 @@ _vpssec_holding_rescue() {
     _ssh_rescue_start_watchdog
     local dog="$SSH_RESCUE_WATCHDOG_PID" rescue="$SSH_RESCUE_PID" i
 
-    _ssh_close_rescue_port
+    _keeping_bats_traps _ssh_close_rescue_port
     for i in $(seq 1 30); do _alive "$dog" || break; sleep 0.1; done
     _vpssec_refute _alive "$dog"
     _vpssec_refute _alive "$rescue"
@@ -213,11 +225,11 @@ SH
     _ssh_rescue_is_up() { kill -0 "$SSH_RESCUE_PID" 2>/dev/null; }
     _ssh_rescue_allow_firewall() { :; }
 
-    _ssh_open_rescue_port
+    _keeping_bats_traps _ssh_open_rescue_port
     local dog="$SSH_RESCUE_WATCHDOG_PID" rescue="$SSH_RESCUE_PID"
     [ -n "$dog" ]
     _alive "$dog"
 
-    _ssh_close_rescue_port
+    _keeping_bats_traps _ssh_close_rescue_port
     _vpssec_refute _alive "$rescue"
 }

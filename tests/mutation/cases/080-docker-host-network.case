@@ -14,6 +14,7 @@ EXPECT_STATUS="failed"
 EXPECT_SEVERITY="medium"
 EXPECT_DESC_CONTAINS="vpssec-mutation-net"
 MODULE="docker"
+MANUAL_ONLY="needs a docker daemon, which the container does not run"
 
 _CTR_NAME="vpssec-mutation-net"
 

@@ -13,15 +13,21 @@ EXPECT_SEVERITY="medium"
 MODULE="users"
 
 _BACKUP="/etc/passwd.vpssec-mutation-bak"
+_REGULAR="vpssecreg"
+_ADDED=0
 
-precheck() {
-    # Need a regular (non-root, non-nobody) UID to alias.
-    awk -F: '$3 >= 1000 && $3 < 65000 {found=1; exit} END {exit !found}' /etc/passwd
-}
+_regular_uid() { awk -F: '$3 >= 1000 && $3 < 65000 {print $3; exit}' /etc/passwd; }
 
+# The UID to alias is a regular user's; a host with none (the container) gets
+# one, locked and without a home, removed again by restore.
 mutate() {
     local target_uid
-    target_uid=$(awk -F: '$3 >= 1000 && $3 < 65000 {print $3; exit}' /etc/passwd)
+    target_uid=$(_regular_uid)
+    if [[ -z "$target_uid" ]]; then
+        useradd -M -s /usr/sbin/nologin "$_REGULAR" || return 1
+        _ADDED=1
+        target_uid=$(_regular_uid)
+    fi
     [[ -z "$target_uid" ]] && return 1
     cp /etc/passwd "$_BACKUP" || return 1
     printf 'vpssecdup:x:%s:65534:vpssec mutation test:/nonexistent:/usr/sbin/nologin\n' \
@@ -31,5 +37,6 @@ mutate() {
 
 restore() {
     [[ -f "$_BACKUP" ]] && mv "$_BACKUP" /etc/passwd
+    (( _ADDED == 1 )) && userdel "$_REGULAR" >/dev/null 2>&1
     return 0
 }

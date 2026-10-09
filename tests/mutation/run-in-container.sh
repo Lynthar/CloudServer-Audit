@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run tests/mutation/run.sh inside a throwaway systemd container built from the
 # Dockerfile next to this script. Arguments are passed through (case filter).
-# Needs Docker; --privileged because systemd must be PID 1 with a writable cgroup.
+# Always --strict: the cases are written for this image, so a skip here means
+# it drifted. Needs Docker; --privileged because systemd must be PID 1.
 set -euo pipefail
 
 MUTATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,4 +23,4 @@ for _ in $(seq 1 30); do
 done
 
 docker cp "${PROJECT_ROOT}/." "$cid:/opt/vpssec"
-docker exec "$cid" bash /opt/vpssec/tests/mutation/run.sh "$@"
+docker exec "$cid" bash /opt/vpssec/tests/mutation/run.sh --strict "$@"

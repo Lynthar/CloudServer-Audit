@@ -166,6 +166,92 @@ _checklist_tags_only() {
     [ ! -f "$BATS_TEST_TMPDIR/handler-ran" ]
 }
 
+# ---- execute_fix's confirmation gate ------------------------------------------
+
+# Each prompt records that it was asked and answers $1 (confirm) / $2
+# (confirm_critical), 0 meaning yes; the handler records the id it ran.
+_gate_answers() {
+    CONFIRM_RC=$1 CRITICAL_RC=$2
+    confirm() { echo confirm >> "$BATS_TEST_TMPDIR/asked"; return "$CONFIRM_RC"; }
+    confirm_critical() { echo confirm_critical >> "$BATS_TEST_TMPDIR/asked"; return "$CRITICAL_RC"; }
+    fake_fix() { echo "$1" >> "$BATS_TEST_TMPDIR/ran"; }
+}
+
+_asked() { cat "$BATS_TEST_TMPDIR/asked" 2>/dev/null || true; }
+
+@test "gate: a RISKY fix is asked through confirm_critical, which --yes does not answer" {
+    # confirm says yes here, as --yes makes it; only the critical prompt counts.
+    export VPSSEC_YES=1
+    FIX_RISKY["fake.risky"]="test fixture"
+    _gate_answers 0 1
+
+    run execute_fix fake.risky
+    [ "$status" -eq 1 ]
+    [ "$(_asked)" = confirm_critical ]
+    [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+}
+
+@test "gate: a CONFIRM fix is asked through confirm, and a no stops it" {
+    FIX_CONFIRM["fake.conf"]="test fixture"
+    _gate_answers 1 0
+
+    run execute_fix fake.conf
+    [ "$status" -eq 1 ]
+    [ "$(_asked)" = confirm ]
+    [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+}
+
+@test "gate: --yes with no terminal applies a CONFIRM fix and refuses a RISKY one" {
+    # The real prompts, no stand-ins. setsid: no controlling terminal, so the
+    # critical prompt's read fails at once instead of waiting on whoever runs this.
+    local root
+    root=$(_vpssec_repo_root)
+    cat > "$BATS_TEST_TMPDIR/probe.sh" <<SH
+source "$root/core/common.sh"
+VPSSEC_STATE="$VPSSEC_STATE" VPSSEC_BACKUPS="$VPSSEC_BACKUPS" VPSSEC_LOGS="$VPSSEC_LOGS"
+_log_file="$VPSSEC_LOGS/vpssec.log"
+source "$root/core/state.sh"
+source "$root/core/security_levels.sh"
+source "$root/core/engine.sh"
+i18n_load en_US
+VPSSEC_YES=1
+FIX_CONFIRM[fake.conf]='test fixture'
+FIX_RISKY[fake.risky]='test fixture'
+fake_fix() { echo "\$1" >> "$BATS_TEST_TMPDIR/ran"; }
+rc=0; execute_fix fake.conf || rc=\$?; echo "conf=\$rc"
+rc=0; execute_fix fake.risky || rc=\$?; echo "risky=\$rc"
+SH
+    run setsid -w bash "$BATS_TEST_TMPDIR/probe.sh" </dev/null
+    [[ "$output" == *"conf=0"* ]]
+    [[ "$output" == *"risky=1"* ]]
+    [ "$(cat "$BATS_TEST_TMPDIR/ran")" = fake.conf ]
+}
+
+@test "gate: real fixes are asked through the prompt their class names, or not at all" {
+    # Engine and classification together: a RISKY id reclassified as CONFIRM
+    # would apply under --yes while every class test stayed green.
+    _gate_answers 0 0
+    FIX_VERIFY=()   # dispatch is stubbed, so no audit predicate could see a change
+    update_fix() { echo "$1" >> "$BATS_TEST_TMPDIR/ran"; }
+    ufw_fix() { echo "$1" >> "$BATS_TEST_TMPDIR/ran"; }
+    ssh_fix() { echo "$1" >> "$BATS_TEST_TMPDIR/ran"; }
+
+    local id want
+    while read -r id want; do
+        rm -f "$BATS_TEST_TMPDIR/asked" "$BATS_TEST_TMPDIR/ran"
+        run execute_fix "$id"
+        [ "$status" -eq 0 ]
+        [ "$(_asked)" = "${want#-}" ]
+        [ "$(cat "$BATS_TEST_TMPDIR/ran")" = "$id" ]
+    done <<'EOF'
+update.apply_security confirm_critical
+ufw.set_default_deny confirm_critical
+ssh.harden_algorithms confirm
+ssh.disable_empty_password -
+ssh.disable_password_auth -
+EOF
+}
+
 # ---- module-failure visibility ---------------------------------------------
 
 @test "audit_module records a failed module as an _internal check" {

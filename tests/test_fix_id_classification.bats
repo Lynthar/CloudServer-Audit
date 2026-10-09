@@ -8,13 +8,10 @@ setup() {
     SL="$REPO/core/security_levels.sh"
 }
 
-# Keys of the four FIX_* maps = every ["..."] entry before the
-# CHECK_SCORE_CATEGORY map starts.
+# Fix ids with a selectable safety class. Keys of the other FIX_* maps do not
+# count: an id listed only in FIX_VERIFY still reads "unknown" to get_fix_safety.
 _classified_fix_ids() {
-    local end
-    end=$(grep -n 'CHECK_SCORE_CATEGORY=' "$SL" | head -1 | cut -d: -f1)
-    awk -v e="$end" 'NR<e' "$SL" \
-        | grep -oE '\["[a-zA-Z0-9_.]+"\]' | tr -d '["]' | sort -u
+    { _map_keys FIX_SAFE; _map_keys FIX_CONFIRM; _map_keys FIX_RISKY; } | sort -u
 }
 
 # One line per emitted check, "<id>\t<fix>". Sites: `check_emit "<id>" …` /
@@ -54,14 +51,10 @@ _emitted_sites() {
     ' "$@"
 }
 
-_emitted_fix_ids() {
-    _emitted_sites "$REPO"/modules/*.sh | cut -f2 | grep -v '^$' | sort -u
-}
-
 @test "every emitted fix_id is classified in a FIX_* map" {
     local classified emitted orphans="" fid
     classified=$(_classified_fix_ids)
-    emitted=$(_emitted_fix_ids)
+    emitted=$(_emitted_fix_ids_all | sort -u)
 
     while IFS= read -r fid; do
         [[ -z "$fid" ]] && continue
@@ -69,7 +62,7 @@ _emitted_fix_ids() {
     done <<<"$emitted"
 
     if [[ -n "$orphans" ]]; then
-        echo "Unclassified fix_id(s) — add to a FIX_* map in core/security_levels.sh:"
+        echo "Unclassified fix_id(s) — add to FIX_SAFE, FIX_CONFIRM or FIX_RISKY:"
         echo "  $orphans"
         false
     fi
@@ -295,6 +288,20 @@ _emitted_check_ids() {
     if [[ -n "$orphans" ]]; then
         echo "CHECK_SCORE_CATEGORY entry for a check no module emits:"
         echo "  $orphans"
+        false
+    fi
+}
+
+@test "every emitted check id has a score category" {
+    # An unlisted id is scored as info by default, so a forgotten entry hides:
+    # a check meant to count would silently move no score at all.
+    local missing
+    missing=$(comm -23 <(_emitted_check_ids | sort -u) <(_map_keys CHECK_SCORE_CATEGORY))
+
+    if [[ -n "$missing" ]]; then
+        echo "Emitted check id with no CHECK_SCORE_CATEGORY entry (register it,"
+        echo "as \"info\" if it must not move the score):"
+        echo "  ${missing//$'\n'/ }"
         false
     fi
 }

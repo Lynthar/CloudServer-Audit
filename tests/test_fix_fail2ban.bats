@@ -114,18 +114,6 @@ EOF
     [ "$(sha256sum < "$F2B_JAIL_LOCAL")" = "$before" ]
 }
 
-@test "configure: the drop-in lands in jail.d and is a .local" {
-    # Both halves are load-bearing, and measured against a real fail2ban-client:
-    # jail.d beats the operator's jail.local, and within jail.d the *.local tier
-    # beats the distro's defaults-debian.conf. Renaming to .conf loses the second.
-    _f2b_jail_comes_up
-    run _f2b_fix_configure_ssh_jail
-    [ "$status" -eq 0 ]
-    [ "$(dirname "$F2B_DROPIN")" = "$F2B_JAIL_D" ]
-    [[ "$F2B_DROPIN" == *.local ]]
-    [ -f "$F2B_DROPIN" ]
-}
-
 @test "configure: the drop-in carries the sshd jail and the hardened values" {
     _f2b_jail_comes_up
     run _f2b_fix_configure_ssh_jail

@@ -91,3 +91,56 @@ _cosign_fails_first() {
         [[ "$output" != *"stdout-noise"* ]]
     done
 }
+
+# ---- what cosign is asked to accept --------------------------------------
+# The whole argv is pinned, not just the identity: a regexp flag, a dropped
+# issuer or an --insecure-* switch each widens who may sign a release root runs.
+
+_cosign_records_argv() {
+    ARGV="$BATS_TEST_TMPDIR/cosign-argv"
+    STAGE="$BATS_TEST_TMPDIR/stage"
+    cosign() { printf '%s\n' "$@" > "$ARGV"; return 1; }
+    mktemp() { mkdir -p "$STAGE"; echo "$STAGE"; }
+    curl() { : > "${*: -1}"; }
+    print_info() { :; }
+    print_ok() { :; }
+    VPSSEC_NO_VERIFY=0
+    # Not the VERSION file's tag, so a pin to anything but the tag requested shows.
+    VPSSEC_VERSION="v9.8.7"
+}
+
+_expected_argv() {
+    printf '%s\n' verify-blob --bundle "$1.sig.json" \
+        --certificate-identity \
+        "https://github.com/Lynthar/CloudServer-Audit/.github/workflows/release.yml@refs/tags/v9.8.7" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        "$1"
+}
+
+@test "run.sh asks cosign for this repo's release workflow at the requested tag, and nothing looser" {
+    local src
+    src="$(_vpssec_repo_root)/run.sh"
+    _load_from run.sh
+    eval "$(grep -E '^(VPSSEC_REPO|COSIGN_OIDC_ISSUER)=' "$src")"
+    eval "$(awk '/^download_and_verify\(\)/,/^}/' "$src")"
+    _cosign_records_argv
+
+    run download_and_verify
+    [ "$status" -eq 1 ]
+    [ "$(cat "$ARGV")" = "$(_expected_argv vpssec-9.8.7.tar.gz)" ]
+}
+
+@test "install.sh asks cosign for this repo's release workflow at the requested tag, and nothing looser" {
+    local src
+    src="$(_vpssec_repo_root)/install.sh"
+    _load_from install.sh
+    unset GITHUB_REPO
+    eval "$(grep -E '^(GITHUB_REPO|COSIGN_OIDC_ISSUER)=' "$src")"
+    eval "$(awk '/^install_vpssec\(\)/,/^}/' "$src")"
+    _cosign_records_argv
+    INSTALL_DIR="$BATS_TEST_TMPDIR/opt-vpssec"
+
+    run install_vpssec
+    [ "$status" -eq 1 ]
+    [ "$(cat "$ARGV")" = "$(_expected_argv "$STAGE/vpssec-9.8.7.tar.gz")" ]
+}

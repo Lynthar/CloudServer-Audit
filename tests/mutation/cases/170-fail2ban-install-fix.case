@@ -21,12 +21,10 @@ precheck() {
 }
 
 mutate() {
-    return 0
+    host_snapshot /etc/fail2ban /var/lib/fail2ban /run/fail2ban /var/log/fail2ban.log
 }
 
 restore() {
-    systemctl disable --now fail2ban >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq fail2ban >/dev/null 2>&1
     rm -f /etc/fail2ban/jail.d/99-vpssec-sshd.local
-    return 0
+    host_restore fail2ban.service
 }

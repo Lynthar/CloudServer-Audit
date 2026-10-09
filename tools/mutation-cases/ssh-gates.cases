@@ -45,3 +45,13 @@ run_case "rootoff/password-state-assumed" 1 \
 run_case "passwordoff/root-fallback-ignores-refusal" 1 \
     '        if _ssh_can_login_with_key "root"; then' \
     '        if true; then'
+
+# Each SSH fix's rescue confirmation, skipped: the change lands without the
+# operator having tested the way back in.
+run_case "passwordoff/rescue-confirmation-skipped" 1 \
+    '    if ! confirm_critical "$(i18n '"'"'ssh.rescue_port_verify'"'"' "port=$SSH_RESCUE_PORT")"; then' \
+    '    if false; then'
+
+run_case "rootoff/rescue-confirmation-skipped" 2 \
+    '    if ! confirm_critical "$(i18n '"'"'ssh.rescue_port_verify'"'"' "port=$SSH_RESCUE_PORT")"; then' \
+    '    if false; then'

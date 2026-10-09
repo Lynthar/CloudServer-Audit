@@ -14,16 +14,16 @@ run_case "declined/flag-carries-over" 1 \
     '    :'
 # The engine's own prompt answered no is a failure again.
 run_case "declined/engine-prompt-fails" 1 \
-    '                    return 2' \
-    '                    return 1'
+    '                return 2' \
+    '                return 1'
 # A fix's own prompt answered no is a failure again.
 run_case "declined/self-prompt-fails" 1 \
     '        elif (( _VPSSEC_DECLINED )); then' \
     '        elif false; then'
 # An unread confirmation loses the message that says nobody answered.
 run_case "declined/unread-unsaid" 1 \
-    "                print_warn \"\$(i18n 'fix.unconfirmed')\"" \
-    '                :'
+    "            print_warn \"\$(i18n 'fix.unconfirmed')\"" \
+    '            :'
 # A skipped fix goes down the failure path: Failed, the menu, exit 1.
 run_case "skipped/handled-as-failure" 1 \
     '        elif (( fix_rc == 2 )); then' \

@@ -5,7 +5,8 @@ name: mutation sweep
 # commit, but exactly what catches a suite that has quietly stopped testing
 # the thing it is named after. Every case file, every anchor, one total.
 #
-# A red run means a planted defect SURVIVED, or an anchor/pairing broke.
+# A red run means a planted defect SURVIVED, an anchor/pairing broke, or a
+# suite died without failing a test (NOT-RUN: no verdict, not a kill).
 # A survivor has three possible meanings — uncovered code, an assertion
 # asking the wrong question, or inert code — read tools/mutate-suite.sh's
 # header before "fixing" the cases file.
@@ -65,7 +66,8 @@ jobs:
       - name: What a red run means
         if: failure()
         run: |
-          echo "A planted defect was NOT caught, or an anchor/pairing broke."
+          echo "A planted defect was NOT caught, an anchor/pairing broke, or a suite"
+          echo "died without failing a test (NOT-RUN) -- rerun before reading it as a gap."
           echo "Read the per-file lines above, then reproduce one file locally with:"
           echo "    bash tools/mutate-all.sh <stem>"
           echo "Interpret a survivor with the three meanings in tools/mutate-suite.sh's"

@@ -551,48 +551,44 @@ generate_plan() {
 # answer must have changed nothing by then).
 execute_fix() {
     local fix_id="$1"
-    local skip_safety_check="${2:-false}"
     local module="${fix_id%%.*}"
     _VPSSEC_DECLINED=0
 
-    # Check fix safety (unless explicitly skipped)
-    if [[ "$skip_safety_check" != "true" ]]; then
-        local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
+    local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
 
-        # A whitelist, not a blacklist: nothing runs unless a FIX_* map says how
-        # safe it is. An unclassified id used to fall past the alert_only test
-        # and apply unconfirmed, with only a source-text grep in CI guarding it.
-        if ! can_fix "$fix_id"; then
-            if [[ "$safety" == "alert_only" ]]; then
-                local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
-                print_warn "$(i18n 'fix.alert_only'): $warning"
-            else
-                log_error "Refusing unclassified fix_id: $fix_id"
-                print_warn "$(i18n 'fix.unclassified' "id=$fix_id")"
-            fi
-            return 1
+    # A whitelist, not a blacklist: nothing runs unless a FIX_* map says how
+    # safe it is. An unclassified id used to fall past the alert_only test
+    # and apply unconfirmed, with only a source-text grep in CI guarding it.
+    if ! can_fix "$fix_id"; then
+        if [[ "$safety" == "alert_only" ]]; then
+            local warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "No auto-fix available")
+            print_warn "$(i18n 'fix.alert_only'): $warning"
+        else
+            log_error "Refusing unclassified fix_id: $fix_id"
+            print_warn "$(i18n 'fix.unclassified' "id=$fix_id")"
         fi
+        return 1
+    fi
 
-        # Confirmation is enforced centrally so no confirm/risky fix can apply
-        # unacknowledged. FIX_SELF_CONFIRMED fixes prompt themselves and are
-        # skipped here. Risky uses confirm_critical, which ignores --yes.
-        if fix_needs_engine_confirmation "$fix_id"; then
-            local warning
-            warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
-            local confirmed=0
-            if fix_is_risky "$fix_id"; then
-                confirm_critical "$(i18n 'fix.risky'): $warning" && confirmed=1
-            else
-                confirm "$(i18n 'fix.confirm'): $warning" && confirmed=1
+    # Confirmation is enforced centrally so no confirm/risky fix can apply
+    # unacknowledged. FIX_SELF_CONFIRMED fixes prompt themselves and are
+    # skipped here. Risky uses confirm_critical, which ignores --yes.
+    if fix_needs_engine_confirmation "$fix_id"; then
+        local warning
+        warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
+        local confirmed=0
+        if fix_is_risky "$fix_id"; then
+            confirm_critical "$(i18n 'fix.risky'): $warning" && confirmed=1
+        else
+            confirm "$(i18n 'fix.confirm'): $warning" && confirmed=1
+        fi
+        if (( ! confirmed )); then
+            if (( _VPSSEC_DECLINED )); then
+                print_warn "$(i18n 'fix.declined')"
+                return 2
             fi
-            if (( ! confirmed )); then
-                if (( _VPSSEC_DECLINED )); then
-                    print_warn "$(i18n 'fix.declined')"
-                    return 2
-                fi
-                print_warn "$(i18n 'fix.unconfirmed')"
-                return 1
-            fi
+            print_warn "$(i18n 'fix.unconfirmed')"
+            return 1
         fi
     fi
 

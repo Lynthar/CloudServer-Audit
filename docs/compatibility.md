@@ -58,7 +58,7 @@ same reasons will likewise exit 1 instead of 0.
 
 ## Score
 
-The formula (README → Security score) changes only in a MAJOR release.
+The formula (user guide, Appendix B) changes only in a MAJOR release.
 Adding checks in a MINOR release can still move absolute scores — compare
 scores only between runs of the same version and module set, and read
 `meta.partial_scope` / `stats.scored_total` before comparing anything.

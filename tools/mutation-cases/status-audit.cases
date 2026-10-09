@@ -15,3 +15,11 @@ run_case "status/incomplete-unsaid" 1 \
 run_case "status/never-untranslated" 1 \
     "    never=\$(i18n 'status.never')" \
     '    never=never'
+
+# A user who cannot read state/ sees the version line and then nothing.
+run_case "status/unreadable-state-silent" 1 \
+    '    if [[ -d "${VPSSEC_STATE}" && ! -r "${VPSSEC_STATE}" ]]; then' \
+    '    if false; then'
+run_case "status/unreadable-state-unsaid" 1 \
+    "        print_msg \"  \$(i18n 'status.state_unreadable')\"" \
+    '        print_msg ""'

@@ -1,0 +1,32 @@
+# Mutation cases: tests/test_ssh_lockout_predicates.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_lockout_predicates.bats
+#
+# The lockout gates' predicates on real inputs. ssh-gates.cases covers how the
+# gates combine them; a survivor here is a predicate that answers "can log in"
+# for an account sshd or the system would turn away.
+
+run_case "account/nologin-shell-counted" 1 \
+    '        */nologin|*/false) return 1 ;;' \
+    '        */nologin|*/false) ;;'
+
+run_case "account/expiry-ignored" 1 \
+    '        (( expire <= today )) && return 1' \
+    '        :'
+
+run_case "keylogin/root-refusal-ignored" 1 \
+    '        [[ "${prl,,}" == "no" ]] && return 1' \
+    '        :'
+
+run_case "keylogin/pubkey-off-ignored" 1 \
+    '    _ssh_pubkey_enabled || return 1' \
+    '    :'
+
+# %h left literal: the key file sshd reads is never the one counted.
+run_case "keys/home-token-unexpanded" 1 \
+    '        path="${path//%h/"$home_dir"}"' \
+    '        :'
+
+# Relative AuthorizedKeysFile resolved against the cwd instead of the home.
+run_case "keys/relative-path-not-under-home" 1 \
+    '        [[ "$path" != /* ]] && path="$home_dir/$path"' \
+    '        :'

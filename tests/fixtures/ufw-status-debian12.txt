@@ -1,0 +1,17 @@
+Status: active
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW       Anywhere                  
+2222/tcp                   LIMIT       Anywhere                  
+3306                       ALLOW       Anywhere                  
+Anywhere                   ALLOW       203.0.113.9                # Current session (vpssec rescue)
+22/tcp (v6)                ALLOW       Anywhere (v6)             
+2222/tcp (v6)              LIMIT       Anywhere (v6)             
+3306 (v6)                  ALLOW       Anywhere (v6)             
+
+8080/tcp                   ALLOW OUT   Anywhere                  
+9100/tcp                   ALLOW OUT   Anywhere                  
+8080/tcp (v6)              ALLOW OUT   Anywhere (v6)             
+9100/tcp (v6)              ALLOW OUT   Anywhere (v6)             
+

@@ -1,0 +1,20 @@
+# Mutation cases: tests/test_audit_header.bats against vpssec.
+# mutate-suite: vpssec tests/test_audit_header.bats
+#
+# The header line before an audit: which modules a partial run covers.
+
+# The raw --include again: the injected context modules go unnamed, and an
+# --exclude run says nothing true.
+run_case "header/raw-include" 1 \
+    '                print_msg "Modules: $(_report_modules_scope)"' \
+    '                print_msg "Modules: ${VPSSEC_INCLUDE}"'
+
+# Only --include counts as partial, so an --exclude run gets no Modules line.
+run_case "header/exclude-unsaid" 1 \
+    '            if score_is_partial; then' \
+    '            if [[ -n "${VPSSEC_INCLUDE:-}" ]]; then'
+
+# A full run claims a module scope too.
+run_case "header/always" 1 \
+    '            if score_is_partial; then' \
+    '            if true; then'

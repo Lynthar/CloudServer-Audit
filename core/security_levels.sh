@@ -392,6 +392,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["ufw.disabled"]="required"
     ["ufw.firewall_active"]="required"
     ["ufw.no_firewall"]="required"
+    ["ufw.firewall_unknown"]="info"            # not measured: no score either way
     ["ufw.default_deny"]="recommended"
     ["ufw.default_accept"]="recommended"
     ["ufw.ssh_allowed"]="recommended"
@@ -431,6 +432,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["update.unattended_enabled"]="recommended"
     ["update.unattended_disabled"]="recommended"
     ["update.unattended_not_installed"]="recommended"
+    ["update.unattended_state_unknown"]="info" # not measured: no score either way
 
     # === Docker Module - conditional (only if Docker installed) ===
     ["docker.not_installed"]="info"
@@ -871,7 +873,7 @@ get_fix_manual_step() {
 
 # Get score category. An UNLISTED id defaults to "info", not "recommended":
 # a check nobody classified must not silently drag the score down until it is
-# deliberately promoted. Every emitted id is classified today; CI enforces it.
+# deliberately promoted. Every literally emitted id is listed; a test enforces it.
 get_check_score_category() {
     local check_id="$1"
     echo "${CHECK_SCORE_CATEGORY[$check_id]:-info}"

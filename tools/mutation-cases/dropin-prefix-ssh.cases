@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_dropin_prefixes.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_dropin_prefixes.bats
+
+# A 99- name loses to cloud-init's 50- file: sshd keeps the first value it reads.
+run_case "prefix/ssh-sorts-last" 1 \
+    'SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening.conf"' \
+    'SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/99-vpssec-hardening.conf"'
+
+# Outside the *.conf glob, sshd never reads it.
+run_case "prefix/ssh-not-conf" 1 \
+    'SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening.conf"' \
+    'SSH_HARDENING_DROPIN="${SSH_DROPIN_DIR}/00-vpssec-hardening"'

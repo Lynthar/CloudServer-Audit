@@ -1,0 +1,110 @@
+# Plant: sshd listening only on 2222, behind an active ufw that allows just that
+# port, with PasswordAuthentication yes and the admin 116 plants (key + NOPASSWD).
+# Expect: ssh.password_auth_enabled → ssh.disable_password_auth → ssh.password_auth_disabled,
+# through the real rescue path: a second sshd on a free port, a ufw rule for it
+# from the source typed at its prompt (an IPv6 one, the form whose teardown once
+# parsed wrong), then the confirmation. postfix() asserts what that path must
+# leave behind — nothing: the rescue port differs from 2222 and no longer listens,
+# its ufw rule is gone, its temp config is deleted, and the production sshd is
+# still up on 2222 (the rescue is killed by pid; a port-based kill would take it).
+# It reads the guide transcript from the runner's $STAGE_LOG. Rollback deletes the
+# 00- drop-in, the plant rules again (rc 0).
+TEST_DESC="sshd on 2222 behind ufw: ssh.disable_password_auth converges through a real rescue sshd and ufw rule, and leaves neither behind"
+EXPECT_ID="ssh.password_auth_enabled"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="high"
+MODULE="ssh"
+FIX_ID="ssh.disable_password_auth"
+FIX_TTY_ANSWERS="2001:db8::10
+yes"
+EXPECT_FIXED_ID="ssh.password_auth_disabled"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="ssh.password_auth_enabled"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DROPIN="/etc/ssh/sshd_config.d/99-vpssec-mutation-test.conf"
+_HARDENING="/etc/ssh/sshd_config.d/00-vpssec-hardening.conf"
+_HAD_HARDENING=0
+_ADMIN="vpssecadm"
+_KEYDIR=""
+_SUDOERS="/etc/sudoers.d/90-vpssec-mutation-test"
+_LIVE_PORT=2222
+_UFW_BEFORE=""
+_SERVICE=""
+_pick_service() {
+    if systemctl list-unit-files ssh.service &>/dev/null; then _SERVICE="ssh"
+    elif systemctl list-unit-files sshd.service &>/dev/null; then _SERVICE="sshd"
+    fi
+}
+
+# Does anything listen on TCP port $1?
+_listening() { ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"; }
+
+precheck() {
+    command -v sshd >/dev/null 2>&1 && command -v ssh-keygen >/dev/null 2>&1 \
+        && [[ -d /etc/ssh/sshd_config.d ]] && getent group sudo >/dev/null \
+        && ! getent passwd "$_ADMIN" >/dev/null \
+        && [[ -r /etc/sudoers && -d /etc/sudoers.d ]] \
+        && ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1 \
+        && ! _listening "$_LIVE_PORT"
+}
+
+mutate() {
+    _pick_service
+    [[ -n "$_SERVICE" ]] || return 1
+    [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
+    host_snapshot /etc/ufw /etc/default/ufw /var/lib/ufw
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1 || return 1
+
+    _KEYDIR=$(mktemp -d) || return 1
+    useradd -m -s /bin/bash -G sudo "$_ADMIN" || return 1
+    ssh-keygen -q -t ed25519 -N '' -f "$_KEYDIR/key" || return 1
+    install -d -m 700 -o "$_ADMIN" -g "$_ADMIN" "/home/$_ADMIN/.ssh"
+    install -m 600 -o "$_ADMIN" -g "$_ADMIN" "$_KEYDIR/key.pub" "/home/$_ADMIN/.ssh/authorized_keys"
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$_ADMIN" > "$_SUDOERS"
+    chmod 440 "$_SUDOERS"
+    printf 'Port %s\nPasswordAuthentication yes\n' "$_LIVE_PORT" > "$_DROPIN"
+    chmod 644 "$_DROPIN"
+    systemctl reload "$_SERVICE" >/dev/null 2>&1 || return 1
+    # sshd re-executes on reload: wait until it listens on the new port.
+    local i
+    for i in $(seq 1 50); do _listening "$_LIVE_PORT" && break; sleep 0.1; done
+    _listening "$_LIVE_PORT" || return 1
+
+    ufw allow "$_LIVE_PORT/tcp" >/dev/null 2>&1 || return 1
+    ufw default deny incoming >/dev/null 2>&1 || return 1
+    ufw --force enable >/dev/null 2>&1 || return 1
+    _UFW_BEFORE=$(ufw status 2>/dev/null)
+    return 0
+}
+
+postfix() {
+    local rescue
+    rescue=$(sed -n 's/.*Rescue port \([0-9][0-9]*\) opened.*/\1/p' "$STAGE_LOG" | head -1)
+    [[ -n "$rescue" ]] || { echo "         no rescue daemon was opened"; return 1; }
+    [[ "$rescue" != "$_LIVE_PORT" ]] || { echo "         rescue reused the live port"; return 1; }
+    grep -q "Allowed rescue port $rescue through the firewall" "$STAGE_LOG" \
+        || { echo "         no ufw rule was added for rescue port $rescue"; return 1; }
+    ! _listening "$rescue" || { echo "         rescue port $rescue still listening"; return 1; }
+    [[ "$(ufw status 2>/dev/null)" == "$_UFW_BEFORE" ]] \
+        || { echo "         ufw rules differ from before the fix"; ufw status | sed 's/^/         | /'; return 1; }
+    ! compgen -G "${TMPDIR:-/tmp}/vpssec-sshd-rescue*" >/dev/null \
+        || { echo "         rescue temp files left behind"; return 1; }
+    if ! systemctl is-active --quiet "$_SERVICE" || ! _listening "$_LIVE_PORT"; then
+        echo "         production sshd is no longer serving port $_LIVE_PORT"
+        return 1
+    fi
+}
+
+restore() {
+    ufw --force disable >/dev/null 2>&1
+    host_restore ufw.service
+    rm -f "$_DROPIN" "$_SUDOERS"
+    [[ -n "$_KEYDIR" ]] && rm -rf "$_KEYDIR"
+    (( _HAD_HARDENING == 0 )) && rm -f "$_HARDENING"
+    userdel -r "$_ADMIN" >/dev/null 2>&1
+    [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
+    return 0
+}

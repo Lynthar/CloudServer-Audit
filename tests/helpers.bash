@@ -179,6 +179,42 @@ _vpssec_fake_etc() {
     printf '%s\n' "$dir"
 }
 
+# Stub sshd so `sshd -T` answers like real sshd: drop-ins in $SSH_DROPIN_DIR by
+# name, then $SSH_CONFIG; first value wins; no Match applies; every key printed,
+# defaulted when unset (else ssh.sh falls back to parsing files). Set paths first.
+_vpssec_stub_sshd_merging() {
+    export VPSSEC_TEST_SSH_CONFIG="$SSH_CONFIG" VPSSEC_TEST_SSH_DROPIN_DIR="$SSH_DROPIN_DIR"
+    _vpssec_stub_script sshd <<'SH'
+[[ "$1" == -T ]] || exit 0
+shopt -s nullglob
+files=("$VPSSEC_TEST_SSH_DROPIN_DIR"/*.conf)
+[[ -f "$VPSSEC_TEST_SSH_CONFIG" ]] && files+=("$VPSSEC_TEST_SSH_CONFIG")
+LC_ALL=C awk '
+    FNR == 1 { inmatch = 0 }
+    /^[[:space:]]*(#|$)/ { next }
+    { k = tolower($1) }
+    k == "match" { inmatch = 1; next }
+    inmatch || k == "include" { next }
+    !(k in v) { $1 = ""; sub(/^[[:space:]]+/, ""); v[k] = $0 }
+    END {
+        d["port"] = "22"; d["permitrootlogin"] = "without-password"
+        d["pubkeyauthentication"] = "yes"; d["passwordauthentication"] = "yes"
+        d["kbdinteractiveauthentication"] = "yes"; d["usepam"] = "no"
+        d["permitemptypasswords"] = "no"; d["authenticationmethods"] = "any"
+        d["authorizedkeysfile"] = ".ssh/authorized_keys .ssh/authorized_keys2"
+        for (k in d) if (!(k in v)) v[k] = d[k]
+        print "port " v["port"]
+        print "listenaddress [::]:" v["port"]
+        print "listenaddress 0.0.0.0:" v["port"]
+        for (k in v) {
+            if (k == "port") continue
+            print k " " (k == "authorizedkeysfile" ? v[k] : tolower(v[k]))
+        }
+    }
+' "${files[@]}" /dev/null
+SH
+}
+
 # The created-file contract. `.vpssec_created` is the ONLY thing backup_restore
 # consults when deciding what a rollback deletes, so a fix that creates a file
 # without registering it leaves it behind after the operator undid the plan.

@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_dropin_prefixes.bats against modules/update.sh.
+# mutate-suite: modules/update.sh tests/test_dropin_prefixes.bats
+
+# Read before 50unattended-upgrades, whose origins list then follows the #clear.
+run_case "prefix/apt-sorts-early" 1 \
+    'UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"' \
+    'UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/20vpssec-unattended-security"'
+
+# An extension apt does not accept: the part is skipped with a notice.
+run_case "prefix/apt-extension" 1 \
+    'UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended-security"' \
+    'UPDATE_UU_DROPIN="/etc/apt/apt.conf.d/52vpssec-unattended.security"'

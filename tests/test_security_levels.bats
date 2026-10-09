@@ -206,17 +206,25 @@ setup() {
     done
 }
 
-@test "FIX_SELF_CONFIRMED: each listed module still calls confirm_critical" {
-    # Drift guard: if a module's confirm_critical is removed, the fix no
-    # longer self-confirms and must be dropped from FIX_SELF_CONFIRMED, or
-    # the engine will never gate it. Catch that here at PR time.
-    local root id module
+@test "FIX_SELF_CONFIRMED: each listed fix still calls confirm_critical itself" {
+    # The engine never prompts for these, so each one's own function must.
+    # Per fix, comments excluded: ssh.sh has two such fixes, and one keeping
+    # its prompt must not vouch for the other.
+    local root id module src fn
     root=$(_vpssec_repo_root)
     for id in "${!FIX_SELF_CONFIRMED[@]}"; do
         module="${id%%.*}"
-        if ! grep -q 'confirm_critical' "$root/modules/$module.sh"; then
-            printf '%s is in FIX_SELF_CONFIRMED but modules/%s.sh has no confirm_critical\n' \
-                "$id" "$module" >&2
+        src="$root/modules/$module.sh"
+        # The function the module's <module>_fix dispatcher runs for this id.
+        fn=$(awk -v id="$id" -v f="${module}_fix" '
+            $0 ~ ("^" f "\\(\\)") { inf = 1; next }
+            inf && /^}/ { exit }
+            inf && $1 == id ")" { arm = 1; next }
+            arm { print $1; exit }' "$src")
+        if [[ -z "$fn" ]] || ! sed -n "/^${fn}() {/,/^}/p" "$src" \
+                | grep -v '^[[:space:]]*#' | grep -q 'confirm_critical'; then
+            printf '%s is in FIX_SELF_CONFIRMED but %s does not call confirm_critical\n' \
+                "$id" "${fn:-its dispatch arm}" >&2
             return 1
         fi
     done

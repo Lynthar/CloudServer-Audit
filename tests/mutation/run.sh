@@ -13,7 +13,12 @@
 #      the case defines postfix(), that it returns 0 (what the service makes
 #      of the change, which the audit reads from files). A risky
 #      fix asks on /dev/tty and ignores --yes: the case lists what to type
-#      in FIX_TTY_ANSWERS, one line per prompt, fed through a pseudo-terminal
+#      in FIX_TTY_ANSWERS, one line per prompt, fed through a pseudo-terminal.
+#      The answers are typed ahead, so each yes/no line must meet its own
+#      `[yes/NO]` prompt in the transcript — otherwise a fix that never asked
+#      would pass. A case with EXPECT_DECLINED=1 answers no: guide must exit 0
+#      (a declined fix is a skip), leave no session and no undo command, and
+#      EXPECT_FIXED_ID must keep EXPECT_FIXED_STATUS; there is no stage 3
 #   6. then runs `vpssec rollback <that session>` (answering its
 #      confirmation on a pseudo-terminal), re-audits and asserts
 #      EXPECT_ROLLBACK_ID / EXPECT_ROLLBACK_STATUS and the rollback's
@@ -26,6 +31,14 @@
 #      instead of the rollback, with the same assertions on the result
 #   7. runs restore() to revert the planted defect
 #
+# Every audit must exit 0 with meta.complete true, or 3 with it false; any
+# other pairing is the exit-code contract broken, and the case does not pass.
+#
+# A case whose precheck() is false is skipped (failed under --strict), and
+# the condition it stopped at is printed. A case with MANUAL_ONLY="<why>"
+# needs what the container cannot provide (a docker daemon): it is listed as
+# MANUAL and not run unless --manual is given.
+#
 # IMPORTANT: run only on a disposable VM or container. Restore is
 # best-effort — if a case crashes between mutate and restore, the
 # system can be left in a degraded state. Take a VM snapshot first.
@@ -34,7 +47,9 @@
 #   sudo bash tests/mutation/run.sh                 # all cases
 #   sudo bash tests/mutation/run.sh ssh             # cases whose filename contains "ssh"
 #   sudo bash tests/mutation/run.sh -k filesystem   # synonym for filtering
-#   bash tests/mutation/run-in-container.sh         # the same, inside a throwaway systemd container
+#   sudo bash tests/mutation/run.sh --manual        # also run the MANUAL_ONLY cases
+#   sudo bash tests/mutation/run.sh --strict        # a skipped case fails the run
+#   bash tests/mutation/run-in-container.sh         # --strict, inside a throwaway systemd container
 
 set -uo pipefail   # NOT -e: we want to keep going past individual failures
 
@@ -46,15 +61,20 @@ BACKUPS_DIR="${VPSSEC_ROOT}/backups"
 STAGE_LOG="${VPSSEC_ROOT}/logs/mutation-stage.log"
 
 PATTERN=""
-for arg in "$@"; do
-    case "$arg" in
+STRICT=0
+RUN_MANUAL=0
+while (( $# > 0 )); do
+    case "$1" in
         -k|--filter) shift; PATTERN="${1:-}";;
+        --strict) STRICT=1;;
+        --manual) RUN_MANUAL=1;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
-        *) PATTERN="$arg";;
+        *) PATTERN="$1";;
     esac
+    shift
 done
 
 # ---- preflight ---------------------------------------------------------------
@@ -64,7 +84,7 @@ command -v jq >/dev/null || { echo "jq not installed" >&2; exit 1; }
 mkdir -p "${VPSSEC_ROOT}/logs"
 
 # ---- counters / results ------------------------------------------------------
-declare -i total=0 passed=0 failed=0 errored=0 skipped=0
+declare -i total=0 passed=0 failed=0 errored=0 skipped=0 manual=0
 declare -a results=()
 
 color() {
@@ -80,16 +100,39 @@ color() {
 
 # ---- audit + assertion helpers -----------------------------------------------
 
-# Fresh audit of one module into reports/summary.json. Returns 1 when no report
-# was written or the module did not complete: a check that is "absent" from an
-# audit that never ran the module is no verdict, so every caller fails on it.
+# Fresh audit of one module into reports/summary.json. Returns 1, with the
+# reason in AUDIT_WHY, when no report was written, the exit code disagrees with
+# meta.complete, or the module did not complete: none of those is a verdict.
 run_audit() {
-    local module="$1"
+    local module="$1" rc=0 complete
+    AUDIT_WHY=""
     rm -f "$REPORT"
     "$VPSSEC_BIN" audit --include="$module" --json-only --yes --lang=en_US \
-        >/dev/null 2>&1 || true
-    [[ -s "$REPORT" ]] || return 1
-    jq -e --arg m "$module" '(.meta.modules_failed // []) | index($m) | not' "$REPORT" >/dev/null
+        >/dev/null 2>&1 || rc=$?
+    if [[ ! -s "$REPORT" ]]; then
+        AUDIT_WHY="no summary.json (audit rc=$rc)"
+        return 1
+    fi
+    complete=$(jq -r '.meta.complete' "$REPORT" 2>/dev/null)
+    if ! [[ ( $rc -eq 0 && "$complete" == true ) || ( $rc -eq 3 && "$complete" == false ) ]]; then
+        AUDIT_WHY="audit exited $rc with meta.complete=$complete"
+        return 1
+    fi
+    if ! jq -e --arg m "$module" '(.meta.modules_failed // []) | index($m) | not' "$REPORT" >/dev/null; then
+        AUDIT_WHY="$module did not complete"
+        return 1
+    fi
+}
+
+# Confirmation prompts in the stage transcript against the yes/no lines typed
+# for them. Prints the mismatch and returns 1 when they differ.
+prompts_match_answers() {
+    local answers="$1" what="$2" want got
+    want=$(grep -ciE '^(yes|no)$' <<<"$answers")
+    got=$(grep -o '\[yes/NO\] >' "$STAGE_LOG" 2>/dev/null | wc -l)
+    (( got == want )) && return 0
+    echo "  $(color red '[FAIL]') $what showed $got [yes/NO] prompt(s) for $want yes/no answer(s): the answers were typed ahead, not asked for"
+    return 1
 }
 
 # "id status" as the report shows it, or empty when the id is not there.
@@ -109,6 +152,64 @@ report_has() {
     fi
 }
 
+# ---- helpers for cases that install packages ---------------------------------
+# Call host_snapshot <paths it may create> in mutate() before installing, and
+# host_restore <units> in restore(): every package installed since is purged,
+# or its dependencies stay behind and later cases no longer start from absent.
+
+host_snapshot() {
+    local p
+    _SNAP_PKGS=$(dpkg-query -W -f '${Package}\n' 2>/dev/null | sort)
+    _SNAP_FW_EMPTY=0
+    if ! command -v nft >/dev/null 2>&1 || [[ -z "$(nft list ruleset 2>/dev/null)" ]]; then
+        _SNAP_FW_EMPTY=1
+    fi
+    _SNAP_ABSENT=()
+    for p in "$@"; do [[ -e "$p" ]] || _SNAP_ABSENT+=("$p"); done
+    _SNAP_USERS=$(getent passwd | awk -F: '$3 < 1000 {print $1}' | sort)
+    _SNAP_GROUPS=$(getent group | awk -F: '$3 < 1000 {print $1}' | sort)
+}
+
+# Undo to the snapshot: stop and disable $@, empty the firewall if it was empty,
+# purge every package installed since (and the system accounts they added),
+# delete the paths that were absent. Accounts from uid 1000 up are the case's.
+host_restore() {
+    local u p
+    local -a new=()
+    [[ -n "${_SNAP_PKGS:-}" ]] || return 1
+    for u in "$@"; do systemctl disable --now "$u" >/dev/null 2>&1; done
+    # Before the purge, which may take the tool itself away. ufw writes through
+    # iptables-nft, so its rules live in the nft ruleset too.
+    if (( _SNAP_FW_EMPTY )); then
+        if command -v nft >/dev/null 2>&1; then
+            nft flush ruleset >/dev/null 2>&1
+        else
+            for p in iptables ip6tables; do
+                command -v "$p" >/dev/null 2>&1 || continue
+                for u in filter nat mangle raw; do "$p" -t "$u" -F; "$p" -t "$u" -X; done >/dev/null 2>&1
+                for u in INPUT FORWARD OUTPUT; do "$p" -P "$u" ACCEPT; done >/dev/null 2>&1
+            done
+        fi
+    fi
+    mapfile -t new < <(comm -13 <(printf '%s\n' "$_SNAP_PKGS") \
+                                <(dpkg-query -W -f '${Package}\n' 2>/dev/null | sort))
+    if (( ${#new[@]} > 0 )); then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${new[@]}" >/dev/null 2>&1
+    fi
+    for p in "${_SNAP_ABSENT[@]}"; do rm -rf -- "$p"; done
+    for u in $(comm -13 <(printf '%s\n' "$_SNAP_USERS") \
+                        <(getent passwd | awk -F: '$3 < 1000 {print $1}' | sort)); do
+        userdel "$u" >/dev/null 2>&1
+    done
+    for u in $(comm -13 <(printf '%s\n' "$_SNAP_GROUPS") \
+                        <(getent group | awk -F: '$3 < 1000 {print $1}' | sort)); do
+        groupdel "$u" >/dev/null 2>&1
+    done
+    systemctl daemon-reload >/dev/null 2>&1
+    for u in "$@"; do systemctl reset-failed "$u" >/dev/null 2>&1; done
+    return 0
+}
+
 # ---- single case runner ------------------------------------------------------
 run_case() {
     local case_file="$1"
@@ -126,7 +227,8 @@ run_case() {
     unset TEST_DESC EXPECT_ID EXPECT_STATUS EXPECT_SEVERITY EXPECT_DESC_CONTAINS \
           MODULE DESTRUCTIVE FIX_ID EXPECT_FIXED_ID EXPECT_FIXED_STATUS \
           EXPECT_ROLLBACK_ID EXPECT_ROLLBACK_STATUS EXPECT_ROLLBACK_RC \
-          FIX_TTY_ANSWERS ROLLBACK_BY 2>/dev/null || true
+          FIX_TTY_ANSWERS ROLLBACK_BY EXPECT_DECLINED MANUAL_ONLY \
+          _SNAP_PKGS _SNAP_FW_EMPTY _SNAP_ABSENT _SNAP_USERS _SNAP_GROUPS 2>/dev/null || true
     # A command an earlier case ran and then uninstalled stays hashed in this
     # shell, and `command -v` in the next precheck would still find it.
     hash -r
@@ -143,7 +245,12 @@ run_case() {
     : "${EXPECT_ID:?$case_name missing EXPECT_ID}"
     : "${EXPECT_STATUS:?$case_name missing EXPECT_STATUS}"
     : "${MODULE:?$case_name missing MODULE}"
-    if [[ -n "${FIX_ID:-}" ]]; then
+    if [[ -n "${EXPECT_DECLINED:-}" ]]; then
+        : "${FIX_ID:?$case_name has EXPECT_DECLINED but no FIX_ID}"
+        : "${FIX_TTY_ANSWERS:?$case_name has EXPECT_DECLINED but no FIX_TTY_ANSWERS}"
+        : "${EXPECT_FIXED_ID:?$case_name has EXPECT_DECLINED but no EXPECT_FIXED_ID}"
+        : "${EXPECT_FIXED_STATUS:?$case_name has EXPECT_DECLINED but no EXPECT_FIXED_STATUS}"
+    elif [[ -n "${FIX_ID:-}" ]]; then
         : "${EXPECT_FIXED_ID:?$case_name has FIX_ID but no EXPECT_FIXED_ID}"
         : "${EXPECT_ROLLBACK_ID:?$case_name has FIX_ID but no EXPECT_ROLLBACK_ID}"
         : "${EXPECT_ROLLBACK_STATUS:?$case_name has FIX_ID but no EXPECT_ROLLBACK_STATUS}"
@@ -154,12 +261,30 @@ run_case() {
     echo ""
     echo "$(color dim '>>>') $case_name — $TEST_DESC"
 
-    # Optional applicability check (e.g. "skip if /etc/shadow- doesn't exist")
+    if [[ -n "${MANUAL_ONLY:-}" ]] && (( ! RUN_MANUAL )); then
+        echo "  $(color yellow '[MANUAL]') $MANUAL_ONLY"
+        results+=("MANUAL| $case_name | $MANUAL_ONLY")
+        manual+=1
+        return
+    fi
+
+    # Optional applicability check (e.g. "skip if /etc/shadow- doesn't exist").
+    # Under --strict only a MANUAL_ONLY case may skip: the image is pinned, so
+    # any other skip means it drifted and the case silently stopped running.
     if declare -f precheck >/dev/null; then
         if ! precheck; then
-            echo "  $(color yellow '[SKIP]') precheck reported case is not applicable"
-            results+=("SKIP  | $case_name | precheck false")
-            skipped+=1
+            local stopped_at
+            stopped_at=$( { set -x; precheck; } 2>&1 >/dev/null | grep '^+' | tail -n 2 \
+                | sed 's/^+* //' | paste -sd ';' - )
+            if (( STRICT )) && [[ -z "${MANUAL_ONLY:-}" ]]; then
+                echo "  $(color red '[FAIL]') precheck false under --strict, at: $stopped_at"
+                results+=("FAIL  | $case_name | precheck false under --strict: $stopped_at")
+                failed+=1
+            else
+                echo "  $(color yellow '[SKIP]') precheck false, at: $stopped_at"
+                results+=("SKIP  | $case_name | precheck false: $stopped_at")
+                skipped+=1
+            fi
             return
         fi
     fi
@@ -175,8 +300,8 @@ run_case() {
     # silences the TUI/text output. We still rely on reports/summary.json
     # being written to disk.
     if ! run_audit "$MODULE"; then
-        echo "  $(color red '[ERROR]') audit incomplete: no summary.json or $MODULE did not complete"
-        results+=("ERROR | $case_name | audit incomplete")
+        echo "  $(color red '[ERROR]') audit gave no verdict: $AUDIT_WHY"
+        results+=("ERROR | $case_name | $AUDIT_WHY")
         errored+=1
         restore >/dev/null 2>&1 || true
         return
@@ -238,7 +363,9 @@ run_case() {
     # the PASS line); only a failed stage 2 or 3 turns the case red.
     if (( detected == 1 )); then
         if (( converged == 1 )); then
-            (( warned == 0 )) && results+=("PASS  | $case_name | $EXPECT_ID @ $hit_severity${FIX_ID:+ → $FIX_ID → rollback}")
+            local stages="${FIX_ID:+ → $FIX_ID → rollback}"
+            [[ -n "${EXPECT_DECLINED:-}" ]] && stages=" → $FIX_ID declined"
+            (( warned == 0 )) && results+=("PASS  | $case_name | $EXPECT_ID @ $hit_severity$stages")
             passed+=1
         else
             failed+=1
@@ -271,13 +398,23 @@ run_fix_and_rollback() {
         "${guide_cmd[@]}" >"$STAGE_LOG" 2>&1 || guide_rc=$?
     fi
 
+    if [[ -n "${FIX_TTY_ANSWERS:-}" ]] && ! prompts_match_answers "$FIX_TTY_ANSWERS" "guide --fix=$FIX_ID"; then
+        results+=("FAIL  | $case_name | guide prompts do not match FIX_TTY_ANSWERS")
+        return 1
+    fi
+
     local session
     session=$(comm -13 <(printf '%s\n' "$before_sessions") \
                        <(ls -1 "$BACKUPS_DIR" 2>/dev/null | sort) | tail -1)
 
+    if [[ -n "${EXPECT_DECLINED:-}" ]]; then
+        declined_left_nothing "$case_name" "$guide_rc" "$session" "$before_log_lines"
+        return
+    fi
+
     if ! run_audit "$MODULE"; then
-        echo "  $(color red '[FAIL]') audit incomplete after guide --fix=$FIX_ID (guide rc=$guide_rc)"
-        results+=("FAIL  | $case_name | audit incomplete after fix")
+        echo "  $(color red '[FAIL]') audit gave no verdict after guide --fix=$FIX_ID (guide rc=$guide_rc): $AUDIT_WHY"
+        results+=("FAIL  | $case_name | after fix: $AUDIT_WHY")
         return 1
     fi
     if report_has "$EXPECT_FIXED_ID" "$EXPECT_FIXED_STATUS"; then
@@ -332,6 +469,10 @@ run_fix_and_rollback() {
         # operator would, with no menu in between to consume the answer.
         printf 'yes\n' | script -qefc "$VPSSEC_BIN rollback $session --lang=en_US" /dev/null \
             >"$STAGE_LOG" 2>&1 || rollback_rc=$?
+        if ! prompts_match_answers yes "rollback $session"; then
+            results+=("FAIL  | $case_name | rollback did not ask before restoring")
+            return 1
+        fi
     fi
     if (( rollback_rc != EXPECT_ROLLBACK_RC )); then
         echo "  $(color red '[FAIL]') rollback ($session) exited $rollback_rc, expected $EXPECT_ROLLBACK_RC"
@@ -341,8 +482,8 @@ run_fix_and_rollback() {
     fi
 
     if ! run_audit "$MODULE"; then
-        echo "  $(color red '[FAIL]') audit incomplete after rollback"
-        results+=("FAIL  | $case_name | audit incomplete after rollback")
+        echo "  $(color red '[FAIL]') audit gave no verdict after rollback: $AUDIT_WHY"
+        results+=("FAIL  | $case_name | after rollback: $AUDIT_WHY")
         return 1
     fi
     if report_has "$EXPECT_ROLLBACK_ID" "$EXPECT_ROLLBACK_STATUS"; then
@@ -358,6 +499,46 @@ run_fix_and_rollback() {
         return 1
     fi
     return 0
+}
+
+# Stage 2 for an EXPECT_DECLINED case: a no at the prompt is a skip (guide 0)
+# that changed nothing — no session, no undo command, the finding unchanged.
+declined_left_nothing() {
+    local case_name="$1" guide_rc="$2" session="$3" before_log_lines="$4" undo
+    if (( guide_rc != 0 )); then
+        echo "  $(color red '[FAIL]') declined $FIX_ID, yet guide exited $guide_rc (a declined fix is a skip)"
+        tail -n 15 "$STAGE_LOG" | sed 's/^/         | /'
+        results+=("FAIL  | $case_name | declined, yet guide rc $guide_rc")
+        return 1
+    fi
+    if [[ -n "$session" ]]; then
+        echo "  $(color red '[FAIL]') declined $FIX_ID, yet it left backup session $session"
+        results+=("FAIL  | $case_name | declined, yet session $session")
+        return 1
+    fi
+    undo=$(tail -n +"$(( before_log_lines + 1 ))" "${VPSSEC_ROOT}/logs/vpssec.log" 2>/dev/null \
+        | sed -n "s/.*Undo for ${FIX_ID//./\\.}: //p" | tail -1)
+    if [[ -n "$undo" ]]; then
+        echo "  $(color red '[FAIL]') declined $FIX_ID, yet it logged an undo command: $undo"
+        results+=("FAIL  | $case_name | declined, yet undo logged")
+        return 1
+    fi
+    if ! run_audit "$MODULE"; then
+        echo "  $(color red '[FAIL]') audit gave no verdict after declining $FIX_ID: $AUDIT_WHY"
+        results+=("FAIL  | $case_name | after decline: $AUDIT_WHY")
+        return 1
+    fi
+    if ! report_has "$EXPECT_FIXED_ID" "$EXPECT_FIXED_STATUS"; then
+        echo "  $(color red '[FAIL]') declined $FIX_ID, yet $EXPECT_FIXED_ID is '$(report_check "$EXPECT_FIXED_ID")', not $EXPECT_FIXED_STATUS"
+        results+=("FAIL  | $case_name | declined, yet $EXPECT_FIXED_ID not $EXPECT_FIXED_STATUS")
+        return 1
+    fi
+    if declare -f postfix >/dev/null && ! postfix; then
+        echo "  $(color red '[FAIL]') after declining $FIX_ID: the case's postfix() check failed"
+        results+=("FAIL  | $case_name | postfix check failed")
+        return 1
+    fi
+    echo "  $(color green '[PASS]') declined $FIX_ID: guide rc 0, nothing changed, $EXPECT_FIXED_ID still $EXPECT_FIXED_STATUS"
 }
 
 # ---- main --------------------------------------------------------------------
@@ -378,7 +559,7 @@ if (( ${#results[@]} > 0 )); then
     printf '%s\n' "${results[@]}"
 fi
 echo ""
-echo "Total: $total  Passed: $(color green "$passed")  Failed: $(color red "$failed")  Errored: $(color red "$errored")  Skipped: $(color yellow "$skipped")"
+echo "Total: $total  Passed: $(color green "$passed")  Failed: $(color red "$failed")  Errored: $(color red "$errored")  Skipped: $(color yellow "$skipped")  Manual: $manual"
 
 # Non-zero exit if anything failed or errored — for CI
 (( failed == 0 && errored == 0 ))

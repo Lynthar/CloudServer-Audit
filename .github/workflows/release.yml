@@ -4,11 +4,9 @@ name: release
 # from the tag, signs it with cosign keyless (sigstore + GitHub OIDC),
 # and uploads tarball + .sig.json + .sha256 as release assets.
 #
-# Verification on the user side: run.sh downloads the three files and
-# runs `cosign verify-blob` with --certificate-identity-regexp pinned
-# to this repo's release.yml. Sigstore + Rekor provide an independent
-# trust root from github.com, so a compromised upstream can't forge a
-# signature without compromising sigstore itself.
+# run.sh and install.sh verify with an exact --certificate-identity: this
+# repo's release.yml at the tag installed. Sigstore + Rekor are a trust root
+# independent of github.com, so a compromised upstream cannot forge a signature.
 
 # SECURITY (repo-settings, can't be enforced from this file alone): the
 # end-user trust chain (run.sh's cosign verify-blob) ultimately reduces to

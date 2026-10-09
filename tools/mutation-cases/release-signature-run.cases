@@ -43,3 +43,35 @@ run_case "release-signature-run/no-wait" 1 \
 run_case "release-signature-run/wait-after-last" 1 \
     '        if (( attempt < 3 )); then' \
     '        if true; then'
+
+# The signer is pinned to a branch instead of the tag being run: a release built
+# from any later push to main is accepted as this version.
+run_case "release-signature-run/identity-not-the-tag" 1 \
+    '        local want_identity="https://github.com/${VPSSEC_REPO}/.github/workflows/release.yml@refs/tags/${ver_tag}"' \
+    '        local want_identity="https://github.com/${VPSSEC_REPO}/.github/workflows/release.yml@refs/heads/main"'
+
+# The identity becomes a pattern that any workflow in any repository matches —
+# the silent widening, since every real signature still verifies.
+run_case "release-signature-run/identity-regexp" 1 \
+    '                --certificate-identity "$identity" \' \
+    "                --certificate-identity-regexp '.*' \\"
+
+# Any OIDC issuer is accepted, so a certificate from another provider passes.
+run_case "release-signature-run/issuer-regexp" 1 \
+    '                --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \' \
+    "                --certificate-oidc-issuer-regexp '.*' \\"
+
+# The pinned issuer itself changes.
+run_case "release-signature-run/issuer-constant" 1 \
+    'COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"' \
+    'COSIGN_OIDC_ISSUER="https://accounts.google.com"'
+
+# Transparency-log proof is no longer required for the signature.
+run_case "release-signature-run/tlog-ignored" 1 \
+    '                --bundle "$bundle" \' \
+    '                --bundle "$bundle" --insecure-ignore-tlog \'
+
+# The identity names another repository's workflow.
+run_case "release-signature-run/repo-constant" 1 \
+    'VPSSEC_REPO="Lynthar/CloudServer-Audit"' \
+    'VPSSEC_REPO="someone-else/CloudServer-Audit"'

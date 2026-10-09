@@ -1,0 +1,33 @@
+# Plant: as 152 — ufw enabled with SSH allowed and the incoming policy set to allow.
+# Expect: ufw.default_accept; ufw.set_default_deny is RISKY, the engine asks on the
+# terminal and the answer is no (FIX_TTY_ANSWERS). A declined fix is a skip: guide
+# exits 0, the policy stays allow, no session and no undo command (EXPECT_DECLINED).
+# If the engine stopped asking (--yes reaching a risky fix), the fix would land here.
+TEST_DESC="ufw default incoming allow: answering no at ufw.set_default_deny's prompt changes nothing and guide exits 0"
+EXPECT_ID="ufw.default_accept"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="medium"
+MODULE="ufw"
+FIX_ID="ufw.set_default_deny"
+FIX_TTY_ANSWERS="no"
+EXPECT_DECLINED=1
+EXPECT_FIXED_ID="ufw.default_accept"
+EXPECT_FIXED_STATUS="failed"
+
+precheck() {
+    ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
+}
+
+mutate() {
+    host_snapshot /etc/ufw /etc/default/ufw /var/lib/ufw
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1 || return 1
+    ufw allow 22/tcp >/dev/null 2>&1
+    ufw default allow incoming >/dev/null 2>&1
+    ufw --force enable >/dev/null 2>&1
+}
+
+restore() {
+    ufw --force disable >/dev/null 2>&1
+    host_restore ufw.service
+}

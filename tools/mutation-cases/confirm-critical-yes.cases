@@ -1,0 +1,10 @@
+# Mutation cases: tests/test_guide_plan_contract.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_guide_plan_contract.bats
+#
+# confirm_critical is the one prompt --yes must not answer; the suite reaches
+# the real function under setsid, with no terminal to read from.
+
+# --yes answers the critical prompt: guide --yes applies RISKY fixes unasked.
+run_case "critical/yes-answers-it" 1 \
+    '    local yn rc=0' \
+    '    local yn rc=0; [[ "${VPSSEC_YES:-0}" == "1" ]] && return 0'

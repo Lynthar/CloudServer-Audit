@@ -18,14 +18,13 @@ EXPECT_ROLLBACK_STATUS="failed"
 EXPECT_ROLLBACK_RC=0
 
 _AUTHLOG="/var/log/auth.log"
-_HAD_AUTHLOG=0
 
 precheck() {
     ! command -v fail2ban-client >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
 }
 
 mutate() {
-    [[ -e "$_AUTHLOG" ]] && _HAD_AUTHLOG=1
+    host_snapshot /etc/fail2ban /var/lib/fail2ban /run/fail2ban /var/log/fail2ban.log "$_AUTHLOG"
     touch "$_AUTHLOG"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null 2>&1 || return 1
@@ -34,8 +33,6 @@ mutate() {
 }
 
 restore() {
-    systemctl disable --now fail2ban >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq fail2ban >/dev/null 2>&1
-    (( _HAD_AUTHLOG == 0 )) && rm -f "$_AUTHLOG"
-    return 0
+    rm -f /etc/fail2ban/jail.d/99-vpssec-sshd.local
+    host_restore fail2ban.service
 }

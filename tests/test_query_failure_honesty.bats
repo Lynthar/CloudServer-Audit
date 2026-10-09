@@ -314,6 +314,7 @@ _net_emitted() {
     run jq -r '.[] | select(.id == "update.unattended_disabled" or .id == "update.unattended_enabled") | .id' \
         "$VPSSEC_STATE/checks.json"
     [ -z "$output" ]
+    [ "${CHECK_SCORE_CATEGORY[update.unattended_state_unknown]}" = "info" ]
 }
 
 # ---- kernel: IPv6 firewall ----------------------------------------------
@@ -453,7 +454,7 @@ _fw_probes_answer() {
     [ "$status" -eq 0 ]
     run jq -r '[.[] | "\(.id) \(.status)"] | join(",")' "$VPSSEC_STATE/checks.json"
     [ "$output" = "ufw.firewall_unknown failed" ]
-    [ -z "${CHECK_SCORE_CATEGORY[ufw.firewall_unknown]-}" ]
+    [ "${CHECK_SCORE_CATEGORY[ufw.firewall_unknown]}" = "info" ]
 }
 
 @test "ufw: any one failed status query with nothing found is unknown" {

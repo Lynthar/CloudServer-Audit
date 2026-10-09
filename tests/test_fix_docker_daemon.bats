@@ -244,9 +244,10 @@ _completed_fixes() {
     # live-restore is reloadable; restarting dockerd to apply it stops every
     # container, because the running daemon does not have live-restore yet.
     _daemon_picks_up_on reload
+    confirm() { return 0; }
     confirm_critical() { echo "PROMPTED" >&2; return 1; }
 
-    run execute_fix docker.enable_live_restore true
+    run execute_fix docker.enable_live_restore
     [ "$status" -eq 0 ]
     grep -q 'docker.enable_live_restore' <<<"$(_completed_fixes)"
     _vpssec_stub_called systemctl 'reload docker$'
@@ -270,9 +271,11 @@ _completed_fixes() {
     # The daemon's answer is the postcondition, not the reload's exit status.
     _vpssec_stub systemctl 0
     _daemon_reports false
+    confirm() { return 0; }
 
-    run execute_fix docker.enable_live_restore true
+    run execute_fix docker.enable_live_restore
     [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: docker.enable_live_restore' "$VPSSEC_LOGS/vpssec.log"
     _vpssec_refute grep -q 'docker.enable_live_restore' <<<"$(_completed_fixes)"
 }
 
@@ -290,7 +293,7 @@ _completed_fixes() {
     _daemon_picks_up_on restart
     confirm_critical() { return 0; }
 
-    run execute_fix docker.enable_no_new_privileges true
+    run execute_fix docker.enable_no_new_privileges
     [ "$status" -eq 0 ]
     grep -q 'docker.enable_no_new_privileges' <<<"$(_completed_fixes)"
     _vpssec_stub_called systemctl 'restart docker$'
@@ -302,7 +305,7 @@ _completed_fixes() {
     _daemon_picks_up_on restart
     confirm_critical() { _VPSSEC_DECLINED=1; return 1; }
 
-    run execute_fix docker.enable_no_new_privileges true
+    run execute_fix docker.enable_no_new_privileges
     [ "$status" -eq 1 ]
     _vpssec_refute grep -q 'docker.enable_no_new_privileges' <<<"$(_completed_fixes)"
     jq -e '.["no-new-privileges"] == true' "$DOCKER_DAEMON_JSON"
@@ -314,7 +317,7 @@ _completed_fixes() {
     _daemon_picks_up_on restart 20.10.24+dfsg1
     confirm_critical() { _VPSSEC_DECLINED=1; return 1; }
 
-    run execute_fix docker.enable_no_new_privileges true
+    run execute_fix docker.enable_no_new_privileges
     [ "$status" -eq 1 ]
     _vpssec_refute grep -q 'docker.enable_no_new_privileges' <<<"$(_completed_fixes)"
 }

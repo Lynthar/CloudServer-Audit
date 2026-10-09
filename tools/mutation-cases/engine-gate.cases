@@ -1,0 +1,30 @@
+# Mutation cases: tests/test_guide_plan_contract.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_guide_plan_contract.bats
+#
+# execute_fix's whitelist and confirmation gate. Every fix passes through it;
+# the suite drives it with stand-in prompts and once with the real ones.
+
+# A RISKY fix asked through the ordinary prompt, which --yes answers.
+run_case "gate/risky-asks-confirm" 1 \
+    "            confirm_critical \"\$(i18n 'fix.risky'): \$warning\" && confirmed=1" \
+    "            confirm \"\$(i18n 'fix.risky'): \$warning\" && confirmed=1"
+
+# A CONFIRM fix asked through the critical prompt: --yes no longer applies it.
+run_case "gate/confirm-asks-critical" 1 \
+    "            confirm \"\$(i18n 'fix.confirm'): \$warning\" && confirmed=1" \
+    "            confirm_critical \"\$(i18n 'fix.confirm'): \$warning\" && confirmed=1"
+
+# No gate at all: every confirm and risky fix applies unasked.
+run_case "gate/removed" 1 \
+    '    if fix_needs_engine_confirmation "$fix_id"; then' \
+    '    if false; then'
+
+# The answer is asked for and then ignored.
+run_case "gate/no-applies-anyway" 1 \
+    '        if (( ! confirmed )); then' \
+    '        if false; then'
+
+# The whitelist gone: an id no FIX_* map classifies applies unannounced.
+run_case "gate/unclassified-applies" 1 \
+    '    if ! can_fix "$fix_id"; then' \
+    '    if false; then'

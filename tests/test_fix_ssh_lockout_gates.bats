@@ -19,11 +19,11 @@ setup() {
     export TMPDIR="$BATS_TEST_TMPDIR"
 
     _vpssec_stub systemctl
-    _stub_sshd_honours_dropin
+    _vpssec_stub_sshd_merging
 
-    # Never start a real rescue daemon.
-    _ssh_open_rescue_port() { return 0; }
-    _ssh_close_rescue_port() { return 0; }
+    # Never start a real rescue daemon; record that it was opened and is up.
+    _ssh_open_rescue_port() { touch "$BATS_TEST_TMPDIR/rescue-opened" "$BATS_TEST_TMPDIR/rescue-up"; }
+    _ssh_close_rescue_port() { rm -f "$BATS_TEST_TMPDIR/rescue-up"; }
     get_current_ssh_ip() { echo "203.0.113.9"; }
 
     # Default: the operator says yes at the critical prompt, so a refusal in
@@ -31,23 +31,6 @@ setup() {
     confirm_critical() { return 0; }
 
     _install_world
-}
-
-# `sshd -T` answers from whatever the module last wrote into the drop-in,
-# lowercased the way real sshd prints it: a host where our drop-in wins the
-# merge, without which every "the gate lets it through" assertion fails blind.
-_stub_sshd_honours_dropin() {
-    export VPSSEC_TEST_DROPIN="$SSH_HARDENING_DROPIN"
-    _vpssec_stub_script sshd <<'SH'
-case "$*" in
-    *-T*)
-        if [[ -f "${VPSSEC_TEST_DROPIN:-}" ]]; then
-            grep -v '^#' "$VPSSEC_TEST_DROPIN" | tr '[:upper:]' '[:lower:]'
-        fi
-        ;;
-esac
-exit 0
-SH
 }
 
 # The gate's inputs (sudo grants, keys, password hashes, sshd settings), so its
@@ -92,7 +75,6 @@ _root_can_key_login() {
 @test "password-off gate: refuses when nobody holds a usable key" {
     _admins_are alice
     _users_with_keys
-    _root_can_key_login no
 
     run _ssh_fix_disable_password_auth
     [ "$status" -eq 1 ]
@@ -146,6 +128,8 @@ _root_can_key_login() {
     run _ssh_fix_disable_password_auth
     [ "$status" -eq 1 ]
     [ ! -e "$SSH_HARDENING_DROPIN" ]
+    [ -e "$BATS_TEST_TMPDIR/rescue-opened" ]
+    [ ! -e "$BATS_TEST_TMPDIR/rescue-up" ]
 }
 
 @test "password-off gate: refuses while public key authentication is off" {
@@ -273,6 +257,18 @@ _root_can_key_login() {
     run _ssh_fix_disable_root_login
     [ "$status" -eq 1 ]
     [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "root-off gate: declining the rescue-port confirmation changes nothing" {
+    _admins_are alice
+    _users_with_keys alice
+    confirm_critical() { return 1; }
+
+    run _ssh_fix_disable_root_login
+    [ "$status" -eq 1 ]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+    [ -e "$BATS_TEST_TMPDIR/rescue-opened" ]
+    [ ! -e "$BATS_TEST_TMPDIR/rescue-up" ]
 }
 
 @test "root-off gate: an admin with a key is enough with passwords off" {

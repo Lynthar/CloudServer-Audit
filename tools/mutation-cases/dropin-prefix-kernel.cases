@@ -1,0 +1,7 @@
+# Mutation cases: tests/test_dropin_prefixes.bats against modules/kernel.sh.
+# mutate-suite: modules/kernel.sh tests/test_dropin_prefixes.bats
+
+# Sorted before Debian 12's 99-sysctl.conf, /etc/sysctl.conf overrides it at boot.
+run_case "prefix/sysctl-sorts-early" 1 \
+    'VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"' \
+    'VPSSEC_SYSCTL_CONF="${SYSCTL_D}/90-vpssec-hardening.conf"'

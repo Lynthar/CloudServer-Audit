@@ -109,14 +109,6 @@ _no_packages_installed() { _vpssec_stub dpkg-query 1; }
     grep -qF 'Unattended-Upgrade::Mail "root";' "$etc/apt/apt.conf.d/50unattended-upgrades"
 }
 
-@test "enable: the drop-in sorts after 50, so it wins the merge" {
-    # apt reads apt.conf.d in lexical order; a 52- prefix is the entire reason
-    # the #clear above takes effect.
-    run _update_fix_enable_unattended
-    [ "$status" -eq 0 ]
-    [[ "$(basename "$UPDATE_UU_DROPIN")" > "50unattended-upgrades" ]]
-}
-
 @test "enable: Debian gets codename-based security origins" {
     _vpssec_stub_script lsb_release <<'SH'
 echo Debian
@@ -252,9 +244,11 @@ SH
     # FIX_VERIFY asks auto_update_status — the same question the audit asks,
     # so the fix cannot be recorded on a finding that stays open.
     _apt_config_periodic_off
+    confirm() { return 0; }
 
-    run execute_fix update.enable_unattended true
+    run execute_fix update.enable_unattended
     [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: update.enable_unattended' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "enable: a masked timer alone fails the postcondition" {
@@ -262,9 +256,11 @@ SH
 [[ "$1" == "is-enabled" ]] && exit 1
 exit 0
 SH
+    confirm() { return 0; }
 
-    run execute_fix update.enable_unattended true
+    run execute_fix update.enable_unattended
     [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: update.enable_unattended' "$VPSSEC_LOGS/vpssec.log"
 }
 
 # ==============================================================================
@@ -340,9 +336,11 @@ SH
 @test "install: a configure that did not take effect is not recorded" {
     # It answers the same unattended check as enable, so the same predicate.
     _apt_config_periodic_off
+    confirm() { return 0; }
 
-    run execute_fix update.install_unattended true
+    run execute_fix update.install_unattended
     [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: update.install_unattended' "$VPSSEC_LOGS/vpssec.log"
 }
 
 # ==============================================================================

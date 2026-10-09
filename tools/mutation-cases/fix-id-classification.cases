@@ -1,0 +1,14 @@
+# Mutation cases: tests/test_fix_id_classification.bats against core/security_levels.sh.
+# mutate-suite: core/security_levels.sh tests/test_fix_id_classification.bats
+#
+# A fix id passed through a variable, not a literal fix="…", and still listed in
+# FIX_VERIFY: only the safety maps make it selectable.
+run_case "classify/variable-passed-fix-unclassified" 1 \
+    '    ["update.apply_security"]="May break system packages or services"' \
+    '    # update.apply_security unclassified'
+
+# An unscored state check dropped from the category map still defaults to info,
+# so only the positive gate notices it is gone.
+run_case "category/unknown-state-unlisted" 1 \
+    '    ["ufw.firewall_unknown"]="info"            # not measured: no score either way' \
+    '    # ufw.firewall_unknown unlisted'

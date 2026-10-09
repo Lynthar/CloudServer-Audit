@@ -36,7 +36,7 @@ SH
     source "$(_vpssec_repo_root)/modules/fail2ban.sh"
     _f2b_starts_enabled 1
 
-    run execute_fix fail2ban.enable_service true
+    run execute_fix fail2ban.enable_service
     [ "$status" -eq 1 ]
     _vpssec_refute _recorded fail2ban.enable_service
 }
@@ -45,7 +45,7 @@ SH
     source "$(_vpssec_repo_root)/modules/fail2ban.sh"
     _f2b_starts_enabled 0
 
-    run execute_fix fail2ban.enable_service true
+    run execute_fix fail2ban.enable_service
     [ "$status" -eq 0 ]
     _recorded fail2ban.enable_service
 }
@@ -71,7 +71,7 @@ SH
 exit 3
 SH
 
-    run execute_fix timezone.enable_ntp true
+    run execute_fix timezone.enable_ntp
     [ "$status" -eq 0 ]
     _recorded timezone.enable_ntp
 
@@ -115,7 +115,7 @@ SH
 exit 0
 SH
 
-    run execute_fix webapp.nginx_server_tokens true
+    run execute_fix webapp.nginx_server_tokens
     [ "$status" -eq 1 ]
     _vpssec_refute _recorded webapp.nginx_server_tokens
 }

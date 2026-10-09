@@ -29,7 +29,7 @@ _completed_fixes() {
     _fake_verify_pass() { return 0; }
     FIX_VERIFY["ufw.enable"]="_fake_verify_pass"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     [ "$status" -eq 0 ]
     grep -q 'ufw.enable' <<<"$(_completed_fixes)"
 }
@@ -39,7 +39,7 @@ _completed_fixes() {
     _fake_verify_fail() { return 1; }
     FIX_VERIFY["ufw.enable"]="_fake_verify_fail"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     [ "$status" -eq 1 ]
 }
 
@@ -48,7 +48,7 @@ _completed_fixes() {
     _fake_verify_fail() { return 1; }
     FIX_VERIFY["ufw.enable"]="_fake_verify_fail"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     _vpssec_refute grep -q 'ufw.enable' <<<"$(_completed_fixes)"
 }
 
@@ -56,7 +56,7 @@ _completed_fixes() {
     _install_fake_fix ufw 0
     FIX_VERIFY["ufw.enable"]="_no_such_function_anywhere"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     [ "$status" -eq 1 ]
     # The guarded branch, not bash's "command not found" falling through: the
     # distinction is what keeps the failure attributable in the log.
@@ -70,7 +70,7 @@ _completed_fixes() {
     unset 'FIX_VERIFY[ufw.enable]'
     FIX_VERIFY["ufw.some_other_fix"]="_fake_verify_fail"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     [ "$status" -eq 0 ]
     grep -q 'ufw.enable' <<<"$(_completed_fixes)"
 }
@@ -80,7 +80,7 @@ _completed_fixes() {
     _fake_verify_pass() { return 0; }
     FIX_VERIFY["ufw.enable"]="_fake_verify_pass"
 
-    run execute_fix ufw.enable true
+    run execute_fix ufw.enable
     [ "$status" -eq 1 ]
 }
 

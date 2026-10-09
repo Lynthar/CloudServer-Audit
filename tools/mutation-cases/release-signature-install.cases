@@ -36,3 +36,27 @@ run_case "release-signature-install/no-wait" 1 \
 run_case "release-signature-install/wait-after-last" 1 \
     '        if (( attempt < 3 )); then' \
     '        if true; then'
+
+run_case "release-signature-install/identity-not-the-tag" 1 \
+    '        local want_identity="https://github.com/${GITHUB_REPO}/.github/workflows/release.yml@refs/tags/${ver_tag}"' \
+    '        local want_identity="https://github.com/${GITHUB_REPO}/.github/workflows/release.yml@refs/heads/main"'
+
+run_case "release-signature-install/identity-regexp" 1 \
+    '                --certificate-identity "$identity" \' \
+    "                --certificate-identity-regexp '.*' \\"
+
+run_case "release-signature-install/issuer-regexp" 1 \
+    '                --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \' \
+    "                --certificate-oidc-issuer-regexp '.*' \\"
+
+run_case "release-signature-install/issuer-constant" 1 \
+    'COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"' \
+    'COSIGN_OIDC_ISSUER="https://accounts.google.com"'
+
+run_case "release-signature-install/tlog-ignored" 1 \
+    '                --bundle "$bundle" \' \
+    '                --bundle "$bundle" --insecure-ignore-tlog \'
+
+run_case "release-signature-install/repo-constant" 1 \
+    'GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"' \
+    'GITHUB_REPO="${GITHUB_REPO:-someone-else/CloudServer-Audit}"'

@@ -10,6 +10,9 @@ setup() {
     i18n_load en_US
     VPSSEC_QUIET_SCAN=0
     state_init
+    # The engine's prompts answer yes: these tests are about what follows them.
+    confirm() { return 0; }
+    confirm_critical() { return 0; }
 }
 
 # A fix function the engine will dispatch to, whose outcome the test picks.
@@ -31,7 +34,7 @@ _completed_fixes() {
 
 @test "a template-only fix that succeeds is NOT recorded as complete" {
     _install_fake_fix docker 0
-    run execute_fix docker.generate_proxy_template true
+    run execute_fix docker.generate_proxy_template
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q 'docker.generate_proxy_template' <<<"$(_completed_fixes)"
 }
@@ -40,13 +43,13 @@ _completed_fixes() {
     # The webapp convention's cost was exactly this: a fix that wrote its file
     # correctly showed up in the guide summary as a failure.
     _install_fake_fix webapp 0
-    run execute_fix webapp.nginx_ssl_protocols true
+    run execute_fix webapp.nginx_ssl_protocols
     [ "$status" -eq 0 ]
 }
 
 @test "it tells the operator what is still outstanding" {
     _install_fake_fix docker 0
-    run execute_fix docker.generate_proxy_template true
+    run execute_fix docker.generate_proxy_template
     [ "$status" -eq 0 ]
     [[ "$output" == *"does not resolve the finding"* ]]
     [[ "$output" == *"ports stay exposed"* ]]
@@ -54,7 +57,7 @@ _completed_fixes() {
 
 @test "a template-only fix that FAILS is neither recorded nor called successful" {
     _install_fake_fix docker 1
-    run execute_fix docker.generate_proxy_template true
+    run execute_fix docker.generate_proxy_template
     [ "$status" -eq 1 ]
     _vpssec_refute grep -q 'docker.generate_proxy_template' <<<"$(_completed_fixes)"
 }
@@ -70,7 +73,7 @@ _completed_fixes() {
     # replaces the module's so only the engine's own path is under test.
     _install_fake_fix ufw 0
     _ufw_default_deny() { return 0; }
-    run execute_fix ufw.set_default_deny true
+    run execute_fix ufw.set_default_deny
     [ "$status" -eq 0 ]
     grep -q 'ufw.set_default_deny' <<<"$(_completed_fixes)"
 }
@@ -78,7 +81,7 @@ _completed_fixes() {
 @test "an ordinary fix does not print a manual-step notice" {
     _install_fake_fix ufw 0
     _ufw_default_deny() { return 0; }
-    run execute_fix ufw.set_default_deny true
+    run execute_fix ufw.set_default_deny
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q 'does not resolve the finding' <<<"$output"
 }
@@ -106,7 +109,7 @@ _completed_fixes() {
     [ "$status" -eq 0 ]
 
     _install_fake_fix webapp 0
-    run execute_fix webapp.nginx_hsts true
+    run execute_fix webapp.nginx_hsts
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q 'webapp.nginx_hsts' <<<"$(_completed_fixes)"
 }

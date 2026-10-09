@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_dropin_prefixes.bats against modules/fail2ban.sh.
+# mutate-suite: modules/fail2ban.sh tests/test_dropin_prefixes.bats
+
+# A .conf in jail.d sits in the distro's tier and can lose to defaults-debian.conf.
+run_case "prefix/f2b-conf-tier" 1 \
+    'F2B_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.local"' \
+    'F2B_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.conf"'
+
+# jail.local is the operator's file; writing it there replaces theirs.
+run_case "prefix/f2b-into-jail-local" 1 \
+    'F2B_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.local"' \
+    'F2B_DROPIN="/etc/fail2ban/jail.local"'

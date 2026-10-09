@@ -1,11 +1,12 @@
-# Plant: weaken /boot/grub/grub.cfg perms to world-readable.
-# Expect: the FS_SENSITIVE_FILES entry routes into the medium (non-critical)
-# bucket — grub.cfg is not in _fs_is_critical_perm_path, so it must surface as
+# Plant: make /boot/grub/grub.cfg world-writable (666). Read access is not the
+# risk — the module expects 644 — writing the kernel command line is.
+# Expect: the FS_SENSITIVE_FILES entry routes into the non-critical bucket
+# (reported at low) — grub.cfg is not in _fs_is_critical_perm_path, so it must surface as
 # sensitive_perms_wrong_minor, not _wrong.
-TEST_DESC="/boot/grub/grub.cfg with 644 perms surfaces in sensitive_perms_wrong_minor"
+TEST_DESC="/boot/grub/grub.cfg with 666 perms surfaces in sensitive_perms_wrong_minor"
 EXPECT_ID="filesystem.sensitive_perms_wrong_minor"
 EXPECT_STATUS="failed"
-EXPECT_SEVERITY="medium"
+EXPECT_SEVERITY="low"
 # Critical for this case: the user's host may already have other
 # minor-perm issues queued (e.g. /etc/crontab at 644), so an EXPECT_ID
 # match alone proves nothing. Force the substring check.
@@ -14,19 +15,26 @@ MODULE="filesystem"
 
 _TARGET="/boot/grub/grub.cfg"
 _ORIG_PERMS=""
+_PLANTED=""   # what mutate created, removed again by restore
 
-precheck() {
-    # Skip on UEFI-only / non-GRUB-Legacy systems.
-    [[ -f "$_TARGET" ]]
-}
-
+# A host without GRUB (the container) gets a stand-in file: the check reads
+# only its mode, so an empty one is the same plant.
 mutate() {
+    if [[ ! -e "$_TARGET" ]]; then
+        [[ -d /boot/grub ]] || { mkdir -p /boot/grub || return 1; _PLANTED="/boot/grub"; }
+        install -m 600 /dev/null "$_TARGET" || return 1
+        _PLANTED="${_PLANTED:-$_TARGET}"
+    fi
     _ORIG_PERMS=$(stat -c '%a' "$_TARGET" 2>/dev/null)
-    chmod 644 "$_TARGET"
+    chmod 666 "$_TARGET"
     return 0
 }
 
 restore() {
-    chmod "${_ORIG_PERMS:-600}" "$_TARGET"
+    if [[ -n "$_PLANTED" ]]; then
+        rm -rf "$_PLANTED"
+    else
+        chmod "${_ORIG_PERMS:-600}" "$_TARGET"
+    fi
     return 0
 }

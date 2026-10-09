@@ -170,7 +170,7 @@ _block_path_under() {
     # journald's next start, and the audit already reads the host as persistent.
     _vpssec_stub journalctl 1
 
-    run execute_fix logging.enable_persistent_journal true
+    run execute_fix logging.enable_persistent_journal
     [ "$status" -eq 0 ]
 }
 
@@ -280,7 +280,7 @@ SH
     # systemctl answered 0 and the fix believed it; the audit asks is-active.
     _service_never_starts
 
-    run execute_fix logging.enable_auditd true
+    run execute_fix logging.enable_auditd
     [ "$status" -eq 1 ]
     _vpssec_refute grep -q 'logging.enable_auditd' "$VPSSEC_STATE/ok.json"
 }

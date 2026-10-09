@@ -30,9 +30,14 @@ setup() {
 
 # ---- stubs ----------------------------------------------------------
 
-# `sshd -T` reporting the given ports, which is what get_ssh_ports reads.
+# `sshd -T` reporting the given ports as real sshd prints them: a port line
+# each, and the listenaddress lines it always adds, which get_ssh_ports reads.
 _sshd_ports() {
-    printf 'port %s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-ports"
+    local p
+    {
+        printf 'port %s\n' "$@"
+        for p; do printf 'listenaddress [::]:%s\nlistenaddress 0.0.0.0:%s\n' "$p" "$p"; done
+    } > "$BATS_TEST_TMPDIR/sshd-ports"
     _vpssec_stub_script sshd <<SH
 [[ "\$*" == *-T* ]] && cat "$BATS_TEST_TMPDIR/sshd-ports"
 exit 0
@@ -84,7 +89,10 @@ case "\$1" in
     enable)  printf 'active\n' > "\$state" ;;
     status)
         printf 'Status: %s\n' "\$(cat "\$state")"
-        [[ "\${2:-}" == verbose ]] && printf 'Default: %s (incoming), allow (outgoing), disabled (routed)\n' "\$(cat "\$policy")"
+        # Real ufw prints nothing more while inactive, verbose or not.
+        if [[ "\${2:-}" == verbose && "\$(cat "\$state")" == active ]]; then
+            printf 'Logging: on (low)\nDefault: %s (incoming), allow (outgoing), disabled (routed)\n' "\$(cat "\$policy")"
+        fi
         ;;
     show)    cat "\$rules" ;;
     default) [[ "\$3" == incoming ]] && printf '%s\n' "\$2" > "\$policy" ;;
@@ -92,6 +100,10 @@ esac
 exit 0
 SH
 }
+
+# set_default_deny is offered only while ufw is active: an inactive ufw prints
+# no policy to read or restore.
+_ufw_active() { printf 'active\n' > "$ufw_state"; }
 
 # ufw refuses the operation named by $1 (enable / default), everything else
 # behaves as _ufw_working.
@@ -239,6 +251,7 @@ _call_at() {
 # ==============================================================================
 
 @test "default deny: the SSH rule is added before the policy flips" {
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
 
@@ -253,6 +266,7 @@ _call_at() {
 @test "default deny: a refused SSH rule aborts before the policy flips" {
     _ufw_working 22
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 1 ]
     _vpssec_refute _vpssec_stub_called ufw 'default deny'
@@ -261,6 +275,7 @@ _call_at() {
 @test "default deny: every sshd port is covered, not just the first" {
     _sshd_ports 22 2222
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     _vpssec_stub_called ufw 'allow 22/tcp'
@@ -270,6 +285,7 @@ _call_at() {
 @test "default deny: an already-allowed port is not re-added" {
     _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
@@ -281,6 +297,7 @@ _call_at() {
     # straight to deny, cutting the next login.
     _tuple allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 out
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     local allow_at deny_at
@@ -309,6 +326,7 @@ _call_at() {
     # interface rule does not cover that path, and the deny would.
     _tuple allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     _vpssec_stub_called ufw 'allow 22/tcp'
@@ -318,6 +336,7 @@ _call_at() {
     i18n_load en_US
     VPSSEC_QUIET_SCAN=0
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     [[ "$output" == *"ufw default allow incoming"* ]]
@@ -328,6 +347,7 @@ _call_at() {
 @test "default deny: outgoing traffic is left allowed" {
     # Denying incoming without restoring allow-outgoing would break every
     # outbound connection on the host.
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 0 ]
     _vpssec_stub_called ufw 'default allow outgoing'
@@ -336,6 +356,7 @@ _call_at() {
 @test "default deny: a refused policy change is reported as failure" {
     _ufw_refuses default
 
+    _ufw_active
     run _ufw_fix_default_deny
     [ "$status" -eq 1 ]
 }

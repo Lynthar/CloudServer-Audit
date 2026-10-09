@@ -19,10 +19,11 @@
 #     run_case "<id>" <occurrence> "<exact old line>" "<replacement line>"
 #
 # Exit status is 0 only when every mutation was killed and every anchor
-# resolved.
+# resolved. bad-anchors counts every case that produced no verdict:
+# ANCHOR-BAD, NOT-APPLIED, LANDED-WRONG and NOT-RUN.
 #
 # ---------------------------------------------------------------------
-# Three properties of this runner exist because their absence produced a
+# Four properties of this runner exist because their absence produced a
 # WRONG answer, not merely an inconvenient one. Do not simplify them away:
 #
 #   1. Anchors match WHOLE LINES and carry an occurrence index. Several
@@ -41,6 +42,12 @@
 #   3. The mutation is asserted to have LANDED before the suite runs: the
 #      file must differ from the pristine copy, and line N must now equal
 #      the replacement. That converts a silent no-op into a loud error.
+#
+#   4. A mutation counts as killed only when bats names a failing test.
+#      bats exiting non-zero with no `not ok` line means the suite died
+#      rather than failed -- OOM, a full /tmp, Ctrl-C, a host file an
+#      earlier case broke -- and counting that as a kill lets the machine,
+#      not the suite, report a clean sweep. Such a case is NOT-RUN.
 # ---------------------------------------------------------------------
 set -u
 
@@ -114,13 +121,18 @@ run_case() {
         return
     fi
 
-    local out
+    local out failing
     if out=$(bats "$SUITE" 2>&1); then
         printf '%-36s SURVIVED at line %-5s <-- COVERAGE GAP\n' "$id" "$line"
         gap=$((gap + 1))
+        return
+    fi
+    failing=$(grep -c '^not ok' <<<"$out")
+    if (( failing == 0 )); then
+        printf '%-36s NOT-RUN at line %-5s (bats failed, but no test did)\n' "$id" "$line"
+        bad=$((bad + 1))
     else
-        printf '%-36s killed at line %-5s (%s failing)\n' \
-            "$id" "$line" "$(grep -c '^not ok' <<<"$out")"
+        printf '%-36s killed at line %-5s (%s failing)\n' "$id" "$line" "$failing"
         pass=$((pass + 1))
     fi
 }

@@ -1,0 +1,31 @@
+# Mutation cases: tests/test_ufw_permissive_rules.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_ufw_permissive_rules.bats
+#
+# The rule-table parser behind ufw.permissive_rules, run on real `ufw status`
+# output.
+
+run_case "permissive/translated-table" 1 \
+    '    ufw_output=$(LC_ALL=C ufw status 2>/dev/null)' \
+    '    ufw_output=$(ufw status 2>/dev/null)'
+
+run_case "permissive/database-port-ignored" 1 \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then' \
+    '        if false; then'
+
+# ALLOW OUT read as an inbound exposure, for a database port and for any other.
+run_case "permissive/outbound-database-port-counted" 1 \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then' \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+([A-Z]+\s+)?Anywhere"; then'
+
+run_case "permissive/outbound-counted" 1 \
+    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then' \
+    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+([A-Z]+[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then'
+
+# The SSH/web exclusion as a prefix: 2222 then passes for 22.
+run_case "permissive/port-prefix-excluded" 1 \
+    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then' \
+    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)"; then'
+
+run_case "permissive/database-port-also-for-review" 1 \
+    '            if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then' \
+    '            if [[ -n "$rule_port" ]]; then'

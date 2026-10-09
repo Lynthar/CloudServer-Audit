@@ -17,16 +17,12 @@ EXPECT_ROLLBACK_ID="ufw.no_ssh_rule"
 EXPECT_ROLLBACK_STATUS="failed"
 EXPECT_ROLLBACK_RC=0
 
-_NFT_WAS_EMPTY=0
-
 precheck() {
     ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
 }
 
 mutate() {
-    if ! command -v nft >/dev/null 2>&1 || [[ -z "$(nft list ruleset 2>/dev/null)" ]]; then
-        _NFT_WAS_EMPTY=1
-    fi
+    host_snapshot /etc/ufw /etc/default/ufw /var/lib/ufw
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1 || return 1
     ufw --force enable >/dev/null 2>&1
@@ -34,8 +30,5 @@ mutate() {
 
 restore() {
     ufw --force disable >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq ufw >/dev/null 2>&1
-    # ufw disable leaves its chains behind; later cases must not inherit them.
-    (( _NFT_WAS_EMPTY == 1 )) && command -v nft >/dev/null 2>&1 && nft flush ruleset >/dev/null 2>&1
-    return 0
+    host_restore ufw.service
 }

@@ -21,13 +21,12 @@ precheck() {
 }
 
 mutate() {
-    return 0
+    host_snapshot /etc/apt/apt.conf.d/20auto-upgrades /etc/apt/apt.conf.d/50unattended-upgrades \
+        /etc/apt/apt.conf.d/52vpssec-unattended-security /var/lib/unattended-upgrades \
+        /var/log/unattended-upgrades
 }
 
 restore() {
-    systemctl disable --now unattended-upgrades >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y -qq \
-        unattended-upgrades apt-listchanges >/dev/null 2>&1
     rm -f /etc/apt/apt.conf.d/20auto-upgrades /etc/apt/apt.conf.d/52vpssec-unattended-security
-    return 0
+    host_restore unattended-upgrades.service
 }

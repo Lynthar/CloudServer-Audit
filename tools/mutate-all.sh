@@ -13,9 +13,10 @@
 #     bash tools/mutate-all.sh                 # every cases file
 #     bash tools/mutate-all.sh docker fail2ban # only those, by file stem
 #
-# Exit status is 0 only when every case was killed, every anchor resolved,
-# and every cases file declared a pairing. Expect this to take a while: each
-# mutation runs its whole suite, and there are several hundred of them.
+# Exit status is 0 only when every case was killed by a failing test, every
+# anchor resolved, and every cases file declared a pairing. Expect this to
+# take a while: each mutation runs its whole suite, and there are several
+# hundred of them.
 #
 # ---------------------------------------------------------------------
 # The pairing is DECLARED, not guessed. Every cases file carries
@@ -88,7 +89,7 @@ for f in "${files[@]}"; do
     # usually read in CI, and if it is green on the machine you have, a count
     # with no case id leaves nothing to reproduce.
     if (( ${g:-0} > 0 || ${b:-0} > 0 )); then
-        grep -E 'SURVIVED|ANCHOR-BAD' <<< "$out" | sed 's/^/    /'
+        grep -E 'SURVIVED|ANCHOR-BAD|NOT-APPLIED|LANDED-WRONG|NOT-RUN' <<< "$out" | sed 's/^/    /'
     fi
 
     total_killed=$((total_killed + ${k:-0}))

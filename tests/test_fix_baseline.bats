@@ -305,9 +305,11 @@ SH
     # a kernel without AppArmor support. Only FIX_VERIFY catches this, since
     # enable/start both succeeded.
     _vpssec_stub aa-status 1
+    confirm() { return 0; }
 
-    run execute_fix baseline.enable_apparmor true
+    run execute_fix baseline.enable_apparmor
     [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: baseline.enable_apparmor' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "apparmor: a failing systemctl enable does not skip the start" {
