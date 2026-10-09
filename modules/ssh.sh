@@ -73,10 +73,34 @@ _ssh_get_config() {
     echo "$default"
 }
 
-# Check if password auth is enabled
+# Check if password auth is enabled: PasswordAuthentication, or a password
+# typed into keyboard-interactive (see the next function).
 _ssh_password_auth_enabled() {
     local value=$(_ssh_get_config "PasswordAuthentication" "yes")
-    [[ "${value,,}" == "yes" ]]
+    [[ "${value,,}" == "yes" ]] || _ssh_kbdint_password_path
+}
+
+# keyboard-interactive through PAM asks pam_unix for the password whatever
+# PasswordAuthentication says. It stays a password login unless every
+# AuthenticationMethods list also needs something besides a password.
+_ssh_kbdint_password_path() {
+    local value list m only
+    local -a ms=()
+    value=$(_ssh_get_config "KbdInteractiveAuthentication" "yes")
+    [[ "${value,,}" == "yes" ]] || return 1
+    value=$(_ssh_get_config "UsePAM" "no")
+    [[ "${value,,}" == "yes" ]] || return 1
+    value=$(_ssh_get_config "AuthenticationMethods" "any")
+    [[ "${value,,}" == "any" ]] && return 0
+    for list in $value; do
+        IFS=, read -ra ms <<<"$list"
+        only=1
+        for m in "${ms[@]}"; do
+            [[ "${m%%:*}" == keyboard-interactive || "$m" == password ]] || only=0
+        done
+        [[ "$only" == 1 && ",$list" == *",keyboard-interactive"* ]] && return 0
+    done
+    return 1
 }
 
 # Check if root login is enabled
@@ -315,7 +339,7 @@ _ssh_check_authkeys_permissions() {
 
     # Check .ssh directory permissions (should be 700 or 755)
     local ssh_perms
-    ssh_perms=$(stat -c "%a" "$ssh_dir" 2>/dev/null)
+    ssh_perms=$(stat -L -c "%a" "$ssh_dir" 2>/dev/null)
     if [[ -n "$ssh_perms" ]] && [[ "$ssh_perms" != "700" ]] && [[ "$ssh_perms" != "755" ]]; then
         issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$ssh_dir" "mode=$ssh_perms" "want=700")")
     fi
@@ -323,14 +347,14 @@ _ssh_check_authkeys_permissions() {
     # Check authorized_keys permissions (should be 600 or 644)
     if [[ -f "$auth_keys" ]]; then
         local ak_perms
-        ak_perms=$(stat -c "%a" "$auth_keys" 2>/dev/null)
+        ak_perms=$(stat -L -c "%a" "$auth_keys" 2>/dev/null)
         if [[ -n "$ak_perms" ]] && [[ "$ak_perms" != "600" ]] && [[ "$ak_perms" != "644" ]]; then
             issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$auth_keys" "mode=$ak_perms" "want=600")")
         fi
 
         # Check ownership
         local ak_owner
-        ak_owner=$(stat -c "%U" "$auth_keys" 2>/dev/null)
+        ak_owner=$(stat -L -c "%U" "$auth_keys" 2>/dev/null)
         if [[ -n "$ak_owner" ]] && [[ "$ak_owner" != "$user" ]] && [[ "$ak_owner" != "root" ]]; then
             issues+=("$(i18n 'ssh.authkeys_bad_owner' "path=$auth_keys" "owner=$ak_owner" "want=$user")")
         fi
@@ -393,7 +417,14 @@ ssh_audit() {
 }
 
 _ssh_audit_password_auth() {
-    if _ssh_password_auth_enabled; then
+    # No fix for the keyboard-interactive path: turning it off can break a
+    # second factor, so that choice stays with the operator.
+    if _ssh_kbdint_password_path; then
+        check_emit "ssh.password_auth_enabled" high failed \
+            desc="$(i18n 'ssh.password_auth_kbdint_desc')" \
+            suggestion="$(i18n 'ssh.fix_kbdint_password')"
+        print_severity "high" "$(i18n 'ssh.password_auth_enabled')"
+    elif _ssh_password_auth_enabled; then
         check_emit "ssh.password_auth_enabled" high failed \
             desc="$(i18n 'ssh.password_auth_enabled_desc')" \
             suggestion="$(i18n 'ssh.fix_disable_password')" \
@@ -774,7 +805,7 @@ ssh_fix() {
 
     # Migrate any legacy `99-` drop-in to the new `00-` name before a fix reads
     # or writes it, so prior settings are preserved and the losing file is gone.
-    _ssh_migrate_legacy_dropin
+    _ssh_migrate_legacy_dropin || return 1
 
     case "$fix_id" in
         ssh.disable_password_auth)
@@ -1069,17 +1100,20 @@ _ssh_close_rescue_port() {
     trap - EXIT INT TERM HUP
 }
 
-# Backup path of the drop-in overwritten by the most recent write, so
-# _ssh_reload_safe can roll back. "NEW" = no prior drop-in existed, so
-# rollback deletes the file; empty = no call has run yet.
+# What the most recent write replaced, for _ssh_reload_safe's rollback: a
+# backup path; "NEW" (no prior drop-in, so delete); "PREV" (the old content is
+# in SSH_LAST_DROPIN_PREV); empty = no call has run yet.
 SSH_LAST_DROPIN_BACKUP=""
+SSH_LAST_DROPIN_PREV=""
 
 # Migrate the legacy 99- drop-in, which loses to 50-cloud-init, to the 00-
-# name. Acts only when the legacy file exists and the new one does not.
-# Best effort: a failure leaves the legacy file, which 00- outranks anyway.
+# name, both recorded so a rollback brings 99- back and deletes 00-. A failed
+# mv leaves the legacy file, which a written 00- outranks anyway.
 _ssh_migrate_legacy_dropin() {
     [[ -f "$SSH_HARDENING_DROPIN_LEGACY" ]] || return 0
     [[ -e "$SSH_HARDENING_DROPIN" ]] && return 0
+    backup_file "$SSH_HARDENING_DROPIN_LEGACY" >/dev/null || return 1
+    backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1
     if mv "$SSH_HARDENING_DROPIN_LEGACY" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
         log_info "Migrated legacy SSH hardening drop-in to $SSH_HARDENING_DROPIN"
     fi
@@ -1113,6 +1147,12 @@ _ssh_write_hardening_config() {
     # broken drop-in left on disk blocks sshd at the next restart.
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
         SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN") || return 1
+        # Nothing printed: this session created the file (an earlier fix, or the
+        # legacy migration), so no session copy holds what this write replaces.
+        if [[ -z "$SSH_LAST_DROPIN_BACKUP" ]]; then
+            SSH_LAST_DROPIN_PREV=$(cat "$SSH_HARDENING_DROPIN") || return 1
+            SSH_LAST_DROPIN_BACKUP="PREV"
+        fi
     else
         # "NEW" drives this module's own reload-failure rollback. backup_file
         # is called as well so the plan-level rollback also deletes it —
@@ -1161,6 +1201,12 @@ _ssh_rollback_dropin() {
         # No prior drop-in: delete the new one we just wrote.
         if [[ -f "$SSH_HARDENING_DROPIN" ]] && rm -f "$SSH_HARDENING_DROPIN"; then
             print_warn "$(i18n 'ssh.dropin_rolled_back_deleted')"
+        fi
+    elif [[ "$backup" == "PREV" ]]; then
+        if printf '%s\n' "$SSH_LAST_DROPIN_PREV" > "$SSH_HARDENING_DROPIN"; then
+            print_warn "$(i18n 'ssh.dropin_rolled_back_restored')"
+        else
+            print_error "$(i18n 'ssh.dropin_rollback_failed')"
         fi
     elif [[ -n "$backup" && -f "$backup" ]]; then
         # Restore prior content. Use cp -p to preserve mode/ownership
@@ -1227,6 +1273,13 @@ _ssh_reload_safe() {
 }
 
 _ssh_fix_disable_password_auth() {
+    # Passwords would still log in through keyboard-interactive (PAM) after
+    # this fix; whether to turn that off is the operator's call.
+    if _ssh_kbdint_password_path; then
+        print_error "$(i18n 'ssh.kbdint_fix_refused')"
+        return 1
+    fi
+
     # Safety check - ensure user has SSH key access
     local current_ip=$(get_current_ssh_ip)
     if [[ -n "$current_ip" ]]; then
@@ -1476,15 +1529,11 @@ _ssh_fix_harden_algorithms() {
             grep -iv "^KexAlgorithms") || true
     fi
 
-    # Recommended secure algorithms (modern OpenSSH)
-    local secure_ciphers="chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
-    local secure_macs="hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
-    local secure_kex="curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256"
-
-    # Write config
-    local content="Ciphers $secure_ciphers
-MACs $secure_macs
-KexAlgorithms $secure_kex"
+    # Removed from the defaults rather than a fixed list: the distro's own
+    # set, its post-quantum hybrid KEX included, stays (OpenSSH 7.5+ syntax).
+    local content="Ciphers -3des-cbc,arcfour*,blowfish-cbc,cast128-cbc
+MACs -hmac-md5*,hmac-sha1*
+KexAlgorithms -diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1"
 
     if [[ -n "$existing" ]]; then
         content="$existing

@@ -1,0 +1,33 @@
+# Plant: a throwaway account and a sudoers.d rule naming it by "#uid" with
+# NOPASSWD. sudo reads "#1234" as a uid, not a comment.
+# Expect: users.nopasswd_sudo naming the rule, where nothing used to be reported.
+#
+# Safety: 0440, valid syntax (visudo -c passes); the account has no password
+# and a nologin shell, and both are removed by restore.
+TEST_DESC="A NOPASSWD rule naming its user by #uid is found"
+EXPECT_ID="users.nopasswd_sudo"
+EXPECT_STATUS="failed"
+EXPECT_DESC_CONTAINS="98-vpssec-mutation-test: #"
+MODULE="users"
+
+_USER="vpssecmut"
+_DROPIN="/etc/sudoers.d/98-vpssec-mutation-test"
+
+precheck() {
+    command -v visudo >/dev/null 2>&1 && command -v useradd >/dev/null 2>&1 &&
+        ! getent passwd "$_USER" >/dev/null
+}
+
+mutate() {
+    useradd -M -s /usr/sbin/nologin "$_USER" || return 1
+    printf '#%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -u "$_USER")" > "$_DROPIN"
+    chmod 440 "$_DROPIN"
+    visudo -c -f "$_DROPIN" >/dev/null 2>&1 || { rm -f "$_DROPIN"; userdel "$_USER"; return 1; }
+    return 0
+}
+
+restore() {
+    rm -f "$_DROPIN"
+    userdel "$_USER" >/dev/null 2>&1
+    return 0
+}

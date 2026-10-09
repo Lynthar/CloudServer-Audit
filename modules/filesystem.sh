@@ -161,22 +161,34 @@ _fs_pkg_mode_tampered() {
     esac
 }
 
+# Glob match in which "*" stays inside one path segment, as in the shell's own
+# pathname expansion: /usr/*bin/x must not pass /usr/local/bin/x. Equal slash
+# counts mean no "*" swallowed a "/".
+_fs_path_glob() {
+    local a="${1//[!\/]/}" b="${2//[!\/]/}"
+    [[ "$1" == $2 && ${#a} -eq ${#b} ]]
+}
+
+# A path as one printable line: a name holding a newline or another control
+# byte is shown $'...'-quoted, so it cannot split into two findings, forge a
+# log line, or reach a terminal raw.
+_fs_display_path() {
+    if [[ "$1" == *[[:cntrl:]]* ]]; then printf '%q\n' "$1"; else printf '%s\n' "$1"; fi
+}
+
 # Check if path is in whitelist (supports glob patterns)
 _fs_is_whitelisted() {
     local path="$1"
     local pattern
 
     for pattern in "${FS_SUID_WHITELIST[@]}"; do
-        # Support glob patterns with *
-        if [[ "$path" == $pattern ]]; then
-            return 0
-        fi
+        _fs_path_glob "$path" "$pattern" && return 0
     done
     # Distro-specific legit SUID paths (RHEL/Arch) from core/distro.sh.
     # The debian branch returns nothing, so this is a no-op on Debian/Ubuntu.
     if declare -f distro_suid_whitelist >/dev/null 2>&1; then
         while IFS= read -r pattern; do
-            [[ -n "$pattern" && "$path" == $pattern ]] && return 0
+            [[ -n "$pattern" ]] && _fs_path_glob "$path" "$pattern" && return 0
         done < <(distro_suid_whitelist)
     fi
     # A package-owned SUID binary is distro-shipped — this replaced the
@@ -203,7 +215,7 @@ _fs_find_suid_files() {
     while IFS= read -r -d '' file; do
         [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         if ! _fs_is_whitelisted "$file"; then
-            results+=("$file")
+            results+=("$(_fs_display_path "$file")")
             ((count++)) || true
             # Limit output
             if ((count >= FS_MAX_REPORT_ITEMS)); then
@@ -242,17 +254,13 @@ _fs_find_sgid_files() {
         [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
         local skip=0
         for pattern in "${sgid_whitelist[@]}"; do
-            # Unquoted RHS = glob match (e.g. /usr/lib/*/utempter/utempter across arches)
-            if [[ "$file" == $pattern ]]; then
-                skip=1
-                break
-            fi
+            _fs_path_glob "$file" "$pattern" && { skip=1; break; }
         done
 
         # Distro-specific SGID paths (RHEL/Arch) from core/distro.sh
         if (( skip == 0 )) && declare -f distro_sgid_whitelist >/dev/null 2>&1; then
             while IFS= read -r pattern; do
-                [[ -n "$pattern" && "$file" == $pattern ]] && { skip=1; break; }
+                [[ -n "$pattern" ]] && _fs_path_glob "$file" "$pattern" && { skip=1; break; }
             done < <(distro_sgid_whitelist)
         fi
 
@@ -266,7 +274,7 @@ _fs_find_sgid_files() {
         fi
 
         if ((skip == 0)); then
-            results+=("$file")
+            results+=("$(_fs_display_path "$file")")
             ((count++)) || true
             if ((count >= FS_MAX_REPORT_ITEMS)); then
                 break
@@ -292,7 +300,7 @@ _fs_find_world_writable() {
 
     while IFS= read -r -d '' file; do
         [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
-        results+=("$file")
+        results+=("$(_fs_display_path "$file")")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
@@ -323,7 +331,7 @@ _fs_find_world_writable_dirs() {
 
     while IFS= read -r -d '' dir; do
         [[ "$dir" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
-        results+=("$dir")
+        results+=("$(_fs_display_path "$dir")")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
@@ -357,7 +365,7 @@ _fs_find_no_owner() {
 
     while IFS= read -r -d '' file; do
         [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
-        results+=("$file")
+        results+=("$(_fs_display_path "$file")")
         ((count++)) || true
         if ((count >= FS_MAX_REPORT_ITEMS)); then
             break
@@ -385,9 +393,11 @@ _fs_check_sensitive_file() {
     fi
 
     local actual owner group
-    actual=$(stat -c "%a" "$file" 2>/dev/null)
-    owner=$(stat -c "%U" "$file" 2>/dev/null)
-    group=$(stat -c "%G" "$file" 2>/dev/null)
+    # -L: a symlinked drop-in (Arch's 20-systemd-userdb.conf) is judged by its
+    # target, which is what sshd or sudo reads; the link's own 777 means nothing.
+    actual=$(stat -L -c "%a" "$file" 2>/dev/null)
+    owner=$(stat -L -c "%U" "$file" 2>/dev/null)
+    group=$(stat -L -c "%G" "$file" 2>/dev/null)
 
     if [[ -z "$actual" ]]; then
         return 1
@@ -572,19 +582,21 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice"
 )
 
-# True when every capability in the raw getcap value $1 appears in the
-# comma-separated allowed list $2. Both getcap formats are handled:
-# modern "cap_a,cap_b=ep" and legacy "cap_a+ep" (flag suffix stripped).
+# True when every capability the getcap value $1 names is in the comma list
+# $2. Each space-separated clause ("cap_a,cap_b=ep", "cap_c+ep") names its own;
+# "=ep" names all of them, and text that is not a clause is never a subset.
 _fs_caps_subset_of() {
-    local held="$1" allowed="$2"
-    held="${held%%=*}"
-    held="${held%%+*}"
-    local cap
-    local IFS=','
-    for cap in $held; do
-        cap="${cap// /}"
-        [[ -z "$cap" ]] && continue
-        [[ ",${allowed}," == *",${cap},"* ]] || return 1
+    local allowed="$2" clause names cap
+    local -a clauses=() caps=()
+    read -ra clauses <<<"$1"
+    (( ${#clauses[@]} > 0 )) || return 1
+    for clause in "${clauses[@]}"; do
+        names="${clause%%[=+-]*}"
+        [[ -n "$names" && "$names" != "$clause" ]] || return 1
+        IFS=, read -ra caps <<<"$names"
+        for cap in "${caps[@]}"; do
+            [[ ",${allowed}," == *",${cap},"* ]] || return 1
+        done
     done
     return 0
 }
@@ -642,8 +654,7 @@ _fs_find_caps_files() {
         for entry in "${FS_CAPS_WHITELIST[@]}"; do
             local wl_file="${entry%%:*}"
             local wl_cap="${entry#*:}"
-            # Unquoted $wl_file = glob match (handles multiarch /usr/lib/*/ paths)
-            if [[ "$file" == $wl_file ]] && _fs_caps_subset_of "$caps" "$wl_cap"; then
+            if _fs_path_glob "$file" "$wl_file" && _fs_caps_subset_of "$caps" "$wl_cap"; then
                 whitelisted=true
                 break
             fi
@@ -654,7 +665,7 @@ _fs_find_caps_files() {
             local dentry
             while IFS= read -r dentry; do
                 [[ -z "$dentry" ]] && continue
-                if [[ "$file" == ${dentry%%:*} ]] && _fs_caps_subset_of "$caps" "${dentry#*:}"; then
+                if _fs_path_glob "$file" "${dentry%%:*}" && _fs_caps_subset_of "$caps" "${dentry#*:}"; then
                     whitelisted=true
                     break
                 fi
@@ -871,7 +882,7 @@ _fs_audit_world_writable() {
 
     if ((count > 0 || dir_count > 0)); then
         local total=$((count + dir_count))
-        local items=$(echo -e "$ww_files\n$ww_dirs" | head -5 | tr '\n' ' ')
+        local items=$(printf '%s\n' "$ww_files" "$ww_dirs" | sed '/^$/d' | head -5 | tr '\n' ' ')
         check_emit "filesystem.world_writable" medium failed \
             title="$(i18n 'filesystem.world_writable' "count=$total")" \
             desc="$(i18n 'filesystem.world_writable_desc' "items=$items")" \
@@ -932,7 +943,7 @@ _fs_sensitive_perm_issues() {
         # RHEL ships host private keys as 640 root:ssh_keys, which is the
         # default rather than a slip. Accepted ONLY when the group really is
         # ssh_keys; 640 still forbids world bits. Debian and Arch keep 600.
-        if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
+        if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -L -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
             expected="640"
         fi
         bucket=med
@@ -1181,7 +1192,7 @@ _fs_fix_sensitive_perms() {
         [[ -f "$file" ]] || return 0
 
         local actual
-        actual=$(stat -c "%a" "$file" 2>/dev/null)
+        actual=$(stat -L -c "%a" "$file" 2>/dev/null)
         [[ -z "$actual" ]] && return 0
         local actual_num=$((8#$actual))
         local expected_num=$((8#$expected))

@@ -1,34 +1,113 @@
 # Mutation cases: tests/test_sudo_admins.bats against core/common.sh.
 # mutate-suite: core/common.sh tests/test_sudo_admins.bats
 #
-# Each case widens "who can become root through sudo" the way one of the old
-# copies did; the lockout gates trust whatever this list says.
+# Each case reads sudoers the way a line-by-line regex did, or applies a grant
+# or Defaults sudo would not; the lockout gates trust whatever this answers.
+
+# ---- which files sudo reads ---------------------------------------------------
 
 run_case "files/ignored-dropin-read" 1 \
-    '        _sudoers_dropin_ignored "$f" && continue' \
-    '        :'
+    '                _sudoers_dropin_ignored "$f" && continue' \
+    '                :'
 
-run_case "grant/command-restricted-counted" 1 \
-    "    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\\(([^)]*)\\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)ALL[[:space:]]*(#.*)?\$'" \
-    "    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\\(([^)]*)\\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)'"
+run_case "files/include-not-followed" 1 \
+    '                _sudoers_lines "$target" $((depth + 1))' \
+    '                :'
 
-run_case "grant/runas-ignored" 1 \
-    '        (( ok )) || return 1' \
-    '        :'
+run_case "files/includedir-not-followed" 1 \
+    '                _sudoers_lines "$f" $((depth + 1))' \
+    '                :'
 
-run_case "grant/nopasswd-never-seen" 1 \
-    '    [[ "$tags" == *NOPASSWD:* ]] && nopasswd=1' \
+# The first `local LC_ALL=C` in common.sh is _display_width's; this is the second.
+run_case "files/includedir-locale-order" 2 \
+    '    local LC_ALL=C' \
     '    :'
 
-run_case "grants/group-rule-dropped" 1 \
-    '                if [[ "$token" == %* ]]; then' \
-    '                if false; then'
+# ---- lexing ---------------------------------------------------------------------
+
+run_case "lex/uid-read-as-comment" 1 \
+    '                if (substr(s, i, 1) == "#" && substr(s, i + 1, 1) !~ /[0-9]/)' \
+    '                if (substr(s, i, 1) == "#")'
+
+run_case "lex/continuation-ignored" 1 \
+    '            if (nb % 2) { held = substr(line, 1, length(line) - 1); hfile = file; next }' \
+    '            if (0) { held = substr(line, 1, length(line) - 1); hfile = file; next }'
+
+run_case "lex/space-before-colon-kept" 1 \
+    '            gsub(/ ?, ?/, ",", s); gsub(/ ?: ?/, ":", s); gsub(/ ?= ?/, "=", s)' \
+    '            gsub(/ ?, ?/, ",", s); gsub(/ ?= ?/, "=", s)'
+
+# ---- principals, runas, commands --------------------------------------------------
+
+run_case "alias/not-expanded" 1 \
+    '                if ((kind, it[i]) in ALIAS) {' \
+    '                if (0) {'
+
+run_case "list/negation-ignored" 1 \
+    '                while (substr(it[i], 1, 1) == "!") { neg = !neg; it[i] = substr(it[i], 2) }' \
+    '                while (substr(it[i], 1, 1) == "!") { it[i] = substr(it[i], 2) }'
+
+run_case "runas/any-runas-is-root" 1 \
+    '            if (r == "\001") return 1' \
+    '            return 1'
+
+run_case "runas/group-part-kept" 1 \
+    '            if (p) u = substr(r, 1, p - 1)' \
+    '            if (0) u = substr(r, 1, p - 1)'
+
+run_case "cmnd/alias-never-full" 1 \
+    '            if (depth > 16 || !(("C", c) in ALIAS)) return 0' \
+    '            return 0'
+
+# ---- tags and Defaults ------------------------------------------------------------
+
+run_case "tag/not-carried" 1 \
+    '                    c = sp_[j]; sub(/^ /, "", c)' \
+    '                    c = sp_[j]; sub(/^ /, "", c); auth = "-"'
+
+run_case "tag/passwd-ignored" 1 \
+    '                        if (tg == "NOPASSWD") auth = "N"; else if (tg == "PASSWD") auth = "P"' \
+    '                        if (tg == "NOPASSWD") auth = "N"'
+
+run_case "defaults/authenticate-ignored" 1 \
+    '                    if (ps[i] == "authenticate" || ps[i] == "!authenticate")' \
+    '                    if (0)'
+
+run_case "defaults/user-binding-unexpanded" 1 \
+    '                    if (f[3] == "u") b = principals(b, "U", 0)' \
+    '                    if (0) b = principals(b, "U", 0)'
+
+run_case "defaults/user-before-runas" 1 \
+    '    for cls in g u r; do' \
+    '    for cls in g r u; do'
+
+run_case "defaults/user-binding-matches-all" 1 \
+    '                grep -qxF -- "$acct" <<<"$accts" || continue' \
+    '                :'
+
+run_case "defaults/any-runas-binding" 1 \
+    '            elif [[ "$cls" == r && ",$b," != *",+ALL,"* && ",$b," != *",+root,"* && ",$b," != *",+#0,"* ]]; then' \
+    '            elif false; then'
+
+# ---- accounts ---------------------------------------------------------------------
+
+run_case "accounts/negation-ignored" 1 \
+    '            if [[ "${item:0:1}" == "-" ]]; then del[$n]=1; else add[$n]=1; fi' \
+    '            add[$n]=1'
+
+run_case "accounts/uid-unresolved" 1 \
+    '            \#*) mapfile -t names < <(getent passwd "${name#\#}" 2>/dev/null | cut -d: -f1) ;;' \
+    '            \#*) ;;'
+
+run_case "accounts/group-members-dropped" 1 \
+    '            %*) mapfile -t names < <(_group_all_members "${name#%}") ;;' \
+    '            %*) ;;'
 
 # Aliases, typos and removed users come back as "admins".
-run_case "grants/non-accounts-kept" 1 \
-    '        if [[ -n "$m" ]] && getent passwd "$m" >/dev/null 2>&1; then' \
-    '        if [[ -n "$m" ]]; then'
+run_case "accounts/non-accounts-kept" 1 \
+    '            *) getent passwd "$name" >/dev/null 2>&1 && names=("$name") ;;' \
+    '            *) names=("$name") ;;'
 
-run_case "grants/group-members-dropped" 1 \
-    '                    _group_all_members "${token#%}" | sed -n "/./s/\$/ $flag/p"' \
-    '                    :'
+run_case "grants/first-wins" 1 \
+    '            last[$acct]="$auth"' \
+    '            [[ -n "${last[$acct]:-}" ]] || last[$acct]="$auth"'

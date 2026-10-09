@@ -1,8 +1,9 @@
 # Plant: a 99- drop-in offering 3des-cbc. sshd keeps the FIRST value it reads and
 # the fix writes 00-vpssec-hardening.conf, so the fix wins only while its file exists.
 # Expect: ssh.weak_algorithms naming cipher:3des-cbc → ssh.harden_algorithms →
-# ssh.algorithms_ok; rollback deletes the fix's drop-in, the plant rules again and
-# the same cipher is reported (rc 0).
+# ssh.algorithms_ok, every key exchange sshd offered before that the audit does not
+# call weak still offered (Debian 12's sntrup761 hybrid); rollback deletes the
+# fix's drop-in, the plant rules again and the same cipher is reported (rc 0).
 TEST_DESC="3des-cbc offered: ssh.harden_algorithms converges, rollback re-exposes it"
 EXPECT_ID="ssh.weak_algorithms"
 EXPECT_STATUS="failed"
@@ -30,14 +31,27 @@ precheck() {
     command -v sshd >/dev/null 2>&1 && [[ -d /etc/ssh/sshd_config.d ]]
 }
 
+_KEX_BEFORE=""
+_kex() { sshd -T -C user=x,host=none,addr=none 2>/dev/null | awk '$1 == "kexalgorithms" { print $2 }'; }
+
 mutate() {
     _pick_service
+    _KEX_BEFORE=$(_kex)
     [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
     printf 'Ciphers aes128-ctr,3des-cbc\n' > "$_DROPIN"
     chmod 644 "$_DROPIN"
     sshd -t >/dev/null 2>&1 || { rm -f "$_DROPIN"; return 1; }
     [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
     return 0
+}
+
+postfix() {
+    local after k
+    after=",$(_kex),"
+    for k in ${_KEX_BEFORE//,/ }; do
+        [[ "$k" == *-sha1 ]] && continue
+        [[ "$after" == *",$k,"* ]] || { echo "  kex $k no longer offered"; return 1; }
+    done
 }
 
 restore() {

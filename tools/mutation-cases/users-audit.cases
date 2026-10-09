@@ -1,0 +1,58 @@
+# Mutation cases: tests/test_users_audit.bats against modules/users.sh.
+# mutate-suite: modules/users.sh tests/test_users_audit.bats
+#
+# Each case brings back a finding a stock RHEL, Arch or Debian host does not
+# deserve, or hides one it does.
+
+run_case "nopasswd/defaults-dropped" 1 \
+    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 } \$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
+    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 }' <<<\"\$recs\""
+
+run_case "nopasswd/rules-dropped" 1 \
+    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 } \$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
+    "    awk -F'\\t' '\$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\""
+
+run_case "shells/shutdown-halt-login" 1 \
+    '        */nologin|*/false|/bin/sync|*/shutdown|*/halt)' \
+    '        */nologin|*/false|/bin/sync)'
+
+# An /etc/shells allow-list: sshd never reads it, so a planted interpreter hides.
+run_case "shells/etc-shells-required" 2 \
+    '        if _has_login_shell "$shell"; then' \
+    '        if _has_login_shell "$shell" && grep -qxF -- "$shell" /etc/shells; then'
+
+run_case "home/no-login-counted" 1 \
+    '        _has_login_shell "$shell" || continue' \
+    '        :'
+
+run_case "faillog/no-not-reported" 1 \
+    "        [[ \"\${val,,}\" == yes ]] || i18n 'users.faillog_should_yes' \"key=FAILLOG_ENAB\" \"val=\$val\"" \
+    '        :'
+
+run_case "faillog/malformed-passes" 1 \
+    "        i18n 'users.faillog_malformed' \"line=\$bad\"" \
+    '        :'
+
+run_case "faillog/first-line-wins" 1 \
+    '            val="${BASH_REMATCH[1]}" have=1' \
+    '            (( have )) || val="${BASH_REMATCH[1]}"; have=1'
+
+run_case "faillog/comment-dropped" 1 \
+    '            val="${BASH_REMATCH[1]}" have=1' \
+    '            val="${BASH_REMATCH[1]%%[[:space:]]#*}" have=1'
+
+run_case "faillog/quotes-kept" 1 \
+    '        if [[ "$l" =~ ^[[:space:]]*FAILLOG_ENAB[[:space:]][[:space:]\"]*([^\"]*) ]]; then' \
+    '        if [[ "$l" =~ ^[[:space:]]*FAILLOG_ENAB[[:space:]]([^\"]*) ]]; then'
+
+run_case "faillog/malformed-overrides" 1 \
+    '            bad="$l"' \
+    '            bad="$l" have=0'
+
+run_case "pwquality/main-ignored" 1 \
+    '    [[ -f "$USERS_PWQUALITY_CONF" ]] && files+=("$USERS_PWQUALITY_CONF")' \
+    '    :'
+
+run_case "pwquality/locale-order" 1 \
+    "    done < <(printf '%s\\n' \"\$USERS_PWQUALITY_CONF.d\"/*.conf | LC_ALL=C sort)" \
+    "    done < <(printf '%s\\n' \"\$USERS_PWQUALITY_CONF.d\"/*.conf | sort)"

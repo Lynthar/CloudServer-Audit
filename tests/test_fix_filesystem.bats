@@ -461,6 +461,7 @@ _make() {
 _perms_seeing_group() {
     _vpssec_stub id 0 0
     _vpssec_stub_script stat <<STUB
+while (( \$# )) && [[ "\$1" != -c ]]; do shift; done
 case "\$2" in
     %a) printf '%s\n' '640' ;;
     %U) printf '%s\n' 'root' ;;

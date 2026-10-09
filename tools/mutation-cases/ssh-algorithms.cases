@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_ssh_algorithms.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_algorithms.bats
+#
+# Each case leaves a weak algorithm in place, or replaces sshd's defaults with
+# a fixed list that drops the post-quantum hybrids.
+
+run_case "ciphers/arcfour-kept" 1 \
+    '    local content="Ciphers -3des-cbc,arcfour*,blowfish-cbc,cast128-cbc' \
+    '    local content="Ciphers -3des-cbc,blowfish-cbc,cast128-cbc'
+
+run_case "macs/sha1-kept" 1 \
+    'MACs -hmac-md5*,hmac-sha1*' \
+    'MACs -hmac-md5*'
+
+run_case "kex/fixed-list" 1 \
+    'KexAlgorithms -diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1"' \
+    'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256"'

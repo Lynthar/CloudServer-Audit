@@ -120,7 +120,7 @@ declare -gA FIX_CONFIRM=(
     ["nginx.add_catchall"]="Adds a default server that closes requests for unknown hostnames and bare-IP requests on port 80, and on 443 when nginx already serves 443"
 
     # Could break old SSH clients
-    ["ssh.harden_algorithms"]="May break connections from older SSH clients"
+    ["ssh.harden_algorithms"]="Removes SHA-1/MD5 MACs and SHA-1 key exchange from the defaults: clients offering nothing newer can no longer connect"
 
     # Webapp - SSL changes may affect connectivity
     ["webapp.nginx_ssl_protocols"]="May break old browser/client connections"

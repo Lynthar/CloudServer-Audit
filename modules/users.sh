@@ -4,9 +4,11 @@
 
 # --- Configuration ---
 
-# Named, not inlined: this is the seam that lets a test point every reader
-# in this module at a fixture instead of the host's real /etc/shadow.
+# Named, not inlined: the seams that let a test point this module's readers
+# at fixtures instead of the host's real files.
 USERS_SHADOW_FILE="/etc/shadow"
+USERS_LOGIN_DEFS="/etc/login.defs"
+USERS_PWQUALITY_CONF="/etc/security/pwquality.conf"
 
 # System users that should have shells (whitelist)
 declare -ga ALLOWED_SHELL_USERS=(
@@ -70,13 +72,13 @@ declare -gA PWQUALITY_POLICY=(
 
 # --- Detection Functions ---
 
-# Does this user have a login shell? An EMPTY 7th passwd field is NOT
-# "no login": login(1) and sshd fall back to /bin/sh, so an empty-password,
-# empty-shell account is fully login-capable.
+# Can this account log in? sshd needs only an executable shell (/etc/shells is
+# never consulted) and an empty field means /bin/sh, so only these names say no;
+# shutdown and halt, like sync, are RHEL system accounts, not shells.
 _has_login_shell() {
     local shell="$1"
     case "$shell" in
-        */nologin|*/false|/bin/sync)
+        */nologin|*/false|/bin/sync|*/shutdown|*/halt)
             return 1
             ;;
         *)
@@ -170,48 +172,12 @@ _find_system_users_with_shells() {
     printf '%s\n' "${suspicious[@]}"
 }
 
-# Find NOPASSWD sudo entries - HIGH RISK
+# Every way sudoers lets something run without a password, one per line as
+# "<file>: <rule>": rules carrying NOPASSWD and authenticate Defaults turned off.
 _find_nopasswd_sudo() {
-    local findings=()
-
-    # Check /etc/sudoers
-    if [[ -r /etc/sudoers ]]; then
-        while IFS= read -r line; do
-            # Skip comments and empty lines
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$line" ]] && continue
-
-            # Check for NOPASSWD
-            if [[ "$line" =~ NOPASSWD: ]]; then
-                # Extract user/group
-                local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
-                findings+=("/etc/sudoers: $entry")
-            fi
-        done < /etc/sudoers
-    fi
-
-    # Check /etc/sudoers.d/
-    if [[ -d /etc/sudoers.d ]]; then
-        for f in /etc/sudoers.d/*; do
-            [[ -f "$f" ]] || continue
-            [[ -r "$f" ]] || continue
-
-            # Skip drop-ins sudo itself ignores (see _sudoers_dropin_ignored)
-            _sudoers_dropin_ignored "$f" && continue
-
-            while IFS= read -r line; do
-                [[ "$line" =~ ^[[:space:]]*# ]] && continue
-                [[ -z "$line" ]] && continue
-
-                if [[ "$line" =~ NOPASSWD: ]]; then
-                    local entry=$(echo "$line" | sed 's/[[:space:]]*#.*//')
-                    findings+=("$f: $entry")
-                fi
-            done < "$f"
-        done
-    fi
-
-    printf '%s\n' "${findings[@]}"
+    local recs
+    recs=$(_sudoers_records)
+    awk -F'\t' '$1 == "T" { print $2 ": " $4 } $1 == "D" && $5 == "0" { print $2 ": " $6 }' <<<"$recs"
 }
 
 # Regex of cloud-init default usernames FOR THE DETECTED PROVIDER; the union
@@ -328,13 +294,13 @@ _find_recent_users() {
         local epoch="" evidence=""
         if [[ -d "$home" ]]; then
             local btime
-            btime=$(stat -c %W "$home" 2>/dev/null) || btime=""
+            btime=$(stat -L -c %W "$home" 2>/dev/null) || btime=""
             if [[ "$btime" =~ ^[0-9]+$ ]] && (( btime > 0 )); then
                 epoch="$btime"
                 evidence="home-created"
             else
                 local mtime
-                mtime=$(stat -c %Y "$home" 2>/dev/null || stat -f %m "$home" 2>/dev/null) || mtime=""
+                mtime=$(stat -L -c %Y "$home" 2>/dev/null || stat -L -f %m "$home" 2>/dev/null) || mtime=""
                 if [[ "$mtime" =~ ^[0-9]+$ ]]; then
                     epoch="$mtime"
                     evidence="home-modified"
@@ -376,7 +342,7 @@ _analyze_ssh_keys() {
         [[ "$key_count" -eq 0 ]] && continue
 
         # Check permissions
-        local key_perms=$(stat -c %a "$authkeys" 2>/dev/null || stat -f %Lp "$authkeys" 2>/dev/null)
+        local key_perms=$(stat -L -c %a "$authkeys" 2>/dev/null || stat -L -f %Lp "$authkeys" 2>/dev/null)
         local perms_ok="yes"
         if [[ "$key_perms" != "600" && "$key_perms" != "400" ]]; then
             perms_ok="no"
@@ -425,8 +391,10 @@ _find_unusual_home() {
 
     while IFS=: read -r user pass uid gid gecos home shell; do
         [[ "$uid" =~ ^[0-9]+$ ]] || continue
-        # Skip system users
+        # Skip system users, and accounts that cannot log in: where their home
+        # is means nothing (nobody's is / on RHEL and Arch).
         [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
+        _has_login_shell "$shell" || continue
 
         # Normal locations
         case "$home" in
@@ -507,15 +475,14 @@ _pwquality_get_directive_from_files() {
 }
 
 _pwquality_get_directive() {
-    local key="$1"
+    local key="$1" f
     local -a files=()
-    [[ -f /etc/security/pwquality.conf ]] && files+=(/etc/security/pwquality.conf)
-    if [[ -d /etc/security/pwquality.conf.d ]]; then
-        local f
-        for f in /etc/security/pwquality.conf.d/*.conf; do
-            [[ -f "$f" ]] && files+=("$f")
-        done
-    fi
+    # libpwquality's order: the drop-ins in byte order, then the main file,
+    # whose value therefore wins over any drop-in.
+    while IFS= read -r f; do
+        [[ -f "$f" ]] && files+=("$f")
+    done < <(printf '%s\n' "$USERS_PWQUALITY_CONF.d"/*.conf | LC_ALL=C sort)
+    [[ -f "$USERS_PWQUALITY_CONF" ]] && files+=("$USERS_PWQUALITY_CONF")
     [[ ${#files[@]} -eq 0 ]] && return 0
     _pwquality_get_directive_from_files "$key" "${files[@]}"
 }
@@ -537,9 +504,8 @@ _check_pwquality() {
         fi
     fi
 
-    # Reads pwquality.conf plus pwquality.conf.d/*.conf, last-write-wins, so
-    # drop-in policies are honoured.
-    if [[ -f /etc/security/pwquality.conf || -d /etc/security/pwquality.conf.d ]]; then
+    # pwquality.conf plus its .d drop-ins, in libpwquality's order.
+    if [[ -f "$USERS_PWQUALITY_CONF" || -d "$USERS_PWQUALITY_CONF.d" ]]; then
         # Every comparison guards with a numeric regex first: a non-numeric
         # value would be read as a variable name and abort under set -u.
         # dcredit/ucredit are legitimately negative, so they allow a '-'.
@@ -716,15 +682,27 @@ _check_hash_rounds() {
     fi
 }
 
-# Failed-login logging in login.defs. Both FAILLOG_ENAB and LOG_UNKFAIL_ENAB
-# should be yes; the latter surfaces brute-force against fake usernames.
+# FAILLOG_ENAB as shadow's login.defs reader takes it: the last "NAME value"
+# line wins, the value whole up to any quote ("yes # x" is not yes). Lines in
+# another shape are skipped by shadow, so one matters only when none is valid.
 _check_faillog_logging() {
-    local issues=() enab unk
-    enab=$(grep -E '^FAILLOG_ENAB'     /etc/login.defs 2>/dev/null | awk '{print $2}')
-    unk=$(grep -E  '^LOG_UNKFAIL_ENAB' /etc/login.defs 2>/dev/null | awk '{print $2}')
-    [[ -n "$enab" && "$enab" != "yes" ]] && issues+=("$(i18n 'users.faillog_should_yes' "key=FAILLOG_ENAB" "val=$enab")")
-    [[ -n "$unk"  && "$unk"  != "yes" ]] && issues+=("$(i18n 'users.faillog_should_yes' "key=LOG_UNKFAIL_ENAB" "val=$unk")")
-    printf '%s\n' "${issues[@]}"
+    local l val="" have=0 bad=""
+    [[ -r "$USERS_LOGIN_DEFS" ]] || return 0
+    while IFS= read -r l || [[ -n "$l" ]]; do
+        l="${l%"${l##*[![:space:]]}"}"
+        [[ "$l" =~ ^[[:space:]]*FAILLOG_ENAB([[:space:]=]|$) ]] || continue
+        if [[ "$l" =~ ^[[:space:]]*FAILLOG_ENAB[[:space:]][[:space:]\"]*([^\"]*) ]]; then
+            val="${BASH_REMATCH[1]}" have=1
+        else
+            bad="$l"
+        fi
+    done < "$USERS_LOGIN_DEFS"
+    if (( have )); then
+        [[ "${val,,}" == yes ]] || i18n 'users.faillog_should_yes' "key=FAILLOG_ENAB" "val=$val"
+    elif [[ -n "$bad" ]]; then
+        i18n 'users.faillog_malformed' "line=$bad"
+    fi
+    return 0
 }
 
 # sudoers integrity via visudo -c. A syntax error either locks operators out
@@ -913,7 +891,7 @@ users_audit() {
             suggestion="$(i18n 'users.review_names')"
     fi
 
-    # 8. Check for unusual home directories - LOW (strict only)
+    # 8. Check for unusual home directories - LOW
     local unusual=$(_find_unusual_home)
     local unusual_count=$(count_lines "$unusual" '|')
 

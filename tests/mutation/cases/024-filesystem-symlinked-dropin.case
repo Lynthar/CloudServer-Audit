@@ -1,0 +1,28 @@
+# Plant: an sshd_config.d drop-in that is a symlink to a 644 file elsewhere, the
+# shape Arch's systemd and Debian 13's systemd-userdbd ship (20-systemd-userdb.conf).
+# Expect: filesystem.sensitive_perms_ok — the link's own mode 777 is no finding;
+# it used to fail as "mode 777 (expected 644)" and no fix could clear it.
+TEST_DESC="A symlinked sshd drop-in is judged by its target's mode"
+EXPECT_ID="filesystem.sensitive_perms_ok"
+EXPECT_STATUS="passed"
+MODULE="filesystem"
+
+_TARGET="/usr/local/lib/vpssec-mutation-userdb.conf"
+_LINK="/etc/ssh/sshd_config.d/20-vpssec-mutation-userdb.conf"
+
+precheck() {
+    [[ -d /etc/ssh/sshd_config.d ]]
+}
+
+mutate() {
+    mkdir -p "${_TARGET%/*}"
+    printf '# vpssec mutation test\n' > "$_TARGET"
+    chmod 644 "$_TARGET"
+    ln -sfn "$_TARGET" "$_LINK"
+    return 0
+}
+
+restore() {
+    rm -f "$_LINK" "$_TARGET"
+    return 0
+}

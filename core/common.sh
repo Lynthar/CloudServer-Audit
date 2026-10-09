@@ -1111,7 +1111,6 @@ count_authorized_keys() {
 # ssh audit and the ssh lockout gates must agree, or a gate clears a lockout.
 
 SUDOERS_FILE="/etc/sudoers"
-SUDOERS_DIR="/etc/sudoers.d"
 
 # True for a sudoers.d drop-in that sudo IGNORES: @includedir skips any name
 # containing '.' or ending in '~'. Reading those reports grants sudo never gives.
@@ -1120,16 +1119,181 @@ _sudoers_dropin_ignored() {
     [[ "$base" == *.* || "$base" == *'~' ]]
 }
 
-# The sudoers files sudo actually reads, one per line.
-sudoers_files() {
-    [[ -r "$SUDOERS_FILE" ]] && echo "$SUDOERS_FILE"
-    local f
-    for f in "$SUDOERS_DIR"/*; do
-        [[ -f "$f" && -r "$f" ]] || continue
-        _sudoers_dropin_ignored "$f" && continue
-        echo "$f"
-    done
-    return 0
+# The lines sudo reads, as "<file><TAB><line>", with @include / @includedir
+# (and the older #include forms) expanded where they stand: rule order decides
+# which grant wins, and a file sudo never includes grants nothing.
+_sudoers_lines() {
+    # sudo reads an @includedir in byte order (strcmp) and the last grant read
+    # decides, so the glob below must not sort by the caller's locale.
+    local LC_ALL=C
+    local file="$1" depth="${2:-0}" line target f
+    (( depth < 8 )) && [[ -r "$file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*[@#]include(dir)?[[:space:]]+\"?([^\"]*[^\"[:space:]])\"?[[:space:]]*$ ]]; then
+            target="${BASH_REMATCH[2]}"
+            [[ "$target" == /* ]] || target="${file%/*}/$target"
+            if [[ -z "${BASH_REMATCH[1]}" ]]; then
+                _sudoers_lines "$target" $((depth + 1))
+                continue
+            fi
+            for f in "$target"/*; do
+                [[ -f "$f" ]] || continue
+                _sudoers_dropin_ignored "$f" && continue
+                _sudoers_lines "$f" $((depth + 1))
+            done
+        else
+            printf '%s\t%s\n' "$file" "$line"
+        fi
+    done < "$file"
+}
+
+# sudoers as tab-separated records in sudo's reading order; "-" stands for an
+# empty field, which read's IFS would swallow. G file who N|P|- text: all
+# commands as root; T file who text: NOPASSWD; D file g|u|r|c who 0|1 text.
+_sudoers_records() {
+    _sudoers_lines "$SUDOERS_FILE" | LC_ALL=C awk '
+        function norm(s) { gsub(/[ \t]+/, " ", s); sub(/^ /, "", s); sub(/ $/, "", s); return s }
+        function tight(s) {
+            gsub(/ ?, ?/, ",", s); gsub(/ ?: ?/, ":", s); gsub(/ ?= ?/, "=", s)
+            gsub(/\( /, "(", s); gsub(/ \)/, ")", s)
+            return s
+        }
+        # "#" opens a comment unless a digit follows: "#1001" is a uid.
+        function uncomment(s,   i) {
+            for (i = 1; i <= length(s); i++)
+                if (substr(s, i, 1) == "#" && substr(s, i + 1, 1) !~ /[0-9]/)
+                    return substr(s, 1, i - 1)
+            return s
+        }
+        # Principals of a user or runas list ($2 is the alias kind), aliases
+        # expanded; a negated alias negates every member.
+        function principals(list, kind, depth,   n, it, i, neg, sub_, out, m, j, t) {
+            if (depth > 16) return ""
+            n = split(list, it, ",")
+            out = ""
+            for (i = 1; i <= n; i++) {
+                neg = 0
+                while (substr(it[i], 1, 1) == "!") { neg = !neg; it[i] = substr(it[i], 2) }
+                if (it[i] == "") continue
+                if ((kind, it[i]) in ALIAS) {
+                    sub_ = principals(ALIAS[kind, it[i]], kind, depth + 1)
+                    m = split(sub_, t, ",")
+                    for (j = 1; j <= m; j++) {
+                        if (neg) t[j] = (substr(t[j], 1, 1) == "+" ? "-" : "+") substr(t[j], 2)
+                        out = out (out == "" ? "" : ",") t[j]
+                    }
+                } else {
+                    out = out (out == "" ? "" : ",") (neg ? "-" : "+") it[i]
+                }
+            }
+            return out
+        }
+        function cmnd_full(c, depth,   n, it, i) {
+            if (c == "ALL") return 1
+            if (depth > 16 || !(("C", c) in ALIAS)) return 0
+            n = split(ALIAS["C", c], it, ",")
+            for (i = 1; i <= n; i++)
+                if (substr(it[i], 1, 1) != "!" && cmnd_full(it[i], depth + 1)) return 1
+            return 0
+        }
+        # No Runas_Spec runs as root; "(:grp)" runs as the invoking user.
+        function runas_root(r,   u, p, n, it, i) {
+            if (r == "\001") return 1
+            u = r; p = index(r, ":")
+            if (p) u = substr(r, 1, p - 1)
+            n = split(principals(u, "R", 0), it, ",")
+            for (i = 1; i <= n; i++)
+                if (it[i] == "+ALL" || it[i] == "+root" || it[i] == "+#0") return 1
+            return 0
+        }
+        # Comma split that keeps a Runas_Spec "(a, b : c)" whole.
+        function specs(s, out,   n, d, i, c, cur) {
+            n = 0; d = 0; cur = ""
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (c == "(") d++
+                else if (c == ")") d--
+                if (c == "," && d == 0) { out[++n] = cur; cur = "" } else cur = cur c
+            }
+            out[++n] = cur
+            return n
+        }
+        BEGIN {
+            SEP = "\034"
+            split("NOPASSWD PASSWD NOEXEC EXEC SETENV NOSETENV LOG_INPUT NOLOG_INPUT LOG_OUTPUT NOLOG_OUTPUT MAIL NOMAIL FOLLOW NOFOLLOW INTERCEPT NOINTERCEPT", k, " ")
+            for (i in k) TAG[k[i]] = 1
+            split("User_Alias U Runas_Alias R Host_Alias H Cmnd_Alias C Cmd_Alias C", k, " ")
+            for (i = 1; i < 10; i += 2) KIND[k[i]] = k[i + 1]
+        }
+        {
+            t = index($0, "\t"); file = substr($0, 1, t - 1)
+            line = uncomment(substr($0, t + 1))
+            if (held != "" && hfile == file) line = held " " line
+            held = ""
+            sub(/[ \t]+$/, "", line)
+            for (nb = 0; substr(line, length(line) - nb, 1) == "\\"; nb++) ;
+            if (nb % 2) { held = substr(line, 1, length(line) - 1); hfile = file; next }
+            disp = norm(line); s = tight(disp)
+            if (s == "") next
+            sp = index(s, " "); word = sp ? substr(s, 1, sp - 1) : s
+            if (word in KIND) {
+                na = split(substr(s, sp + 1), a, ":")
+                for (i = 1; i <= na; i++) {
+                    eq = index(a[i], "=")
+                    if (eq) ALIAS[KIND[word], substr(a[i], 1, eq - 1)] = substr(a[i], eq + 1)
+                }
+                next
+            }
+            if (s ~ /^Defaults([:@>!]|( |$))/) {
+                c = substr(s, 9, 1); cls = "g"; bind = ""; rest = substr(s, 10)
+                if (c == ":" || c == "@" || c == ">" || c == "!") {
+                    p = index(rest, " "); if (!p) next
+                    bind = substr(rest, 1, p - 1); rest = substr(rest, p + 1)
+                    cls = (c == ":") ? "u" : (c == ">") ? "r" : (c == "!") ? "c" : "g"
+                }
+                np = split(rest, ps, ",")
+                for (i = 1; i <= np; i++)
+                    if (ps[i] == "authenticate" || ps[i] == "!authenticate")
+                        rec[++n] = "D" SEP file SEP cls SEP bind SEP (ps[i] == "authenticate") SEP disp
+                next
+            }
+            if (!sp) next
+            r = substr(s, sp + 1); eq = index(r, "=")
+            if (!eq) next
+            rec[++n] = "R" SEP file SEP word SEP substr(r, eq + 1) SEP disp
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                split(rec[i], f, SEP)
+                if (f[1] == "D") {
+                    b = f[4]
+                    if (f[3] == "u") b = principals(b, "U", 0)
+                    else if (f[3] == "r") b = principals(b, "R", 0)
+                    print "D\t" f[2] "\t" f[3] "\t" (b == "" ? "-" : b) "\t" f[5] "\t" f[6]
+                    continue
+                }
+                runas = "\001"; auth = "-"; anyn = 0; full = 0; fauth = "-"
+                m = specs(f[4], sp_)
+                for (j = 1; j <= m; j++) {
+                    c = sp_[j]; sub(/^ /, "", c)
+                    if (substr(c, 1, 1) == "(") {
+                        q = index(c, ")"); if (!q) break
+                        runas = substr(c, 2, q - 2); c = substr(c, q + 1); sub(/^ /, "", c)
+                    }
+                    while (match(c, /^[A-Z_]+=[^ ]* /)) c = substr(c, RLENGTH + 1)
+                    while (match(c, /^[A-Z_]+:/) && (substr(c, 1, RLENGTH - 1) in TAG)) {
+                        tg = substr(c, 1, RLENGTH - 1)
+                        if (tg == "NOPASSWD") auth = "N"; else if (tg == "PASSWD") auth = "P"
+                        c = substr(c, RLENGTH + 1); sub(/^ /, "", c)
+                    }
+                    if (auth == "N") anyn = 1
+                    if (cmnd_full(c, 0) && runas_root(runas)) { full = 1; fauth = auth }
+                }
+                pr = principals(f[3], "U", 0); if (pr == "") pr = "-"
+                if (full) print "G\t" f[2] "\t" pr "\t" fauth "\t" f[5]
+                if (anyn) print "T\t" f[2] "\t" pr "\t" f[5]
+            }
+        }'
 }
 
 # Pure-data variant of _group_all_members, for tests.
@@ -1159,52 +1323,76 @@ _group_all_members() {
     _group_all_members_from_streams "$group_line" "$passwd"
 }
 
-# For a rule line granting FULL root — commands ALL, Runas absent or holding
-# ALL or root — print "<user-or-%group> <1 if NOPASSWD else 0>"; fail for any
-# other line. A command-restricted rule is not a way to root.
-_sudoers_full_grant() {
-    local line="$1"
-    local re='^[[:space:]]*(%?[A-Za-z_][A-Za-z0-9._\\-]*)[[:space:]]+[^=]+=[[:space:]]*(\(([^)]*)\))?[[:space:]]*(([A-Z_]+:[[:space:]]*)*)ALL[[:space:]]*(#.*)?$'
-    [[ "$line" =~ $re ]] || return 1
-    local token="${BASH_REMATCH[1]}" runas="${BASH_REMATCH[3]}"
-    local has_runas="${BASH_REMATCH[2]}" tags="${BASH_REMATCH[4]}"
-    case "$token" in
-        Defaults|Cmnd_Alias|Host_Alias|User_Alias|Runas_Alias) return 1 ;;
-    esac
-    if [[ -n "$has_runas" ]]; then
-        local users="${runas%%:*}" u ok=0
-        for u in ${users//,/ }; do
-            [[ "$u" == "ALL" || "$u" == "root" ]] && ok=1
+# Accounts a principal ("who") list names: "+x" adds and "-x" removes, x a
+# user, #uid, %group, %#gid or ALL, aliases already expanded. Names that are
+# not accounts drop out.
+_sudoers_accounts() {
+    local item name n
+    local -a items=() names=()
+    local -A add=() del=()
+    IFS=, read -ra items <<<"$1"
+    for item in "${items[@]}"; do
+        name="${item:1}" names=()
+        case "$name" in
+            ALL) mapfile -t names < <(getent passwd 2>/dev/null | cut -d: -f1) ;;
+            %:*|+*|'') ;;
+            %\#*)
+                n=$(getent group "${name#%#}" 2>/dev/null | cut -d: -f1)
+                [[ -n "$n" ]] && mapfile -t names < <(_group_all_members "$n") ;;
+            %*) mapfile -t names < <(_group_all_members "${name#%}") ;;
+            \#*) mapfile -t names < <(getent passwd "${name#\#}" 2>/dev/null | cut -d: -f1) ;;
+            *) getent passwd "$name" >/dev/null 2>&1 && names=("$name") ;;
+        esac
+        for n in "${names[@]}"; do
+            [[ -n "$n" ]] || continue
+            if [[ "${item:0:1}" == "-" ]]; then del[$n]=1; else add[$n]=1; fi
         done
-        (( ok )) || return 1
-    fi
-    local nopasswd=0
-    [[ "$tags" == *NOPASSWD:* ]] && nopasswd=1
-    echo "$token $nopasswd"
+    done
+    for n in "${!add[@]}"; do
+        [[ -n "${del[$n]:-}" ]] || echo "$n"
+    done
 }
 
-# Every full grant as "<account> <0|1>": users and %group members named by a
-# full-grant rule. Group membership alone grants nothing (Arch ships %wheel
-# commented out); names that are not real accounts drop out.
+# True when sudo asks account $1 for a password where no tag says: the
+# authenticate Defaults in sudo's order, generic, then per-user, then per-runas
+# for root; later lines of a class win. $2 is _sudoers_records' output.
+_sudoers_authenticates() {
+    local acct="$1" recs="$2" val=1 cls kind c b v accts
+    for cls in g u r; do
+        while IFS=$'\t' read -r kind _ c b v _; do
+            [[ "$kind" == D && "$c" == "$cls" ]] || continue
+            if [[ "$cls" == u ]]; then
+                accts=$(_sudoers_accounts "$b")
+                grep -qxF -- "$acct" <<<"$accts" || continue
+            elif [[ "$cls" == r && ",$b," != *",+ALL,"* && ",$b," != *",+root,"* && ",$b," != *",+#0,"* ]]; then
+                continue
+            fi
+            val="$v"
+        done <<<"$recs"
+    done
+    (( val == 1 ))
+}
+
+# Every account holding a grant of all commands as root, as "<account> <0|1>",
+# 1 when no password is asked. The last such grant naming the account decides,
+# as in sudo; one without a PASSWD/NOPASSWD tag takes the authenticate Defaults.
 _sudo_admin_grants() {
-    local f line grant token flag m
-    {
-        while IFS= read -r f; do
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                grant=$(_sudoers_full_grant "$line") || continue
-                token="${grant% *}" flag="${grant##* }"
-                if [[ "$token" == %* ]]; then
-                    _group_all_members "${token#%}" | sed -n "/./s/\$/ $flag/p"
-                else
-                    echo "$token $flag"
-                fi
-            done < "$f"
-        done < <(sudoers_files)
-    } | while read -r m flag; do
-        # if-form: a dropped name must not become this pipeline's status.
-        if [[ -n "$m" ]] && getent passwd "$m" >/dev/null 2>&1; then
-            echo "$m $flag"
+    local recs kind prins auth acct
+    local -A last=()
+    recs=$(_sudoers_records)
+    while IFS=$'\t' read -r kind _ prins auth _; do
+        [[ "$kind" == G ]] || continue
+        while IFS= read -r acct; do
+            last[$acct]="$auth"
+        done < <(_sudoers_accounts "$prins")
+    done <<<"$recs"
+    for acct in "${!last[@]}"; do
+        auth="${last[$acct]}"
+        if [[ "$auth" == - ]]; then
+            auth=N
+            _sudoers_authenticates "$acct" "$recs" && auth=P
         fi
+        if [[ "$auth" == N ]]; then echo "$acct 1"; else echo "$acct 0"; fi
     done
 }
 

@@ -28,3 +28,23 @@ run_case "backup/first-run-failure-swallowed" 1 \
 run_case "backup/new-marker-dropped" 1 \
     '        SSH_LAST_DROPIN_BACKUP="NEW"' \
     '        SSH_LAST_DROPIN_BACKUP=""'
+
+# ---- the legacy migration and a write over this session's own file ------------
+
+# The migration must be undoable: without either snapshot a rollback leaves 00-
+# with the legacy content and no 99-, a config different from before the plan.
+run_case "migrate/legacy-not-backed-up" 1 \
+    '    backup_file "$SSH_HARDENING_DROPIN_LEGACY" >/dev/null || return 1' \
+    '    :'
+
+run_case "migrate/new-name-not-registered" 1 \
+    '    backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1' \
+    '    :'
+
+run_case "write/own-copy-not-kept" 1 \
+    '            SSH_LAST_DROPIN_BACKUP="PREV"' \
+    '            :'
+
+run_case "rollback/own-copy-not-restored" 1 \
+    "        if printf '%s\\n' \"\$SSH_LAST_DROPIN_PREV\" > \"\$SSH_HARDENING_DROPIN\"; then" \
+    '        if true; then'

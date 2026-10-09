@@ -1,0 +1,35 @@
+# Mutation cases: tests/test_filesystem_findings.bats against modules/filesystem.sh.
+# mutate-suite: modules/filesystem.sh tests/test_filesystem_findings.bats
+#
+# Each case misreads a path a real host ships or an attacker can create: a
+# symlinked drop-in, a whitelisted name one directory off, a second getcap
+# clause, a name holding a newline or a backslash.
+
+run_case "symlink/link-mode-audited" 1 \
+    '    actual=$(stat -L -c "%a" "$file" 2>/dev/null)' \
+    '    actual=$(stat -c "%a" "$file" 2>/dev/null)'
+
+# Through the link's 777 the fix would chmod a stricter 400 target up to 440.
+run_case "symlink/link-mode-fixed" 1 \
+    '        actual=$(stat -L -c "%a" "$file" 2>/dev/null)' \
+    '        actual=$(stat -c "%a" "$file" 2>/dev/null)'
+
+run_case "glob/star-crosses-slash" 1 \
+    '    [[ "$1" == $2 && ${#a} -eq ${#b} ]]' \
+    '    [[ "$1" == $2 ]]'
+
+run_case "caps/first-clause-only" 1 \
+    '    read -ra clauses <<<"$1"' \
+    '    clauses=("${1%% *}")'
+
+run_case "caps/all-caps-subset" 1 \
+    '        [[ -n "$names" && "$names" != "$clause" ]] || return 1' \
+    '        [[ -n "$names" ]] || continue'
+
+run_case "names/newline-raw" 1 \
+    "    if [[ \"\$1\" == *[[:cntrl:]]* ]]; then printf '%q\\n' \"\$1\"; else printf '%s\\n' \"\$1\"; fi" \
+    "    printf '%s\\n' \"\$1\""
+
+run_case "names/echo-e-back" 1 \
+    "        local items=\$(printf '%s\\n' \"\$ww_files\" \"\$ww_dirs\" | sed '/^\$/d' | head -5 | tr '\\n' ' ')" \
+    "        local items=\$(echo -e \"\$ww_files\\n\$ww_dirs\" | head -5 | tr '\\n' ' ')"

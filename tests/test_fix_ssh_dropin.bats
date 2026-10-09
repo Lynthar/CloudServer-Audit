@@ -258,6 +258,43 @@ _sshd_matched() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-TC.out"; }
     [ ! -e "$SSH_HARDENING_DROPIN" ]
 }
 
+@test "ssh migrate: a rollback brings the 99- drop-in back and removes 00-" {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/state.sh"
+    printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN_LEGACY"
+    _vpssec_begin_backup_session
+
+    _ssh_migrate_legacy_dropin
+    [ -e "$SSH_HARDENING_DROPIN" ]
+    backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    grep -qx 'X11Forwarding no' "$SSH_HARDENING_DROPIN_LEGACY"
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "ssh rollback: a write over a drop-in this session created restores what it replaced" {
+    # Two SSH fixes in one plan, or a fix after the migration: the session has
+    # no copy of the file, so the write keeps its own.
+    _vpssec_begin_backup_session
+    _ssh_write_hardening_config "MaxAuthTries 3"
+    _ssh_write_hardening_config "MaxAuthTries 3
+PasswordAuthentication no"
+
+    _ssh_rollback_dropin
+    grep -qx 'MaxAuthTries 3' "$SSH_HARDENING_DROPIN"
+    _vpssec_refute grep -q 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
+}
+
+@test "ssh rollback: after the migration, a failed write returns to the migrated content" {
+    printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN_LEGACY"
+    _vpssec_begin_backup_session
+    _ssh_migrate_legacy_dropin
+    _ssh_write_hardening_config "PasswordAuthentication no"
+
+    _ssh_rollback_dropin
+    grep -qx 'X11Forwarding no' "$SSH_HARDENING_DROPIN"
+    _vpssec_refute grep -q 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
+}
+
 # ---- the backup contract ---------------------------------------------
 
 @test "hardening drop-in: a backup that cannot be taken aborts the write" {
