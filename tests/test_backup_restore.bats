@@ -161,6 +161,7 @@ _make_backup_session() {
     local rel="${TEST_HOST_ROOT#/}/sshd_config"
     mkdir -p "$backup_dir/$(dirname "$rel")"
     echo "expected" > "$backup_dir/$rel"
+    printf '644 /%s\n' "$rel" > "$backup_dir/.vpssec_modes"
 
     # Make sure the destination tree exists but no symlinks
     # interfere — vanilla file restore.

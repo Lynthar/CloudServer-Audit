@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_status_last_audit.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_status_last_audit.bats
+#
+# An audit pass records itself, and status reads it back.
+
+run_case "record/not-written" 1 \
+    '    state_record_audit "$(calculate_score)" "$complete" \' \
+    '    : "$(calculate_score)" "$complete" \'
+run_case "record/always-complete" 1 \
+    '    (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || complete=false' \
+    '    :'
+run_case "status/incomplete-unsaid" 1 \
+    '        elif [[ "$audit_complete" == "false" ]]; then' \
+    '        elif false; then'
+run_case "status/never-untranslated" 1 \
+    "    never=\$(i18n 'status.never')" \
+    '    never=never'

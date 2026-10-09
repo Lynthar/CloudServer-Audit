@@ -90,21 +90,18 @@ _timezone_check_current() {
         return
     fi
 
-    # Check if using UTC (common for cloud VPS but may not be desired)
-    # Always provide fix_id to allow user to change timezone in guide mode
+    # Passed checks carry no fix: guide lists findings only. Changing a set
+    # timezone is the operator's call, so the command is given instead.
     if [[ "$current_tz" == "UTC" || "$current_tz" == "Etc/UTC" ]]; then
         check_emit "timezone.using_utc" low passed \
             title="$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            desc="$(i18n 'timezone.utc_note'). $(i18n 'timezone.change_available')" \
-            suggestion="$(i18n 'timezone.fix_set_timezone')" \
-            fix="timezone.set_timezone"
+            desc="$(i18n 'timezone.utc_note')" \
+            suggestion="$(i18n 'timezone.change_timezone_cmd')"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     else
         check_emit "timezone.configured" low passed \
             title="$(i18n 'timezone.current_timezone' "tz=$current_tz")" \
-            desc="$(i18n 'timezone.change_available')" \
-            suggestion="$(i18n 'timezone.fix_set_timezone')" \
-            fix="timezone.set_timezone"
+            suggestion="$(i18n 'timezone.change_timezone_cmd')"
         print_ok "$(i18n 'timezone.current_timezone' "tz=$current_tz")"
     fi
 
@@ -256,12 +253,9 @@ _timezone_check_locale() {
             fix="timezone.set_locale"
         print_warn "$(i18n 'timezone.locale_not_set')"
     else
-        # Provide fix_id to allow user to change locale in guide mode
         check_emit "timezone.locale_ok" low passed \
             title="$(i18n 'timezone.locale_ok' "locale=$current_locale")" \
-            desc="$(i18n 'timezone.change_available')" \
-            suggestion="$(i18n 'timezone.fix_set_locale')" \
-            fix="timezone.set_locale"
+            suggestion="$(i18n 'timezone.change_locale_cmd')"
         print_ok "$(i18n 'timezone.locale_ok' "locale=$current_locale")"
     fi
 
@@ -297,9 +291,8 @@ timezone_fix() {
 _timezone_fix_set_timezone() {
     print_info "$(i18n 'timezone.setting_timezone')"
 
-    # Also attached to the PASSED checks so a guide user can change the
-    # timezone deliberately. The menu cannot be answered non-interactively,
-    # so an already-configured host is left alone and reported as success.
+    # The menu cannot be answered non-interactively, so a host that has a
+    # timezone by now is left alone and reported as success.
     local current_tz=""
     IFS='|' read -r current_tz _ <<< "$(_timezone_current)"
     if _noninteractive || ! _tty_readable; then
@@ -454,9 +447,9 @@ _timezone_fix_rtc_utc() {
 _timezone_fix_set_locale() {
     print_info "$(i18n 'timezone.setting_locale')"
 
-    # NEVER override an already-valid locale: this fix is FIX_SAFE and is
-    # offered on the passing check too, so forcing en_US.UTF-8 would silently
-    # change the operator's language. Only a genuinely unset locale is set.
+    # NEVER override an already-valid locale: this fix is FIX_SAFE, and forcing
+    # en_US.UTF-8 would silently change the operator's language. Only a
+    # genuinely unset locale is set.
     if _timezone_locale_set; then
         print_ok "$(i18n 'timezone.locale_already_set' "locale=$(_timezone_current_locale)")"
         return 0

@@ -118,21 +118,33 @@ _preflight_check_deps() {
         print_ok "$(i18n 'common.required_deps')"
     fi
 
-    # lsof is optional because pkg_manager_locked answers from /proc/locks
-    # first. It is declared here so the audit says out loud when the host
-    # lacks it, rather than turning that into a silent scored pass.
-    local optional_deps=(whiptail dialog curl wget lsof)
-    local missing_optional=()
+    # One check for what is missing, not a print: prints are silenced during
+    # the scan. Any member of a group provides it; lsof is optional because
+    # pkg_manager_locked answers from /proc/locks first.
+    local -a lacking=() lacking_cmds=()
+    if ! check_command whiptail && ! check_command dialog; then
+        # dialog: one package name on every family (whiptail is newt on RHEL).
+        lacking+=("$(i18n 'preflight.cap_tui')"); lacking_cmds+=(dialog)
+    fi
+    if ! check_command curl && ! check_command wget; then
+        lacking+=("$(i18n 'preflight.cap_network')"); lacking_cmds+=(curl)
+    fi
+    if ! check_command lsof; then
+        lacking+=("$(i18n 'preflight.cap_lsof')"); lacking_cmds+=(lsof)
+    fi
 
-    for dep in "${optional_deps[@]}"; do
-        if ! check_command "$dep"; then
-            missing_optional+=("$dep")
+    if (( ${#lacking[@]} > 0 )); then
+        local caps opt_hint
+        caps=$(printf '%s; ' "${lacking[@]}")
+        caps="${caps%; }"
+        if ! opt_hint=$(pkg_install_hint "${lacking_cmds[@]}"); then
+            opt_hint=$(i18n 'preflight.install_deps' "deps=${lacking_cmds[*]}")
         fi
-    done
-
-    if [[ ${#missing_optional[@]} -gt 0 ]]; then
-        log_info "Optional dependencies missing: ${missing_optional[*]}"
-        print_item "${DIM}$(i18n 'preflight.dep_optional' "dep=${missing_optional[*]}")${NC}"
+        log_info "Optional capabilities missing: $caps"
+        check_emit "preflight.optional_missing" low failed \
+            desc="$(i18n 'preflight.optional_missing_desc' "caps=$caps")" \
+            suggestion="$opt_hint"
+        print_warn "$(i18n 'preflight.optional_missing')"
     fi
 }
 

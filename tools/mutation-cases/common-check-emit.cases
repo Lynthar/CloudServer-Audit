@@ -5,8 +5,8 @@
 # the id, and the title from the id's i18n key.
 
 run_case "derive/module-is-whole-id" 1 \
-    '    if json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \' \
-    '    if json=$(create_check_json "$id" "$id" "$severity" "$status" \'
+    '        && json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \' \
+    '        && json=$(create_check_json "$id" "$id" "$severity" "$status" \'
 
 run_case "derive/title-default-dropped" 1 \
     '    [[ -n "$title" ]] || title=$(i18n "$id")' \

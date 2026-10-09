@@ -190,24 +190,52 @@ log_init() {
     echo "=== vpssec session started at $(date -Iseconds) ===" >> "${_log_file}"
 }
 
-# 2>/dev/null comes FIRST in every redirect list below: bash applies them
-# left to right, so the other order leaks the append error to the caller.
+# Control bytes (all but tab and newline) and DEL, each with its visible \xHH
+# form. Host data reaches the reports and the log, which are read with cat and
+# tail: a raw ESC there rewrites the reader's screen and can hide a line.
+declare -ga _VPSSEC_CTRL_BYTES=() _VPSSEC_CTRL_SHOWN=()
+for _ctrl_n in {1..8} {11..31} 127; do
+    printf -v _ctrl_shown '\\x%02x' "$_ctrl_n"
+    printf -v _ctrl_byte '%b' "$_ctrl_shown"
+    _VPSSEC_CTRL_SHOWN+=("$_ctrl_shown")
+    _VPSSEC_CTRL_BYTES+=("$_ctrl_byte")
+done
+unset _ctrl_n _ctrl_shown _ctrl_byte
+
+# Rewrite those bytes in the variable named $1 as visible text, in place.
+_ctrl_visible_var() {
+    local -n _cvv_ref="$1"
+    [[ "$_cvv_ref" == *[[:cntrl:]]* ]] || return 0
+    local i
+    for i in "${!_VPSSEC_CTRL_BYTES[@]}"; do
+        _cvv_ref="${_cvv_ref//"${_VPSSEC_CTRL_BYTES[i]}"/"${_VPSSEC_CTRL_SHOWN[i]}"}"
+    done
+}
+
+# 2>/dev/null comes FIRST in the redirect list: bash applies them left to
+# right, so the other order leaks the append error to the caller.
+_log_write() {
+    local level="$1" msg="$2"
+    _ctrl_visible_var msg
+    echo "[$level] $(date -Iseconds) $msg" 2>/dev/null >> "${_log_file}" || true
+}
+
 log_debug() {
     if [[ "${VPSSEC_DEBUG:-0}" == "1" ]]; then
-        echo "[DEBUG] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
+        _log_write DEBUG "$*"
     fi
 }
 
 log_info() {
-    echo "[INFO] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
+    _log_write INFO "$*"
 }
 
 log_warn() {
-    echo "[WARN] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
+    _log_write WARN "$*"
 }
 
 log_error() {
-    echo "[ERROR] $(date -Iseconds) $*" 2>/dev/null >> "${_log_file}" || true
+    _log_write ERROR "$*"
 }
 
 # --- Output Functions ---
@@ -343,13 +371,22 @@ print_progress() {
 
 # --- Text Width Helpers (terminal cells, CJK-aware) ---
 
-# Strip ANSI codes before measuring width. Pure bash, no sed fork.
-# Two forms are stripped: the literal "\033[...m" text (the colour vars are
-# single-quoted) and a real ESC byte, in case a caller pre-expanded it.
+# One colour code: the literal "\033[...m" text (the colour vars are single-
+# quoted) or a real ESC byte. A regex, not a glob: in a glob `[0-9;]*m` runs to
+# the LAST "m" in the string and takes the visible text with it.
+_VPSSEC_ANSI_RE='(\\033|'$'\033'')\[[0-9;]*m'
+
+# Remove every colour code from the variable named $1, in place (no fork).
+_ansi_strip_var() {
+    local -n _asv_ref="$1"
+    while [[ "$_asv_ref" =~ $_VPSSEC_ANSI_RE ]]; do
+        _asv_ref="${_asv_ref/"${BASH_REMATCH[0]}"/}"
+    done
+}
+
 _strip_ansi() {
     local s="$1"
-    s="${s//\\033\[[0-9;]*m/}"
-    s="${s//$'\033'\[[0-9;]*m/}"
+    _ansi_strip_var s
     printf '%s\n' "$s"
 }
 
@@ -358,8 +395,7 @@ _strip_ansi() {
 # East_Asian_Width W/F ranges, so the answer holds under any locale.
 _display_width() {
     local s="$1"
-    s="${s//\\033\[[0-9;]*m/}"
-    s="${s//$'\033'\[[0-9;]*m/}"
+    _ansi_strip_var s
     [[ -z "$s" ]] && { echo 0; return; }
 
     # Byte-wise indexing: force the C locale for the ${#s} / ${s:i:1}
@@ -741,6 +777,10 @@ VPSSEC_CREATED_MANIFEST=".vpssec_created"
 # and cp -p would otherwise restore that mode (see the design notes).
 VPSSEC_MODES_MANIFEST=".vpssec_modes"
 
+# Scratch name of a copy still being written, at the session root. Never a
+# restore candidate: it may be a fragment left by a killed backup.
+VPSSEC_PARTIAL_PREFIX=".vpssec_partial."
+
 # True if $1 already has a mode recorded in manifest $2. Compared with
 # grep -qxF on the path column: /etc paths can contain regex metacharacters.
 _backup_mode_recorded() {
@@ -749,8 +789,9 @@ _backup_mode_recorded() {
     cut -d' ' -f2- "$manifest" 2>/dev/null | grep -qxF "$path"
 }
 
-# Record $1's current mode into backup directory $2, once. First write wins:
-# it must describe the pre-plan state, not a fix's own intermediate.
+# Record $1's current mode into backup directory $2, once; 1 when it cannot be
+# recorded. First write wins: it must describe the pre-plan state, not a fix's
+# own intermediate. Without the entry a rollback leaves the copy's 600 in place.
 backup_track_mode() {
     local path="$1" backup_dir="$2"
     [[ -n "$backup_dir" ]] || return 0
@@ -758,10 +799,10 @@ backup_track_mode() {
     _backup_mode_recorded "$path" "$manifest" && return 0
 
     local mode
-    mode=$(stat -c '%a' "$path" 2>/dev/null) || return 0
-    [[ "$mode" =~ ^[0-7]+$ ]] || return 0
+    mode=$(stat -c '%a' "$path" 2>/dev/null) || return 1
+    [[ "$mode" =~ ^[0-7]+$ ]] || return 1
 
-    printf '%s %s\n' "$mode" "$path" >> "$manifest" || return 0
+    printf '%s %s\n' "$mode" "$path" 2>/dev/null >> "$manifest" || return 1
     chmod 600 "$manifest" 2>/dev/null || true
 }
 
@@ -862,10 +903,6 @@ backup_file() {
             return 0
         fi
 
-        # Before the copy is taken and re-permissioned, so the manifest holds
-        # the file's own mode rather than the snapshot's 600.
-        backup_track_mode "$file" "$backup_dir"
-
         # Every step is checked: this runs inside fix bodies where errexit is
         # off, so an unchecked failure would return rc 0 and a path to a
         # snapshot that does not exist.
@@ -874,14 +911,32 @@ backup_file() {
             print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
             return 1
         fi
-        if ! cp -p "$file" "$backup_path"; then
-            rm -f "$backup_path" 2>/dev/null || true
+        # Copied under a scratch name, renamed when complete: a copy cut short
+        # by a kill must not sit at the final name, where the next backup keeps
+        # it as the original and a rollback writes it back over the file.
+        local partial
+        if ! partial=$(mktemp "${backup_dir}/${VPSSEC_PARTIAL_PREFIX}XXXXXX") \
+            || ! cp -p "$file" "$partial"; then
+            [[ -n "${partial:-}" ]] && rm -f "$partial" 2>/dev/null
             log_error "Backup failed (cp): $file -> $backup_path"
             print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
             return 1
         fi
-        chmod 600 "$backup_path" 2>/dev/null || \
+        chmod 600 "$partial" 2>/dev/null || \
             log_warn "Could not chmod 600 backup copy: $backup_path"
+        if ! mv -f "$partial" "$backup_path"; then
+            rm -f "$partial" 2>/dev/null
+            log_error "Backup failed (rename): $file -> $backup_path"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
+            return 1
+        fi
+        # A copy whose mode went unrecorded would come back as 600: withdraw it.
+        if ! backup_track_mode "$file" "$backup_dir"; then
+            rm -f "$backup_path" 2>/dev/null
+            log_error "Backup failed (mode manifest): $file -> $backup_path"
+            print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
+            return 1
+        fi
         log_info "Backed up: $file -> $backup_path"
         echo "$backup_path"
     else
@@ -1568,8 +1623,8 @@ create_check_json() {
                "title": .[4], "desc": .[5], "suggestion": .[6], "fix_id": .[7]}'
 }
 
-# Emit one check: module is the id prefix, title defaults to i18n "$id"; trailing
-# args are key=value (title desc suggestion fix), an unknown key drops the check.
+# Emit one check: module is the id prefix, severity high|medium|low|info, status
+# passed|failed, title defaults to i18n "$id"; key=value args, an unknown key drops it.
 # A check that cannot be recorded marks its module incomplete and still returns 0.
 check_emit() {
     local id="$1" severity="$2" status="$3"
@@ -1585,18 +1640,29 @@ check_emit() {
         esac
     done
     [[ -n "$title" ]] || title=$(i18n "$id")
+    _ctrl_visible_var title
+    _ctrl_visible_var desc
+    _ctrl_visible_var suggestion
+    # Every renderer buckets on these values; one outside them used to vanish
+    # from the Markdown or show as a low failure in the terminal.
     local json
-    if json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \
+    if [[ "$severity" =~ ^(high|medium|low|info)$ && "$status" =~ ^(passed|failed)$ ]] \
+        && json=$(create_check_json "$id" "${id%%.*}" "$severity" "$status" \
             "$title" "$desc" "$suggestion" "$fix") && state_add_check "$json"; then
         return 0
     fi
-    log_error "check_emit $id: the check could not be recorded"
+    log_error "check_emit $id: the check could not be recorded ($severity/$status)"
     # An _internal record reports a failure that is already recorded.
     [[ "${id%%.*}" == "_internal" ]] || _module_record_failure "${id%%.*}" "emit"
     return 0  # engine.sh emits under errexit, where 1 would kill the whole run
 }
 
 # --- User Interaction ---
+
+# Set when the operator ANSWERED no to confirm or confirm_critical, as opposed to
+# nobody being there to ask. execute_fix resets it and reads it to tell a fix
+# the operator declined (skipped) from one that failed.
+_VPSSEC_DECLINED=0
 
 confirm() {
     local prompt="$1"
@@ -1618,13 +1684,17 @@ confirm() {
     tty_say -n "$prompt_text"
 
     # Read from /dev/tty to handle curl|bash piped execution
+    local answered=1
     if ! read -r yn 2>/dev/null </dev/tty; then
         tty_say ""
         yn="$default"
+        answered=0
     fi
     yn="${yn:-$default}"
 
-    [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]]
+    [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]] && return 0
+    (( answered )) && _VPSSEC_DECLINED=1
+    return 1
 }
 
 # Seconds confirm_critical waits for an answer. Bounded because the rescue sshd
@@ -1652,7 +1722,9 @@ confirm_critical() {
         return 1
     fi
 
-    [[ "${yn,,}" == "yes" ]]
+    [[ "${yn,,}" == "yes" ]] && return 0
+    _VPSSEC_DECLINED=1
+    return 1
 }
 
 # --- Filesystem-walk Helpers (shared across modules) ---

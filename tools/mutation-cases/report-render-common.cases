@@ -1,0 +1,26 @@
+# Mutation cases: tests/test_report_render.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_report_render.bats
+#
+# What a check may hold: severity and status inside the renderers' buckets,
+# no control bytes; and colour codes that measure as nothing.
+
+# Back to the glob's reach: from the first colour code to the last "m".
+run_case "width/greedy-strip" 1 \
+    "_VPSSEC_ANSI_RE='(\\\\033|'\$'\\033'')\\[[0-9;]*m'" \
+    "_VPSSEC_ANSI_RE='(\\\\033|'\$'\\033'')\\[.*m'"
+run_case "width/codes-measured" 2 \
+    '    _ansi_strip_var s' \
+    '    :'
+run_case "ctrl/desc-raw" 1 \
+    '    _ctrl_visible_var desc' \
+    '    :'
+run_case "ctrl/log-raw" 1 \
+    '    _ctrl_visible_var msg' \
+    '    :'
+# ESC left out of the table: the escape sequences pass through as they are.
+run_case "ctrl/esc-missing" 1 \
+    'for _ctrl_n in {1..8} {11..31} 127; do' \
+    'for _ctrl_n in {1..8} {11..26} {28..31} 127; do'
+run_case "emit/any-status-accepted" 1 \
+    '    if [[ "$severity" =~ ^(high|medium|low|info)$ && "$status" =~ ^(passed|failed)$ ]] \' \
+    '    if true \'

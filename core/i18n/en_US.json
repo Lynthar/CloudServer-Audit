@@ -131,12 +131,16 @@
     "network_fail": "Network connection failed",
     "dep_missing": "Missing required dependency: {dep}",
     "install_deps": "Install with your package manager: {deps}",
-    "dep_optional": "Optional dependency missing: {dep} (related features disabled)",
     "virtualization": "Virtualization type: {type}",
     "listening_ports": "Listening ports: {count}",
     "dangerous_ports": "Dangerous ports exposed: {ports}",
     "os_unsupported_suggestion": "Use Debian 12/13, Ubuntu 22.04/24.04/26.04, a RHEL 8/9/10 family distro (Rocky/Alma/CentOS Stream), or Arch",
-    "network_fail_suggestion": "Check network configuration and DNS"
+    "network_fail_suggestion": "Check network configuration and DNS",
+    "optional_missing": "Optional tools missing",
+    "optional_missing_desc": "Working without: {caps}. The audit still runs; these parts fall back or are skipped.",
+    "cap_tui": "menus (whiptail or dialog)",
+    "cap_network": "network reachability check (curl or wget)",
+    "cap_lsof": "package-lock check fallback (lsof)"
   },
   "ssh": {
     "admin_no_key_desc": "No authorized_keys file found",
@@ -834,14 +838,20 @@
     "templates_dir_failed": "Could not create the backup templates directory: {path}",
     "template_write_failed": "Could not write the backup template: {name}",
     "restore_empty": "Backup {timestamp} contained no restorable files - nothing was rolled back",
-    "restore_none_skipped": "Nothing was restored: all {skipped} entries were skipped by safety checks (see logs/vpssec.log)",
+    "restore_none_skipped": "Nothing was restored: all {skipped} entries were skipped by safety checks or had no backup copy (see logs/vpssec.log)",
     "restore_partial": "Partially restored: {restored} file(s) restored, {skipped} skipped (see logs/vpssec.log)",
     "restore_count": "{restored} file(s) restored",
-    "restored_partial": "Rollback finished, but some entries were skipped",
+    "restored_partial": "Rollback finished, but not everything came back as it was",
     "reload_failed": "{service} is running but did not reload; the restored config is not live until it restarts",
     "snapshot_failed": "Could not back up {file} — aborting this change (nothing was modified).",
     "reloading_services": "Reloading services...",
-    "undo_hint": "vpssec rollback restores files only and cannot undo this change. To undo it: {cmd}"
+    "undo_hint": "vpssec rollback restores files only and cannot undo this change. To undo it: {cmd}",
+    "available": "Available backups:",
+    "session_entry": "{ts} ({count} changes)",
+    "preview_restore": "Files to restore:",
+    "preview_delete": "Files to delete (created by the fixes):",
+    "preview_missing": "Cannot restore (backup copy missing):",
+    "restore_mode_lost": "{count} restored file(s) kept the backup copy's mode 600: their original mode was not recorded (see logs/vpssec.log)"
   },
   "fail2ban": {
     "title": "Fail2ban Protection",
@@ -1330,12 +1340,17 @@
     "score_basis": "Computed over {count} scored checks",
     "score_partial": "Partial score: computed over {count} scored checks from modules [{modules}] only - not comparable with a full-run score",
     "info_note": "{count} of these are advisory and do not affect the score",
-    "advisory_checks": "Advisory (not scored)",
     "legend": "Legend",
     "save_failed": "Report files could not be written: {files}. Any of them already in {dir} is from an earlier run (see logs/vpssec.log)",
     "not_saved": "Reports not saved.",
     "not_saved_previous": "Reports not saved; {dir} still holds the ones written {time}.",
-    "share_notice": "Reports contain details of this host (accounts, ports, processes, paths, containers). Review them before sharing."
+    "share_notice": "Reports contain details of this host (accounts, ports, processes, paths, containers). Review them before sharing.",
+    "col_severity": "Severity",
+    "col_count": "Count",
+    "not_scored": "not scored",
+    "completeness": "Incomplete scan",
+    "completeness_note": "Part of this run did not finish, so the findings below the score are not the whole picture:",
+    "next_manual": "this distribution is audit-only: apply each finding's Recommendations by hand"
   },
   "category": {
     "basics": "System Basics",
@@ -1380,19 +1395,21 @@
     "plan_empty": "Selection resolved to zero executable fixes — nothing was run. The UI handed over IDs the planner does not recognize; please report this.",
     "progress_discarded": "Discarded the interrupted plan saved {ts}: --fix names a new plan.",
     "progress_pending": "An interrupted plan (saved {ts}) is waiting, and this run cannot ask about it. Run vpssec guide in a terminal to resume or discard it, pass --fix to replace it, or delete {path}.",
-    "resume_module_unavailable": "Cannot resume: the plan needs the {module} module, which could not be loaded (see logs/vpssec.log). The interrupted plan is kept."
+    "resume_module_unavailable": "Cannot resume: the plan needs the {module} module, which could not be loaded (see logs/vpssec.log). The interrupted plan is kept.",
+    "none_applied": "No fix applied",
+    "skipped_list": "Skipped at confirmation ({count}): {ids}"
   },
   "fix": {
     "alert_only": "Alert only - manual fix required",
     "unclassified": "Refused: fix {id} is not classified in any safety map",
-    "risky_skipped": "Risky fix skipped",
-    "confirm_skipped": "Fix skipped in basic mode",
     "safe": "Safe fix",
     "confirm": "Requires confirmation",
     "risky": "Risky operation",
     "manual_step_remains": "Applied, but this does not resolve the finding on its own — a manual step remains:",
     "verify_failed": "Applied, but its audit predicate still fails — the fix is not recorded as complete",
-    "template_only": "Template only - a manual step is needed to take effect"
+    "template_only": "Template only - a manual step is needed to take effect",
+    "declined": "Skipped: not confirmed",
+    "unconfirmed": "Not applied: the confirmation could not be read"
   },
   "help": {
     "modules_by_category": "Modules by category",
@@ -1423,14 +1440,18 @@
     "title": "vpssec Status",
     "version": "Version: {version}",
     "update_available": "A newer release is available: {latest} (installed: run install.sh again; one-off: re-run the curl command)",
-    "last_run": "Last run: {time}",
+    "last_run": "Last fix applied: {time}",
     "completed_fixes": "Completed fixes: {count}",
     "latest_backup": "Latest backup: {time}",
     "interrupted": "Previous plan interrupted at fix {current} of {total}.",
     "interrupted_hint": "Run 'vpssec guide' to resume the saved plan, or 'vpssec rollback' to undo partial changes.",
     "reloading_services": "Reloading services...",
     "state_unreadable": "State is not readable as this user (it is root-owned by design). Run: sudo vpssec status",
-    "backups_kept": "Backups: {count} session(s), {size}, in {path} - vpssec never deletes them; remove old ones yourself"
+    "backups_kept": "Backups: {count} session(s), {size}, in {path} - vpssec never deletes them; remove old ones yourself",
+    "last_audit": "Last audit: {time}, score {score}/100",
+    "last_audit_incomplete": "Last audit: {time}, score {score}/100 (some modules did not finish)",
+    "last_audit_never": "Last audit: {never}",
+    "never": "never"
   },
   "timezone": {
     "title": "Timezone & Time Sync",
@@ -1481,9 +1502,10 @@
     "already_configured": "Timezone already set ({tz}); leaving it unchanged",
     "needs_interactive": "No timezone is configured and this fix needs a terminal to ask which one; run vpssec guide interactively",
     "locale_set_failed": "Failed to set system locale",
-    "change_available": "Change available in guide mode",
     "ntp_state_unknown": "NTP state could not be queried",
-    "ntp_state_unknown_desc": "systemctl could not say whether any NTP daemon (systemd-timesyncd, chrony, ntpsec/ntpd, openntpd) is running, so no claim is made about time synchronisation."
+    "ntp_state_unknown_desc": "systemctl could not say whether any NTP daemon (systemd-timesyncd, chrony, ntpsec/ntpd, openntpd) is running, so no claim is made about time synchronisation.",
+    "change_timezone_cmd": "To change it: timedatectl set-timezone <Region/City>",
+    "change_locale_cmd": "To change it: localectl set-locale LANG=<locale>"
   },
   "malware": {
     "hidden_ports_desc": "Ports: {list}",
@@ -1817,7 +1839,7 @@
     "kernel.harden_ipv6": "May drop IPv6 connectivity on hosts that obtain their address/route via Router Advertisements (SLAAC)",
     "kernel.harden_kernel": "Disables unprivileged user namespaces (breaks Docker rootless / podman / Chrome sandbox) and restricts SysRq",
     "kernel.harden_network": "May affect container networking (Docker/LXC); IPv6 RA settings are skipped on SLAAC hosts to preserve connectivity",
-    "nginx.add_catchall": "Modifies Nginx configuration",
+    "nginx.add_catchall": "Adds a default server that closes requests for unknown hostnames and bare-IP requests on port 80, and on 443 when nginx already serves 443",
     "ssh.harden_algorithms": "Removes SHA-1/MD5 MACs and SHA-1 key exchange from the defaults: clients offering nothing newer can no longer connect",
     "timezone.set_timezone": "Prompts for a new system timezone; log timestamps and cron schedules shift with it",
     "alerts.setup_config": "Asks for a webhook URL and an email address, then writes the alert config and monitor scripts",

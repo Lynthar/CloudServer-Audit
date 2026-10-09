@@ -258,3 +258,15 @@ _vpssec_begin_backup_session() {
     mkdir -p "$VPSSEC_BACKUP_SESSION"
     export VPSSEC_BACKUP_SESSION
 }
+
+# Make write_file_atomic's final rename fail while backups still land: backup_file
+# renames its finished copy into the backup dir too, so a plain `mv` stub would
+# abort the fix at the backup instead of at the write under test.
+_mv_fails_outside_backups() {
+    local real_mv
+    real_mv=$(command -v mv)
+    _vpssec_stub_script mv <<SH2
+case "\$*" in *"$VPSSEC_BACKUPS"/*) exec $real_mv "\$@" ;; esac
+exit 1
+SH2
+}

@@ -115,6 +115,31 @@ state_mark_fix_complete() {
     log_info "Fix marked complete: $fix_id"
 }
 
+# Record a finished audit pass for `status`: when, the score, and whether every
+# module finished. Without it status showed "never" after any number of audits;
+# last_run above is the last fix applied.
+state_record_audit() {
+    local score="$1" complete="$2"
+    local timestamp
+    timestamp=$(date -Iseconds)
+    local lock_file="${VPSSEC_STATE}/.ok.lock"
+
+    (
+        flock -x 200
+        [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+        local temp_file
+        temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") || return 1
+        if jq --arg ts "$timestamp" --argjson score "$score" --argjson complete "$complete" \
+            '.last_audit = {timestamp: $ts, score: $score, complete: $complete}' \
+            "$STATE_OK_FILE" > "$temp_file" 2>/dev/null; then
+            mv -f "$temp_file" "$STATE_OK_FILE"
+        else
+            rm -f "$temp_file"
+            return 1
+        fi
+    ) 200>"$lock_file"
+}
+
 # --- Plan State Management ---
 
 # Save execution plan. Atomic and checked: execute_plan re-reads this file,
@@ -201,24 +226,58 @@ backup_create_session() {
     echo "${VPSSEC_BACKUPS}/${timestamp}"
 }
 
-# Re-apply the mode recorded by backup_track_mode; a backup with no entry
-# keeps whatever cp -p gave it. The path reaches awk through ENVIRON, never
-# `-v` — awk expands escapes in -v, mangling any path with a backslash.
+# Re-apply the mode recorded by backup_track_mode; 1 when there is none to
+# apply or chmod fails, and the file keeps the copy's 600. The path reaches awk
+# through ENVIRON, never `-v` — awk expands escapes in -v, mangling backslashes.
 _backup_restore_mode() {
     local path="$1" manifest="$2"
-    [[ -f "$manifest" ]] || return 0
+    [[ -f "$manifest" ]] || return 1
 
     local mode
     mode=$(VPSSEC_MODE_PATH="$path" awk '
         BEGIN { want = ENVIRON["VPSSEC_MODE_PATH"] }
         { m = $1; sub(/^[0-7]+ /, ""); if ($0 == want) { print m; exit } }
-    ' "$manifest" 2>/dev/null) || return 0
+    ' "$manifest" 2>/dev/null) || return 1
     # Anything awk printed is already a valid mode; only emptiness needs a guard.
-    [[ -n "$mode" ]] || return 0
+    [[ -n "$mode" ]] || return 1
 
     if ! chmod "$mode" "$path" 2>/dev/null; then
         log_warn "Restored content but could not restore mode $mode on $path"
+        return 1
     fi
+}
+
+# What rolling back session dir $1 involves. Rollback acts on exactly these
+# and its preview lists exactly these, so the two cannot disagree.
+# The backed-up copies, NUL-terminated: not the manifests, not a partial copy.
+_backup_session_copies() {
+    find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \
+        ! -name "${VPSSEC_PARTIAL_PREFIX}*" -print0
+}
+
+# Files a fix created that are still there, one per line: rollback deletes
+# them (a symlinked one is refused and counted). A directory is never deleted.
+_backup_session_created() {
+    local manifest="$1/$VPSSEC_CREATED_MANIFEST" path
+    [[ -f "$manifest" ]] || return 0
+    while IFS= read -r path || [[ -n "$path" ]]; do
+        [[ "$path" == /* && -e "$path" ]] || continue
+        [[ -f "$path" || -L "$path" ]] && printf '%s\n' "$path"
+    done < "$manifest"
+    return 0
+}
+
+# Files whose mode was recorded but whose copy is gone, one per line: the
+# session is damaged, and a rollback must say it could not restore them.
+_backup_session_missing() {
+    local backup_dir="$1" manifest="$1/$VPSSEC_MODES_MANIFEST" line path
+    [[ -f "$manifest" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[0-7]+\ / ]] || continue
+        path="${line#* }"
+        [[ -e "${backup_dir}${path}" || -L "${backup_dir}${path}" ]] || printf '%s\n' "$path"
+    done < "$manifest"
+    return 0
 }
 
 # Restore one backup session. 0 = all restored, 2 = partial, 1 = nothing;
@@ -251,7 +310,14 @@ backup_restore() {
 
     local skipped=0
     local restored=0
+    local mode_lost=0
     local modes_manifest="${backup_dir}/${VPSSEC_MODES_MANIFEST}"
+
+    local missing_path
+    while IFS= read -r missing_path; do
+        log_error "Restore FAILED (backup copy missing): $missing_path"
+        ((skipped++)) || true
+    done < <(_backup_session_missing "$backup_dir")
 
     while IFS= read -r -d '' backup_file; do
         # Check 2a: source must not be a symlink — find -type f follows them,
@@ -302,38 +368,35 @@ backup_restore() {
             continue
         fi
         # cp -p copied the backup's mode, which backup_file chmods to 600.
-        _backup_restore_mode "$original_path" "$modes_manifest"
+        if ! _backup_restore_mode "$original_path" "$modes_manifest"; then
+            log_error "Restored content without its original mode: $original_path"
+            ((mode_lost++)) || true
+        fi
         log_info "Restored: $backup_file -> $original_path"
         ((restored++)) || true
-    done < <(find "$backup_dir" -type f ! -name '.vpssec_created' ! -name '.vpssec_modes' -print0)
+    done < <(_backup_session_copies "$backup_dir")
 
     # Files a fix CREATED have no prior version, so rollback must delete them.
     # Same symlink safety as restore: never delete through a symlinked path.
-    local created_manifest="${backup_dir}/.vpssec_created"
-    if [[ -f "$created_manifest" ]]; then
-        local created_path created_parent
-        while IFS= read -r created_path; do
-            [[ -n "$created_path" ]] || continue
-            [[ "$created_path" == /* ]] || continue   # absolute paths only
-            [[ -e "$created_path" ]] || continue       # already gone
-            created_parent=$(dirname "$created_path")
-            if [[ -L "$created_parent" || -L "$created_path" ]]; then
-                log_warn "Skipping delete of created file (symlink in path): $created_path"
+    local created_path created_parent
+    while IFS= read -r created_path; do
+        created_parent=$(dirname "$created_path")
+        if [[ -L "$created_parent" || -L "$created_path" ]]; then
+            log_warn "Skipping delete of created file (symlink in path): $created_path"
+            ((skipped++)) || true
+            continue
+        fi
+        if [[ -f "$created_path" ]]; then
+            if rm -f "$created_path"; then
+                log_info "Removed fix-created file on rollback: $created_path"
+                ((restored++)) || true
+            else
+                # Counted, so the exit status reports the incomplete rollback.
+                log_error "Rollback could not remove fix-created file: $created_path"
                 ((skipped++)) || true
-                continue
             fi
-            if [[ -f "$created_path" ]]; then
-                if rm -f "$created_path"; then
-                    log_info "Removed fix-created file on rollback: $created_path"
-                    ((restored++)) || true
-                else
-                    # Counted, so the exit status reports the incomplete rollback.
-                    log_error "Rollback could not remove fix-created file: $created_path"
-                    ((skipped++)) || true
-                fi
-            fi
-        done < "$created_manifest"
-    fi
+        fi
+    done < <(_backup_session_created "$backup_dir")
 
     # Counts go to the terminal, not just the log; restored == 0 is a failure.
     if (( restored == 0 )); then
@@ -350,34 +413,40 @@ backup_restore() {
     if (( skipped > 0 )); then
         log_warn "Restore complete with skips: ${restored} restored, ${skipped} skipped (see logs/vpssec.log)"
         print_warn "$(i18n 'backup.restore_partial' "restored=${restored}" "skipped=${skipped}")"
-        return 2
     fi
+    if (( mode_lost > 0 )); then
+        print_warn "$(i18n 'backup.restore_mode_lost' "count=${mode_lost}")"
+    fi
+    (( skipped > 0 || mode_lost > 0 )) && return 2
 
     log_info "Restore complete: ${restored} files"
     print_info "$(i18n 'backup.restore_count' "restored=${restored}")"
     return 0
 }
 
-# Preview one backup. Same timestamp-shape gate as backup_restore, so an
-# unvalidated argument cannot list arbitrary directories.
+# Preview one backup: "restore <path>", "delete <path>" and "missing <path>"
+# lines, from the same lists backup_restore acts on. Same timestamp-shape gate
+# as backup_restore, so an unvalidated argument cannot list arbitrary dirs.
 backup_list_contents() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
 
     [[ "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    [[ -d "$backup_dir" ]] || return 0
 
-    if [[ -d "$backup_dir" ]]; then
-        find "$backup_dir" -type f | while read -r f; do
-            echo "${f#"$backup_dir"}"
-        done
-    fi
+    local f
+    while IFS= read -r -d '' f; do
+        printf 'restore /%s\n' "${f#"$backup_dir"/}"
+    done < <(_backup_session_copies "$backup_dir")
+    _backup_session_created "$backup_dir" | sed 's/^/delete /'
+    _backup_session_missing "$backup_dir" | sed 's/^/missing /'
 }
 
 # --- Score Calculation ---
 
 # --- Check Metrics: one jq reduction over checks.json, cached on
-# (path, mtime, size). The scoring inclusion rules live in that jq
-# program and nowhere else — see the design notes. ---
+# (path, mtime, size). The scoring inclusion rules live in _VPSSEC_JQ_DEFS
+# and nowhere else — see the design notes. ---
 
 declare -gA VPSSEC_METRICS=()
 _VPSSEC_METRICS_KEY=""
@@ -412,6 +481,70 @@ _checks_fingerprint() {
     printf '%s|%s' "$file" "$s"
 }
 
+# jq definitions every count and every report shares. bucket: the one rule for
+# which list a check lands in — passed, or the severity of anything else, info
+# and unknown counting as low. scored: whether the check moves the score.
+_VPSSEC_JQ_DEFS='
+def bucket:
+  if .status == "passed" then "passed"
+  elif .severity == "high" or .severity == "critical" then "high"
+  elif .severity == "medium" then "medium"
+  else "low" end;
+def present($arr; $p):
+  any($arr[]; ((.id // "") | startswith($p + "."))
+              and ((.id // "") != ($p + ".not_installed")));
+def installed($all):
+  { docker:      present($all; "docker"),
+    nginx:       present($all; "nginx"),
+    cloudflared: present($all; "cloudflared") };
+def category($catmap; $default_cat; $id): ($catmap[$id] // $default_cat);
+def scored($catmap; $default_cat; $installed; $strict; $id):
+  category($catmap; $default_cat; $id) as $c
+  | if   $c == "required" or $c == "recommended" then true
+    elif $c == "conditional" then
+      ($id | split(".") | .[0]) as $m
+      | if   $m == "docker"      then $installed.docker
+        elif $m == "nginx"       then $installed.nginx
+        elif $m == "cloudflared" then $installed.cloudflared
+        else true end
+    elif $c == "optional" then $strict
+    elif $c == "info"     then false
+    else true end;
+'
+
+# The inputs the scoring defs take, as globals _SCORE_CATMAP, _SCORE_DEFAULT_CAT
+# and _SCORE_STRICT (no fork). Read once per jq program that scores.
+_score_context() {
+    if _SCORE_CATMAP=$(_score_category_map_json) && [[ -n "$_SCORE_CATMAP" ]]; then
+        # Unlisted ids default to "info" — the fail-safe documented on
+        # get_check_score_category (a forgotten classification must not
+        # silently drag the score down).
+        _SCORE_DEFAULT_CAT="info"
+    else
+        # security_levels.sh not loaded: mirror the historical fallback
+        # in _check_counts_in_score, which treated every check as
+        # "required" when get_check_score_category was unavailable.
+        _SCORE_CATMAP="{}"
+        _SCORE_DEFAULT_CAT="required"
+    fi
+    _SCORE_STRICT="false"
+    [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]] && _SCORE_STRICT="true"
+    return 0
+}
+
+# checks.json with each check carrying `scored`, for the reports.
+checks_with_scoring() {
+    _score_context
+    state_get_checks | jq \
+        --argjson catmap "$_SCORE_CATMAP" \
+        --arg     default_cat "$_SCORE_DEFAULT_CAT" \
+        --argjson strict "$_SCORE_STRICT" \
+        "$_VPSSEC_JQ_DEFS"'
+        installed(.) as $installed
+        | map(. + {scored: scored($catmap; $default_cat; $installed; $strict; (.id // ""))})
+    '
+}
+
 _check_metrics_refresh() {
     local key
     key=$(_checks_fingerprint) || key=""
@@ -420,76 +553,30 @@ _check_metrics_refresh() {
         return 0
     fi
 
-    local catmap default_cat
-    if catmap=$(_score_category_map_json) && [[ -n "$catmap" ]]; then
-        # Unlisted ids default to "info" — the fail-safe documented on
-        # get_check_score_category (a forgotten classification must not
-        # silently drag the score down).
-        default_cat="info"
-    else
-        # security_levels.sh not loaded: mirror the historical fallback
-        # in _check_counts_in_score, which treated every check as
-        # "required" when get_check_score_category was unavailable.
-        catmap="{}"
-        default_cat="required"
-    fi
-
-    local strict="false"
-    [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]] && strict="true"
+    _score_context
 
     local checks_file="$STATE_CHECKS_FILE"
     local metrics_out=""
     if [[ -f "$checks_file" ]]; then
         metrics_out=$(jq -r \
-            --argjson catmap "$catmap" \
-            --arg     default_cat "$default_cat" \
-            --argjson strict "$strict" '
-            def present($arr; $p):
-              any($arr[]; ((.id // "") | startswith($p + "."))
-                          and ((.id // "") != ($p + ".not_installed")));
-            def category($catmap; $default_cat; $id): ($catmap[$id] // $default_cat);
-            def scored($catmap; $default_cat; $installed; $strict; $id):
-              category($catmap; $default_cat; $id) as $c
-              | if   $c == "required" or $c == "recommended" then true
-                elif $c == "conditional" then
-                  ($id | split(".") | .[0]) as $m
-                  | if   $m == "docker"      then $installed.docker
-                    elif $m == "nginx"       then $installed.nginx
-                    elif $m == "cloudflared" then $installed.cloudflared
-                    else true end
-                elif $c == "optional" then $strict
-                elif $c == "info"     then false
-                else true end;
+            --argjson catmap "$_SCORE_CATMAP" \
+            --arg     default_cat "$_SCORE_DEFAULT_CAT" \
+            --argjson strict "$_SCORE_STRICT" "$_VPSSEC_JQ_DEFS"'
             [ .[] | select(((.id // "") | length) > 0) ] as $all
-            | { docker:      present($all; "docker"),
-                nginx:       present($all; "nginx"),
-                cloudflared: present($all; "cloudflared") } as $installed
+            | installed($all) as $installed
             | reduce $all[] as $chk (
                 {total:0, high:0, medium:0, low:0, passed:0, info:0,
                  scored_total:0, high_failed:0, medium_failed:0, low_failed:0};
-                ($chk.id)                  as $id
-                | ($chk.status   // "")    as $st
-                | ($chk.severity // "low") as $sev
-                | (scored($catmap; $default_cat; $installed; $strict; $id)) as $in
+                ($chk | bucket) as $b
+                | (scored($catmap; $default_cat; $installed; $strict; $chk.id)) as $in
                 | .total += 1
                 # info = carried in the report but not scored. A separate
                 # dimension: the check still falls into a severity bucket below.
                 | (if $in then . else .info += 1 end)
-                | (if   $st == "passed" then .passed += 1
-                   elif $st == "failed" then
-                          (if   $sev == "high" or $sev == "critical" then .high += 1
-                           elif $sev == "medium"                     then .medium += 1
-                           elif $sev == "low" or $sev == "info"      then .low += 1
-                           else . end)
-                   else . end)
+                | .[$b] += 1
                 | (if $in then
                      .scored_total += 1
-                     | (if $st == "failed" then
-                          (if   $sev == "high" or $sev == "critical" then .high_failed += 1
-                           elif $sev == "medium"                     then .medium_failed += 1
-                           elif $sev == "low" or $sev == "info"      then .low_failed += 1
-                           else . end)
-                        else . end)
+                     | (if $b == "passed" then . else .[$b + "_failed"] += 1 end)
                    else . end)
               )
             | to_entries[] | "\(.key)=\(.value)"

@@ -221,3 +221,23 @@ setup() {
         fi
     done
 }
+
+# ---- the warning the operator reads ----------------------------------
+
+@test "fixwarn: the English text is the warning in this file, word for word" {
+    # get_fix_warning prefers the i18n key, so a warning edited only in the
+    # maps above never reaches the confirmation prompt.
+    i18n_load en_US
+    local key id want n=0 bad=0
+    for key in "${!VPSSEC_I18N[@]}"; do
+        [[ "$key" == fixwarn.* ]] || continue
+        id="${key#fixwarn.}"
+        n=$((n + 1))
+        want="${FIX_CONFIRM[$id]:-${FIX_RISKY[$id]:-${FIX_ALERT_ONLY[$id]:-}}}"
+        if [[ "${VPSSEC_I18N[$key]}" != "$want" ]]; then
+            printf '%s\n  i18n: %s\n  maps: %s\n' "$id" "${VPSSEC_I18N[$key]}" "$want" >&2
+            bad=1
+        fi
+    done
+    (( n > 0 && bad == 0 ))
+}

@@ -24,10 +24,10 @@ are not part of the contract.
 |---|---|---|
 | `audit` | 0 | complete scan — every selected module finished |
 | `audit` | 3 | one or more modules did not finish (failed to load or crashed, a check could not be recorded, or a filesystem walk hit `VPSSEC_FS_TIMEOUT`); the names are in `meta.modules_failed` |
-| `guide` | 0 | every fix in the executed plan succeeded |
+| `guide` | 0 | no fix in the executed plan failed — a fix the operator answered "no" to at its confirmation is skipped, not failed, and the summary names it |
 | `guide` | 4 | unsupported distro (not Debian/Ubuntu) — nothing was changed |
 | `rollback` | 0 | the requested restore completed (also: cancelled at the prompt) |
-| `rollback` | 2 | the restore ran but skipped some entries (counted in the output, named in `logs/vpssec.log`); services were still reloaded |
+| `rollback` | 2 | the restore ran but skipped some entries, or restored a file whose original mode was not on record (counted in the output, named in `logs/vpssec.log`); services were still reloaded |
 | any | 1 | error — not root, bad arguments (including `VPSSEC_FS_TIMEOUT`), a failed fix, nothing restored, a report file that could not be written, … |
 | `run.sh` | 2 | `guide`/`rollback` refused under the run-once entry point, whether named on its command line, picked in the mode menu, or set through `VPSSEC_MODE` |
 
@@ -49,7 +49,9 @@ same reasons will likewise exit 1 instead of 0.
   `meta`, `stats`, `checks[]` — and existing field names are removed or
   renamed only in a MAJOR release; new fields may appear in any MINOR, so
   consumers must ignore unknown fields. With `--json-only`, stdout is
-  exactly this JSON document; everything else goes to stderr.
+  exactly this JSON document; everything else goes to stderr. Each entry in
+  `checks[]` carries `scored`: whether it counts toward this run's score
+  (it can depend on `--strict` and on what is installed).
 - **`reports/summary.sarif`** is SARIF 2.1.0, kept valid against the
   official schema.
 - **`reports/summary.md`** is for humans and is NOT a stable interface.

@@ -1082,7 +1082,7 @@ _fs_audit_umask() {
 _fs_audit_caps() {
     # Check if getcap is available
     if ! command -v getcap &>/dev/null; then
-        check_emit "filesystem.caps_unavailable" low info \
+        check_emit "filesystem.caps_unavailable" low failed \
             desc="$(i18n 'filesystem.caps_unavailable_desc')"
         print_info "$(i18n 'filesystem.caps_unavailable')"
         return

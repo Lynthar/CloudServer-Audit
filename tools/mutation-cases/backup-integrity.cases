@@ -1,0 +1,19 @@
+# Mutation cases: tests/test_backup_session_integrity.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_backup_session_integrity.bats
+#
+# backup_file leaves a copy at its final name only when it is complete and its
+# mode is on record.
+
+# The copy is written straight to its final name: a killed cp leaves a fragment
+# there, which the next backup keeps and a rollback writes back.
+run_case "copy/written-in-place" 1 \
+    '        if ! partial=$(mktemp "${backup_dir}/${VPSSEC_PARTIAL_PREFIX}XXXXXX") \' \
+    '        if ! partial="$backup_path" \'
+# A mode that could not be recorded no longer fails the backup.
+run_case "mode/unrecorded-accepted" 1 \
+    '        if ! backup_track_mode "$file" "$backup_dir"; then' \
+    '        if ! backup_track_mode "$file" "$backup_dir" && false; then'
+# The failed append to the manifest is swallowed again.
+run_case "mode/append-failure-swallowed" 1 \
+    "    printf '%s %s\\n' \"\$mode\" \"\$path\" 2>/dev/null >> \"\$manifest\" || return 1" \
+    "    printf '%s %s\\n' \"\$mode\" \"\$path\" 2>/dev/null >> \"\$manifest\" || return 0"

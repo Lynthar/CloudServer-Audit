@@ -130,7 +130,7 @@ _pam_umask_enabled() {
     VPSSEC_QUIET_SCAN=0
     _login_defs "$(printf 'UMASK\t\t022')"
     _pam_umask_enabled
-    _vpssec_stub mv 1
+    _mv_fails_outside_backups
 
     run _fs_fix_umask
     [ "$status" -eq 1 ]

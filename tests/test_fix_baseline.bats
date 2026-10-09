@@ -191,7 +191,7 @@ _config_mode() {
     _selinux_present
     _permissive_config
     VPSSEC_QUIET_SCAN=0
-    _vpssec_stub mv 1
+    _mv_fails_outside_backups
 
     run _baseline_fix_selinux_enforcing
     [ "$status" -eq 1 ]

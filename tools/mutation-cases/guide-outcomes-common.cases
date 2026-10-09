@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_guide_outcomes.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_guide_outcomes.bats
+#
+# The two prompts tell an answered no from nobody answering.
+
+# confirm's no is not recorded: a declined fix reads as unconfirmed, a failure.
+run_case "confirm/no-unrecorded" 1 \
+    '    (( answered )) && _VPSSEC_DECLINED=1' \
+    '    :'
+# confirm with no terminal counts as answered: automation reads "skipped", exit 0.
+run_case "confirm/unread-counts-as-no" 1 \
+    '        answered=0' \
+    '        :'
+# confirm_critical's no is not recorded: a self-confirming fix declined fails.
+run_case "confirm-critical/no-unrecorded" 1 \
+    '    _VPSSEC_DECLINED=1' \
+    '    :'

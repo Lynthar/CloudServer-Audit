@@ -157,9 +157,10 @@ _mode_of() { stat -c '%a' "$1"; }
 # Backward compatibility
 # ==============================================================================
 
-@test "modes: a backup taken before the manifest existed still restores" {
+@test "modes: a backup without its mode manifest restores content, reported partial" {
     # Rolling back a directory written by an older vpssec must not fail just
-    # because it has no .vpssec_modes. Content wins over mode.
+    # because it has no .vpssec_modes: content wins over mode. But the files
+    # come back 600, which breaks /etc/passwd, so it is not reported complete.
     local f="$etc/passwd"
     _make_file "$f" 666
 
@@ -167,9 +168,11 @@ _mode_of() { stat -c '%a' "$1"; }
     rm -f "$modes_manifest"
     printf 'rewritten\n' > "$f"
 
+    VPSSEC_QUIET_SCAN=0
     run backup_restore "$session_ts"
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 2 ]
     grep -qx 'root:x:0:0:root:/root:/bin/bash' "$f"
+    grep -q 'kept the backup copy.s mode 600' <<<"$output"
 }
 
 @test "modes: an unparseable manifest entry does not abort the restore" {

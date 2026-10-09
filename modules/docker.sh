@@ -822,6 +822,9 @@ _docker_fix_enable_daemon_setting() {
     _docker_check_live_restore && confirm_key="docker.confirm_restart_live"
     if ! confirm_critical "$(i18n "$confirm_key")"; then
         print_warn "$(i18n 'docker.restart_skipped')"
+        # daemon.json is already written, so this "no" is a failure, not a
+        # skipped fix: execute_fix must not read it as a declined one.
+        _VPSSEC_DECLINED=0
         return 1
     fi
     if ! systemctl restart docker 2>/dev/null; then

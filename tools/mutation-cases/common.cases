@@ -6,24 +6,24 @@
 # source file per invocation, so the two sides are two files by necessity.
 
 run_case "modes/never-recorded" 1 \
-    '        backup_track_mode "$file" "$backup_dir"' \
-    '        :'
+    '        if ! backup_track_mode "$file" "$backup_dir"; then' \
+    '        if false; then'
 
 run_case "modes/intermediate-overwrites-original" 1 \
     '    _backup_mode_recorded "$path" "$manifest" && return 0' \
     '    :'
 
 run_case "modes/manifest-columns-swapped" 1 \
-    '    printf '"'"'%s %s\n'"'"' "$mode" "$path" >> "$manifest" || return 0' \
-    '    printf '"'"'%s %s\n'"'"' "$path" "$mode" >> "$manifest" || return 0'
+    '    printf '"'"'%s %s\n'"'"' "$mode" "$path" 2>/dev/null >> "$manifest" || return 1' \
+    '    printf '"'"'%s %s\n'"'"' "$path" "$mode" 2>/dev/null >> "$manifest" || return 1'
 
 run_case "modes/recorded-after-the-copy" 1 \
-    '    mode=$(stat -c '"'"'%a'"'"' "$path" 2>/dev/null) || return 0' \
+    '    mode=$(stat -c '"'"'%a'"'"' "$path" 2>/dev/null) || return 1' \
     '    mode=600'
 
 # The mutant keeps the trailing `|| \` so the follow-up log_warn line stays
 # syntactically attached and inert; dropping it detaches the continuation and
 # breaks the file rather than the behaviour.
 run_case "modes/backup-copy-left-readable" 1 \
-    '        chmod 600 "$backup_path" 2>/dev/null || \' \
+    '        chmod 600 "$partial" 2>/dev/null || \' \
     '        : || \'

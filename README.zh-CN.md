@@ -59,10 +59,10 @@ sudo vpssec guide --fix=ssh.enable_pubkey --yes  # 不出菜单，只执行指�
 sudo vpssec rollback                             # 撤销上次运行改过的东西
 ```
 
-两条不需要 root：
+两条不需要 root 也能跑：
 
 ```bash
-vpssec status        # 上次运行、最新备份、有没有新版本
+vpssec status        # 版本、有没有新版本；root 下还有上次审计与修复、备份
 vpssec help ssh      # 某个模块里的检查项与 fix id
 ```
 

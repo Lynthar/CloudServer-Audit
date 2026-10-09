@@ -1,0 +1,19 @@
+# Mutation cases: tests/test_preflight_optional.bats against modules/preflight.sh.
+# mutate-suite: modules/preflight.sh tests/test_preflight_optional.bats
+#
+# Missing optional tools are one check, one entry per capability, and a
+# capability is there when any one of its tools is.
+
+run_case "group/tui-needs-both" 1 \
+    '    if ! check_command whiptail && ! check_command dialog; then' \
+    '    if ! check_command whiptail || ! check_command dialog; then'
+run_case "group/network-needs-both" 1 \
+    '    if ! check_command curl && ! check_command wget; then' \
+    '    if ! check_command curl || ! check_command wget; then'
+run_case "lsof/unchecked" 1 \
+    '    if ! check_command lsof; then' \
+    '    if false; then'
+# Back to a line nobody sees during the scan.
+run_case "emit/not-a-check" 1 \
+    '        check_emit "preflight.optional_missing" low failed \' \
+    '        : \'

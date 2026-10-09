@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_status_last_audit.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_status_last_audit.bats
+#
+# What an audit pass writes for status.
+
+run_case "record/complete-dropped" 1 \
+    "            '.last_audit = {timestamp: \$ts, score: \$score, complete: \$complete}' \\" \
+    "            '.last_audit = {timestamp: \$ts, score: \$score, complete: true}' \\"

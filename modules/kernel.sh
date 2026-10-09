@@ -436,7 +436,7 @@ kernel_audit() {
     container_type=$(_kernel_is_container)
     if [[ -n "$container_type" ]]; then
         print_item "$(i18n 'kernel.check_container')"
-        check_emit "kernel.container_detected" low info \
+        check_emit "kernel.container_detected" low failed \
             title="$(i18n 'kernel.container_detected' "type=$container_type")" \
             desc="$(i18n 'kernel.container_limitations')"
         print_info "$(i18n 'kernel.container_detected' "type=$container_type")"

@@ -298,8 +298,9 @@ _completed_fixes() {
 
 @test "no-new-privileges fix: declining the restart is a failure, the setting staged" {
     # Not loaded is not on: the daemon keeps creating containers without it.
+    # An answered "no" (the flag set) after daemon.json is written still fails.
     _daemon_picks_up_on restart
-    confirm_critical() { return 1; }
+    confirm_critical() { _VPSSEC_DECLINED=1; return 1; }
 
     run execute_fix docker.enable_no_new_privileges true
     [ "$status" -eq 1 ]
@@ -311,7 +312,7 @@ _completed_fixes() {
 @test "no-new-privileges fix: declining is a failure on an old daemon too" {
     # Engine 20.10 cannot report the setting, so the fix's own word decides.
     _daemon_picks_up_on restart 20.10.24+dfsg1
-    confirm_critical() { return 1; }
+    confirm_critical() { _VPSSEC_DECLINED=1; return 1; }
 
     run execute_fix docker.enable_no_new_privileges true
     [ "$status" -eq 1 ]

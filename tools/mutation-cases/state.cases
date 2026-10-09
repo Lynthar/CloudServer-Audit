@@ -3,8 +3,8 @@
 # mutate-suite: core/state.sh tests/test_backup_mode_restore.bats
 
 run_case "modes/mode-never-reapplied" 1 \
-    '        _backup_restore_mode "$original_path" "$modes_manifest"' \
-    '        :'
+    '        if ! _backup_restore_mode "$original_path" "$modes_manifest"; then' \
+    '        if ! :; then'
 
 run_case "modes/chmod-not-issued" 1 \
     '    if ! chmod "$mode" "$path" 2>/dev/null; then' \
@@ -19,8 +19,8 @@ run_case "modes/manifest-path-wrong" 1 \
 # Dropping the exclusion writes a file into / on the test host; the suite's
 # assertion removes it first for exactly that reason.
 run_case "modes/manifest-restored-into-root" 1 \
-    "    done < <(find \"\$backup_dir\" -type f ! -name '.vpssec_created' ! -name '.vpssec_modes' -print0)" \
-    "    done < <(find \"\$backup_dir\" -type f ! -name '.vpssec_created' -print0)"
+    '    find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \' \
+    '    find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" \'
 
 # There is deliberately NO case for the `[[ -n "$mode" ]]` guard in
 # _backup_restore_mode. Its only observable effect is one log line: with the guard

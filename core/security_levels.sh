@@ -59,8 +59,8 @@ declare -gA FIX_SAFE=(
     # alerts.setup_config is CONFIRM: it asks for a webhook and an email on a
     # tty. No alerts.generate_templates: no check emits it as a fix_id.
 
-    # set_timezone stays CONFIRM: it prompts, and it is offered on passing
-    # checks too, so auto-applying would stall a select-all run.
+    # set_timezone stays CONFIRM: it prompts for a zone, so auto-applying
+    # would stall a select-all run.
     ["timezone.enable_ntp"]="true"
     # No timezone.sync_time: no check emits it. The actionable case is
     # covered by timezone.enable_ntp.
@@ -110,8 +110,7 @@ declare -gA FIX_CONFIRM=(
     ["docker.enable_no_new_privileges"]="Restarts the Docker daemon, which stops every running container unless live-restore is on; applies only to containers created afterwards"
     ["docker.enable_live_restore"]="Reloads the Docker daemon (no restart); any other pending reloadable daemon.json change takes effect too"
 
-    # Interactive: prompts for a timezone, and is offered on hosts whose
-    # timezone is already correct so the operator can change it on purpose.
+    # Interactive: prompts for a timezone. Offered only where none is set.
     ["timezone.set_timezone"]="Prompts for a new system timezone; log timestamps and cron schedules shift with it"
     # Interactive for the same reason: asks for a webhook URL and an email.
     ["alerts.setup_config"]="Asks for a webhook URL and an email address, then writes the alert config and monitor scripts"
@@ -731,6 +730,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["preflight.network_fail"]="info"
     ["preflight.deps_ok"]="info"
     ["preflight.deps_missing"]="info"
+    ["preflight.optional_missing"]="info"
     ["preflight.ports_ok"]="info"
     # Operator preference / non-posture
     ["ssh.no_access_control"]="info"

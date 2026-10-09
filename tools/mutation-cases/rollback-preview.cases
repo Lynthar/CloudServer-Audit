@@ -1,0 +1,9 @@
+# Mutation cases: tests/test_backup_session_integrity.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_backup_session_integrity.bats
+#
+# rollback's preview, under the confirmation it is for.
+
+# The raw list is printed: "restore /etc/x" lines under one heading again.
+run_case "preview/raw-list" 1 \
+    '        sed -n "s/^$verb /  - /p" <<<"$contents" | tty_out' \
+    "        printf '%s\\n' \"\$contents\" | tty_out"

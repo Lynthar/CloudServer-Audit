@@ -66,10 +66,10 @@ sudo vpssec guide --fix=ssh.enable_pubkey --yes  # one named fix, no menu
 sudo vpssec rollback                             # undo what the last run changed
 ```
 
-Two of them don't need root:
+Two of them run without root:
 
 ```bash
-vpssec status        # last run, newest backup, whether there's a newer release
+vpssec status        # version, newer release; with root also the last audit and fix, backups
 vpssec help ssh      # the checks and fix ids in one module
 ```
 

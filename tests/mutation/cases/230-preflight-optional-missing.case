@@ -1,0 +1,25 @@
+# Plant: nothing — the slim image ships no whiptail, dialog or lsof.
+# Expect: preflight.optional_missing naming the menus and the lsof fallback;
+# it used to be a print silenced during the scan, so only the log had it.
+# Severity: low, failed, unscored (info) — degraded capability, not exposure.
+#
+# Safety: changes nothing; precheck skips a host that has those tools.
+TEST_DESC="Missing optional tools are a check in the report, not a silenced print"
+EXPECT_ID="preflight.optional_missing"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+EXPECT_DESC_CONTAINS="lsof"
+MODULE="preflight"
+
+precheck() {
+    ! command -v lsof >/dev/null 2>&1 \
+        && ! command -v whiptail >/dev/null 2>&1 && ! command -v dialog >/dev/null 2>&1
+}
+
+mutate() {
+    return 0
+}
+
+restore() {
+    return 0
+}

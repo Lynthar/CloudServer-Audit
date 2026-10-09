@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_backup_session_integrity.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_backup_session_integrity.bats
+#
+# One set of lists says what a rollback restores, deletes and cannot restore;
+# the preview and the restore both read it.
+
+# A copy missing from the session goes unnoticed: rollback reports complete.
+run_case "missing/ignored" 1 \
+    '    done < <(_backup_session_missing "$backup_dir")' \
+    '    done < /dev/null'
+# A copy left half-written by a killed backup is listed (and restored) as a copy.
+run_case "partial/listed-as-copy" 1 \
+    '        ! -name "${VPSSEC_PARTIAL_PREFIX}*" -print0' \
+    '        -print0'
+# The preview no longer names the files a rollback will delete.
+run_case "preview/deletes-unlisted" 1 \
+    "    _backup_session_created \"\$backup_dir\" | sed 's/^/delete /'" \
+    '    :'

@@ -314,8 +314,9 @@ main() {
             print_msg "Version: ${VPSSEC_VERSION}"
             print_msg "Date: $(date '+%Y-%m-%d %H:%M:%S')"
             print_msg "OS: $(detect_os) $(detect_os_version)"
-            if [[ -n "${VPSSEC_INCLUDE:-}" ]]; then
-                print_msg "Modules: ${VPSSEC_INCLUDE}"
+            # The modules that will run: context modules added, excludes removed.
+            if score_is_partial; then
+                print_msg "Modules: $(_report_modules_scope)"
             fi
             audit_all
             ;;

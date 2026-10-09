@@ -1001,7 +1001,7 @@ vpssec [mode] [options]
 | `audit` | 只读审计（默认模式） |
 | `guide` | 交互式加固向导（会修改系统） |
 | `rollback [TS]` | 回滚到指定时间戳的备份；省略 `TS` 进入交互选择 |
-| `status` | 显示最近一次运行的得分和最新备份信息 |
+| `status` | 显示版本与有没有新版本；以 root 运行时还显示上次审计的时间与得分（有模块没跑完会注明）、上次应用修复的时间、备份会话数与位置——状态目录只归 root 可读 |
 | `help [MODULE]` | 列出所有模块和 `fix_id`；带模块名时显示该模块的详情（不需要 root，不会改系统） |
 
 ### 选项
@@ -1038,7 +1038,8 @@ score   = clamp(0, 100, base − penalty)
 `scored_total` 只统计分类为 `required`、`recommended`、`conditional`
 （且对应组件已安装）、`optional`（仅 `--strict`）的检查。`info` 类
 检查（如云厂商识别、"Docker 未安装"）既不进分子也不进分母——所以
-这些项不会影响分数。
+这些项不会影响分数。`summary.md` 在这类发现的标题后标「不计分」，
+`summary.json` 的每条检查带 `scored` 字段。
 
 ### 分数只在相同模块范围内可比
 

@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_guide_outcomes.bats against modules/timezone.sh.
+# mutate-suite: modules/timezone.sh tests/test_guide_outcomes.bats
+#
+# A timezone or locale that is set is a passed check, and passed checks carry
+# no fix; the mutants hang the fix back on.
+
+run_case "offer/utc-carries-fix" 1 \
+    "            suggestion=\"\$(i18n 'timezone.change_timezone_cmd')\"" \
+    "            suggestion=\"\$(i18n 'timezone.change_timezone_cmd')\" fix=\"timezone.set_timezone\""
+run_case "offer/locale-carries-fix" 1 \
+    "            suggestion=\"\$(i18n 'timezone.change_locale_cmd')\"" \
+    "            suggestion=\"\$(i18n 'timezone.change_locale_cmd')\" fix=\"timezone.set_locale\""

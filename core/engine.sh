@@ -461,6 +461,11 @@ _run_audit_pass() {
     # Clear progress line
     _progress "\r                                                              \r"
 
+    local complete=true
+    (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || complete=false
+    state_record_audit "$(calculate_score)" "$complete" \
+        || log_warn "Could not record the audit in $STATE_OK_FILE"
+
     export VPSSEC_QUIET_SCAN=0
 }
 
@@ -485,8 +490,9 @@ audit_all() {
 get_available_fixes() {
     local checks=$(state_get_checks)
 
-    # Get fixes that have a fix_id (failed items + passed items with fix_id for optional config like timezone)
-    local fixes=$(echo "$checks" | jq -r '[.[] | select(.fix_id != null and .fix_id != "" and (.status == "failed" or (.status == "passed" and (.fix_id | startswith("timezone.")))))]')
+    # Failed checks only: a fix hung on a passed check was offered on every
+    # host, pre-ticked, and declining it turned a clean run into a failure.
+    local fixes=$(echo "$checks" | jq -r '[.[] | select(.fix_id != null and .fix_id != "" and .status == "failed")]')
 
     # Add safety classification if security_levels is loaded
     if declare -f get_fix_safety &>/dev/null; then
@@ -540,11 +546,14 @@ generate_plan() {
     echo "$plan_json"
 }
 
-# Execute a single fix
+# Execute a single fix: 0 applied, 1 failed, 2 skipped because the operator
+# answered no at its confirmation (a fix that returns non-zero after such an
+# answer must have changed nothing by then).
 execute_fix() {
     local fix_id="$1"
     local skip_safety_check="${2:-false}"
     local module="${fix_id%%.*}"
+    _VPSSEC_DECLINED=0
 
     # Check fix safety (unless explicitly skipped)
     if [[ "$skip_safety_check" != "true" ]]; then
@@ -570,16 +579,19 @@ execute_fix() {
         if fix_needs_engine_confirmation "$fix_id"; then
             local warning
             warning=$(get_fix_warning "$fix_id" 2>/dev/null || echo "")
+            local confirmed=0
             if fix_is_risky "$fix_id"; then
-                if ! confirm_critical "$(i18n 'fix.risky'): $warning"; then
-                    print_warn "$(i18n 'fix.risky_skipped')"
-                    return 1
-                fi
+                confirm_critical "$(i18n 'fix.risky'): $warning" && confirmed=1
             else
-                if ! confirm "$(i18n 'fix.confirm'): $warning"; then
-                    print_warn "$(i18n 'fix.confirm_skipped')"
-                    return 1
+                confirm "$(i18n 'fix.confirm'): $warning" && confirmed=1
+            fi
+            if (( ! confirmed )); then
+                if (( _VPSSEC_DECLINED )); then
+                    print_warn "$(i18n 'fix.declined')"
+                    return 2
                 fi
+                print_warn "$(i18n 'fix.unconfirmed')"
+                return 1
             fi
         fi
     fi
@@ -617,6 +629,9 @@ execute_fix() {
                 state_mark_fix_complete "$fix_id"
             fi
             return 0
+        elif (( _VPSSEC_DECLINED )); then
+            log_info "Fix declined at its own confirmation: $fix_id"
+            return 2
         else
             log_error "Fix failed: $fix_id"
             return 1
@@ -634,6 +649,7 @@ execute_plan() {
     local total=$(echo "$fixes" | jq 'length')
     local completed=()
     local failed=()
+    local skipped=()
 
     # Open a backup session: every backup_file call by the fixes below lands in
     # this one directory (VPSSEC_BACKUP_SESSION), so a rollback restores the
@@ -665,9 +681,14 @@ execute_plan() {
         print_msg ""
         print_info "[$i/$total] $title"
 
-        if execute_fix "$fix_id"; then
+        local fix_rc=0
+        execute_fix "$fix_id" || fix_rc=$?
+        if (( fix_rc == 0 )); then
             print_ok "$(i18n 'common.success')"
             completed+=("$fix_id")
+        elif (( fix_rc == 2 )); then
+            # The operator's choice, not a failure: no menu, no rollback offer.
+            skipped+=("$fix_id")
         else
             print_error "$(i18n 'common.failed')"
             failed+=("$fix_id")
@@ -684,30 +705,31 @@ execute_plan() {
 
                 case "$choice" in
                     2)
-                        # Retry
-                        if execute_fix "$fix_id"; then
-                            print_ok "$(i18n 'common.success')"
-                            completed+=("$fix_id")
-                            # Rebuilt, not filtered: `${arr[@]/pat}` blanks
-                            # the element instead of removing it.
+                        # Retry. Rebuilt, not filtered: `${arr[@]/pat}` blanks
+                        # the element instead of removing it.
+                        fix_rc=0
+                        execute_fix "$fix_id" || fix_rc=$?
+                        if (( fix_rc != 1 )); then
                             local _kept=()
                             local _f
                             for _f in "${failed[@]}"; do
                                 [[ "$_f" != "$fix_id" ]] && _kept+=("$_f")
                             done
                             failed=("${_kept[@]}")
+                            if (( fix_rc == 0 )); then
+                                print_ok "$(i18n 'common.success')"
+                                completed+=("$fix_id")
+                            else
+                                skipped+=("$fix_id")
+                            fi
                         fi
                         ;;
                     3)
-                        # Restore THIS plan's session, not merely the latest
-                        # dir. rc is swallowed so set -e cannot kill the run
-                        # mid-rollback, but the outcome is reported.
+                        # Restore THIS plan's session, the way `vpssec rollback`
+                        # does, daemons reloaded included. rc swallowed so set -e
+                        # cannot kill the run mid-rollback; the outcome is printed.
                         print_warn "$(i18n 'backup.restoring')"
-                        local _rb_rc=0
-                        backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")" || _rb_rc=$?
-                        if (( _rb_rc == 1 )); then
-                            print_error "$(i18n 'error.rollback_failed')"
-                        fi
+                        _rollback_session "$(basename "$VPSSEC_BACKUP_SESSION")" || true
                         VPSSEC_BACKUP_SESSION=""
                         state_clear_progress
                         return 1
@@ -726,11 +748,20 @@ execute_plan() {
     # Print summary
     print_msg ""
     if [[ ${#failed[@]} -eq 0 ]]; then
-        print_ok "$(i18n 'guide.complete')"
+        if [[ ${#completed[@]} -eq 0 && ${#skipped[@]} -gt 0 ]]; then
+            print_warn "$(i18n 'guide.none_applied')"
+        else
+            print_ok "$(i18n 'guide.complete')"
+        fi
     elif [[ ${#completed[@]} -eq 0 ]]; then
         print_error "$(i18n 'guide.all_failed')"
     else
         print_warn "$(i18n 'guide.partial_complete' "count=${#failed[@]}")"
+    fi
+    if [[ ${#skipped[@]} -gt 0 ]]; then
+        local skipped_list
+        skipped_list=$(printf '%s, ' "${skipped[@]}")
+        print_info "$(i18n 'guide.skipped_list' "count=${#skipped[@]}" "ids=${skipped_list%, }")"
     fi
 
     # Sessions are never pruned: the oldest one holds the only copy of the
@@ -1113,15 +1144,15 @@ rollback_mode() {
 
     if [[ -z "$timestamp" ]]; then
         # Interactive selection
-        tty_say "$(i18n 'common.info'): Available backups:"
+        tty_say "$(i18n 'backup.available')"
         tty_say ""
 
         local i=1
         local -a backup_array=()
         while read -r ts; do
             backup_array+=("$ts")
-            local contents=$(backup_list_contents "$ts" | wc -l)
-            tty_say "  $i) $ts ($contents files)"
+            local contents=$(backup_list_contents "$ts" | grep -c .) || contents=0
+            tty_say "  $i) $(i18n 'backup.session_entry' "ts=$ts" "count=$contents")"
             ((i++))
         done <<< "$backups"
 
@@ -1146,12 +1177,19 @@ rollback_mode() {
     tty_say ""
     tty_warn "$(i18n 'backup.restoring') $timestamp"
 
-    local contents=$(backup_list_contents "$timestamp")
-    if [[ -n "$contents" ]]; then
+    local contents verb heading
+    contents=$(backup_list_contents "$timestamp")
+    for verb in restore delete missing; do
+        grep -q "^$verb " <<<"$contents" || continue
+        case "$verb" in
+            restore) heading=$(i18n 'backup.preview_restore') ;;
+            delete)  heading=$(i18n 'backup.preview_delete') ;;
+            missing) heading=$(i18n 'backup.preview_missing') ;;
+        esac
         tty_say ""
-        tty_say "$(i18n 'common.info'): Files to restore:"
-        sed 's/^/  - /' <<<"$contents" | tty_out
-    fi
+        tty_say "$heading"
+        sed -n "s/^$verb /  - /p" <<<"$contents" | tty_out
+    done
 
     tty_say ""
     if ! confirm_critical "$(i18n 'common.confirm')?"; then
@@ -1159,9 +1197,16 @@ rollback_mode() {
         return 0
     fi
 
-    # backup_restore has three outcomes; do not collapse them to a boolean.
-    # 2 (partial) still reloads services, since the restored files must take
-    # effect, but reports the partial result honestly.
+    local rc=0
+    _rollback_session "$timestamp" || rc=$?
+    return "$rc"
+}
+
+# Roll back one session: restore it, say which of the three outcomes it was,
+# and reload the daemons unless nothing came back. Returns backup_restore's
+# 0 / 1 / 2. `rollback` and the guide's failure menu both end here.
+_rollback_session() {
+    local timestamp="$1"
     local restore_rc=0
     backup_restore "$timestamp" || restore_rc=$?
 
@@ -1176,6 +1221,7 @@ rollback_mode() {
         print_warn "$(i18n 'backup.restored_partial')"
     fi
 
+    # Also after a partial restore: the files that did come back must take effect.
     print_info "$(i18n 'backup.reloading_services')"
     _rollback_reload_services
 
@@ -1204,15 +1250,6 @@ _rollback_reload_services() {
 status_mode() {
     print_header "vpssec $(i18n 'cli.cmd_status')"
 
-    # Non-root honesty: state/ is deliberately chmod 700 root, so a normal
-    # user's status can never show run data on a root-owned install. Say so
-    # instead of printing a header followed by silence.
-    if [[ -d "${VPSSEC_STATE}" && ! -r "${VPSSEC_STATE}" ]]; then
-        print_msg "  $(i18n 'status.state_unreadable')"
-        print_msg ""
-        return 0
-    fi
-
     print_msg "  $(i18n 'status.version' "version=${VPSSEC_VERSION}")"
 
     # The only command that reaches the network to compare versions. audit and
@@ -1225,11 +1262,33 @@ status_mode() {
         print_warn "  $(i18n 'status.update_available' "latest=$latest")"
     fi
 
-    # Last run info
-    local ok_state="${STATE_OK_FILE}"
+    # Non-root honesty: state/ is deliberately chmod 700 root, so a normal
+    # user's status can never show run data on a root-owned install. Say so
+    # after the version, which needs no state, instead of printing silence.
+    if [[ -d "${VPSSEC_STATE}" && ! -r "${VPSSEC_STATE}" ]]; then
+        print_msg "  $(i18n 'status.state_unreadable')"
+        print_msg ""
+        return 0
+    fi
+
+    # An audit records itself here too; last_run is only ever the last fix.
+    local ok_state="${STATE_OK_FILE}" never
+    never=$(i18n 'status.never')
     if [[ -f "$ok_state" ]]; then
-        local last_run=$(jq -r '.last_run // "never"' "$ok_state")
-        print_msg "  $(i18n 'status.last_run' "time=$last_run")"
+        local audit_ts audit_score audit_complete
+        IFS='|' read -r audit_ts audit_score audit_complete < <(jq -r \
+            '.last_audit as $a | [$a.timestamp // "", $a.score // "", $a.complete] | map(tostring) | join("|")' \
+            "$ok_state" 2>/dev/null) || true
+        if [[ -z "$audit_ts" ]]; then
+            print_msg "  $(i18n 'status.last_audit_never' "never=$never")"
+        elif [[ "$audit_complete" == "false" ]]; then
+            print_msg "  $(i18n 'status.last_audit_incomplete' "time=$audit_ts" "score=$audit_score")"
+        else
+            print_msg "  $(i18n 'status.last_audit' "time=$audit_ts" "score=$audit_score")"
+        fi
+
+        local last_run=$(jq -r '.last_run // ""' "$ok_state")
+        print_msg "  $(i18n 'status.last_run' "time=${last_run:-$never}")"
 
         local completed=$(jq -r '.completed_fixes | length' "$ok_state")
         print_msg "  $(i18n 'status.completed_fixes' "count=$completed")"

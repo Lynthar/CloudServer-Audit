@@ -1,0 +1,42 @@
+# Mutation cases: tests/test_guide_outcomes.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_guide_outcomes.bats
+#
+# What guide offers, how a declined fix ends, and what the failure menu's
+# rollback does.
+
+# Passed checks offered again: every host lists the timezone and locale changes.
+run_case "offer/passed-check-offered" 1 \
+    "    local fixes=\$(echo \"\$checks\" | jq -r '[.[] | select(.fix_id != null and .fix_id != \"\" and .status == \"failed\")]')" \
+    "    local fixes=\$(echo \"\$checks\" | jq -r '[.[] | select(.fix_id != null and .fix_id != \"\")]')"
+# A no from the previous fix leaks into the next one, whose failure reads skipped.
+run_case "declined/flag-carries-over" 1 \
+    '    _VPSSEC_DECLINED=0' \
+    '    :'
+# The engine's own prompt answered no is a failure again.
+run_case "declined/engine-prompt-fails" 1 \
+    '                    return 2' \
+    '                    return 1'
+# A fix's own prompt answered no is a failure again.
+run_case "declined/self-prompt-fails" 1 \
+    '        elif (( _VPSSEC_DECLINED )); then' \
+    '        elif false; then'
+# An unread confirmation loses the message that says nobody answered.
+run_case "declined/unread-unsaid" 1 \
+    "                print_warn \"\$(i18n 'fix.unconfirmed')\"" \
+    '                :'
+# A skipped fix goes down the failure path: Failed, the menu, exit 1.
+run_case "skipped/handled-as-failure" 1 \
+    '        elif (( fix_rc == 2 )); then' \
+    '        elif false; then'
+# The summary forgets which fixes were skipped.
+run_case "skipped/unlisted" 1 \
+    "        print_info \"\$(i18n 'guide.skipped_list' \"count=\${#skipped[@]}\" \"ids=\${skipped_list%, }\")\"" \
+    '        :'
+# Nothing applied, everything skipped, and the run says "Hardening complete".
+run_case "skipped/none-applied-reads-complete" 1 \
+    '        if [[ ${#completed[@]} -eq 0 && ${#skipped[@]} -gt 0 ]]; then' \
+    '        if false; then'
+# The menu's rollback restores files only: daemons keep the rolled-back config.
+run_case "menu/rollback-without-reload" 1 \
+    '                        _rollback_session "$(basename "$VPSSEC_BACKUP_SESSION")" || true' \
+    '                        backup_restore "$(basename "$VPSSEC_BACKUP_SESSION")" || true'

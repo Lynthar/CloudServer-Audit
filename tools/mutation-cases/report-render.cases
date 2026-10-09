@@ -1,0 +1,40 @@
+# Mutation cases: tests/test_report_render.bats against core/report.sh.
+# mutate-suite: core/report.sh tests/test_report_render.bats
+#
+# The Markdown and the terminal render every check, say an incomplete scan
+# before the score, give advice that runs here, and mark unscored findings.
+
+run_case "completeness/markdown-dropped" 1 \
+    '    _md_completeness "$checks" "$groups"' \
+    '    :'
+run_case "completeness/terminal-dropped" 1 \
+    '    _print_completeness' \
+    '    :'
+# Sections select by severity again: an info-severity failure is listed nowhere.
+run_case "bucket/markdown-by-severity" 1 \
+    '            | [ .modules[] as $m | $checks[] | select(.module == $m and bucket == $kind) | render(.) ]' \
+    '            | [ .modules[] as $m | $checks[] | select(.module == $m and ((if .status == "passed" then "passed" else .severity end) == $kind)) | render(.) ]'
+# An audit-only distro is told to run guide.
+run_case "next/guide-on-audit-only" 1 \
+    '        if (( debian )); then' \
+    '        if true; then'
+# Rollback is offered with no backup to restore.
+run_case "next/rollback-without-backup" 1 \
+    '    if (( debian )) && [[ -n "$(backup_get_latest)" ]]; then' \
+    '    if (( debian )); then'
+# Rollback is offered where it is not supported.
+run_case "next/rollback-on-audit-only" 1 \
+    '    if (( debian )) && [[ -n "$(backup_get_latest)" ]]; then' \
+    '    if [[ -n "$(backup_get_latest)" ]]; then'
+# The partial-score line echoes the raw --include again: "[all]" under --exclude.
+run_case "partial/raw-include" 1 \
+    "        print_msg \"  \${DIM}\$(i18n 'report.score_partial' \"count=\${scored_total}\" \"modules=\$(_report_modules_scope)\")\${NC}\"" \
+    "        print_msg \"  \${DIM}\$(i18n 'report.score_partial' \"count=\${scored_total}\" \"modules=\${VPSSEC_INCLUDE:-all}\")\${NC}\""
+# The JSON checks lose `scored`.
+run_case "scored/json-unmarked" 1 \
+    '    local checks=$(checks_with_scoring)' \
+    '    local checks=$(state_get_checks)'
+# The Markdown findings lose their "not scored" mark.
+run_case "scored/markdown-unmarked" 2 \
+    '    local checks=$(checks_with_scoring)' \
+    '    local checks=$(state_get_checks)'

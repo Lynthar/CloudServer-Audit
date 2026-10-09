@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_report_render.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_report_render.bats
+#
+# The one bucket rule and the per-check score flag the reports read.
+
+# info-severity failures fall out of the low bucket the counts put them in.
+run_case "bucket/info-own-bucket" 1 \
+    '  else "low" end;' \
+    '  elif .severity == "low" then "low" else "info" end;'
+run_case "scored/flag-dropped" 1 \
+    '        | map(. + {scored: scored($catmap; $default_cat; $installed; $strict; (.id // ""))})' \
+    '        | map(.)'
