@@ -34,8 +34,6 @@ _simulate_module_load_all() {
     [ "${#ALLOWED_SHELL_USERS[@]}" -gt 0 ]
     [ "${#SYSTEM_ACCOUNTS[@]}" -gt 0 ]
     [ "${#SUSPICIOUS_USERNAMES[@]}" -gt 0 ]
-    [ "${#PASSWORD_POLICY[@]}" -gt 0 ]
-    [ "${#PWQUALITY_POLICY[@]}" -gt 0 ]
 }
 
 @test "scoping: filesystem.sh top-level arrays are visible" {
@@ -56,7 +54,6 @@ _simulate_module_load_all() {
 @test "scoping: malware.sh top-level arrays are visible" {
     _simulate_module_load_all
     [ "${#CRYPTO_PROCESS_PATTERNS[@]}" -gt 0 ]
-    [ "${#CRYPTO_POOL_PATTERNS[@]}" -gt 0 ]
     [ "${#CRYPTO_POOL_PORTS[@]}" -gt 0 ]
     [ "${#WEB_DIRECTORIES[@]}" -gt 0 ]
     [ "${#WEBSHELL_PATTERNS[@]}" -gt 0 ]

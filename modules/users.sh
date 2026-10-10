@@ -52,24 +52,6 @@ declare -ga SUSPICIOUS_USERNAMES=(
 # Days to consider a user "recently created"
 RECENT_USER_DAYS=7
 
-# Password policy settings (recommended values)
-declare -gA PASSWORD_POLICY=(
-    ["PASS_MAX_DAYS"]="90"      # Maximum days before password expires
-    ["PASS_MIN_DAYS"]="1"       # Minimum days between password changes
-    ["PASS_MIN_LEN"]="8"        # Minimum password length
-    ["PASS_WARN_AGE"]="7"       # Days before expiry to warn user
-)
-
-# pwquality recommended settings
-declare -gA PWQUALITY_POLICY=(
-    ["minlen"]="12"
-    ["dcredit"]="-1"
-    ["ucredit"]="-1"
-    ["lcredit"]="-1"
-    ["ocredit"]="-1"
-    ["minclass"]="3"
-)
-
 # --- Detection Functions ---
 
 # Can this account log in? sshd needs only an executable shell (/etc/shells is

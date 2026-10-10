@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_i18n_references.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_i18n_references.bats
+#
+# The code stops reading a key: once through its only literal, twice through a
+# family whose builder goes away while its table stays.
+
+run_case "literal/last-reference-dropped" 1 \
+    '            title_key="ssh.root_login_keyonly"' \
+    '            title_key="ssh.root_login_enabled"'
+
+run_case "family/check-title-builder-dropped" 1 \
+    '        print_item "$(i18n "ssh.check_${stem}")"' \
+    '        print_item "$stem"'
+
+run_case "family/fail-desc-builder-dropped" 1 \
+    '                desc="$(i18n "${fail_id}_desc" "val=$val")" \' \
+    '                desc="$val" \'

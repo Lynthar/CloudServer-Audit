@@ -5,7 +5,6 @@
 
 # --- Fail2ban Configuration ---
 
-F2B_CONFIG="/etc/fail2ban/fail2ban.conf"
 F2B_JAIL_LOCAL="/etc/fail2ban/jail.local"
 F2B_JAIL_D="/etc/fail2ban/jail.d"
 
@@ -180,23 +179,6 @@ _f2b_list_active_jails() {
         | tr ',' '\n' \
         | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
         | grep -v '^$'
-}
-
-# Get SSH jail configuration
-_f2b_get_ssh_jail_config() {
-    local jail_name=""
-
-    # Determine which jail name is used
-    if fail2ban-client status sshd &>/dev/null; then
-        jail_name="sshd"
-    elif fail2ban-client status ssh &>/dev/null; then
-        jail_name="ssh"
-    else
-        return 1
-    fi
-
-    # Get jail status
-    fail2ban-client status "$jail_name" 2>/dev/null
 }
 
 # Get ban statistics
@@ -686,28 +668,4 @@ EOF
     fi
     print_error "$(i18n 'fail2ban.ssh_jail_config_failed')"
     return 1
-}
-
-# --- Fail2ban Utility Functions ---
-
-# Unban an IP address (utility for other scripts)
-f2b_unban_ip() {
-    local ip="$1"
-    local jail="${2:-sshd}"
-
-    if _f2b_service_active; then
-        fail2ban-client set "$jail" unbanip "$ip" 2>/dev/null
-    fi
-}
-
-# Get list of currently banned IPs
-f2b_get_banned_ips() {
-    local jail="${1:-sshd}"
-
-    if _f2b_service_active; then
-        fail2ban-client status "$jail" 2>/dev/null | \
-            grep "Banned IP list" | \
-            cut -d: -f2 | \
-            tr -d '\t'
-    fi
 }

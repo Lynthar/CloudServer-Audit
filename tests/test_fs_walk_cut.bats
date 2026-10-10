@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh \
+    _vpssec_load core/distro.sh core/state.sh core/security_levels.sh core/engine.sh \
         modules/filesystem.sh modules/webapp.sh
     i18n_load en_US
     state_init

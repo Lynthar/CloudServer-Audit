@@ -88,35 +88,11 @@ _preflight_check_network() {
 
 # Check required and optional dependencies
 _preflight_check_deps() {
-    # Required dependencies
-    local required_deps=(jq ss systemctl sed awk tar grep)
-    local missing_required=()
-
-    for dep in "${required_deps[@]}"; do
-        if ! check_command "$dep"; then
-            missing_required+=("$dep")
-        fi
-    done
-
-    if [[ ${#missing_required[@]} -gt 0 ]]; then
-        # Never `apt install <command>`: apt is wrong on two of the four
-        # families, and a command name is not a package name on any.
-        local dep_pkgs dep_hint
-        dep_pkgs=$(distro_packages_for_commands "${missing_required[@]}")
-        # shellcheck disable=SC2086  # deliberate split: one package per word
-        if ! dep_hint=$(pkg_install_hint $dep_pkgs); then
-            dep_hint=$(i18n 'preflight.install_deps' "deps=$dep_pkgs")
-        fi
-        check_emit "preflight.deps_missing" low failed \
-            title="$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")" \
-            desc="$(i18n 'preflight.deps_missing_desc' "missing_required=${missing_required[*]}")" \
-            suggestion="$dep_hint"
-        print_error "$(i18n 'preflight.dep_missing' "dep=${missing_required[*]}")"
-    else
-        check_emit "preflight.deps_ok" low passed \
-            title="$(i18n 'common.required_deps')"
-        print_ok "$(i18n 'common.required_deps')"
-    fi
+    # The entry point exits before any mode runs when a required command is
+    # missing (check_required_deps), so here they are all present.
+    check_emit "preflight.deps_ok" low passed \
+        title="$(i18n 'common.required_deps')"
+    print_ok "$(i18n 'common.required_deps')"
 
     # One check for what is missing, not a print: prints are silenced during
     # the scan. Any member of a group provides it; lsof is optional because

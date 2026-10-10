@@ -3,21 +3,6 @@
 # Read-only, and invoked BEFORE vpssec_init — no run-lock, no root, no mkdir.
 # Depends only on i18n, VPSSEC_MODULE_ORDER and the FIX_* maps.
 
-# ----------------------------------------------------------------------
-# Colour helpers (degrade gracefully if VPSSEC_COLOR=0)
-# ----------------------------------------------------------------------
-
-_help_safety_badge() {
-    local safety="$1"
-    case "$safety" in
-        safe)       echo "${GREEN}[safe]${NC}    " ;;
-        confirm)    echo "${YELLOW}[confirm]${NC} " ;;
-        risky)      echo "${RED}[risky]${NC}   " ;;
-        alert_only) echo "${CYAN}[alert]${NC}   " ;;
-        *)          echo "[?]      " ;;
-    esac
-}
-
 # Bucket every fix_id from the four FIX_* maps by module and safety.
 # Sets _help_fixes_<safety>_<module> (newline-separated) and
 # _help_fixes_total_<module>, cleared on each call.

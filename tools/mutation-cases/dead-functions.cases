@@ -1,0 +1,14 @@
+# Mutation cases: tests/test_dead_functions.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_dead_functions.bats
+#
+# Production code that leaves a function with no caller.
+
+# Its only call removed: the function stays defined and nothing reaches it.
+run_case "dead/only-call-removed" 1 \
+    '    _record_unavailable_modules' \
+    '    :'
+
+# A module dropped from the order: the engine no longer calls its audit or fix.
+run_case "dead/module-unlisted" 1 \
+    '    "scheduling"' \
+    '    # "scheduling"'

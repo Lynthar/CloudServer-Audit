@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for _nginx_catchall_state_from_text. Finding `default_server` and
+# Tests for _nginx_catchall_coverage_from_text. Finding `default_server` and
 # `return 444` anywhere in the merged config is not enough: the state must be
 # per-port and scoped to one server block, or a 443-only vhost reads as covered.
 
@@ -11,6 +11,13 @@ setup() {
     source "$(_vpssec_repo_root)/modules/nginx.sh"
 }
 
+# The <have> half of the "<needed> <have>" answer.
+_have() {
+    local coverage
+    coverage=$(_nginx_catchall_coverage_from_text "$1") || return
+    printf '%s\n' "${coverage#* }"
+}
+
 @test "catchall: both 80 and 443 in one server block → both" {
     local cfg='server {
     listen 80 default_server;
@@ -18,7 +25,7 @@ setup() {
     server_name _;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "both" ]
 }
@@ -35,7 +42,7 @@ server {
     server_name _;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "both" ]
 }
@@ -55,7 +62,7 @@ server {
     ssl_certificate /etc/ssl/cert.pem;
     return 200 "ok";
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "80only" ]
 }
@@ -72,7 +79,7 @@ server {
     server_name app.example.com;
     return 200 "ok";
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "443only" ]
 }
@@ -83,13 +90,13 @@ server {
     server_name app.example.com;
     return 200 "ok";
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
 
 @test "catchall: empty config → none" {
-    run _nginx_catchall_state_from_text ""
+    run _have ""
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
@@ -100,7 +107,7 @@ server {
     listen [::]:443 ssl default_server;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "both" ]
 }
@@ -111,7 +118,7 @@ server {
     listen 0.0.0.0:443 ssl default_server;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "both" ]
 }
@@ -124,7 +131,7 @@ server {
     server_name _;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
@@ -135,7 +142,7 @@ server {
     server_name _;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
@@ -154,7 +161,7 @@ server {
     server_name app.example.com;
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
@@ -166,7 +173,7 @@ server {
     # return 444;
     return 200 "still alive";
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "none" ]
 }
@@ -184,25 +191,25 @@ server {
     }
     return 444;
 }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "both" ]
 }
 
 @test "catchall: one-liner server block handled" {
     local cfg='server { listen 80 default_server; return 444; }'
-    run _nginx_catchall_state_from_text "$cfg"
+    run _have "$cfg"
     [ "$status" -eq 0 ]
     [ "$output" = "80only" ]
 }
 
 @test "catchall: a server returning 444 without default_server is no catchall" {
-    run _nginx_catchall_state_from_text 'server { listen 80; server_name x.example; return 444; }'
+    run _have 'server { listen 80; server_name x.example; return 444; }'
     [ "$output" = "none" ]
 }
 
 @test "coverage: ssl_reject_handshake counts as the 443 catchall" {
-    run _nginx_catchall_state_from_text 'server { listen 80 default_server; return 444; }
+    run _have 'server { listen 80 default_server; return 444; }
 server { listen 443 ssl default_server; ssl_reject_handshake on; }'
     [ "$output" = "both" ]
 }

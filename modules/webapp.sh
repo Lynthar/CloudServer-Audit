@@ -225,19 +225,6 @@ _webapp_get_php_config() {
     echo "$result"
 }
 
-# Get the PHP ini path most relevant for this host. FPM first (it's
-# what serves users); CLI as the legacy fallback.
-_webapp_get_php_ini() {
-    local ini
-    while IFS= read -r ini; do
-        [[ -n "$ini" ]] && { echo "$ini"; return; }
-    done < <(_webapp_list_fpm_inis)
-    if command -v php &>/dev/null; then
-        php -i 2>/dev/null | grep "Loaded Configuration File" | \
-            awk -F'=>' '{print $2}' | tr -d ' '
-    fi
-}
-
 # --- Nginx Security Check Functions ---
 # Each reads NGINX_DUMP, which webapp_audit (or the predicate) has loaded.
 
@@ -521,12 +508,6 @@ _webapp_php_display_errors() {
 _webapp_php_allow_url_include() {
     local val=$(_webapp_get_php_config "allow_url_include")
     echo "${val:-Off}"
-}
-
-# Check allow_url_fopen
-_webapp_php_allow_url_fopen() {
-    local val=$(_webapp_get_php_config "allow_url_fopen")
-    echo "${val:-On}"
 }
 
 # Check open_basedir

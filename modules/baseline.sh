@@ -267,15 +267,13 @@ _baseline_audit_insecure_services() {
 
     # Installed but possibly inactive packages are still a finding: one can be
     # enabled later, and shipped configs carry weak defaults. Names and query
-    # tool both come from distro.sh; the scan is skipped when it is absent.
-    if declare -f distro_insecure_packages >/dev/null 2>&1; then
-        local pkg
-        for pkg in $(distro_insecure_packages); do
-            if pkg_is_installed "$pkg"; then
-                found+=("$pkg(pkg)")
-            fi
-        done
-    fi
+    # tool both come from distro.sh.
+    local pkg
+    for pkg in $(distro_insecure_packages); do
+        if pkg_is_installed "$pkg"; then
+            found+=("$pkg(pkg)")
+        fi
+    done
 
     if (( ${#found[@]} > 0 )); then
         local list; list=$(printf '%s ' "${found[@]}")
@@ -304,7 +302,7 @@ _baseline_audit_integrity() {
             break
         fi
     done
-    if [[ -z "$found" ]] && declare -f pkg_is_installed >/dev/null 2>&1; then
+    if [[ -z "$found" ]]; then
         # Integrity-tool package names are the same across distros; only the
         # query tool differs, so pkg_is_installed (dpkg/rpm/pacman) handles it.
         for t in aide tripwire samhain afick integrit ossec-hids-server ossec-hids-agent; do

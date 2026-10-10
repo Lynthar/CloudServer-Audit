@@ -8,7 +8,7 @@
 run_case "width/greedy-strip" 1 \
     "_VPSSEC_ANSI_RE='(\\\\033|'\$'\\033'')\\[[0-9;]*m'" \
     "_VPSSEC_ANSI_RE='(\\\\033|'\$'\\033'')\\[.*m'"
-run_case "width/codes-measured" 2 \
+run_case "width/codes-measured" 1 \
     '    _ansi_strip_var s' \
     '    :'
 run_case "ctrl/desc-raw" 1 \

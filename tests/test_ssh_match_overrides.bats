@@ -83,8 +83,13 @@ _finding() {
 }
 
 @test "the finding never moves the score" {
-    run check_counts_in_score ssh.match_overrides
-    [ "$status" -ne 0 ]
+    printf 'Match Address 0.0.0.0/0\n    PermitRootLogin yes\n' > "$SSH_CONFIG"
+    _ssh_audit_match_overrides >/dev/null
+    local level
+    for level in standard strict; do
+        VPSSEC_SECURITY_LEVEL=$level
+        [ "$(checks_with_scoring | jq -r '.[] | select(.id == "ssh.match_overrides") | .scored')" = false ]
+    done
 }
 
 @test "ssh_audit runs the Match override check" {

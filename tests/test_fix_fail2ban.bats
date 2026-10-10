@@ -14,7 +14,6 @@ setup() {
 
     etc=$(_vpssec_fake_etc)
     mkdir -p "$etc/fail2ban/jail.d"
-    F2B_CONFIG="$etc/fail2ban/fail2ban.conf"
     F2B_JAIL_LOCAL="$etc/fail2ban/jail.local"
     F2B_JAIL_D="$etc/fail2ban/jail.d"
     F2B_DROPIN="$etc/fail2ban/jail.d/99-vpssec-sshd.local"
@@ -28,10 +27,9 @@ setup() {
     _vpssec_stub systemctl
     _vpssec_stub apt-get
     _vpssec_stub fail2ban-client
-    # `port 2222` because get_ssh_ports reads `sshd -T` first and falls back to
-    # grepping the real /etc/ssh/sshd_config — an unstubbed sshd would let the
-    # test host decide what lands in the drop-in.
-    _vpssec_stub sshd 0 'port 2222'
+    # sshd -T on 2222, shaped as real sshd prints it: get_ssh_ports reads the
+    # listenaddress lines and otherwise greps the real /etc/ssh/sshd_config.
+    _vpssec_stub sshd 0 $'port 2222\nlistenaddress [::]:2222\nlistenaddress 0.0.0.0:2222'
     # A host with nftables and no firewall front-end: what most of these tests
     # need, so banaction detection does not depend on the test machine.
     fw_backend() { echo none; }

@@ -14,7 +14,6 @@ JOURNALD_DROPIN="${JOURNALD_CONF_D}/99-vpssec.conf"
 JOURNAL_DIR="/var/log/journal"
 LOGROTATE_CONF="/etc/logrotate.conf"
 LOGROTATE_D="/etc/logrotate.d"
-RSYSLOG_CONF="/etc/rsyslog.conf"
 AUDIT_RULES_D="/etc/audit/rules.d"
 AUDIT_RULES_FILE="${AUDIT_RULES_D}/99-vpssec.rules"
 # What augenrules --load regenerates from rules.d.
@@ -173,13 +172,11 @@ _logging_audit_logrotate() {
         # Check if critical log files have rotation configured
         local missing=()
 
-        # Per-distro critical logs from distro.sh; this is the Debian
-        # fallback. RHEL uses messages/secure/dnf.rpm.log, Arch pacman.log.
-        local logs="syslog auth.log dpkg.log"
-        if declare -f distro_log_paths >/dev/null 2>&1; then
-            local dl; dl=$(distro_log_paths)
-            if [[ -n "$dl" ]]; then logs="$dl"; fi
-        fi
+        # Per-distro critical logs from distro.sh; a family it has no list
+        # for gets the Debian names.
+        local logs dl
+        dl=$(distro_log_paths)
+        logs="${dl:-syslog auth.log dpkg.log}"
 
         for log in $logs; do
             # BOTH logrotate.conf and logrotate.d: many distros configure

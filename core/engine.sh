@@ -5,12 +5,8 @@
 
 # --- Security Levels ---
 
-# Source security level configuration
-VPSSEC_SECURITY_LEVELS_FILE="${VPSSEC_CORE}/security_levels.sh"
-if [[ -f "$VPSSEC_SECURITY_LEVELS_FILE" ]]; then
-    # shellcheck source=/dev/null
-    source "$VPSSEC_SECURITY_LEVELS_FILE"
-fi
+# shellcheck source=/dev/null
+source "${VPSSEC_CORE}/security_levels.sh"
 
 # --- Module Management ---
 
@@ -494,24 +490,20 @@ get_available_fixes() {
     # host, pre-ticked, and declining it turned a clean run into a failure.
     local fixes=$(echo "$checks" | jq -r '[.[] | select(.fix_id != null and .fix_id != "" and .status == "failed")]')
 
-    # Add safety classification if security_levels is loaded
-    if declare -f get_fix_safety &>/dev/null; then
-        local enriched_fixes="[]"
-        while read -r fix; do
-            local fix_id=$(echo "$fix" | jq -r '.fix_id')
-            local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
-            local enriched=$(echo "$fix" | jq --arg safety "$safety" '. + {safety: $safety}')
+    # Add each fix's safety classification.
+    local enriched_fixes="[]"
+    while read -r fix; do
+        local fix_id=$(echo "$fix" | jq -r '.fix_id')
+        local safety=$(get_fix_safety "$fix_id" 2>/dev/null || echo "unknown")
+        local enriched=$(echo "$fix" | jq --arg safety "$safety" '. + {safety: $safety}')
 
-            enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
-        done < <(echo "$fixes" | jq -c '.[]')
+        enriched_fixes=$(echo "$enriched_fixes" | jq --argjson fix "$enriched" '. + [$fix]')
+    done < <(echo "$fixes" | jq -c '.[]')
 
-        # Alert-only findings emit an empty fix_id, so the select() above has
-        # already dropped them; this stays as the second gate, unconditional
-        # because there has never been a caller that wanted them listed.
-        echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only")]'
-    else
-        echo "$fixes"
-    fi
+    # Alert-only findings emit an empty fix_id, so the select() above has
+    # already dropped them; this stays as the second gate, unconditional
+    # because there has never been a caller that wanted them listed.
+    echo "$enriched_fixes" | jq '[.[] | select(.safety != "alert_only")]'
 }
 
 # Generate execution plan
@@ -917,16 +909,6 @@ guide_mode() {
     print_header "$(i18n 'guide.welcome')"
     print_msg ""
 
-    # Show security level info
-    if declare -f get_security_level &>/dev/null; then
-        local level=$(get_security_level)
-        print_msg "$(i18n 'guide.security_level'): $level"
-        print_security_level_info "$level" 2>/dev/null | while read -r line; do
-            print_msg "  $line"
-        done
-        print_msg ""
-    fi
-
     # Run audit pass (shared with audit_all). state/checks.json is
     # repopulated in-place; QUIET_SCAN is reset to 0 on return so the
     # report-print calls below render correctly.
@@ -978,7 +960,7 @@ guide_mode() {
             fix_array+=("$fix")
         done < <(echo "$fixes" | jq -c '.[]')
 
-        selected_fixes=$(ui_select_fixes fix_array)
+        selected_fixes=$(tui_select_fixes fix_array)
     else
         # Text mode - show numbered list
         local i=1
@@ -1090,7 +1072,7 @@ guide_mode() {
     done < <(echo "$plan" | jq -c '.fixes[]')
 
     if tui_available; then
-        ui_review_plan "$plan_preview"
+        tui_review_plan "$plan_preview"
     else
         # The plan is what the confirmations below refer to, so it goes where
         # they go: never onto a --json-only stdout.

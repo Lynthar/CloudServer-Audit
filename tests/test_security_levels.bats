@@ -83,35 +83,23 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-# ---- get_check_score_category ---------------------------------------
+# ---- CHECK_SCORE_CATEGORY (unlisted ids: test_score.bats) -------------
 
-@test "get_check_score_category: SSH password_auth is required" {
-    run get_check_score_category "ssh.password_auth_enabled"
-    [ "$output" = "required" ]
+@test "score category: SSH password_auth is required" {
+    [ "${CHECK_SCORE_CATEGORY[ssh.password_auth_enabled]}" = "required" ]
 }
 
-@test "get_check_score_category: docker.* is conditional" {
-    run get_check_score_category "docker.privileged_containers"
-    [ "$output" = "conditional" ]
+@test "score category: docker.* is conditional" {
+    [ "${CHECK_SCORE_CATEGORY[docker.privileged_containers]}" = "conditional" ]
 }
 
-@test "get_check_score_category: ssh.x11 is info-only" {
-    run get_check_score_category "ssh.x11_forwarding_enabled"
-    [ "$output" = "info" ]
+@test "score category: ssh.x11 is info-only" {
+    [ "${CHECK_SCORE_CATEGORY[ssh.x11_forwarding_enabled]}" = "info" ]
 }
 
-@test "get_check_score_category: sudo logging is info, both of its states passing" {
-    run get_check_score_category "logging.sudo_logging_ok"
-    [ "$output" = "info" ]
-    run get_check_score_category "logging.sudo_no_events"
-    [ "$output" = "info" ]
-}
-
-@test "get_check_score_category: unknown defaults to info (fail-safe, non-scoring)" {
-    # An unclassified id must NOT move the score until deliberately promoted —
-    # a forgotten/heuristic check should never silently penalize a host.
-    run get_check_score_category "totally.fake"
-    [ "$output" = "info" ]
+@test "score category: sudo logging is info, both of its states passing" {
+    [ "${CHECK_SCORE_CATEGORY[logging.sudo_logging_ok]}" = "info" ]
+    [ "${CHECK_SCORE_CATEGORY[logging.sudo_no_events]}" = "info" ]
 }
 
 # Coverage invariant: the malware module is alert-only for everything it detects,

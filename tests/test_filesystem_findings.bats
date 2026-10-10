@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh
+    _vpssec_load core/distro.sh core/state.sh core/security_levels.sh
     i18n_load en_US
     state_init
     export TMPDIR="$BATS_TEST_TMPDIR"

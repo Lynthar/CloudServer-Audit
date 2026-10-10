@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# The UI to plan to executor ID contract: both selectors must emit deduplicated
+# The UI to plan to executor ID contract: the selector must emit deduplicated
 # fix_ids, generate_plan must yield one entry per unique fix id, and an empty
 # plan and a failed plan must both be visible in the exit status.
 
@@ -60,17 +60,6 @@ _checklist_tags_only() {
     [[ "$output" == *"mod.other_fix"* ]]
     _vpssec_refute grep -q "mod.check_a" <<<"$output"
     # shared_fix appears exactly once despite two checks carrying it
-    [ "$(grep -o "mod.shared_fix" <<<"$output" | wc -l | tr -d ' ')" -eq 1 ]
-}
-
-@test "text_select_fixes emits fix ids, not check ids, deduplicated" {
-    text_checklist() { _checklist_tags_only "$@"; }
-
-    local -a fixes=("$CHECK_A" "$CHECK_B" "$CHECK_C")
-    run text_select_fixes fixes
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"mod.shared_fix"* ]]
-    _vpssec_refute grep -q "mod.check_b" <<<"$output"
     [ "$(grep -o "mod.shared_fix" <<<"$output" | wc -l | tr -d ' ')" -eq 1 ]
 }
 
@@ -343,7 +332,6 @@ _guide_fix_harness() {
     report_print_summary() { :; }
     report_generate_all() { :; }
     tui_select_fixes() { echo "SELECTOR-RAN"; }
-    text_select_fixes() { echo "SELECTOR-RAN"; }
     execute_plan() {
         echo "EXEC $(state_load_plan | jq -r '.fixes[].fix_id' | tr '\n' ' ')"
         return 0

@@ -89,6 +89,15 @@ _write_checks() {
     [ "$output" = "100" ]
 }
 
+@test "calculate_score: an id missing from the category map is not scored" {
+    # A check nobody classified must not drag the score down until promoted.
+    _write_checks \
+        "ssh.root_login_disabled|low|passed" \
+        "totally.unlisted|high|failed"
+    run calculate_score
+    [ "$output" = "100" ]
+}
+
 @test "calculate_score: clamps to 0, never negative" {
     # 5 high failures × 8 penalty = 40, base = 0, score should be 0.
     _write_checks \

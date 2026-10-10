@@ -39,11 +39,9 @@ VPSSEC_YES="${VPSSEC_YES:-0}"
 VPSSEC_DEBUG="${VPSSEC_DEBUG:-0}"
 VPSSEC_QUIET_SCAN="${VPSSEC_QUIET_SCAN:-0}"  # Suppress detailed output during scanning
 
-# -g keeps these global when common.sh is sourced from inside a function
+# -g keeps it global when common.sh is sourced from inside a function
 # (bats helpers); a no-op on the top-level production load path.
 declare -gA VPSSEC_I18N=()
-declare -ga VPSSEC_CHECKS=()
-declare -ga VPSSEC_FIXES=()
 
 # Lazily filled by the getters below, which delegate to cloud.sh's
 # _detect_cloud_provider when loaded and return "unknown" when it is not.
@@ -172,7 +170,6 @@ SYM_OK="✓"
 SYM_FAIL="✗"
 SYM_WARN="⚠"
 SYM_INFO="ℹ"
-SYM_ARROW="→"
 SYM_BULLET="•"
 
 # Severity indicators
@@ -340,35 +337,6 @@ print_severity() {
     esac
 }
 
-# Progress bar
-print_progress() {
-    local current="$1"
-    local total="$2"
-    local width="${3:-40}"
-
-    # Same reason as engine.sh's _progress: this writes to stdout with
-    # printf (it needs \r and no trailing newline), so it must repeat
-    # print_msg's --json-only guard or it corrupts the JSON document.
-    [[ "${VPSSEC_JSON_ONLY:-0}" == "1" ]] && return 0
-
-    # total=0 would abort the percentage arithmetic under set -e.
-    if (( total <= 0 )); then
-        return 0
-    fi
-
-    local percent=$((current * 100 / total))
-    local filled=$((current * width / total))
-    local empty=$((width - filled))
-
-    local bar="${GREEN}"
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    bar+="${DIM}"
-    for ((i=0; i<empty; i++)); do bar+="░"; done
-    bar+="${NC}"
-
-    printf "\r  [%s] %3d%% " "$bar" "$percent"
-}
-
 # --- Text Width Helpers (terminal cells, CJK-aware) ---
 
 # One colour code: the literal "\033[...m" text (the colour vars are single-
@@ -382,12 +350,6 @@ _ansi_strip_var() {
     while [[ "$_asv_ref" =~ $_VPSSEC_ANSI_RE ]]; do
         _asv_ref="${_asv_ref/"${BASH_REMATCH[0]}"/}"
     done
-}
-
-_strip_ansi() {
-    local s="$1"
-    _ansi_strip_var s
-    printf '%s\n' "$s"
 }
 
 # DISPLAY width in terminal cells: CJK forms are 2 cells but one code point,
@@ -693,31 +655,6 @@ validate_path() {
     fi
 
     return 0
-}
-
-# Validate that input matches expected pattern
-validate_input() {
-    local input="$1"
-    local pattern="$2"
-    local max_length="${3:-1024}"
-
-    # Check length
-    if [[ ${#input} -gt $max_length ]]; then
-        return 1
-    fi
-
-    # Check pattern
-    if [[ -n "$pattern" ]] && [[ ! "$input" =~ $pattern ]]; then
-        return 1
-    fi
-
-    return 0
-}
-
-# Validate port number
-validate_port() {
-    local port="$1"
-    [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 ]] && [[ "$port" -le 65535 ]]
 }
 
 # Feeds security-relevant sinks (ufw source scoping for the SSH rescue rule),
@@ -1111,7 +1048,6 @@ get_ssh_ports() {
     if command -v sshd &>/dev/null; then
         dump=$(sshd -T 2>/dev/null) || dump=""
         ports=$(awk '$1 == "listenaddress" { n = split($2, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' <<<"$dump")
-        [[ -n "$ports" ]] || ports=$(awk '$1 == "port" && $2 ~ /^[0-9]+$/ { print $2 }' <<<"$dump")
     fi
     if [[ -z "$ports" ]]; then
         # sshd could not answer: Port lines plus explicit ListenAddress ports

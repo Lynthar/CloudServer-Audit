@@ -399,8 +399,8 @@ SH
 @test "catchall: the config covers both ports with default_server and return 444" {
     run _nginx_fix_add_catchall
     [ "$status" -eq 0 ]
-    run _nginx_catchall_state_from_text "$(cat "$NGINX_CATCHALL_CONF")"
-    [ "$output" = "both" ]
+    run _nginx_catchall_coverage_from_text "$(cat "$NGINX_CATCHALL_CONF")"
+    [ "${output#* }" = "both" ]
 }
 
 @test "catchall: no line of the generated config ends in a backslash" {

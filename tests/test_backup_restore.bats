@@ -71,27 +71,36 @@ _make_backup_session() {
 
 # ---- Check 2: symlinks inside backup tree ----------------------------
 
+# The backup tree mirrors $TEST_HOST_ROOT, so a link that did get followed would
+# restore into the sandbox: the assertions see it, and no real /etc is touched.
 @test "does not propagate symlink-only backup entries to host" {
     _capture_logs
-    # A symlink planted under backups/<ts>/ must never have its target's contents
-    # written to the restore destination. Either find surfaces it and the [[ -L ]]
-    # check skips it, or find never yields it; both leave the trap file unread.
-    local secret="$BATS_TEST_TMPDIR/secret"
-    echo "supersecret" > "$secret"
+    echo "supersecret" > "$BATS_TEST_TMPDIR/secret"
+    echo "original" > "$TEST_HOST_ROOT/etc/app.conf"
 
     local ts="20260501_120000"
-    mkdir -p "$VPSSEC_BACKUPS/$ts/etc/ssh"
-    ln -s "$secret" "$VPSSEC_BACKUPS/$ts/etc/ssh/sshd_config"
+    mkdir -p "$VPSSEC_BACKUPS/$ts$TEST_HOST_ROOT/etc"
+    ln -s "$BATS_TEST_TMPDIR/secret" "$VPSSEC_BACKUPS/$ts$TEST_HOST_ROOT/etc/app.conf"
 
-    # Nothing is restorable under either find behaviour, so the file count is
-    # zero and this is a failed rollback (1), never 0.
+    # Nothing is restorable, so this is a failed rollback (1), never 0.
     run backup_restore "$ts"
     [ "$status" -eq 1 ]
+    [ "$(cat "$TEST_HOST_ROOT/etc/app.conf")" = "original" ]
+}
 
-    # The skip message is not asserted — a find that never yields the symlink
-    # logs nothing. The security property is: nothing under "/etc/ssh" was
-    # created outside the sandbox.
-    [ ! -e "/etc/ssh/sshd_config.tampered_test" ]
+@test "does not restore through a symlinked directory in the backup tree" {
+    _capture_logs
+    mkdir -p "$BATS_TEST_TMPDIR/outside" "$TEST_HOST_ROOT/etc/app"
+    echo "supersecret" > "$BATS_TEST_TMPDIR/outside/app.conf"
+    echo "original" > "$TEST_HOST_ROOT/etc/app/app.conf"
+
+    local ts="20260501_120001"
+    mkdir -p "$VPSSEC_BACKUPS/$ts$TEST_HOST_ROOT/etc"
+    ln -s "$BATS_TEST_TMPDIR/outside" "$VPSSEC_BACKUPS/$ts$TEST_HOST_ROOT/etc/app"
+
+    run backup_restore "$ts"
+    [ "$status" -eq 1 ]
+    [ "$(cat "$TEST_HOST_ROOT/etc/app/app.conf")" = "original" ]
 }
 
 # ---- Check 3: destination symlink TOCTOU -----------------------------

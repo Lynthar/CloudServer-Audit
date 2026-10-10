@@ -4,5 +4,5 @@
 # What an audit pass writes for status.
 
 run_case "record/complete-dropped" 1 \
-    "            '.last_audit = {timestamp: \$ts, score: \$score, complete: \$complete}' \\" \
-    "            '.last_audit = {timestamp: \$ts, score: \$score, complete: true}' \\"
+    "        '.last_audit = {timestamp: \$ts, score: \$score, complete: \$complete}' \\" \
+    "        '.last_audit = {timestamp: \$ts, score: \$score, complete: true}' \\"

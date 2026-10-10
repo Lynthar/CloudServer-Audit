@@ -81,7 +81,7 @@ no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 
-`vpssec audit` runs 339 checks across 21 modules:
+`vpssec audit` runs 338 checks across 21 modules:
 
 | Area | Checks | What it covers |
 |---|---|---|
@@ -90,7 +90,7 @@ no); `--yes` and `--json-only` always write them.
 | Containers and web apps | 55 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
 | Detection and logging | 49 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
 | Network and firewall | 45 | UFW rules and default policy, listening sockets vs what you meant to expose, nginx reverse-proxy exposure, cloudflared tunnels |
-| Baseline and ops | 41 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
+| Baseline and ops | 40 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
 
 **124 of those checks have a fix attached**, graded by how much impact they can
 have: 27 apply straight away, 19 ask before applying, 5 require you to type a

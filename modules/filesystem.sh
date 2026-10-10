@@ -119,15 +119,6 @@ FS_SSHD_CONFIG_D="/etc/ssh/sshd_config.d"
 
 # --- Filesystem Helper Functions ---
 
-# Sanitize count value to ensure it's a single integer
-# Handles cases where grep -c returns multiline output
-_fs_sanitize_count() {
-    local val="$1"
-    val=$(echo "$val" | head -1)
-    val="${val//[^0-9]/}"
-    echo "${val:-0}"
-}
-
 # True when the package manager says PATH's on-disk MODE differs from what
 # its package shipped. dpkg cannot verify modes, so on Debian this always
 # returns "not tampered" and the explicit whitelists stay the guard.
@@ -186,18 +177,14 @@ _fs_is_whitelisted() {
     done
     # Distro-specific legit SUID paths (RHEL/Arch) from core/distro.sh.
     # The debian branch returns nothing, so this is a no-op on Debian/Ubuntu.
-    if declare -f distro_suid_whitelist >/dev/null 2>&1; then
-        while IFS= read -r pattern; do
-            [[ -n "$pattern" ]] && _fs_path_glob "$path" "$pattern" && return 0
-        done < <(distro_suid_whitelist)
-    fi
+    while IFS= read -r pattern; do
+        [[ -n "$pattern" ]] && _fs_path_glob "$path" "$pattern" && return 0
+    done < <(distro_suid_whitelist)
     # A package-owned SUID binary is distro-shipped — this replaced the
     # per-release whitelists. Ownership alone is NOT enough: the exemption is
     # refused wherever the manager can prove the mode was tampered.
-    if declare -f file_owned_by_package >/dev/null 2>&1; then
-        if file_owned_by_package "$path" && ! _fs_pkg_mode_tampered "$path"; then
-            return 0
-        fi
+    if file_owned_by_package "$path" && ! _fs_pkg_mode_tampered "$path"; then
+        return 0
     fi
     return 1
 }
@@ -258,7 +245,7 @@ _fs_find_sgid_files() {
         done
 
         # Distro-specific SGID paths (RHEL/Arch) from core/distro.sh
-        if (( skip == 0 )) && declare -f distro_sgid_whitelist >/dev/null 2>&1; then
+        if (( skip == 0 )); then
             while IFS= read -r pattern; do
                 [[ -n "$pattern" ]] && _fs_path_glob "$file" "$pattern" && { skip=1; break; }
             done < <(distro_sgid_whitelist)
@@ -267,10 +254,9 @@ _fs_find_sgid_files() {
         # Same rule as SUID: exempt a package-owned SGID binary UNLESS the
         # manager can prove the mode was tampered. dpkg cannot, so the
         # explicit whitelist guards Debian.
-        if (( skip == 0 )) && declare -f file_owned_by_package >/dev/null 2>&1; then
-            if file_owned_by_package "$file" && ! _fs_pkg_mode_tampered "$file"; then
-                skip=1
-            fi
+        if (( skip == 0 )) && file_owned_by_package "$file" \
+           && ! _fs_pkg_mode_tampered "$file"; then
+            skip=1
         fi
 
         if ((skip == 0)); then
@@ -661,7 +647,7 @@ _fs_find_caps_files() {
         done
 
         # Distro-specific cap entries (RHEL/Arch) from core/distro.sh
-        if [[ "$whitelisted" == false ]] && declare -f distro_caps_whitelist >/dev/null 2>&1; then
+        if [[ "$whitelisted" == false ]]; then
             local dentry
             while IFS= read -r dentry; do
                 [[ -z "$dentry" ]] && continue
@@ -835,7 +821,7 @@ filesystem_audit() {
 _fs_audit_suid() {
     local suid_files walked=1
     suid_files=$(_fs_find_suid_files) || { walked=0; _FS_CUT_WALKS+=(suid); }
-    local count=$(_fs_sanitize_count "$(echo "$suid_files" | grep -c . 2>/dev/null)")
+    local count=$(count_lines "$suid_files")
 
     if ((count > 0)); then
         local file_list=$(echo "$suid_files" | head -5 | tr '\n' ' ')
@@ -855,7 +841,7 @@ _fs_audit_suid() {
 _fs_audit_sgid() {
     local sgid_files walked=1
     sgid_files=$(_fs_find_sgid_files) || { walked=0; _FS_CUT_WALKS+=(sgid); }
-    local count=$(_fs_sanitize_count "$(echo "$sgid_files" | grep -c . 2>/dev/null)")
+    local count=$(count_lines "$sgid_files")
 
     if ((count > 0)); then
         local file_list=$(echo "$sgid_files" | head -5 | tr '\n' ' ')
@@ -874,11 +860,11 @@ _fs_audit_sgid() {
 _fs_audit_world_writable() {
     local ww_files walked=1
     ww_files=$(_fs_find_world_writable) || { walked=0; _FS_CUT_WALKS+=(world-writable); }
-    local count=$(_fs_sanitize_count "$(echo "$ww_files" | grep -c . 2>/dev/null)")
+    local count=$(count_lines "$ww_files")
 
     local ww_dirs
     ww_dirs=$(_fs_find_world_writable_dirs) || { walked=0; _FS_CUT_WALKS+=(world-writable-dirs); }
-    local dir_count=$(_fs_sanitize_count "$(echo "$ww_dirs" | grep -c . 2>/dev/null)")
+    local dir_count=$(count_lines "$ww_dirs")
 
     if ((count > 0 || dir_count > 0)); then
         local total=$((count + dir_count))
@@ -897,7 +883,7 @@ _fs_audit_world_writable() {
 _fs_audit_no_owner() {
     local no_owner_files walked=1
     no_owner_files=$(_fs_find_no_owner) || { walked=0; _FS_CUT_WALKS+=(no-owner); }
-    local count=$(_fs_sanitize_count "$(echo "$no_owner_files" | grep -c . 2>/dev/null)")
+    local count=$(count_lines "$no_owner_files")
 
     if ((count > 0)); then
         local file_list=$(echo "$no_owner_files" | head -5 | tr '\n' ' ')
@@ -1090,8 +1076,8 @@ _fs_audit_caps() {
 
     local caps_files walked=1
     caps_files=$(_fs_find_caps_files) || { walked=0; _FS_CUT_WALKS+=(caps); }
-    local total_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c . 2>/dev/null)")
-    local dangerous_count=$(_fs_sanitize_count "$(echo "$caps_files" | grep -c "^DANGEROUS:" 2>/dev/null)")
+    local total_count=$(count_lines "$caps_files")
+    local dangerous_count=$(count_lines "$caps_files" '^DANGEROUS:')
 
     if ((dangerous_count > 0)); then
         # Extract dangerous files list
@@ -1133,7 +1119,7 @@ _fs_audit_caps() {
 _fs_audit_cron() {
     local suspicious
     suspicious=$(_fs_find_suspicious_cron)
-    local sus_count=$(_fs_sanitize_count "$(echo "$suspicious" | grep -c . 2>/dev/null)")
+    local sus_count=$(count_lines "$suspicious")
 
     local user_crontabs=$(_fs_count_user_crontabs)
 

@@ -13,14 +13,11 @@ _report_modules_scope() {
         echo "all"
         return 0
     fi
-    # Guarded: unit tests exercise report.sh without engine.sh.
-    if declare -f module_get_enabled >/dev/null 2>&1; then
-        local list
-        list=$(module_get_enabled | paste -sd, -)
-        if [[ -n "$list" ]]; then
-            echo "$list"
-            return 0
-        fi
+    local list
+    list=$(module_get_enabled | paste -sd, -)
+    if [[ -n "$list" ]]; then
+        echo "$list"
+        return 0
     fi
     echo "${VPSSEC_INCLUDE:-all}"
 }
@@ -415,7 +412,7 @@ _get_category_modules() {
     echo "${result[@]}"
 }
 
-# _strip_ansi / _display_width / pad_to_width / truncate_to_width live
+# _display_width / pad_to_width / truncate_to_width live
 # in core/common.sh — the interactive menus need the same cell-accurate
 # padding and are rendered before this file's functions are reachable.
 

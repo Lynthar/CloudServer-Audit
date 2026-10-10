@@ -17,14 +17,9 @@ state_init() {
 
     chmod 700 "${VPSSEC_STATE}"
 
-    # Locked so concurrent runs do not both seed ok.json.
-    local lock_file="${VPSSEC_STATE}/.init.lock"
-    (
-        flock -n 200 || exit 0  # Skip if another process is initializing
-        if [[ ! -f "$STATE_OK_FILE" ]]; then
-            echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
-        fi
-    ) 200>"$lock_file"
+    if [[ ! -f "$STATE_OK_FILE" ]]; then
+        echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+    fi
 
     # Fresh checks.json each run; the previous one is kept as .prev
     # so an interrupted run's partial results stay inspectable.
@@ -36,12 +31,11 @@ state_init() {
 
 # --- Check State Management ---
 
-# Append a check to state under a write lock; returns 1 when the write fails.
+# Append a check to state; returns 1 when the write fails.
 # Invalid JSON (an empty string included: jq accepts it) is replaced by a
 # synthetic "malformed check" record so the breakage shows up in the report.
 state_add_check() {
     local check_json="$1"
-    local lock_file="${VPSSEC_STATE}/.checks.lock"
 
     if [[ -z "$check_json" ]] || ! printf '%s' "$check_json" | jq empty 2>/dev/null; then
         log_error "state_add_check received malformed JSON (first 200 bytes): ${check_json:0:200}"
@@ -57,23 +51,22 @@ state_add_check() {
             "")
     fi
 
-    (
-        flock -x 200
-        [[ -f "$STATE_CHECKS_FILE" ]] || echo '[]' > "$STATE_CHECKS_FILE"
+    # No lock: the run lock serializes writers. Writing from parallel jobs needs
+    # one here first, or two appends read the same file and one is lost.
+    [[ -f "$STATE_CHECKS_FILE" ]] || echo '[]' > "$STATE_CHECKS_FILE"
 
-        local temp_file
-        temp_file=$(mktemp "${STATE_CHECKS_FILE}.XXXXXX") || return 1
+    local temp_file
+    temp_file=$(mktemp "${STATE_CHECKS_FILE}.XXXXXX") || return 1
 
-        # The check goes in on stdin, not --argjson: argv caps one string at
-        # 128 KiB, and a check carrying a long host value would be dropped.
-        if { cat "$STATE_CHECKS_FILE"; printf '%s' "$check_json"; } \
-                | jq -s '.[0] + .[1:]' > "$temp_file" 2>/dev/null; then
-            mv -f "$temp_file" "$STATE_CHECKS_FILE"
-        else
-            rm -f "$temp_file"
-            return 1
-        fi
-    ) 200>"$lock_file"
+    # The check goes in on stdin, not --argjson: argv caps one string at
+    # 128 KiB, and a check carrying a long host value would be dropped.
+    if { cat "$STATE_CHECKS_FILE"; printf '%s' "$check_json"; } \
+            | jq -s '.[0] + .[1:]' > "$temp_file" 2>/dev/null; then
+        mv -f "$temp_file" "$STATE_CHECKS_FILE"
+    else
+        rm -f "$temp_file"
+        return 1
+    fi
 }
 
 # Get all checks
@@ -87,32 +80,24 @@ state_get_checks() {
 
 # --- Fix State Management ---
 
-# Record a completed fix (thread-safe with file locking)
+# Record a completed fix. Always returns 0: the fix itself succeeded, and a
+# record that could not be written is logged, not reported as a failed fix.
 state_mark_fix_complete() {
     local fix_id="$1"
-    local timestamp
+    local timestamp temp_file=""
     timestamp=$(date -Iseconds)
-    local lock_file="${VPSSEC_STATE}/.ok.lock"
 
-    (
-        flock -x 200
-        [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
-
-        # Read, modify, write atomically
-        local temp_file
-        temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") || return 1
-
-        if jq --arg id "$fix_id" --arg ts "$timestamp" \
+    [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+    if temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") \
+        && jq --arg id "$fix_id" --arg ts "$timestamp" \
             '.completed_fixes += [{"id": $id, "timestamp": $ts}] | .last_run = $ts' \
-            "$STATE_OK_FILE" > "$temp_file" 2>/dev/null; then
-            mv -f "$temp_file" "$STATE_OK_FILE"
-        else
-            rm -f "$temp_file"
-            return 1
-        fi
-    ) 200>"$lock_file"
-
-    log_info "Fix marked complete: $fix_id"
+            "$STATE_OK_FILE" > "$temp_file" 2>/dev/null \
+        && mv -f "$temp_file" "$STATE_OK_FILE"; then
+        log_info "Fix marked complete: $fix_id"
+    else
+        [[ -z "$temp_file" ]] || rm -f "$temp_file"
+        log_warn "Could not record the fix in $STATE_OK_FILE: $fix_id"
+    fi
 }
 
 # Record a finished audit pass for `status`: when, the score, and whether every
@@ -122,22 +107,18 @@ state_record_audit() {
     local score="$1" complete="$2"
     local timestamp
     timestamp=$(date -Iseconds)
-    local lock_file="${VPSSEC_STATE}/.ok.lock"
 
-    (
-        flock -x 200
-        [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
-        local temp_file
-        temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") || return 1
-        if jq --arg ts "$timestamp" --argjson score "$score" --argjson complete "$complete" \
-            '.last_audit = {timestamp: $ts, score: $score, complete: $complete}' \
-            "$STATE_OK_FILE" > "$temp_file" 2>/dev/null; then
-            mv -f "$temp_file" "$STATE_OK_FILE"
-        else
-            rm -f "$temp_file"
-            return 1
-        fi
-    ) 200>"$lock_file"
+    [[ -f "$STATE_OK_FILE" ]] || echo '{"completed_fixes": [], "last_run": null}' > "$STATE_OK_FILE"
+    local temp_file
+    temp_file=$(mktemp "${STATE_OK_FILE}.XXXXXX") || return 1
+    if jq --arg ts "$timestamp" --argjson score "$score" --argjson complete "$complete" \
+        '.last_audit = {timestamp: $ts, score: $score, complete: $complete}' \
+        "$STATE_OK_FILE" > "$temp_file" 2>/dev/null; then
+        mv -f "$temp_file" "$STATE_OK_FILE"
+    else
+        rm -f "$temp_file"
+        return 1
+    fi
 }
 
 # --- Plan State Management ---
@@ -157,11 +138,6 @@ state_load_plan() {
     else
         echo '{"fixes": [], "timestamp": null}'
     fi
-}
-
-# Clear plan
-state_clear_plan() {
-    rm -f "$STATE_PLAN_FILE"
 }
 
 # --- Progress Tracking (for interrupted operations) ---
@@ -251,6 +227,8 @@ _backup_restore_mode() {
 # and its preview lists exactly these, so the two cannot disagree.
 # The backed-up copies, NUL-terminated: not the manifests, not a partial copy.
 _backup_session_copies() {
+    # Check 2 of backup_restore: never add -L. Without it find neither yields a
+    # symlink nor enters a symlinked directory, so a planted link is never restored.
     find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \
         ! -name "${VPSSEC_PARTIAL_PREFIX}*" -print0
 }
@@ -281,8 +259,8 @@ _backup_session_missing() {
 }
 
 # Restore one backup session. 0 = all restored, 2 = partial, 1 = nothing;
-# callers MUST distinguish all three. The numbered path checks below keep
-# this from being a write-to-any-path primitive (see the design notes).
+# callers MUST distinguish all three. The numbered path checks (Check 2 is the
+# find in _backup_session_copies) keep this from writing to any path it is given.
 backup_restore() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -301,13 +279,6 @@ backup_restore() {
 
     log_info "Restoring from backup: $timestamp"
 
-    # Resolved once, for the symlink-escape check on each found file.
-    local backup_dir_real
-    backup_dir_real=$(realpath "$backup_dir" 2>/dev/null) || {
-        log_error "Cannot resolve backup directory: $backup_dir"
-        return 1
-    }
-
     local skipped=0
     local restored=0
     local mode_lost=0
@@ -320,27 +291,6 @@ backup_restore() {
     done < <(_backup_session_missing "$backup_dir")
 
     while IFS= read -r -d '' backup_file; do
-        # Check 2a: source must not be a symlink — find -type f follows them,
-        # so a symlink to an arbitrary host file would be matched.
-        if [[ -L "$backup_file" ]]; then
-            log_warn "Skipping symlinked backup entry: $backup_file"
-            ((skipped++)) || true
-            continue
-        fi
-
-        # Check 2b: catches a directory symlink farther up the path.
-        local backup_file_real
-        backup_file_real=$(realpath "$backup_file" 2>/dev/null) || {
-            log_warn "Cannot resolve backup file, skipping: $backup_file"
-            ((skipped++)) || true
-            continue
-        }
-        if [[ "$backup_file_real" != "$backup_dir_real"/* ]]; then
-            log_warn "Skipping backup entry that escapes backup_dir via symlink: $backup_file -> $backup_file_real"
-            ((skipped++)) || true
-            continue
-        fi
-
         local relative_path="${backup_file#"$backup_dir"/}"
         local original_path="/${relative_path}"
         local original_dir
@@ -450,23 +400,15 @@ backup_list_contents() {
 
 declare -gA VPSSEC_METRICS=()
 _VPSSEC_METRICS_KEY=""
-_VPSSEC_CATMAP_JSON=""
 
-# Serialise CHECK_SCORE_CATEGORY into JSON once per process so jq can classify
-# every check without a round-trip per id. Empty string = map not loaded.
+# CHECK_SCORE_CATEGORY as one JSON object, so jq can classify every check
+# without a round-trip per id. Fails when the map is not loaded.
 _score_category_map_json() {
-    if [[ -n "$_VPSSEC_CATMAP_JSON" ]]; then
-        printf '%s' "$_VPSSEC_CATMAP_JSON"
-        return 0
-    fi
     declare -p CHECK_SCORE_CATEGORY >/dev/null 2>&1 || return 1
     local k
-    _VPSSEC_CATMAP_JSON=$(
-        for k in "${!CHECK_SCORE_CATEGORY[@]}"; do
-            printf '%s\t%s\n' "$k" "${CHECK_SCORE_CATEGORY[$k]}"
-        done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
-    ) || { _VPSSEC_CATMAP_JSON=""; return 1; }
-    printf '%s' "$_VPSSEC_CATMAP_JSON"
+    for k in "${!CHECK_SCORE_CATEGORY[@]}"; do
+        printf '%s\t%s\n' "$k" "${CHECK_SCORE_CATEGORY[$k]}"
+    done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
 }
 
 # Cache key. mtime and size are each insufficient alone; together they hold
@@ -515,18 +457,10 @@ def scored($catmap; $default_cat; $installed; $strict; $id):
 # The inputs the scoring defs take, as globals _SCORE_CATMAP, _SCORE_DEFAULT_CAT
 # and _SCORE_STRICT (no fork). Read once per jq program that scores.
 _score_context() {
-    if _SCORE_CATMAP=$(_score_category_map_json) && [[ -n "$_SCORE_CATMAP" ]]; then
-        # Unlisted ids default to "info" — the fail-safe documented on
-        # get_check_score_category (a forgotten classification must not
-        # silently drag the score down).
-        _SCORE_DEFAULT_CAT="info"
-    else
-        # security_levels.sh not loaded: mirror the historical fallback
-        # in _check_counts_in_score, which treated every check as
-        # "required" when get_check_score_category was unavailable.
-        _SCORE_CATMAP="{}"
-        _SCORE_DEFAULT_CAT="required"
-    fi
+    _SCORE_CATMAP=$(_score_category_map_json) || return 1
+    # Unlisted ids score as info: a check nobody classified must not
+    # drag the score down until it is deliberately promoted.
+    _SCORE_DEFAULT_CAT="info"
     _SCORE_STRICT="false"
     [[ "${VPSSEC_SECURITY_LEVEL:-standard}" == "strict" ]] && _SCORE_STRICT="true"
     return 0
@@ -595,12 +529,6 @@ _check_metrics_refresh() {
     done
 
     _VPSSEC_METRICS_KEY="$key"
-}
-
-# Read one metric by name (see the bucket list above).
-check_metric() {
-    _check_metrics_refresh
-    echo "${VPSSEC_METRICS[$1]:-0}"
 }
 
 calculate_score() {

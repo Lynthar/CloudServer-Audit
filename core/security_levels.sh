@@ -333,9 +333,9 @@ get_fix_verify() {
     echo "${FIX_VERIFY[$fix_id]:-}"
 }
 
-# --- Score categories. The score measures configuration posture, so
-# heuristic IOCs, tool prerequisites and operator preferences are info
-# (shown, never scored). Full rules: see the design notes ---
+# --- Score categories. The score measures configuration posture, so heuristic
+# IOCs, tool prerequisites and operator preferences are info (shown, never
+# scored). An unlisted id scores as info; a test lists every emitted id ---
 
 declare -gA CHECK_SCORE_CATEGORY=(
     # === SSH Module - required (core security) ===
@@ -735,7 +735,6 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["preflight.network_ok"]="info"
     ["preflight.network_fail"]="info"
     ["preflight.deps_ok"]="info"
-    ["preflight.deps_missing"]="info"
     ["preflight.optional_missing"]="info"
     ["preflight.ports_ok"]="info"
     # Operator preference / non-posture
@@ -871,34 +870,4 @@ get_fix_manual_step() {
     else
         echo "$fallback"
     fi
-}
-
-# --- Score Category Helper Functions ---
-
-# Get score category. An UNLISTED id defaults to "info", not "recommended":
-# a check nobody classified must not silently drag the score down until it is
-# deliberately promoted. Every literally emitted id is listed; a test enforces it.
-get_check_score_category() {
-    local check_id="$1"
-    echo "${CHECK_SCORE_CATEGORY[$check_id]:-info}"
-}
-
-# Check if a check should be included in score
-# Returns: 0 = include, 1 = exclude
-check_counts_in_score() {
-    local check_id="$1"
-    local category
-    category=$(get_check_score_category "$check_id")
-
-    case "$category" in
-        required|recommended|conditional|optional)
-            return 0
-            ;;
-        info)
-            return 1
-            ;;
-        *)
-            return 0
-            ;;
-    esac
 }

@@ -30,7 +30,7 @@ _optional_check() {
     jq -r '.desc' <<<"$c" | grep -q 'package-lock check fallback (lsof)'
     _vpssec_refute grep -q 'curl or wget' <<<"$(jq -r '.desc' <<<"$c")"
     [ "$(jq -r '.suggestion' <<<"$c")" = "apt install dialog lsof" ]
-    [ "$(get_check_score_category preflight.optional_missing)" = "info" ]
+    [ "${CHECK_SCORE_CATEGORY[preflight.optional_missing]}" = "info" ]
 }
 
 @test "optional: one tool of a pair is enough, and all present emits nothing" {

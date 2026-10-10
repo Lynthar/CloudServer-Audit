@@ -9,43 +9,6 @@ setup() {
     _vpssec_load
 }
 
-# ---- validate_port ---------------------------------------------------
-
-@test "validate_port: 22 is valid" {
-    run validate_port 22
-    [ "$status" -eq 0 ]
-}
-
-@test "validate_port: 1 is valid" {
-    run validate_port 1
-    [ "$status" -eq 0 ]
-}
-
-@test "validate_port: 65535 is valid (upper edge)" {
-    run validate_port 65535
-    [ "$status" -eq 0 ]
-}
-
-@test "validate_port: 0 is invalid (lower edge)" {
-    run validate_port 0
-    [ "$status" -ne 0 ]
-}
-
-@test "validate_port: 65536 is invalid (above max)" {
-    run validate_port 65536
-    [ "$status" -ne 0 ]
-}
-
-@test "validate_port: non-numeric is invalid" {
-    run validate_port abc
-    [ "$status" -ne 0 ]
-}
-
-@test "validate_port: empty is invalid" {
-    run validate_port ""
-    [ "$status" -ne 0 ]
-}
-
 # ---- validate_ip -----------------------------------------------------
 
 @test "validate_ip: 192.168.1.1 is valid" {
@@ -127,30 +90,6 @@ setup() {
     mkdir -p "$base"
     run validate_path "$base" "$base"
     [ "$status" -eq 0 ]
-}
-
-# ---- validate_input --------------------------------------------------
-
-@test "validate_input: empty pattern accepts within length limit" {
-    run validate_input "anything goes" ""
-    [ "$status" -eq 0 ]
-}
-
-@test "validate_input: matches required pattern" {
-    run validate_input "abc123" '^[a-z0-9]+$'
-    [ "$status" -eq 0 ]
-}
-
-@test "validate_input: rejects pattern mismatch" {
-    run validate_input "ABC!" '^[a-z0-9]+$'
-    [ "$status" -ne 0 ]
-}
-
-@test "validate_input: rejects when over max length" {
-    local long
-    long=$(printf 'x%.0s' {1..200})
-    run validate_input "$long" "" 100
-    [ "$status" -ne 0 ]
 }
 
 # validate_ip bounds. A shape-only check accepts 999.999.999.999 and "::::";

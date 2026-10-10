@@ -48,12 +48,6 @@ _nginx_catchall_coverage_from_text() {
     '
 }
 
-_nginx_catchall_state_from_text() {
-    local coverage
-    coverage=$(_nginx_catchall_coverage_from_text "$1")
-    printf '%s\n' "${coverage#* }"
-}
-
 # Does "<needed> <have>" cover what is needed? Port 443 needs a catchall only
 # where nginx serves it: adding one elsewhere opens 443 to the world, or fails
 # to bind next to whatever already holds it.

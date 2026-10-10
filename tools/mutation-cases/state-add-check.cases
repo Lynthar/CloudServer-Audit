@@ -11,5 +11,5 @@ run_case "add/empty-passes-guard" 1 \
 
 # The check back on argv: past 128 KiB the append fails and the check is lost.
 run_case "add/check-on-argv" 1 \
-    "                | jq -s '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then" \
-    "                | jq -s --argjson argv_check \"\$check_json\" '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then"
+    "            | jq -s '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then" \
+    "            | jq -s --argjson argv_check \"\$check_json\" '.[0] + .[1:]' > \"\$temp_file\" 2>/dev/null; then"

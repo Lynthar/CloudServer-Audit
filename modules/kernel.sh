@@ -97,7 +97,6 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "fs.protected_fifos:2:low:FIFO protection"
     "fs.protected_regular:2:low:Regular file protection"
     # Console/console-equivalent attack surface (Lynis KRNL-6000 cross-check)
-    "kernel.core_setuid_ok:0:low:SUID core dumps disabled (defence-in-depth)"
     "kernel.ctrl-alt-del:0:low:Console Ctrl-Alt-Del bypass disabled"
     # TTY line discipline autoload — CVE-2019-13272 / CVE-2020-14381
     # exploit primitive lives here. Mainline default is 0 since 5.x;
@@ -142,29 +141,6 @@ _kernel_is_container() {
 
     # Not a container
     return 1
-}
-
-# Check if a kernel parameter is modifiable (not read-only in container)
-_kernel_param_modifiable() {
-    local param="$1"
-
-    # Try to read the current value
-    if ! sysctl -n "$param" &>/dev/null; then
-        return 1  # Parameter doesn't exist
-    fi
-
-    # In containers, some params are read-only
-    # Try a dry-run write (this won't actually change anything)
-    local current
-    current=$(sysctl -n "$param" 2>/dev/null)
-
-    # Check if the sysctl file is writable
-    local sysctl_file="/proc/sys/${param//\.//}"
-    if [[ -f "$sysctl_file" ]] && [[ ! -w "$sysctl_file" ]]; then
-        return 1  # Read-only
-    fi
-
-    return 0
 }
 
 # Get current sysctl value

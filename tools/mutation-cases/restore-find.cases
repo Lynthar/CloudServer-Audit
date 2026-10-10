@@ -1,0 +1,9 @@
+# Mutation cases: tests/test_backup_restore.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_backup_restore.bats
+#
+# The find that lists a session's copies is all that keeps a symlink planted in
+# the backup tree, or a symlinked directory there, from being restored.
+
+run_case "copies/follows-links" 1 \
+    '    find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \' \
+    '    find -L "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \'

@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_score.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_score.bats
+#
+# What an id missing from CHECK_SCORE_CATEGORY scores as.
+
+run_case "default/unlisted-scored" 1 \
+    '    _SCORE_DEFAULT_CAT="info"' \
+    '    _SCORE_DEFAULT_CAT="required"'
