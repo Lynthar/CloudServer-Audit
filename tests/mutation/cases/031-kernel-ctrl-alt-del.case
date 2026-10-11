@@ -4,8 +4,13 @@
 # into one check_id and a real host usually has several already (sysrq,
 # kptr_restrict), so a bare ID match passes even if the mutation did nothing.
 # EXPECT_DESC_CONTAINS narrows it to "this param appears in the failure description".
-TEST_DESC="kernel.ctrl-alt-del=1 surfaces in kernel.kernel_params_weak"
+TEST_DESC="kernel.ctrl-alt-del=1 surfaces in the kernel-param check"
+# Inside a container the kernel is the host's, so the audit lists the parameter in
+# the unscored host-managed check instead; asked through the module's own detector.
 EXPECT_ID="kernel.kernel_params_weak"
+if ( source "$VPSSEC_ROOT/core/common.sh" && detect_container ) >/dev/null 2>&1; then
+    EXPECT_ID="kernel.kernel_params_host_managed"
+fi
 EXPECT_STATUS="failed"
 EXPECT_DESC_CONTAINS="ctrl-alt-del"
 MODULE="kernel"

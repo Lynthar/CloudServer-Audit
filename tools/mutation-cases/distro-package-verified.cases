@@ -1,0 +1,28 @@
+# Mutation cases: tests/test_malware_preload.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_malware_preload.bats
+#
+# file_package_verified vouches only for a file whose content still matches the
+# sum its owning package recorded. The suite drives it through stub dpkg-query
+# and rpm, plus one real dpkg query that only a Debian-family image answers.
+
+run_case "verify/content-not-compared" 1 \
+    '                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '                [[ -n "$want" ]] || return 1'
+
+# dpkg --verify is silent for a file it holds no sum for; so must not this be.
+run_case "verify/unsummed-vouched" 1 \
+    '                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '                [[ -z "$want" || "${have%% *}" == "$want" ]] || return 1'
+
+run_case "verify/diversion-read-as-owner" 1 \
+    "                pkg=\$(P=\"\$cand\" awk -F': ' '\$2 == ENVIRON[\"P\"] && \$1 !~ /^diversion by / {" \
+    "                pkg=\$(P=\"\$cand\" awk -F': ' '\$2 == ENVIRON[\"P\"] {"
+
+# readlink resolved /lib -> /usr/lib; dpkg on a merged host records /lib.
+run_case "verify/usrmerge-alias-untried" 1 \
+    '                /usr/lib/*|/usr/lib64/*|/usr/bin/*|/usr/sbin/*) alt="${real#/usr}" ;;' \
+    '                /nonexistent/*) alt="${real#/usr}" ;;'
+
+run_case "verify/rpm-verdict-ignored" 1 \
+    "            P=\"\$real\" awk '\$NF == ENVIRON[\"P\"] { bad = 1 } END { exit bad }' <<<\"\$sums\" || return 1" \
+    '            true'

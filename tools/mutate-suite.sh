@@ -14,16 +14,18 @@
 #     bash tools/mutate-suite.sh modules/kernel.sh \
 #          tests/test_fix_kernel.bats tools/mutation-cases/kernel.cases
 #
-# The cases file is a shell fragment of run_case calls:
+# The cases file is a shell fragment of run_case calls, each starting its
+# own line (property 5 counts them that way):
 #
 #     run_case "<id>" <occurrence> "<exact old line>" "<replacement line>"
 #
-# Exit status is 0 only when every mutation was killed and every anchor
-# resolved. bad-anchors counts every case that produced no verdict:
-# ANCHOR-BAD, NOT-APPLIED, LANDED-WRONG and NOT-RUN.
+# Exit status is 0 only when every mutation was killed, every anchor
+# resolved and every case in the file ran. bad-anchors counts every case
+# that produced no verdict: ANCHOR-BAD, NOT-APPLIED, LANDED-WRONG, NOT-RUN.
+# An interrupt (Ctrl-C, TERM) puts the module back and ends the run.
 #
 # ---------------------------------------------------------------------
-# Four properties of this runner exist because their absence produced a
+# Five properties of this runner exist because their absence produced a
 # WRONG answer, not merely an inconvenient one. Do not simplify them away:
 #
 #   1. Anchors match WHOLE LINES and carry an occurrence index. Several
@@ -31,7 +33,10 @@
 #      their ip_forward / rp_filter / RA-guard exceptions verbatim, and a
 #      4-space-indented line is a substring of the same line at 8 spaces.
 #      A first-match replace lands in the wrong function and reports a
-#      coverage gap in code the suite never claimed to cover.
+#      coverage gap in code the suite never claimed to cover. The index
+#      only holds while nobody adds another copy of the line above it, so
+#      a case whose anchor is not unique says so on its verdict line and in
+#      the file's summary (non-unique-anchors=N): prefer a unique anchor.
 #
 #   2. Strings reach awk through ENVIRON, never `-v`. awk processes escape
 #      sequences in a `-v` assignment, so an anchor containing \*, \s or a
@@ -48,6 +53,12 @@
 #      rather than failed -- OOM, a full /tmp, Ctrl-C, a host file an
 #      earlier case broke -- and counting that as a kill lets the machine,
 #      not the suite, report a clean sweep. Such a case is NOT-RUN.
+#
+#   5. Every run_case line in the cases file must run. `source` stops at a
+#      syntax error, or at a stray `return`, without a word, and the cases
+#      before it then report a clean file. The file is checked with bash -n
+#      before anything runs, and the cases that ran are counted against its
+#      run_case lines afterwards; a mismatch prints no summary and exits 2.
 # ---------------------------------------------------------------------
 set -u
 
@@ -63,13 +74,17 @@ for f in "$SRC" "$SUITE" "$CASES"; do
     [[ -r "$f" ]] || { printf 'not readable: %s\n' "$f" >&2; exit 2; }
 done
 command -v bats >/dev/null 2>&1 || { echo 'bats not on PATH' >&2; exit 2; }
+bash -n "$CASES" || { printf 'syntax error in %s: no case runs\n' "$CASES" >&2; exit 2; }
 
 PRISTINE=$(mktemp) || exit 2
-cp "$SRC" "$PRISTINE"
+cp "$SRC" "$PRISTINE" || { rm -f "$PRISTINE"; exit 2; }
 
-# Always put the module back, including on Ctrl-C — a half-mutated module
-# left in the working tree is a nasty thing to debug later.
-trap 'cp "$PRISTINE" "$SRC"; rm -f "$PRISTINE"' EXIT INT TERM
+# The module goes back on every exit, and an interrupt must end the run: a loop
+# that carried on would mutate from the deleted copy and leave the module empty.
+trap 'cp "$PRISTINE" "$SRC" && rm -f "$PRISTINE" \
+    || printf "could not restore %s; the original is %s\n" "$SRC" "$PRISTINE" >&2' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # The suite must be GREEN before anything is mutated: a suite that is already
 # red "kills" every mutation and reports a flawless sweep (a macOS checkout,
@@ -84,6 +99,7 @@ fi
 pass=0
 gap=0
 bad=0
+nonunique=0
 
 run_case() {
     local id="$1" occ="$2" old="$3" new="$4"
@@ -97,8 +113,12 @@ run_case() {
         return
     fi
 
-    local line
+    local line dup=""
     line=$(grep -nxF -- "$old" "$SRC" | sed -n "${occ}p" | cut -d: -f1)
+    if (( n > 1 )); then
+        dup=" [#$occ of $n identical lines]"
+        nonunique=$((nonunique + 1))
+    fi
 
     MUT_OLD="$old" MUT_NEW="$new" MUT_OCC="$occ" awk '
         BEGIN { old = ENVIRON["MUT_OLD"]; new = ENVIRON["MUT_NEW"];
@@ -108,7 +128,7 @@ run_case() {
     ' "$PRISTINE" > "$SRC"
 
     if cmp -s "$PRISTINE" "$SRC"; then
-        printf '%-36s NOT-APPLIED (line %s unchanged)\n' "$id" "$line"
+        printf '%-36s NOT-APPLIED (line %s unchanged)%s\n' "$id" "$line" "$dup"
         bad=$((bad + 1))
         return
     fi
@@ -116,23 +136,23 @@ run_case() {
     local landed
     landed=$(awk -v l="$line" 'NR == l { print }' "$SRC")
     if [[ "$landed" != "$new" ]]; then
-        printf '%-36s LANDED-WRONG at line %s: %s\n' "$id" "$line" "$landed"
+        printf '%-36s LANDED-WRONG at line %s: %s%s\n' "$id" "$line" "$landed" "$dup"
         bad=$((bad + 1))
         return
     fi
 
     local out failing
     if out=$(bats "$SUITE" 2>&1); then
-        printf '%-36s SURVIVED at line %-5s <-- COVERAGE GAP\n' "$id" "$line"
+        printf '%-36s SURVIVED at line %-5s <-- COVERAGE GAP%s\n' "$id" "$line" "$dup"
         gap=$((gap + 1))
         return
     fi
     failing=$(grep -c '^not ok' <<<"$out")
     if (( failing == 0 )); then
-        printf '%-36s NOT-RUN at line %-5s (bats failed, but no test did)\n' "$id" "$line"
+        printf '%-36s NOT-RUN at line %-5s (bats failed, but no test did)%s\n' "$id" "$line" "$dup"
         bad=$((bad + 1))
     else
-        printf '%-36s killed at line %-5s (%s failing)\n' "$id" "$line" "$failing"
+        printf '%-36s killed at line %-5s (%s failing)%s\n' "$id" "$line" "$failing" "$dup"
         pass=$((pass + 1))
     fi
 }
@@ -140,6 +160,14 @@ run_case() {
 # shellcheck source=/dev/null
 source "$CASES"
 
-printf '\n%s: killed=%s  gaps=%s  bad-anchors=%s\n' \
-    "$(basename "$CASES")" "$pass" "$gap" "$bad"
+expected=$(grep -c '^run_case ' "$CASES")
+if (( pass + gap + bad != expected || expected == 0 )); then
+    printf '%s: %d of %d run_case lines ran; the file stopped early or holds none\n' \
+        "$(basename "$CASES")" "$((pass + gap + bad))" "$expected" >&2
+    exit 2
+fi
+
+printf '\n%s: killed=%s  gaps=%s  bad-anchors=%s%s\n' \
+    "$(basename "$CASES")" "$pass" "$gap" "$bad" \
+    "$( (( nonunique )) && printf '  non-unique-anchors=%s' "$nonunique")"
 [[ "$gap" -eq 0 && "$bad" -eq 0 ]]

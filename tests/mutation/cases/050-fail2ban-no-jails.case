@@ -33,18 +33,15 @@ mutate() {
     touch "$_AUTHLOG"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null 2>&1
-    # The runner does not restore after a failed mutate: undo the install here.
-    command -v fail2ban-client >/dev/null 2>&1 || { restore; return 1; }
+    command -v fail2ban-client >/dev/null 2>&1 || return 1
     systemctl enable --now fail2ban >/dev/null 2>&1
     for i in $(seq 1 40); do [[ "$(_jail_count)" == 1 ]] && break; sleep 0.25; done
-    [[ "$(_jail_count)" == 1 ]] || { restore; return 1; }
+    [[ "$(_jail_count)" == 1 ]] || return 1
 
     printf '[sshd]\nenabled = false\n' > "$_JAIL_LOCAL"
     systemctl reload fail2ban >/dev/null 2>&1 || systemctl restart fail2ban >/dev/null 2>&1
     for i in $(seq 1 40); do [[ "$(_jail_count)" == 0 ]] && break; sleep 0.25; done
-    [[ "$(_jail_count)" == 0 ]] && systemctl is-active --quiet fail2ban && return 0
-    restore
-    return 1
+    [[ "$(_jail_count)" == 0 ]] && systemctl is-active --quiet fail2ban
 }
 
 restore() {

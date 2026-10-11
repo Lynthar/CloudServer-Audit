@@ -17,6 +17,7 @@ declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/
 # Variables, not literals, so the audit predicate and the fix read the SAME
 # locations, and so the fix is reachable from a test.
 KERNEL_LIMITS_CONF="/etc/security/limits.conf"
+KERNEL_LIMITS_D="/etc/security/limits.d"
 KERNEL_COREDUMP_CONF="/etc/systemd/coredump.conf"
 KERNEL_COREDUMP_D="/etc/systemd/coredump.conf.d"
 KERNEL_COREDUMP_DROPIN="${KERNEL_COREDUMP_D}/99-vpssec.conf"
@@ -62,24 +63,17 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv4.conf.all.mc_forwarding:0:low:Multicast forwarding (default off; enable = mrouted role)"
     "net.ipv4.conf.all.proxy_arp:0:low:Proxy ARP (default off; enable = bridge/router role)"
 
-    # Network security - IPv6. accept_ra, accept_redirects and use_tempaddr set
-    # under all/default reach only interfaces created later, not existing ones
-    # (eth0); a key that exists only under "all" reaches none, so none is listed.
-    "net.ipv6.conf.all.accept_redirects:0:medium:IPv6 ICMP redirects"
-    "net.ipv6.conf.default.accept_redirects:0:medium:IPv6 ICMP redirects (default)"
+    # Network security - IPv6. accept_ra, accept_redirects and use_tempaddr
+    # belong to the IPv6 check; a key that exists only under "all" reaches no
+    # interface, so none is listed.
     "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"
     "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"
-    "net.ipv6.conf.all.accept_ra:0:medium:IPv6 Router Advertisements (can be MITM vector)"
-    "net.ipv6.conf.default.accept_ra:0:medium:IPv6 Router Advertisements (default)"
-    "net.ipv6.conf.all.use_tempaddr:2:low:IPv6 privacy extensions (use temp addresses)"
-    "net.ipv6.conf.default.use_tempaddr:2:low:IPv6 privacy extensions (default)"
 
-    # ASLR is deliberately absent: it has its own check, and listing it here
-    # too double-counts ASLR-off in the score.
+    # A key is judged by one check only, or a weak value is counted twice in
+    # the score: ASLR has its own, and fs.suid_dumpable is the core-dump check's.
     "kernel.dmesg_restrict:1:medium:Restrict dmesg access"
     "kernel.kptr_restrict:2:medium:Restrict kernel pointer exposure"
     "kernel.yama.ptrace_scope:>=1:medium:Restrict ptrace"
-    "fs.suid_dumpable:0:medium:Disable SUID core dumps"
     "fs.protected_hardlinks:1:medium:Hardlink protection"
     "fs.protected_symlinks:1:medium:Symlink protection"
     "kernel.core_uses_pid:1:low:Core dump filename includes PID"
@@ -105,43 +99,6 @@ declare -ga KERNEL_SECURITY_PARAMS=(
 )
 
 # --- Kernel Helper Functions ---
-
-# Detect if running in a container (OpenVZ, LXC, Docker)
-# Many kernel parameters cannot be modified in containers
-_kernel_is_container() {
-    # Check for OpenVZ
-    if [[ -f /proc/vz/veinfo ]] || [[ -d /proc/vz ]]; then
-        echo "openvz"
-        return 0
-    fi
-
-    # Check for LXC
-    if grep -qa "lxc" /proc/1/cgroup 2>/dev/null; then
-        echo "lxc"
-        return 0
-    fi
-
-    # Check for Docker
-    if [[ -f /.dockerenv ]] || grep -qa "docker" /proc/1/cgroup 2>/dev/null; then
-        echo "docker"
-        return 0
-    fi
-
-    # Check for systemd-nspawn
-    if grep -qa "machine.slice" /proc/1/cgroup 2>/dev/null; then
-        echo "nspawn"
-        return 0
-    fi
-
-    # Check /proc/1/environ for container hints
-    if tr '\0' '\n' < /proc/1/environ 2>/dev/null | grep -q "container="; then
-        echo "container"
-        return 0
-    fi
-
-    # Not a container
-    return 1
-}
 
 # Get current sysctl value
 _kernel_get_sysctl() {
@@ -237,6 +194,9 @@ _kernel_ip_forward_needed() {
     # server}@<name>.service are template units and need a listing scan.
     systemctl is-active --quiet tailscaled 2>/dev/null && return 0
     systemctl is-active --quiet openvpn 2>/dev/null && return 0
+    systemctl is-active --quiet strongswan 2>/dev/null && return 0
+    systemctl is-active --quiet strongswan-starter 2>/dev/null && return 0
+    systemctl is-active --quiet ipsec 2>/dev/null && return 0
     if systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null \
         | awk '{print $1}' \
         | grep -qE '^(wg-quick@|openvpn-(client|server)@)'; then
@@ -247,10 +207,14 @@ _kernel_ip_forward_needed() {
     systemctl is-active --quiet k3s 2>/dev/null && return 0
     systemctl is-active --quiet kubelet 2>/dev/null && return 0
 
-    # Wireguard via manual `ip link add` (no systemd unit). Cheaper
-    # than `wg show` and works without the wireguard-tools package.
+    # The interfaces forwarding serves catch what no unit name above does: snap
+    # LXD and Docker, podman without a unit, CNI bridges and overlays, a hand-made
+    # WireGuard link, tun/tap VPNs. Not veth: a container's own eth0 is one.
     if command -v ip >/dev/null 2>&1; then
-        ip -br link show type wireguard 2>/dev/null | grep -q . && return 0
+        local type
+        for type in bridge vxlan wireguard tun; do
+            [[ -n "$(ip -br link show type "$type" 2>/dev/null)" ]] && return 0
+        done
     fi
 
     return 1
@@ -375,22 +339,37 @@ _kernel_ipv6_firewall_check() {
     esac
 }
 
+# The hard core-size limit pam_limits gives every user: the last "*" entry of
+# type hard or "-", reading limits.conf and then limits.d/*.conf by name. A
+# soft limit caps nothing, since any process may raise it to the hard one.
+_kernel_core_hard_limit() {
+    local f files=()
+    [[ -f "$KERNEL_LIMITS_CONF" ]] && files+=("$KERNEL_LIMITS_CONF")
+    for f in "$KERNEL_LIMITS_D"/*.conf; do
+        [[ -f "$f" ]] && files+=("$f")
+    done
+    (( ${#files[@]} > 0 )) || return 0
+    awk '$1 == "*" && ($2 == "hard" || $2 == "-") && $3 == "core" { v = $4 }
+         END { print v }' "${files[@]}" 2>/dev/null
+}
+
 # Check core dump settings
 _kernel_check_core_dump() {
     local issues=()
 
-    # Check fs.suid_dumpable
-    local suid_dump
-    suid_dump=$(_kernel_get_sysctl "fs.suid_dumpable")
-    if [[ "$suid_dump" != "0" ]]; then
-        issues+=("suid_dumpable=$suid_dump")
+    # In a container fs.suid_dumpable is the host kernel's, which the
+    # container can neither change nor be judged by.
+    if ! detect_container >/dev/null; then
+        local suid_dump
+        suid_dump=$(_kernel_get_sysctl "fs.suid_dumpable")
+        if [[ "$suid_dump" != "0" ]]; then
+            issues+=("suid_dumpable=$suid_dump")
+        fi
     fi
 
-    # Check limits.conf for core limits
-    if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
-        if ! grep -qE "^\*\s+(soft|hard)\s+core\s+0" "$KERNEL_LIMITS_CONF" 2>/dev/null; then
-            issues+=("no_core_limit")
-        fi
+    if [[ -f "$KERNEL_LIMITS_CONF" || -d "$KERNEL_LIMITS_D" ]] \
+       && [[ "$(_kernel_core_hard_limit)" != "0" ]]; then
+        issues+=("no_core_limit")
     fi
 
     # Storage=none may live in the main coredump.conf OR a drop-in, which is
@@ -432,7 +411,7 @@ kernel_audit() {
 
     # Check if running in a container first
     local container_type
-    container_type=$(_kernel_is_container)
+    container_type=$(detect_container) || true
     if [[ -n "$container_type" ]]; then
         print_item "$(i18n 'kernel.check_container')"
         check_emit "kernel.container_detected" low failed \
@@ -524,6 +503,11 @@ _kernel_audit_ipv6() {
     local ipv6_in_use=$(_kernel_ipv6_in_use && echo "yes" || echo "no")
     local ipv6_issues=$(_kernel_ipv6_check_security)
     local ipv6_fw=$(_kernel_ipv6_firewall_check)
+    # Both failing branches name the weak settings.
+    local tok ipv6_text=""
+    for tok in $ipv6_issues; do
+        ipv6_text+="$(i18n "kernel.ipv6_issue_$tok"); "
+    done
 
     # Report IPv6 status
     if [[ "$ipv6_in_use" == "yes" ]]; then
@@ -531,10 +515,6 @@ _kernel_audit_ipv6() {
         local issue_count=$(echo "$ipv6_issues" | wc -w)
 
         if ! _kernel_ipv6_issues_ok yes "$issue_count"; then
-            local tok ipv6_text=""
-            for tok in $ipv6_issues; do
-                ipv6_text+="$(i18n "kernel.ipv6_issue_$tok"); "
-            done
             check_emit "kernel.ipv6_insecure" low failed \
                 title="$(i18n 'kernel.ipv6_insecure' "count=$issue_count")" \
                 desc="$(i18n 'kernel.ipv6_insecure_desc' "ipv6_issues=${ipv6_text%; }")" \
@@ -552,7 +532,7 @@ _kernel_audit_ipv6() {
 
         if ! _kernel_ipv6_issues_ok no "$issue_count"; then
             check_emit "kernel.ipv6_unused_insecure" low failed \
-                desc="$(i18n 'kernel.ipv6_unused_insecure_desc')" \
+                desc="$(i18n 'kernel.ipv6_unused_insecure_desc' "ipv6_issues=${ipv6_text%; }")" \
                 suggestion="$(i18n 'kernel.ipv6_unused_insecure_suggestion')" \
                 fix="kernel.harden_ipv6"
             print_severity "low" "$(i18n 'kernel.ipv6_unused_insecure')"
@@ -589,6 +569,30 @@ _kernel_audit_ipv6() {
 _kernel_audit_aslr() {
     local aslr_status
     aslr_status=$(_kernel_check_aslr)
+
+    # In a container randomize_va_space is the host kernel's: reported either
+    # way, scored neither way, and offered no fix that could only fail or reach
+    # the host. Unreadable stays aslr_unknown, which is unscored anyway.
+    if [[ "$aslr_status" != unknown ]] && detect_container >/dev/null; then
+        local state
+        case "$aslr_status" in
+            full)    state=$(i18n 'kernel.aslr_full_desc') ;;
+            partial) state=$(i18n 'kernel.aslr_partial_desc') ;;
+            *)       state=$(i18n 'kernel.aslr_disabled_desc') ;;
+        esac
+        if [[ "$aslr_status" == full ]]; then
+            check_emit "kernel.aslr_host_managed" low passed \
+                title="$(i18n 'kernel.aslr_host_managed_ok')" \
+                desc="$(i18n 'kernel.aslr_host_managed_desc' "state=$state")"
+            print_ok "$(i18n 'kernel.aslr_host_managed_ok')"
+        else
+            check_emit "kernel.aslr_host_managed" low failed \
+                desc="$(i18n 'kernel.aslr_host_managed_desc' "state=$state")" \
+                suggestion="$(i18n 'kernel.kernel_params_host_managed_suggestion')"
+            print_info "$(i18n 'kernel.aslr_host_managed')"
+        fi
+        return 0
+    fi
 
     case "$aslr_status" in
         full)
@@ -642,12 +646,12 @@ _kernel_param_scan() {
         fi
 
         # On a forwarding host rp_filter=2 (loose) is correct — strict mode
-        # drops the asymmetric-return packets those workloads produce.
-        # rp_filter=0 is still flagged: it permits spoofed source addresses.
+        # drops the asymmetric-return packets those workloads produce. 0 is
+        # still flagged (it permits spoofed sources), and a fix writes 2, not 1.
         if [[ "$param" =~ ^net\.ipv4\.conf\.(all|default)\.rp_filter$ ]] \
-           && _kernel_ip_forward_needed \
-           && [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]]; then
-            continue
+           && _kernel_ip_forward_needed; then
+            [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]] && continue
+            expected="2|1"
         fi
 
         # On a SLAAC host accept_ra=1 / autoconf=1 are the CORRECT values:
@@ -756,22 +760,16 @@ _kernel_audit_kernel_params() {
     local issues_high=()
     local issues_medium=()
     local issues_low=()
-    local unavailable=()
     local passed=0
     local scan kind sev param expected actual
 
-    # Check if we're in a container
     local in_container=false
-    if _kernel_is_container &>/dev/null; then
-        in_container=true
-    fi
+    detect_container >/dev/null && in_container=true
 
-    # Unavailable params are common in containers; they are logged, not scored.
     scan=$(_kernel_param_scan "$KERNEL_SYS_SCOPE")
     while read -r kind sev param expected actual; do
         case "$kind" in
             ok) passed=$((passed + 1)) ;;
-            na) unavailable+=("$param") ;;
             bad)
                 case "$sev" in
                     high)   issues_high+=("$param=$actual $(i18n 'kernel.f_expected' "want=$expected")") ;;
@@ -783,6 +781,26 @@ _kernel_audit_kernel_params() {
     done <<<"$scan"
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
+
+    # In a container these are the host kernel's values, which nothing inside
+    # can change: listed for the operator, scored neither way, and offered no fix.
+    if [[ "$in_container" == true ]]; then
+        if (( total_issues == 0 )); then
+            check_emit "kernel.kernel_params_host_managed" low passed \
+                title="$(i18n 'kernel.kernel_params_host_managed_ok')" \
+                desc="$(i18n 'kernel.kernel_params_host_managed_ok_desc' "passed=$passed")"
+            print_ok "$(i18n 'kernel.kernel_params_host_managed_ok')"
+            return 0
+        fi
+        local host_list
+        host_list=$(printf '%s\n' "${issues_high[@]}" "${issues_medium[@]}" "${issues_low[@]}" | tr '\n' '; ')
+        check_emit "kernel.kernel_params_host_managed" low failed \
+            title="$(i18n 'kernel.kernel_params_host_managed' "count=$total_issues")" \
+            desc="$(i18n 'kernel.kernel_params_host_managed_desc' "list=$host_list")" \
+            suggestion="$(i18n 'kernel.kernel_params_host_managed_suggestion')"
+        print_info "$(i18n 'kernel.kernel_params_host_managed' "count=$total_issues")"
+        return 0
+    fi
 
     # Report any high-severity kernel params separately. (Currently none in
     # KERNEL_SECURITY_PARAMS are tagged high — ASLR has its own check — so
@@ -809,12 +827,6 @@ _kernel_audit_kernel_params() {
             suggestion="$(i18n 'kernel.fix_kernel_params')" \
             fix="kernel.harden_kernel"
         print_severity "low" "$(i18n 'kernel.kernel_params_weak' "count=${#issues_weak[@]}")"
-    fi
-
-    # Report unavailable parameters (info only, not penalized)
-    if [[ ${#unavailable[@]} -gt 0 ]] && [[ "$in_container" == true ]]; then
-        local unavail_list=$(printf '%s ' "${unavailable[@]}")
-        log_debug "Unavailable kernel params (container): $unavail_list"
     fi
 
     if [[ $total_issues -eq 0 ]]; then
@@ -1136,46 +1148,41 @@ _kernel_fix_ipv6() {
         )
     fi
 
-    local fixed=0
-    local persist_failed=0
-
+    # A parameter counts as fixed only when runtime AND persistence both
+    # landed — a runtime-only success evaporates on reboot.
+    local fixed=0 runtime_failed=0 persist_failed=0 setting param value old rc
+    local -a undo=()
     for setting in "${ipv6_params[@]}"; do
-        local param="${setting%%=*}"
-        local value="${setting#*=}"
-
-        # A parameter counts as fixed only when runtime AND persistence
-        # both landed — a runtime-only success evaporates on reboot.
-        if sysctl -w "$param=$value" 2>/dev/null; then
-            if _kernel_write_sysctl "$param" "$value"; then
-                ((fixed++)) || true
-            else
-                ((persist_failed++)) || true
-            fi
+        param="${setting%%=*}"
+        value="${setting#*=}"
+        old=$(_kernel_get_sysctl "$param") || true
+        rc=0
+        _kernel_set_sysctl "$param" "$value" || rc=$?
+        case "$rc" in
+            0) ((fixed++)) || true ;;
+            1) ((runtime_failed++)) || true ;;
+            *) ((persist_failed++)) || true ;;
+        esac
+        if (( rc != 1 )) && [[ -n "$old" && "$old" != "$value" ]]; then
+            undo+=("$param=$old")
         fi
     done
+    record_undo kernel.harden_ipv6 "$(_kernel_undo_cmd "${undo[@]}")"
 
-    # Reload once after the batch; _kernel_write_sysctl no longer reloads
-    # per-call (previously: N params = N reloads).
-    ((fixed > 0)) && _kernel_reload_sysctl_dropin
-
-    if (( persist_failed > 0 )); then
-        print_error "$(i18n 'kernel.persist_failed' "count=$persist_failed")"
-        return 1
-    fi
-    if [[ "$fixed" -gt 0 ]]; then
-        print_ok "$(i18n 'kernel.ipv6_hardened' "count=$fixed")"
-        return 0
-    else
-        print_warn "$(i18n 'kernel.ipv6_harden_failed')"
-        return 1
-    fi
+    _kernel_fix_failed "$runtime_failed" "$persist_failed" && return 1
+    print_ok "$(i18n 'kernel.ipv6_hardened' "count=$fixed")"
+    return 0
 }
 
 _kernel_fix_aslr() {
     print_info "$(i18n 'kernel.enabling_aslr')"
 
     # Fire-and-forget: FIX_VERIFY re-reads the runtime value afterwards.
-    sysctl -w kernel.randomize_va_space=2 2>/dev/null || true
+    local old
+    old=$(_kernel_get_sysctl kernel.randomize_va_space) || true
+    if sysctl -w kernel.randomize_va_space=2 2>/dev/null && [[ -n "$old" && "$old" != 2 ]]; then
+        record_undo kernel.enable_aslr "$(_kernel_undo_cmd "kernel.randomize_va_space=$old")"
+    fi
 
     # A failed persist is a failed fix: a runtime-only success reverts to
     # weak ASLR on reboot with a "completed" entry in ok.json.
@@ -1183,7 +1190,6 @@ _kernel_fix_aslr() {
         print_error "$(i18n 'kernel.persist_failed' "count=1")"
         return 1
     fi
-    _kernel_reload_sysctl_dropin
     return 0
 }
 
@@ -1193,8 +1199,19 @@ _kernel_fix_network_params() {
     # Exactly the params the audit flags: same scan, same exceptions. Two passes,
     # because writing ip_forward resets every per-interface setting to its host
     # default — a param that was fine before can be wrong after the first pass.
-    local params_to_set=() ra_skipped=false kind param expected setting value pass
-    local applied=0 apply_failed=0
+    local params_to_set=() ra_skipped=false kind param expected setting value pass rc entry
+    local applied=0 runtime_failed=0 persist_failed=0
+
+    # Values before the first write: an undo restores these, and a value read
+    # after the ip_forward write may already be the reset one.
+    local -A before=() recorded=()
+    local -a undo=()
+    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
+        param="${entry%%:*}"
+        [[ "$param" =~ $KERNEL_NET_SCOPE ]] || continue
+        before[$param]=$(_kernel_get_sysctl "$param") || true
+    done
+
     for pass in 1 2; do
         params_to_set=()
         while read -r kind _ param expected _; do
@@ -1210,29 +1227,29 @@ _kernel_fix_network_params() {
         for setting in "${params_to_set[@]}"; do
             param="${setting%%=*}"
             value="${setting#*=}"
-            if sysctl -w "$param=$value" 2>/dev/null && \
-               _kernel_write_sysctl "$param" "$value"; then
-                ((applied++)) || true
-            else
-                ((apply_failed++)) || true
+            rc=0
+            _kernel_set_sysctl "$param" "$value" || rc=$?
+            case "$rc" in
+                0) ((applied++)) || true ;;
+                1) ((runtime_failed++)) || true ;;
+                *) ((persist_failed++)) || true ;;
+            esac
+            if (( rc != 1 )) && [[ -n "${before[$param]:-}" && -z "${recorded[$param]:-}" ]]; then
+                undo+=("$param=${before[$param]}")
+                recorded[$param]=1
             fi
         done
-        (( apply_failed == 0 )) || break
+        (( runtime_failed + persist_failed == 0 )) || break
     done
 
     [[ "$ra_skipped" == "true" ]] && print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
+    record_undo kernel.harden_network "$(_kernel_undo_cmd "${undo[@]}")"
 
-    if (( applied == 0 && apply_failed == 0 )); then
+    if (( applied == 0 && runtime_failed + persist_failed == 0 )); then
         print_ok "$(i18n 'kernel.network_already_hardened')"
         return 0
     fi
-
-    ((applied > 0)) && _kernel_reload_sysctl_dropin
-
-    if (( apply_failed > 0 )); then
-        print_error "$(i18n 'kernel.persist_failed' "count=$apply_failed")"
-        return 1
-    fi
+    _kernel_fix_failed "$runtime_failed" "$persist_failed" && return 1
     print_ok "$(i18n 'kernel.network_hardened' "count=$applied")"
     return 0
 }
@@ -1252,25 +1269,26 @@ _kernel_fix_kernel_params() {
 
     # Apply and persist — same counted pattern (and rationale) as
     # _kernel_fix_network_params above.
-    local applied=0 apply_failed=0
+    local applied=0 runtime_failed=0 persist_failed=0 setting value old rc
+    local -a undo=()
     for setting in "${params_to_set[@]}"; do
-        local param="${setting%%=*}"
-        local value="${setting#*=}"
-
-        if sysctl -w "$param=$value" 2>/dev/null && \
-           _kernel_write_sysctl "$param" "$value"; then
-            ((applied++)) || true
-        else
-            ((apply_failed++)) || true
+        param="${setting%%=*}"
+        value="${setting#*=}"
+        old=$(_kernel_get_sysctl "$param") || true
+        rc=0
+        _kernel_set_sysctl "$param" "$value" || rc=$?
+        case "$rc" in
+            0) ((applied++)) || true ;;
+            1) ((runtime_failed++)) || true ;;
+            *) ((persist_failed++)) || true ;;
+        esac
+        if (( rc != 1 )) && [[ -n "$old" ]]; then
+            undo+=("$param=$old")
         fi
     done
+    record_undo kernel.harden_kernel "$(_kernel_undo_cmd "${undo[@]}")"
 
-    ((applied > 0)) && _kernel_reload_sysctl_dropin
-
-    if (( apply_failed > 0 )); then
-        print_error "$(i18n 'kernel.persist_failed' "count=$apply_failed")"
-        return 1
-    fi
+    _kernel_fix_failed "$runtime_failed" "$persist_failed" && return 1
     print_ok "$(i18n 'kernel.kernel_hardened' "count=$applied")"
     return 0
 }
@@ -1278,17 +1296,22 @@ _kernel_fix_kernel_params() {
 _kernel_fix_core_dump() {
     print_info "$(i18n 'kernel.disabling_core_dump')"
 
-    # Disable via sysctl. The persist status is checked because the
-    # postcondition below reads the RUNTIME value, which `sysctl -w` just set:
-    # a drop-in that never got written would pass it and revert at reboot.
-    sysctl -w fs.suid_dumpable=0 2>/dev/null
-    _kernel_write_sysctl "fs.suid_dumpable" "0" || return 1
-    _kernel_reload_sysctl_dropin
+    # Disable via sysctl, except in a container, where the value is the host's
+    # and the audit does not judge it. The persist status is checked because the
+    # postcondition reads the RUNTIME value, which would pass an unwritten drop-in.
+    if ! detect_container >/dev/null; then
+        local old
+        old=$(_kernel_get_sysctl fs.suid_dumpable) || true
+        if sysctl -w fs.suid_dumpable=0 2>/dev/null && [[ -n "$old" && "$old" != 0 ]]; then
+            record_undo kernel.disable_core_dump "$(_kernel_undo_cmd "fs.suid_dumpable=$old")"
+        fi
+        _kernel_write_sysctl "fs.suid_dumpable" "0" || return 1
+    fi
 
     # PAM reads limits.conf on every login, so append through the atomic
     # writer: a partial line is a config error on every later login.
     if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
-        if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then
+        if [[ "$(_kernel_core_hard_limit)" != "0" ]]; then
             backup_file "$KERNEL_LIMITS_CONF" >/dev/null || return 1
             local limits_content
             limits_content=$(cat "$KERNEL_LIMITS_CONF")
@@ -1323,9 +1346,9 @@ ProcessSizeMax=0'
 }
 
 
-# Persist one sysctl. Each call rewrites the whole drop-in so the header
-# appears once and an existing entry is replaced rather than duplicated.
-# Does NOT reload — loop callers reload once after the loop.
+# Persist one sysctl, never reloading: replaying the drop-in would re-apply
+# keys an earlier session wrote. Each call rewrites the whole file, so the
+# header appears once and an existing entry is replaced, not duplicated.
 _kernel_write_sysctl() {
     local param="$1"
     local value="$2"
@@ -1359,8 +1382,30 @@ _kernel_write_sysctl() {
     write_file_atomic "$VPSSEC_SYSCTL_CONF" "$content"
 }
 
-# Reload the drop-in so persisted values take effect now, at the priority
-# they will have after reboot. Silently a no-op where /proc/sys is read-only.
-_kernel_reload_sysctl_dropin() {
-    sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || true
+# Sets $1=$2 at runtime, then persists it: 0 when both landed, 1 when the
+# kernel refused the runtime write (so nothing was persisted), 2 when only the
+# persist failed. Callers count 1 and 2 apart, since they mean different things.
+_kernel_set_sysctl() {
+    sysctl -w "$1=$2" 2>/dev/null || return 1
+    _kernel_write_sysctl "$1" "$2" || return 2
+}
+
+# The command that puts back the runtime values a fix changed, which rollback
+# cannot: it restores only the drop-in. Args: "param=value" pairs, in the order
+# they were written, so ip_forward (which resets the others) goes back first.
+_kernel_undo_cmd() {
+    (( $# > 0 )) || return 0
+    local pair out="sysctl -w"
+    for pair in "$@"; do
+        printf -v out '%s %q' "$out" "$pair"
+    done
+    printf '%s' "$out"
+}
+
+# Prints why a sysctl fix failed; true when it did. A refused runtime write
+# changed nothing, which "failed to persist" would misstate.
+_kernel_fix_failed() {
+    (( $1 > 0 )) && print_error "$(i18n 'kernel.runtime_failed' "count=$1")"
+    (( $2 > 0 )) && print_error "$(i18n 'kernel.persist_failed' "count=$2")"
+    (( $1 + $2 > 0 ))
 }

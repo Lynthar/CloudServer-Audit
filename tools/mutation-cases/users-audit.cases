@@ -56,3 +56,59 @@ run_case "pwquality/main-ignored" 1 \
 run_case "pwquality/locale-order" 1 \
     "    done < <(printf '%s\\n' \"\$USERS_PWQUALITY_CONF.d\"/*.conf | LC_ALL=C sort)" \
     "    done < <(printf '%s\\n' \"\$USERS_PWQUALITY_CONF.d\"/*.conf | sort)"
+
+# ---- one account, one finding; shadow lines with no account --------------------
+
+run_case "uid0/duplicate-uids-again" 1 \
+    "    getent passwd 2>/dev/null | awk -F: '\$3 != \"\" && \$3 != \"0\" {" \
+    "    getent passwd 2>/dev/null | awk -F: '\$3 != \"\" {"
+
+run_case "uid0/system-shell-again" 1 \
+    '        [[ "$uid" -ge 1000 || "$uid" -eq 0 ]] && continue' \
+    '        [[ "$uid" -ge 1000 || "$user" == "root" ]] && continue'
+
+run_case "empty/orphan-shadow-line" 1 \
+    '            entry=$(getent passwd "$user" 2>/dev/null) || continue' \
+    '            entry=$(getent passwd "$user" 2>/dev/null) || entry=""'
+
+# ---- cloud-init default accounts --------------------------------------------------
+
+run_case "cloud/default-user-recent" 1 \
+    '        _is_provider_default_user "$user" && continue' \
+    '        :'
+
+run_case "cloud/default-user-suspicious" 1 \
+    '        if _is_suspicious_username "$user" && ! _is_provider_default_user "$user"; then' \
+    '        if _is_suspicious_username "$user"; then'
+
+run_case "cloud/unknown-provider-skips" 1 \
+    '    [[ "$(vpssec_cloud_tier)" != unknown ]] || return 1' \
+    '    :'
+
+# ---- authorized_keys: StrictModes, not a list of modes; the size cap --------------
+
+run_case "keys/mode-whitelist" 1 \
+    '            strictmodes_refused_path "$user" "$authkeys" >/dev/null && perms_ok="no"' \
+    '            [[ "$(stat -L -c %a "$authkeys")" != 600 && "$(stat -L -c %a "$authkeys")" != 400 ]] && perms_ok="no"'
+
+run_case "keys/oversize-unreported" 1 \
+    '                findings+=("$user|unread|||0|$authkeys")' \
+    '                :'
+
+# ---- sudoers: the main file is named only when visudo names it --------------------
+
+run_case "sudoers/main-always-blamed" 1 \
+    '        if (( named || ${#issues[@]} == 0 )); then' \
+    '        if true; then'
+
+run_case "sudoers/unnamed-failure-dropped" 1 \
+    '        if (( named || ${#issues[@]} == 0 )); then' \
+    '        if (( named )); then'
+
+run_case "sudoers/dropin-path-names-main" 1 \
+    '            [[ "$line" == *"$SUDOERS_FILE" || "$line" == *"$SUDOERS_FILE"[!./A-Za-z0-9_~-]* ]] && named=1' \
+    '            [[ "$line" == *"$SUDOERS_FILE"* ]] && named=1'
+
+run_case "keys/default-path-only" 1 \
+    '        done < <(sshd_authorized_keys_files "$user")' \
+    '        done < <(echo "$home/.ssh/authorized_keys")'

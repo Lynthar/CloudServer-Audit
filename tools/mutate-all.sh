@@ -54,16 +54,19 @@ fi
 total_killed=0 total_gaps=0 total_bad=0 not_run=0 ran=0
 
 for f in "${files[@]}"; do
+    # Named before it runs, its verdict completing the line: a sweep that hangs
+    # shows which file it hangs in.
+    printf '%-34s ' "${f##*/}"
     pairing=$(sed -n 's/^# *mutate-suite: *//p' "$f" | head -1)
     read -r module suite _ <<< "$pairing"
 
     if [[ -z "${module:-}" || -z "${suite:-}" ]]; then
-        printf '%-34s NO PAIRING DECLARED (add "# mutate-suite: <module> <suite>")\n' "${f##*/}"
+        printf 'NO PAIRING DECLARED (add "# mutate-suite: <module> <suite>")\n'
         not_run=$((not_run + 1))
         continue
     fi
     if [[ ! -r "$module" || ! -r "$suite" ]]; then
-        printf '%-34s PAIRING DOES NOT RESOLVE: %s + %s\n' "${f##*/}" "$module" "$suite"
+        printf 'PAIRING DOES NOT RESOLVE: %s + %s\n' "$module" "$suite"
         not_run=$((not_run + 1))
         continue
     fi
@@ -71,15 +74,16 @@ for f in "${files[@]}"; do
     out=$(bash tools/mutate-suite.sh "$module" "$suite" "$f" 2>&1)
     summary=$(tail -1 <<< "$out")
 
-    # A refusal (the suite was already red) prints no summary line. Without
-    # this branch it parses as killed=0 gaps=0 and reads as a clean file.
+    # A refusal (the suite was already red, or the cases file did not run
+    # whole) prints no summary line. Without this branch it parses as
+    # killed=0 gaps=0 and reads as a clean file.
     if [[ "$summary" != *killed=* ]]; then
-        printf '%-34s DID NOT RUN:\n' "${f##*/}"
+        printf 'DID NOT RUN:\n'
         sed 's/^/    /' <<< "$out"
         not_run=$((not_run + 1))
         continue
     fi
-    printf '%-34s %s\n' "${f##*/}" "${summary#*: }"
+    printf '%s\n' "${summary#*: }"
 
     k=$(sed -n 's/.*killed=\([0-9]*\).*/\1/p' <<< "$summary")
     g=$(sed -n 's/.*gaps=\([0-9]*\).*/\1/p' <<< "$summary")

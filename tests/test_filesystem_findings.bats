@@ -125,6 +125,36 @@ SH
     [[ "$(_desc filesystem.non_standard_caps)" == *"/usr/local/sbin/arping"* ]]
 }
 
+# ---- RHEL whitelists hold what Rocky 8 / 9 ship ------------------------------------
+
+@test "rhel: mtr-packet's capability at its RHEL path is not reported" {
+    VPSSEC_DISTRO_FAMILY=rhel
+    _getcap '/usr/sbin/mtr-packet cap_net_raw=ep'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+# No package owns what a test plants, on a host whose rpm answers.
+_rhel_unowned() { VPSSEC_DISTRO_FAMILY=rhel; VPSSEC_PKG_MGR=dnf; _vpssec_stub rpm 1; }
+
+@test "rhel: a SUID binary at a polkit path RHEL does not ship is reported" {
+    # A whitelisted path nothing ships is a free place to hide a SUID binary;
+    # RHEL's polkit helper lives under /usr/lib, which the base list holds.
+    _rhel_unowned
+    _walk suid /usr/libexec/polkit-1/polkit-agent-helper-1
+    _fs_audit_suid
+    [[ "$(_desc filesystem.suspicious_suid)" == *"/usr/libexec/polkit-1/polkit-agent-helper-1"* ]]
+}
+
+@test "rhel: an SGID unix_chkpwd or screen under /usr/bin is reported" {
+    # RHEL's unix_chkpwd is SUID under /usr/sbin, and RHEL 8 / 9 ship no screen.
+    _rhel_unowned
+    _walk sgid /usr/bin/unix_chkpwd /usr/bin/screen
+    _fs_audit_sgid
+    [[ "$(_desc filesystem.suspicious_sgid)" == *"/usr/bin/unix_chkpwd"* ]]
+    [[ "$(_desc filesystem.suspicious_sgid)" == *"/usr/bin/screen"* ]]
+}
+
 # ---- names holding a newline or a backslash --------------------------------------
 
 @test "a SUID name with a newline is one finding, shown quoted" {

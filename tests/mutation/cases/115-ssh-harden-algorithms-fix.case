@@ -40,7 +40,7 @@ mutate() {
     [[ -f "$_HARDENING" ]] && _HAD_HARDENING=1
     printf 'Ciphers aes128-ctr,3des-cbc\n' > "$_DROPIN"
     chmod 644 "$_DROPIN"
-    sshd -t >/dev/null 2>&1 || { rm -f "$_DROPIN"; return 1; }
+    sshd -t >/dev/null 2>&1 || return 1
     [[ -n "$_SERVICE" ]] && systemctl reload "$_SERVICE" >/dev/null 2>&1
     return 0
 }

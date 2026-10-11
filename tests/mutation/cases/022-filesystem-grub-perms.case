@@ -1,15 +1,14 @@
 # Plant: make /boot/grub/grub.cfg world-writable (666). Read access is not the
 # risk — the module expects 644 — writing the kernel command line is.
-# Expect: the FS_SENSITIVE_FILES entry routes into the non-critical bucket
-# (reported at low) — grub.cfg is not in _fs_is_critical_perm_path, so it must surface as
-# sensitive_perms_wrong_minor, not _wrong.
-TEST_DESC="/boot/grub/grub.cfg with 666 perms surfaces in sensitive_perms_wrong_minor"
-EXPECT_ID="filesystem.sensitive_perms_wrong_minor"
+# Expect: grub.cfg is not a credential file, but a group or world write bit on any
+# sensitive file routes it into the HIGH bucket, so it surfaces as
+# sensitive_perms_wrong at high, not as the low _minor finding.
+TEST_DESC="/boot/grub/grub.cfg with 666 perms surfaces in sensitive_perms_wrong at high"
+EXPECT_ID="filesystem.sensitive_perms_wrong"
 EXPECT_STATUS="failed"
-EXPECT_SEVERITY="low"
-# Critical for this case: the user's host may already have other
-# minor-perm issues queued (e.g. /etc/crontab at 644), so an EXPECT_ID
-# match alone proves nothing. Force the substring check.
+EXPECT_SEVERITY="high"
+# Critical for this case: the host may already have other wrong-perm files
+# queued, so an EXPECT_ID match alone proves nothing. Force the substring check.
 EXPECT_DESC_CONTAINS="/boot/grub/grub.cfg"
 MODULE="filesystem"
 

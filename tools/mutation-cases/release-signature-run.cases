@@ -75,3 +75,8 @@ run_case "release-signature-run/tlog-ignored" 1 \
 run_case "release-signature-run/repo-constant" 1 \
     'VPSSEC_REPO="Lynthar/CloudServer-Audit"' \
     'VPSSEC_REPO="someone-else/CloudServer-Audit"'
+
+# A bare 1.2.0 is refused again, though install.sh takes it for the same tag.
+run_case "release-signature-run/no-tag-normalise" 1 \
+    '        [[ "$VPSSEC_VERSION" == v* ]] || VPSSEC_VERSION="v${VPSSEC_VERSION}"' \
+    '        :'

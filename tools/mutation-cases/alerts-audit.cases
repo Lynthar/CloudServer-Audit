@@ -1,0 +1,14 @@
+# Mutation cases: tests/test_alerts_audit.bats against modules/alerts.sh.
+# mutate-suite: modules/alerts.sh tests/test_alerts_audit.bats
+#
+# An alerts.json that does not parse as an object is reported on its own,
+# with no fix: read as "not configured" it offered a fix that overwrote it.
+
+run_case "invalid/read-as-unconfigured" 1 \
+    '    if _alerts_config_exists && ! _alerts_config_valid; then' \
+    '    if false; then'
+
+# Valid JSON that is not an object still breaks every reader that indexes it.
+run_case "invalid/any-json-accepted" 1 \
+    "    jq -e 'type == \"object\"' \"\$ALERTS_CONFIG_FILE\" >/dev/null 2>&1" \
+    "    jq empty \"\$ALERTS_CONFIG_FILE\" >/dev/null 2>&1"

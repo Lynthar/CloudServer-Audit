@@ -10,18 +10,12 @@
 
 # ---- the backup contract ---------------------------------------------
 
-# The pre-2026-08 shape: a failed snapshot blanked the variable and the write
-# went ahead, so the reload-failure path had nothing to restore from.
-run_case "backup/existing-failure-blanked" 1 \
-    '        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN") || return 1' \
-    '        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN" 2>/dev/null) || SSH_LAST_DROPIN_BACKUP=""'
-
-# The first-run branch. Registering the drop-in as fix-created is the only
-# thing that lets a plan-level rollback delete it; swallowing the failure
-# leaves the file on the host after the operator asked to undo everything.
-run_case "backup/first-run-failure-swallowed" 1 \
-    '        backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1' \
-    '        backup_file "$SSH_HARDENING_DROPIN" >/dev/null 2>&1 || true'
+# Every write takes backup_file first: an existing drop-in is snapshotted, a new
+# one registered as fix-created, and only that lets a plan-level rollback restore
+# or delete it. Occurrence 2: the migration's identical line comes first.
+run_case "backup/failure-swallowed" 2 \
+    '    backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1' \
+    '    backup_file "$SSH_HARDENING_DROPIN" >/dev/null 2>&1 || true'
 
 # The "NEW" marker drives this module's own reload-failure rollback, which is
 # a different mechanism from the plan-level one above. Both are needed.
@@ -41,10 +35,30 @@ run_case "migrate/new-name-not-registered" 1 \
     '    backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1' \
     '    :'
 
+# The write keeps what it replaces; the session copy predates the plan and
+# would also undo the fixes before it.
 run_case "write/own-copy-not-kept" 1 \
-    '            SSH_LAST_DROPIN_BACKUP="PREV"' \
-    '            :'
+    '        SSH_LAST_DROPIN_BACKUP="PREV"' \
+    '        :'
 
 run_case "rollback/own-copy-not-restored" 1 \
     "        if printf '%s\\n' \"\$SSH_LAST_DROPIN_PREV\" > \"\$SSH_HARDENING_DROPIN\"; then" \
     '        if true; then'
+
+# ---- the reload after a rollback, and the Include check ------------------------
+
+run_case "rollback/rejected-change-left-live" 1 \
+    '                    _ssh_reload_service || print_error "$(i18n '"'"'ssh.reload_after_rollback_failed'"'"')"' \
+    '                    :'
+
+run_case "include/not-checked" 1 \
+    '    if ! _ssh_dropin_included; then' \
+    '    if false; then'
+
+run_case "include/any-include-counts" 1 \
+    '            [[ "$SSH_HARDENING_DROPIN" == $pat ]] && return 0' \
+    '            return 0'
+
+run_case "include/relative-not-resolved" 1 \
+    '            [[ "$pat" == /* ]] || pat="$base/$pat"' \
+    '            :'

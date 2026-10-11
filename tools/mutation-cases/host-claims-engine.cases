@@ -1,0 +1,11 @@
+# Mutation cases: tests/test_audit_host_claims.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_audit_host_claims.bats
+#
+# Runs module_load_all and _run_audit_pass over a docker-only module order, with
+# docker and podman absent and a rootless socket under a stubbed user's home.
+
+# The old gate: no docker or podman on PATH means the module never loads, and a
+# rootless install reads "not installed" without its own probe running.
+run_case "gate/docker-gated-on-cli" 1 \
+    '        docker)' \
+    '        docker) check_command docker || check_command podman || return 1'

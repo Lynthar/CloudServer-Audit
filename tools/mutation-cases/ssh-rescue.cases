@@ -36,3 +36,11 @@ run_case "watchdog/firewall-rule-left" 1 \
 run_case "watchdog/survives-normal-close" 1 \
     '        kill "$SSH_RESCUE_WATCHDOG_PID" 2>/dev/null || true' \
     '        :'
+
+run_case "teardown/failure-silent" 1 \
+    '                tty_warn "$(i18n '"'"'ssh.rescue_rule_remove_failed'"'"' "cmd=ufw delete ${rule[*]}")"' \
+    '                :'
+
+run_case "teardown/source-dropped" 1 \
+    '    [[ -n "$ip" ]] && rule=(allow from "$ip" to any port "$port" proto tcp)' \
+    '    :'

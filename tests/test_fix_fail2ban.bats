@@ -45,6 +45,7 @@ _f2b_jail_comes_up() {
 state="$BATS_TEST_TMPDIR/f2b-action"
 want=\$(sed -n 's/^banaction = //p' "$F2B_DROPIN" 2>/dev/null)
 case "\$*" in
+    -d) grep -qx 'enabled = true' "$F2B_DROPIN" 2>/dev/null && cat "$BATS_TEST_TMPDIR/f2b-dump" 2>/dev/null ;;
     "reload --restart") [[ -n "\$want" ]] && echo "\$want" > "\$state" ;;
     reload) [[ -n "\$want" && "\$want" != "\$(cat "\$state")" ]] && : > "\$state" ;;
     "get sshd actions")
@@ -130,6 +131,73 @@ EOF
     [ "$status" -eq 0 ]
     grep -qE '^ignoreip = .*127\.0\.0\.1/8' "$F2B_DROPIN"
     grep -qE '^ignoreip = .*::1' "$F2B_DROPIN"
+}
+
+@test "configure: only the ban action is set for every jail" {
+    # [DEFAULT] reaches every jail: an ignoreip there replaced the operator's
+    # list in all of them, and backend = systemd moved file-reading jails
+    # (nginx-http-auth) onto the journal, where nginx does not log.
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    run awk '/^\[/ { sec = $0; next } sec == "[DEFAULT]" && /^[a-z_]+ = / { print $1 }' "$F2B_DROPIN"
+    [ "$output" = "banaction
+banaction_allports" ]
+}
+
+# What `fail2ban-client -d` prints for the sshd jail's ignoreip (fail2ban 1.0.2).
+# It lists enabled jails only, so the stub answers once the drop-in enables sshd:
+# the hosts enable_ssh_jail serves have it off until then.
+_f2b_dump_ignoreip() {
+    printf "['set', 'sshd', 'addignoreip'%s]\n" "$(printf ", '%s'" "$@")" > "$BATS_TEST_TMPDIR/f2b-dump"
+}
+
+@test "configure: the sshd jail keeps the ignoreip it already had" {
+    # An [sshd] ignoreip replaces the inherited one: other admins' addresses
+    # in jail.local would otherwise stop being exempt from this jail.
+    _f2b_dump_ignoreip 10.9.9.9 198.51.100.0/24
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    grep -qxF 'ignoreip = 10.9.9.9 198.51.100.0/24 127.0.0.1/8 ::1' "$F2B_DROPIN"
+}
+
+@test "configure: a first write that fails stops the fix there" {
+    _f2b_jail_comes_up
+    write_file_atomic() { [[ "$2" == *"ignoreip = "* ]] || return 1; printf '%s\n' "$2" > "$1"; }
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 1 ]
+    _vpssec_refute _vpssec_stub_called fail2ban-client '-d'
+    _vpssec_refute test -e "$F2B_DROPIN"
+}
+
+@test "configure: a second write that fails takes the first one back out" {
+    # The first write leaves the jail on without the operator's address; it
+    # must not stay live once the ignoreip write failed.
+    _f2b_jail_comes_up
+    write_file_atomic() { [[ "$2" != *"ignoreip = "* ]] || return 1; printf '%s\n' "$2" > "$1"; }
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 1 ]
+    _vpssec_refute test -e "$F2B_DROPIN"
+}
+
+@test "configure: an address the jail already ignores is not listed twice" {
+    export SSH_CONNECTION="203.0.113.44 51234 10.0.0.5 22"
+    _f2b_dump_ignoreip 127.0.0.1/8 203.0.113.44
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    grep -qxF 'ignoreip = 127.0.0.1/8 203.0.113.44 ::1' "$F2B_DROPIN"
+}
+
+@test "configure: an operator address that cannot be determined is said" {
+    unset SSH_CONNECTION SSH_CLIENT
+    _vpssec_stub who
+    VPSSEC_QUIET_SCAN=0
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SSH source address could not be determined"* ]]
 }
 
 @test "configure: the operator's current SSH source address is whitelisted" {

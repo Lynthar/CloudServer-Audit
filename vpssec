@@ -8,6 +8,18 @@ set -euo pipefail
 # VPSSEC_ROOT is computed ONLY in core/common.sh, relative to its own path.
 # Do not recompute it here — two definitions would drift.
 
+# cron starts jobs with PATH=/usr/bin:/bin, where sysctl, sshd, ufw and nft are
+# absent and every check would read "not installed". Append the sbin directories
+# that are missing; the PATH given keeps its order, so its choices still win.
+_vpssec_complete_path() {
+    local dir
+    for dir in /usr/local/sbin /usr/sbin /sbin; do
+        [[ ":${PATH:-}:" == *":$dir:"* ]] || PATH="${PATH:+$PATH:}$dir"
+    done
+    export PATH
+}
+_vpssec_complete_path
+
 # --- Source Core Modules ---
 
 # readlink -f is load-bearing: install.sh symlinks /usr/local/bin/vpssec to this
@@ -161,8 +173,10 @@ parse_args() {
                 shift
                 ;;
             *)
-                echo "Unknown option: $1"
-                echo "Use --help for usage information"
+                # English: the language files are not loaded yet, and the
+                # word may be a mistyped command rather than an option.
+                echo "Unknown command or option: $1" >&2
+                echo "Run 'vpssec --help' for usage" >&2
                 exit 1
                 ;;
         esac
@@ -182,6 +196,18 @@ main() {
         show_version
         exit 0
     fi
+
+    # Every message is loaded through jq, so without it the first i18n_load
+    # would end the run in silence. Fixed English: there are no translations.
+    if ! check_command jq; then
+        echo "vpssec: jq is required but not installed." >&2
+        local jq_hint
+        if jq_hint=$(pkg_install_hint jq); then
+            echo "Install it with: $jq_hint" >&2
+        fi
+        exit 1
+    fi
+
     if (( VPSSEC_HELP_REQUESTED )); then
         i18n_load "${VPSSEC_LANG}"
         if [[ -n "$VPSSEC_HELP_TOPIC" ]]; then
@@ -294,7 +320,7 @@ main() {
         dep_pkgs=$(distro_packages_for_commands $missing_deps)
         # shellcheck disable=SC2086  # deliberate split: one package per word
         if dep_hint=$(pkg_install_hint $dep_pkgs); then
-            echo "Install with: $dep_hint"
+            echo "$(i18n 'preflight.install_with' "cmd=$dep_hint")"
         else
             echo "$(i18n 'preflight.install_deps' "deps=$dep_pkgs")"
         fi
@@ -310,13 +336,13 @@ main() {
     # Execute command
     case "$command" in
         audit)
-            print_header "vpssec - VPS Security Audit"
-            print_msg "Version: ${VPSSEC_VERSION}"
-            print_msg "Date: $(date '+%Y-%m-%d %H:%M:%S')"
-            print_msg "OS: $(detect_os) $(detect_os_version)"
+            print_header "$(i18n 'cli.header_title')"
+            print_msg "$(i18n 'status.version' "version=${VPSSEC_VERSION}")"
+            print_msg "$(i18n 'report.host_date'): $(date '+%Y-%m-%d %H:%M:%S')"
+            print_msg "$(i18n 'report.host_os'): $(detect_os) $(detect_os_version)"
             # The modules that will run: context modules added, excludes removed.
             if score_is_partial; then
-                print_msg "Modules: $(_report_modules_scope)"
+                print_msg "$(i18n 'report.host_modules'): $(_report_modules_scope)"
             fi
             audit_all
             ;;

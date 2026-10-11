@@ -87,3 +87,26 @@ SH
     [ "$status" -eq 1 ]
     [ ! -e "${VPSSEC_BACKUP_SESSION}${etc}/app.conf" ]
 }
+
+@test "damaged: a deleted list of created files is a partial rollback, named" {
+    # Nothing else records what the plan's fixes created: those files stayed
+    # in place and the rollback read complete.
+    backup_file "$etc/app.conf" >/dev/null
+    backup_file "$etc/new.conf" >/dev/null
+    echo created > "$etc/new.conf"
+    rm -f "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+    echo changed > "$etc/app.conf"
+
+    run backup_restore "$session_ts"
+    [ "$status" -eq 2 ]
+    [ "$(cat "$etc/app.conf")" = "original" ]
+    grep -qF "${VPSSEC_BACKUP_SESSION}/.vpssec_created" "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "intact: a session whose fixes created nothing rolls back whole" {
+    backup_file "$etc/app.conf" >/dev/null
+    echo changed > "$etc/app.conf"
+    run backup_restore "$session_ts"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$etc/app.conf")" = "original" ]
+}

@@ -49,6 +49,8 @@ _completed_fixes() {
     FIX_VERIFY["ufw.enable"]="_fake_verify_fail"
 
     run execute_fix ufw.enable
+    [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: ufw.enable' "$VPSSEC_LOGS/vpssec.log"
     _vpssec_refute grep -q 'ufw.enable' <<<"$(_completed_fixes)"
 }
 

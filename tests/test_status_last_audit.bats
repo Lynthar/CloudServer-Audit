@@ -24,7 +24,10 @@ setup() {
 }
 
 @test "status: an audit with a module that did not finish says so" {
-    VPSSEC_MODULES_FAILED=(backup)
+    # The failure has to happen inside the pass: each pass starts its own record.
+    module_get_enabled() { echo backup; }
+    VPSSEC_MODULE_LOADED[backup]=1
+    backup_audit() { return 1; }
     _run_audit_pass >/dev/null
     run status_mode
     grep -q 'some modules did not finish' <<<"$output"

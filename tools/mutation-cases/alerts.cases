@@ -49,16 +49,38 @@ run_case "config/dir-failure-message-collapsed" 1 \
 # Mutate the status check, not the jq call: the point is "the failure is
 # swallowed", not "jq never runs".
 run_case "config/jq-status-discarded" 1 \
-    "        }'); then" \
-    "        }') && false; then"
+    "        } * . * ({webhook_url: \$webhook, email: \$email} | with_entries(select(.value != \"\")))'); then" \
+    "        } * . * ({webhook_url: \$webhook, email: \$email} | with_entries(select(.value != \"\")))') && false; then"
 
 run_case "config/write-status-discarded" 1 \
-    "    printf '%s\\n' \"\$config_json\" > \"\$ALERTS_CONFIG_FILE\" && wrote=1" \
-    "    printf '%s\\n' \"\$config_json\" > \"\$ALERTS_CONFIG_FILE\"; wrote=1"
+    "    if ! write_file_atomic \"\$ALERTS_CONFIG_FILE\" \"\$config_json\"\$'\\n'; then" \
+    "    if ! write_file_atomic \"\$ALERTS_CONFIG_FILE\" \"\$config_json\"\$'\\n' && false; then"
 
-run_case "config/write-failure-unreported" 1 \
-    '    if ((wrote == 0)); then' \
+# A plain redirection truncates the old config before writing: a write that
+# fails part-way loses the operator's webhook.
+run_case "config/write-not-atomic" 1 \
+    "    if ! write_file_atomic \"\$ALERTS_CONFIG_FILE\" \"\$config_json\"\$'\\n'; then" \
+    "    if ! printf '%s\\n' \"\$config_json\" > \"\$ALERTS_CONFIG_FILE\"; then"
+
+# The empty file created to hold the 0600 mode is left behind by a failed write,
+# and the audit would then call that config unreadable.
+run_case "config/created-file-left" 1 \
+    '        if ((created)); then rm -f "$ALERTS_CONFIG_FILE"; fi' \
+    '        :'
+
+# ---- what an existing config keeps -----------------------------------------
+
+run_case "config/unparsable-overwritten" 1 \
+    '    if [[ -e "$ALERTS_CONFIG_FILE" ]] && ! _alerts_config_valid; then' \
     '    if false; then'
+
+run_case "config/existing-settings-dropped" 1 \
+    "        } * . * ({webhook_url: \$webhook, email: \$email} | with_entries(select(.value != \"\")))'); then" \
+    "        } * ({webhook_url: \$webhook, email: \$email} | with_entries(select(.value != \"\")))'); then"
+
+run_case "config/empty-answer-blanks-value" 1 \
+    "        } * . * ({webhook_url: \$webhook, email: \$email} | with_entries(select(.value != \"\")))'); then" \
+    "        } * . * {webhook_url: \$webhook, email: \$email}'); then"
 
 # The trailing chmod is NOT redundant with the umask around the write: the
 # umask governs creation only, and an alerts.json left at 0644 by an older
@@ -75,42 +97,30 @@ run_case "config/hook-failure-swallowed" 1 \
 
 # ---- the generated hooks ---------------------------------------------------
 
-run_case "hooks/templates-dir-status-discarded" 1 \
-    '    if ! mkdir -p "$ALERTS_TEMPLATES_DIR"; then' \
-    '    if ! mkdir -p "$ALERTS_TEMPLATES_DIR" && false; then'
-
-run_case "hooks/write-status-discarded" 1 \
-    '    if ! cat > "$path"; then' \
-    '    if ! cat > "$path" && false; then'
-
-run_case "hooks/chmod-status-discarded" 1 \
-    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then' \
-    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path" && false; then'
-
 # Dropping the mode argument leaves a hook the operator cannot execute.
 run_case "hooks/lib-not-executable" 1 \
-    "    _alerts_write_template alert-lib.sh +x <<'EOF' || return 1" \
-    "    _alerts_write_template alert-lib.sh <<'EOF' || return 1"
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/alert-lib.sh\" +x <<'EOF' || return 1" \
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/alert-lib.sh\" <<'EOF' || return 1"
 
 # One case per write, because a "check only the first one" implementation passes
 # every test that fails on the first artifact. What kills all five is a single
 # test iterating over all five names in a fresh tree, not five near-identical
 # tests.
 run_case "hooks/second-write-unchecked" 1 \
-    "    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || return 1" \
-    "    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || true"
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/ssh-login-monitor.sh\" +x <<'EOF' || return 1" \
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/ssh-login-monitor.sh\" +x <<'EOF' || true"
 
 run_case "hooks/third-write-unchecked" 1 \
-    "    _alerts_write_template ufw-monitor.sh +x <<'EOF' || return 1" \
-    "    _alerts_write_template ufw-monitor.sh +x <<'EOF' || true"
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/ufw-monitor.sh\" +x <<'EOF' || return 1" \
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/ufw-monitor.sh\" +x <<'EOF' || true"
 
 run_case "hooks/fourth-write-unchecked" 1 \
-    "    _alerts_write_template service-monitor.sh +x <<'EOF' || return 1" \
-    "    _alerts_write_template service-monitor.sh +x <<'EOF' || true"
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/service-monitor.sh\" +x <<'EOF' || return 1" \
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/service-monitor.sh\" +x <<'EOF' || true"
 
 run_case "hooks/last-write-unchecked" 1 \
-    "    _alerts_write_template README.md <<'EOF' || return 1" \
-    "    _alerts_write_template README.md <<'EOF' || true"
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/README.md\" <<'EOF' || return 1" \
+    "    write_template \"\$ALERTS_TEMPLATES_DIR/README.md\" <<'EOF' || true"
 
 # ---- the path rewrite ------------------------------------------------------
 
@@ -138,11 +148,11 @@ run_case "dispatch/unknown-fix-succeeds" 1 \
     '            return 0'
 
 # ---- deliberately absent ---------------------------------------------------
-# `umask 077` around the config write has no case: removing it alone changes
-# nothing observable — the file is created 0644 and the very next statement
-# chmods it to 600. What the umask buys is that the world-readable window never
-# opens at all, which no single-process test can see. The chmod half is pinned
-# by config/existing-mode-not-tightened instead.
+# `umask 077` around creating the empty config has no case: removing it alone
+# changes nothing observable — the file ends 0644, the atomic write keeps that,
+# and the trailing chmod makes it 600. What the umask buys is that the
+# world-readable window never opens at all, which no single-process test can
+# see. The chmod half is pinned by config/existing-mode-not-tightened instead.
 
 # ---- the generated library at run time --------------------------------------
 
@@ -155,6 +165,17 @@ run_case "lib/url-on-argv" 1 \
 run_case "lib/control-character-accepted" 1 \
     '    [[ "$WEBHOOK_URL" == *[[:cntrl:]]* ]] && return 1' \
     '    :'
+
+# The library must send through every mailer the audit counts as "email".
+run_case "lib/sendmail-unused" 1 \
+    '    elif [[ -x "$sendmail" ]]; then' \
+    '    elif false; then'
+
+# A line break in the subject would open a header in every mailer (under
+# sendmail -t, a Bcc); one test per mailer kills it.
+run_case "lib/subject-line-break-kept" 1 \
+    "    local subject=\"\${1//[\$'\\r\\n']/ }\"" \
+    '    local subject="$1"'
 
 # The two config-quoting escapes. Killed by the real-curl test, which skips where
 # curl is not installed: run them in the verification container.

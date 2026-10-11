@@ -63,6 +63,24 @@ _checklist_tags_only() {
     [ "$(grep -o "mod.shared_fix" <<<"$output" | wc -l | tr -d ' ')" -eq 1 ]
 }
 
+@test "tui_select_fixes pre-ticks SAFE fixes only" {
+    # Everything ticked put risky fixes in the plan on a bare Enter, while
+    # the text menu plans nothing on one.
+    tui_checklist() {
+        shift 2
+        while [[ $# -gt 0 ]]; do printf '%s=%s\n' "$1" "$3"; shift 3; done
+    }
+    FIX_SAFE["mod.shared_fix"]="test fixture"
+    FIX_RISKY["mod.other_fix"]="test fixture"
+    local -a fixes=()
+    mapfile -t fixes < <(get_available_fixes | jq -c '.[]')
+
+    run tui_select_fixes fixes
+    [ "$status" -eq 0 ]
+    grep -qx 'mod.shared_fix=on' <<<"$output"
+    grep -qx 'mod.other_fix=off' <<<"$output"
+}
+
 @test "generate_plan: one entry per unique fix id, even when selected twice" {
     # Selection repeats shared_fix (the UI can produce this when two rows
     # carried the same fix), and two checks in state match it.
@@ -367,6 +385,15 @@ _guide_fix_harness() {
     _vpssec_refute grep -q "SELECTOR-RAN" <<<"$output"
 }
 
+@test "guide_mode: the plan review names severity in the language asked for" {
+    _guide_fix_harness
+    i18n_load zh_CN
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"- [$(i18n 'common.low')] Title C (mod.other_fix)"* ]]
+}
+
 @test "guide_mode --fix on a host with nothing to fix is a refusal, not 'complete'" {
     _guide_fix_harness
     get_available_fixes() { echo '[]'; }
@@ -374,6 +401,106 @@ _guide_fix_harness() {
     run guide_mode
     [ "$status" -eq 1 ]
     [[ "$output" == *"mod.other_fix"* ]]
+}
+
+# ---- what guide's exit status says --------------------------------------------
+# 1 = a fix in the plan failed; 3 = otherwise, the audit did not finish; 0 = neither.
+
+@test "guide_mode: failed findings with no automatic fix are counted, not called complete" {
+    _guide_fix_harness
+    get_available_fixes() { echo '[]'; }
+    VPSSEC_QUIET_SCAN=0
+    run guide_mode
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No automatic fix"*"3 failed findings"* ]]
+    _vpssec_refute grep -qF "$(i18n 'guide.complete')" <<<"$output"
+}
+
+@test "guide_mode: nothing to fix and an incomplete scan exits 3, as audit does" {
+    _guide_fix_harness
+    get_available_fixes() { echo '[]'; }
+    VPSSEC_MODULES_FAILED=(ssh)
+    run guide_mode
+    [ "$status" -eq 3 ]
+}
+
+@test "guide_mode: a plan with no failed fix but an incomplete re-audit exits 3" {
+    _guide_fix_harness
+    VPSSEC_MODULES_FAILED=(ssh)
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"EXEC mod.other_fix "* ]]
+}
+
+@test "guide_mode: a failed fix exits 1, whatever the scan" {
+    _guide_fix_harness
+    execute_plan() { echo "EXEC-FAILED"; return 1; }
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"EXEC-FAILED"* ]]
+    VPSSEC_MODULES_FAILED=(ssh)
+    run guide_mode
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"EXEC-FAILED"* ]]
+}
+
+@test "resume: a resumed plan whose fix fails exits 1" {
+    VPSSEC_MODULE_LOADED[mod]=1
+    state_save_plan '{"fixes":[{"fix_id":"mod.other_fix","title":"Old plan"}]}'
+    state_save_progress "mod.other_fix" 1 '[]'
+    execute_plan() { echo "EXEC-FAILED"; return 1; }
+    run _guide_resume
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"EXEC-FAILED"* ]]
+}
+
+# A module whose audit crashes on its first run, losing a check and offering a
+# fix, and passes on every later one: guide's audit before the fixes is
+# incomplete, the one after is not. Extra arguments join the module order.
+_flaky_guide() {
+    VPSSEC_MODULES="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPSSEC_MODULES"
+    cat > "$VPSSEC_MODULES/flaky.sh" <<SH
+flaky_audit() {
+    if [[ -e "$BATS_TEST_TMPDIR/ran" ]]; then
+        check_emit flaky.thing low passed
+        return 0
+    fi
+    touch "$BATS_TEST_TMPDIR/ran"
+    check_emit flaky.thing low failed fix=flaky.do
+    check_emit flaky.unrecordable bogus failed
+    return 7
+}
+flaky_fix() { :; }
+SH
+    VPSSEC_MODULE_ORDER=(flaky "$@")
+    FIX_SAFE["flaky.do"]="test fixture"
+    is_debian_based() { return 0; }
+    report_print_details() { :; }
+    report_print_summary() { :; }
+    report_generate_all() { report_generate_json "$VPSSEC_REPORTS/summary.json"; }
+    module_load_all "" ""
+    export VPSSEC_FIX_IDS="flaky.do" VPSSEC_YES=1
+}
+
+@test "guide: a module that failed only before the fixes leaves the final report complete" {
+    _flaky_guide
+    run guide_mode
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.meta.complete' "$VPSSEC_REPORTS/summary.json")" = true ]
+    [ "$(jq -c '.meta.modules_failed' "$VPSSEC_REPORTS/summary.json")" = '[]' ]
+    # The lost check of the first audit is not reported again by the second.
+    [ "$(jq '[.checks[] | select(.id == "_internal.module_failed")] | length' \
+        "$VPSSEC_REPORTS/summary.json")" = 0 ]
+}
+
+@test "guide: a module that never loaded is still missing from the final report" {
+    _flaky_guide ghost
+    run guide_mode
+    [ "$status" -eq 3 ]
+    [ "$(jq -c '.meta.modules_failed' "$VPSSEC_REPORTS/summary.json")" = '["ghost"]' ]
 }
 
 # ---- a leftover progress.json versus a run nobody can answer -----------------

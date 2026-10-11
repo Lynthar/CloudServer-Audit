@@ -2,8 +2,14 @@
 # mutate-suite: core/state.sh tests/test_backup_restore.bats
 #
 # The find that lists a session's copies is all that keeps a symlink planted in
-# the backup tree, or a symlinked directory there, from being restored.
+# the backup tree, or a symlinked directory there, from being restored; and a
+# directory now at a restore target must stop the copy.
 
 run_case "copies/follows-links" 1 \
     '    find "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \' \
     '    find -L "$1" -type f ! -name "$VPSSEC_CREATED_MANIFEST" ! -name "$VPSSEC_MODES_MANIFEST" \'
+
+# A directory at the target: the copy lands inside it and counts as restored.
+run_case "restore/copied-into-directory" 1 \
+    '        if ! mkdir -p "$original_dir" || ! cp -pT "$backup_file" "$original_path"; then' \
+    '        if ! mkdir -p "$original_dir" || ! cp -p "$backup_file" "$original_path"; then'

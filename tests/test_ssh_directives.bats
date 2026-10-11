@@ -36,6 +36,7 @@ setup() {
     export VPSSEC_QUIET_SCAN=0
     declare -gA SSH_STUB=()
     _ssh_get_config() { printf '%s\n' "${SSH_STUB[$1]-$2}"; }
+    _vpssec_stub sshd   # ssh_audit skips everything on a host without one
     local fn
     for fn in _ssh_audit_password_auth _ssh_audit_root_login _ssh_audit_pubkey \
               _ssh_audit_admin_user _ssh_audit_empty_password _ssh_audit_max_auth_tries \

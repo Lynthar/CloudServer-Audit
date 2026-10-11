@@ -36,6 +36,7 @@ _finding() {
     printf 'PermitRootLogin no\nPasswordAuthentication no\n' > "$SSH_CONFIG"
 
     run _finding
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 
@@ -44,6 +45,7 @@ _finding() {
         > "$SSH_CONFIG"
 
     run _finding
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 
@@ -101,6 +103,7 @@ _finding() {
         eval "$fn() { :; }"
     done
     printf 'Match Address 0.0.0.0/0\n    PermitRootLogin yes\n' > "$SSH_CONFIG"
+    _vpssec_stub sshd 0 'port 22'   # an sshd that answers, or nothing is audited
 
     ssh_audit >/dev/null
     jq -e '.[] | select(.id == "ssh.match_overrides")' "$VPSSEC_STATE/checks.json" >/dev/null

@@ -179,13 +179,13 @@ report_generate_markdown() {
 
 | $(i18n 'common.info') | |
 |---|---|
-| Hostname | ${hostname} |
-| OS | ${os} ${os_version} |
-| Distro Family | ${distro_family} |
-| Hardening | ${guide_state} |
-| Date | $(date '+%Y-%m-%d %H:%M:%S') |
-| vpssec Version | ${VPSSEC_VERSION} |
-| Modules | ${modules_checked} |
+| $(i18n 'report.host_hostname') | ${hostname} |
+| $(i18n 'report.host_os') | ${os} ${os_version} |
+| $(i18n 'report.host_family') | ${distro_family} |
+| $(i18n 'report.host_hardening') | ${guide_state} |
+| $(i18n 'report.host_date') | $(date '+%Y-%m-%d %H:%M:%S') |
+| $(i18n 'report.host_version') | ${VPSSEC_VERSION} |
+| $(i18n 'report.host_modules') | ${modules_checked} |
 
 ---
 

@@ -279,7 +279,19 @@ _make() {
 
     run _fs_fix_sensitive_perms
     [ "$status" -eq 0 ]
-    [ "$(_mode_of "$etc/shadow")" = "640" ]
+    [ "$(_mode_of "$etc/shadow")" = "600" ]
+}
+
+@test "perms fix: only the offending bits are cleared, none is added" {
+    # chmod to the expected mode turned 0602 into 0644, granting group and
+    # world read the file never had.
+    _make crontab 602
+    _sensitive "crontab:644"
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    [ "$(_mode_of "$etc/crontab")" = "600" ]
+    _fs_sensitive_perms_ok
 }
 
 @test "perms fix: a setuid bit on a config file is stripped" {
@@ -500,4 +512,107 @@ STUB
     run _fs_check_sensitive_file /etc/at.deny "${FS_SENSITIVE_FILES[/etc/at.deny]}"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+# ==============================================================================
+# Owner and group: the fix repairs what the audit reports
+# ==============================================================================
+
+# Running as root, stat seeing mode $1, owner $2 and group $3 on every file;
+# chown and chgrp recorded rather than run.
+_perms_seeing() {
+    _vpssec_stub id 0 0
+    _vpssec_stub_script stat <<STUB
+while (( \$# )) && [[ "\$1" != -c ]]; do shift; done
+case "\$2" in
+    %a) printf '%s\n' '$1' ;;
+    %U) printf '%s\n' '$2' ;;
+    %G) printf '%s\n' '$3' ;;
+    *)  exit 1 ;;
+esac
+STUB
+    _vpssec_stub chown 0
+    _vpssec_stub chgrp 0
+}
+
+@test "perms fix: a file owned by another user is given back to root" {
+    # The audit flags the owner, so a fix that only chmods leaves it flagged
+    # and FIX_VERIFY fails the whole plan.
+    _make passwd 644
+    _sensitive "passwd:644"
+    _perms_seeing 644 bob root
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called chown "root $etc/passwd"
+    _vpssec_refute _vpssec_stub_called chgrp
+}
+
+@test "perms fix: a foreign group that can read is replaced by root" {
+    _make shadow 640
+    _sensitive "shadow:640"
+    _perms_seeing 640 root staff
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called chgrp "root $etc/shadow"
+    _vpssec_refute _vpssec_stub_called chown
+}
+
+@test "perms fix: a group the chmod leaves with no access is not changed" {
+    # 660 against 600 loses its group bits, after which the group grants nothing.
+    _make sshd_config 660
+    _sensitive "sshd_config:600"
+    _perms_seeing 660 root staff
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    _vpssec_refute _vpssec_stub_called chgrp
+}
+
+@test "perms fix: a refused chown is counted as a failure" {
+    _make passwd 644
+    _sensitive "passwd:644"
+    _perms_seeing 644 bob root
+    _vpssec_stub chown 1
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 1 ]
+}
+
+@test "perms fix: as root, the owner is repaired and a rollback restores it" {
+    [ "$(id -u)" = "0" ] || skip "chown needs root"
+    getent passwd nobody >/dev/null || skip "no nobody user"
+    _make passwd 644
+    chown nobody "$etc/passwd"
+    _sensitive "passwd:644"
+    _vpssec_begin_backup_session
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    [ "$(stat -c %U "$etc/passwd")" = "root" ]
+    _fs_sensitive_perms_ok
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$status" -eq 0 ]
+    [ "$(stat -c %U "$etc/passwd")" = "nobody" ]
+}
+
+# ==============================================================================
+# Severity: a write bit is HIGH whichever file it is on
+# ==============================================================================
+
+@test "perms audit: group or world write on a non-credential file is HIGH" {
+    # A world-writable /etc/passwd or /etc/crontab is root for any local user;
+    # a read bit there leaks nothing secret and stays LOW.
+    _make passwd 666
+    _make crontab 664
+    _make at.deny 644
+    _sensitive "passwd:644" "crontab:644" "at.deny:640"
+
+    run _fs_sensitive_perm_issues
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"high"$'\t'"$etc/passwd:"* ]]
+    [[ "$output" == *"high"$'\t'"$etc/crontab:"* ]]
+    [[ "$output" == *"med"$'\t'"$etc/at.deny:"* ]]
 }

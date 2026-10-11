@@ -25,7 +25,7 @@ run_case "coredump/always-reports-success" 1 \
     '    return 0'
 
 run_case "coredump/limits-not-idempotent" 1 \
-    '        if ! grep -qE "^\*\s+hard\s+core\s+0" "$KERNEL_LIMITS_CONF"; then' \
+    '        if [[ "$(_kernel_core_hard_limit)" != "0" ]]; then' \
     '        if true; then'
 
 run_case "dropin/header-filter-removed" 1 \
@@ -37,8 +37,13 @@ run_case "dropin/param-replace-removed" 1 \
     '                   | cat || true)'
 
 run_case "network/rp_filter-exception-gone" 1 \
-    '           && [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]]; then' \
+    '           && _kernel_ip_forward_needed; then' \
     '           && false; then'
+
+# Strict mode drops a forwarding host's asymmetric-return traffic; 0 goes to 2.
+run_case "network/rp_filter-forwarding-target-strict" 1 \
+    '            expected="2|1"' \
+    '            :'
 
 run_case "dropin/backup-skipped" 1 \
     '    backup_file "$VPSSEC_SYSCTL_CONF" >/dev/null || return 1' \
@@ -86,7 +91,7 @@ run_case "bpf/fix-writes-the-lock" 1 \
 # A key that exists only under "all" reaches no interface; listing one again
 # reads and writes a value nothing uses.
 run_case "ipv6/all-only-key-listed" 1 \
-    '    "net.ipv6.conf.default.use_tempaddr:2:low:IPv6 privacy extensions (default)"' \
+    '    "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"' \
     '    "net.ipv6.conf.all.autoconf:0:low:IPv6 stateless autoconfiguration"'
 
 # IPv6 has no send_redirects at all.
@@ -98,23 +103,98 @@ run_case "ipv6/all-only-ra-key-written" 1 \
     '            "net.ipv6.conf.default.accept_ra=0"' \
     '            "net.ipv6.conf.all.accept_ra_defrtr=0"'
 
-# The pass and the suggested fixes must say existing interfaces are unchanged.
+# The pass and the suggested fix must say existing interfaces are unchanged.
 run_case "ipv6/secure-claims-every-interface" 1 \
     "                desc=\"\$(i18n 'kernel.ipv6_secure_desc')\"" \
     '                desc="IPv6 enabled and properly secured"'
-
-run_case "network/ok-claims-every-interface" 1 \
-    "            desc=\"\$(i18n 'kernel.network_params_ok_desc' \"passed=\$passed\")\"" \
-    '            desc="$passed parameters checked"'
 
 run_case "ipv6/fix-suggestion-unqualified" 1 \
     "                suggestion=\"\$(i18n 'kernel.fix_ipv6')\" \\" \
     '                suggestion="Harden IPv6 parameters" \'
 
-run_case "network/high-fix-suggestion-unqualified" 1 \
-    "            suggestion=\"\$(i18n 'kernel.fix_network_params')\" \\" \
-    '            suggestion="Harden network parameters" \'
+# ---- who forwards, one check per key, core-dump limits ---------------------
 
-run_case "network/medium-fix-suggestion-unqualified" 2 \
-    "            suggestion=\"\$(i18n 'kernel.fix_network_params')\" \\" \
-    '            suggestion="Harden network parameters" \'
+run_case "forwarding/interface-signal-removed" 1 \
+    '            [[ -n "$(ip -br link show type "$type" 2>/dev/null)" ]] && return 0' \
+    '            :'
+
+run_case "forwarding/strongswan-unit-dropped" 1 \
+    '    systemctl is-active --quiet strongswan-starter 2>/dev/null && return 0' \
+    '    :'
+
+# Listed twice, one weak value fails two scored checks.
+run_case "dedup/suid_dumpable-back-in-table" 1 \
+    '    "fs.protected_hardlinks:1:medium:Hardlink protection"' \
+    '    "fs.suid_dumpable:0:medium:Disable SUID core dumps"'
+
+run_case "dedup/ipv6-redirects-back-in-table" 1 \
+    '    "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"' \
+    '    "net.ipv6.conf.default.accept_redirects:0:medium:IPv6 ICMP redirects (default)"'
+
+# pam_limits reads limits.d after limits.conf, and the last entry wins.
+run_case "coredump/limits-d-ignored" 1 \
+    '        [[ -f "$f" ]] && files+=("$f")' \
+    '        :'
+
+run_case "coredump/first-entry-wins" 1 \
+    "    awk '\$1 == \"*\" && (\$2 == \"hard\" || \$2 == \"-\") && \$3 == \"core\" { v = \$4 }" \
+    "    awk '\$1 == \"*\" && (\$2 == \"hard\" || \$2 == \"-\") && \$3 == \"core\" && v == \"\" { v = \$4 }"
+
+run_case "coredump/soft-limit-counted" 1 \
+    "    awk '\$1 == \"*\" && (\$2 == \"hard\" || \$2 == \"-\") && \$3 == \"core\" { v = \$4 }" \
+    "    awk '\$1 == \"*\" && \$3 == \"core\" { v = \$4 }"
+
+# ---- containers: the host's kernel is not the container's to judge or fix --
+
+run_case "container/kernel-params-scored" 1 \
+    '    if [[ "$in_container" == true ]]; then' \
+    '    if false; then'
+
+run_case "container/kernel-params-pass-reported-failed" 1 \
+    '        if (( total_issues == 0 )); then' \
+    '        if false; then'
+
+run_case "container/aslr-scored" 1 \
+    '    if [[ "$aslr_status" != unknown ]] && detect_container >/dev/null; then' \
+    '    if false; then'
+
+# Unreadable is no state of the host's to report: it stays the unscored aslr_unknown.
+run_case "container/aslr-unknown-called-host-state" 1 \
+    '    if [[ "$aslr_status" != unknown ]] && detect_container >/dev/null; then' \
+    '    if detect_container >/dev/null; then'
+
+run_case "container/suid_dumpable-judged" 1 \
+    '    if ! detect_container >/dev/null; then' \
+    '    if true; then'
+
+run_case "container/suid_dumpable-written" 2 \
+    '    if ! detect_container >/dev/null; then' \
+    '    if true; then'
+
+# ---- runtime vs persist, no replay, undo ----------------------------------
+
+run_case "runtime/refusal-uncounted-ipv6" 1 \
+    '            1) ((runtime_failed++)) || true ;;' \
+    '            1) : ;;'
+
+run_case "runtime/refusal-called-persist" 2 \
+    '            1) ((runtime_failed++)) || true ;;' \
+    '            1) ((persist_failed++)) || true ;;'
+
+run_case "replay/drop-in-reloaded" 1 \
+    '    _kernel_write_sysctl "$1" "$2" || return 2' \
+    '    _kernel_write_sysctl "$1" "$2" && sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || return 2'
+
+# A value read after the ip_forward write is the reset one, not the original.
+run_case "undo/network-reads-after-write" 1 \
+    '                undo+=("$param=${before[$param]}")' \
+    '                undo+=("$param=$(_kernel_get_sysctl "$param")")'
+
+run_case "undo/aslr-not-recorded" 1 \
+    '        record_undo kernel.enable_aslr "$(_kernel_undo_cmd "kernel.randomize_va_space=$old")"' \
+    '        :'
+
+# An unused IPv6 with weak settings: the desc goes back to repeating its title.
+run_case "ipv6-desc/unused-names-no-setting" 1 \
+    '                desc="$(i18n '"'"'kernel.ipv6_unused_insecure_desc'"'"' "ipv6_issues=${ipv6_text%; }")" \' \
+    '                desc="$(i18n '"'"'kernel.ipv6_unused_insecure_desc'"'"')" \'

@@ -14,6 +14,11 @@ _alerts_config_exists() {
     [[ -f "$ALERTS_CONFIG_FILE" ]]
 }
 
+# A JSON object, which is what every reader of the file indexes into.
+_alerts_config_valid() {
+    jq -e 'type == "object"' "$ALERTS_CONFIG_FILE" >/dev/null 2>&1
+}
+
 _alerts_get_webhook_url() {
     if _alerts_config_exists; then
         jq -r '.webhook_url // empty' "$ALERTS_CONFIG_FILE" 2>/dev/null
@@ -56,7 +61,14 @@ alerts_audit() {
 }
 
 _alerts_audit_config() {
-    if _alerts_config_exists; then
+    # Unparsable is not "not configured": offering setup_config there would
+    # overwrite the operator's webhook with an empty template.
+    if _alerts_config_exists && ! _alerts_config_valid; then
+        check_emit "alerts.config_invalid" low failed \
+            desc="$(i18n 'alerts.config_invalid_desc' "path=$ALERTS_CONFIG_FILE")" \
+            suggestion="$(i18n 'alerts.fix_config_invalid' "path=$ALERTS_CONFIG_FILE")"
+        print_severity "low" "$(i18n 'alerts.config_invalid')"
+    elif _alerts_config_exists; then
         local webhook=$(_alerts_get_webhook_url)
         local email=$(_alerts_get_email)
 
@@ -148,6 +160,13 @@ _alerts_fix_setup_config() {
         return 1
     fi
 
+    # A config that does not parse is the operator's to repair: rewriting it
+    # would drop the webhook and settings they put there.
+    if [[ -e "$ALERTS_CONFIG_FILE" ]] && ! _alerts_config_valid; then
+        print_error "$(i18n 'alerts.config_invalid_desc' "path=$ALERTS_CONFIG_FILE")"
+        return 1
+    fi
+
     # Ask only when there is somebody to ask — see _alerts_should_prompt.
     local webhook_url="" email="" interactive=0
     if _alerts_should_prompt; then
@@ -157,20 +176,20 @@ _alerts_fix_setup_config() {
         print_msg "$(i18n 'alerts.configure_prompt')"
         print_msg ""
 
-        read -rp "Webhook URL (Slack-compatible; Discord: append /slack. Leave empty to skip): " webhook_url </dev/tty
-        read -rp "Email address (leave empty to skip): " email </dev/tty
+        read -rp "$(i18n 'alerts.prompt_webhook') " webhook_url </dev/tty
+        read -rp "$(i18n 'alerts.prompt_email') " email </dev/tty
     fi
 
-    # Built with jq -n --arg, never heredoc interpolation: a URL containing
-    # a quote or backslash produces malformed JSON that breaks the downstream
-    # read. Both paths share this builder; the template is it with empty values.
+    # Built by jq, never heredoc interpolation: a URL holding a quote or a
+    # backslash would break the JSON. Defaults, then what the existing file
+    # sets, then each answer given; the template is that with none given.
     local config_json
-    if ! config_json=$(jq -n \
+    if ! config_json=$( { cat "$ALERTS_CONFIG_FILE" 2>/dev/null || echo '{}'; } | jq \
         --arg webhook "$webhook_url" \
         --arg email   "$email" \
         '{
-            webhook_url: $webhook,
-            email: $email,
+            webhook_url: "",
+            email: "",
             events: {
                 ssh_login_failure: true,
                 firewall_change: true,
@@ -178,24 +197,20 @@ _alerts_fix_setup_config() {
                 security_audit: true
             },
             throttle_minutes: 5
-        }'); then
+        } * . * ({webhook_url: $webhook, email: $email} | with_entries(select(.value != "")))'); then
         print_error "$(i18n 'alerts.config_write_failed' "path=$ALERTS_CONFIG_FILE")"
         return 1
     fi
 
-    # alerts.json holds webhook URLs and tokens; create it 0600 so it
-    # retains its restrictive mode even if someone `cp`s it elsewhere.
-    # The parent state dir is 700 (state_init), but don't rely on that.
-    local _prev_umask wrote=0
-    _prev_umask=$(umask)
-    umask 077
-    printf '%s\n' "$config_json" > "$ALERTS_CONFIG_FILE" && wrote=1
-    umask "$_prev_umask"
-
-    # The redirection above is the whole write, and its status used to be
-    # discarded: an unwritable state dir left the operator with "alert
-    # configuration saved" and a fix the engine recorded as complete.
-    if ((wrote == 0)); then
+    # alerts.json holds webhook URLs, so it is 0600 from the moment it exists:
+    # created empty under umask 077, then replaced atomically, which keeps an
+    # existing file's mode. A failed write leaves the old file whole.
+    local created=0
+    if [[ ! -e "$ALERTS_CONFIG_FILE" ]] && ( umask 077 && : > "$ALERTS_CONFIG_FILE" ); then
+        created=1
+    fi
+    if ! write_file_atomic "$ALERTS_CONFIG_FILE" "$config_json"$'\n'; then
+        if ((created)); then rm -f "$ALERTS_CONFIG_FILE"; fi
         print_error "$(i18n 'alerts.config_write_failed' "path=$ALERTS_CONFIG_FILE")"
         return 1
     fi
@@ -218,36 +233,11 @@ _alerts_fix_setup_config() {
     return 0
 }
 
-# Write one generated artifact from stdin, reporting when it could not be
-# written — a bare `cat >` whose status is discarded ends in "generated" on a
-# full disk. MODE goes to chmod verbatim; `+x` leaves umask in charge of read.
-_alerts_write_template() {
-    local name="$1" mode="${2:-}"
-    local path="${ALERTS_TEMPLATES_DIR}/${name}"
-
-    if ! cat > "$path"; then
-        print_error "$(i18n 'alerts.hook_write_failed' "name=$name")"
-        return 1
-    fi
-
-    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then
-        print_error "$(i18n 'alerts.hook_write_failed' "name=$name")"
-        return 1
-    fi
-
-    print_item "$(i18n 'alerts.hook_created' "name=$name")"
-}
-
 _alerts_fix_generate_templates() {
-    if ! mkdir -p "$ALERTS_TEMPLATES_DIR"; then
-        print_error "$(i18n 'alerts.templates_dir_failed' "path=$ALERTS_TEMPLATES_DIR")"
-        return 1
-    fi
-
     print_info "$(i18n 'alerts.generating_hooks')"
 
     # Main alert function library
-    _alerts_write_template alert-lib.sh +x <<'EOF' || return 1
+    write_template "$ALERTS_TEMPLATES_DIR/alert-lib.sh" +x <<'EOF' || return 1
 #!/bin/bash
 # vpssec Alert Library
 # Source this file in your monitoring scripts
@@ -315,12 +305,17 @@ vpssec_alert_webhook() {
 # Send email notification. Returns non-zero when no channel is configured
 # or the mailer reported failure — see vpssec_alert for why that matters.
 vpssec_alert_email() {
-    local subject="$1"
+    # The subject carries a login name, and a line break in it would start a
+    # header of its own in each mailer below (under sendmail -t, a Bcc).
+    local subject="${1//[$'\r\n']/ }"
     local body="$2"
 
     [[ -z "$ALERT_EMAIL" ]] && return 1
 
     local hostname=$(hostname)
+    # cron's PATH has no sbin, where the MTA's sendmail lives.
+    local sendmail
+    sendmail=$(command -v sendmail 2>/dev/null) || sendmail=/usr/sbin/sendmail
 
     # Use printf with a literal format so backslash sequences in $body
     # (e.g. "\n" from command output, or an attacker-controlled message
@@ -332,6 +327,10 @@ vpssec_alert_email() {
         printf 'Subject: [vpssec] %s\n\n%s\n\nHost: %s\nTime: %s\n' \
             "$subject" "$body" "$hostname" "$(date)" | \
             msmtp "$ALERT_EMAIL"
+    elif [[ -x "$sendmail" ]]; then
+        printf 'To: %s\nSubject: [vpssec] %s\n\n%s\n\nHost: %s\nTime: %s\n' \
+            "$ALERT_EMAIL" "$subject" "$body" "$hostname" "$(date)" | \
+            "$sendmail" -t -i
     else
         return 1
     fi
@@ -386,7 +385,7 @@ vpssec_alert_load_config
 EOF
 
     # SSH login monitor
-    _alerts_write_template ssh-login-monitor.sh +x <<'EOF' || return 1
+    write_template "$ALERTS_TEMPLATES_DIR/ssh-login-monitor.sh" +x <<'EOF' || return 1
 #!/bin/bash
 # SSH Login Monitor - sends alerts on failed/successful logins
 # Install: Copy to /usr/local/bin/ and add to /etc/pam.d/sshd
@@ -417,7 +416,7 @@ esac
 EOF
 
     # Firewall change monitor
-    _alerts_write_template ufw-monitor.sh +x <<'EOF' || return 1
+    write_template "$ALERTS_TEMPLATES_DIR/ufw-monitor.sh" +x <<'EOF' || return 1
 #!/bin/bash
 # UFW Change Monitor
 # Run via inotifywait or periodically via cron
@@ -446,7 +445,7 @@ fi
 EOF
 
     # Service monitor
-    _alerts_write_template service-monitor.sh +x <<'EOF' || return 1
+    write_template "$ALERTS_TEMPLATES_DIR/service-monitor.sh" +x <<'EOF' || return 1
 #!/bin/bash
 # Critical Service Monitor
 # Run via cron: */5 * * * * /path/to/service-monitor.sh
@@ -472,7 +471,7 @@ done
 EOF
 
     # Installation instructions
-    _alerts_write_template README.md <<'EOF' || return 1
+    write_template "$ALERTS_TEMPLATES_DIR/README.md" <<'EOF' || return 1
 # vpssec Alert Hooks
 
 ## Setup

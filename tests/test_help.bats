@@ -138,3 +138,42 @@ setup() {
         }
     done
 }
+
+# ---- what the counts say ---------------------------------------------
+
+@test "help overview: the class counts are separated by comma and space" {
+    # "${parts[*]}" under IFS=', ' joins with the first character only.
+    run _help_fix_summary ssh
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^[0-9]+\ safe,\ [0-9]+\ confirm,\ [0-9]+\ risky,\ [0-9]+\ alert$ ]]
+}
+
+@test "help overview: the class summary is translated" {
+    i18n_load zh_CN
+    run _help_fix_summary preflight
+    [ "$output" != "audit-only" ]
+    [ "$output" = "$(i18n 'help.audit_only')" ]
+    run _help_fix_summary ssh
+    [[ "$output" != *safe* && "$output" != *alert* ]]
+    [[ "$output" == *"$(i18n 'help.count_sep')"* ]]
+}
+
+@test "help <module>: the fix count leaves alert-only entries out" {
+    # They have nothing to run; counting them headed malware's fifteen
+    # findings "Available fixes (15)".
+    local heading
+    heading=$(i18n 'help.available_fixes' 'count=X')
+    run vpssec_help_dispatch malware
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"${heading%%X*}"* ]]
+    [[ "$output" != *"$(i18n 'help.audit_only_module')"* ]]
+    [[ "$output" == *"$(i18n 'help.class_alert_only')"* ]]
+
+    _help_collect_fixes ssh
+    local n=0 k
+    for k in safe confirm risky; do
+        n=$(( n + $(count_lines "${_help_fix_table[$k]}") ))
+    done
+    run vpssec_help_dispatch ssh
+    [[ "$output" == *"$(i18n 'help.available_fixes' "count=$n")"* ]]
+}

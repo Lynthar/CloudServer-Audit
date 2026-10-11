@@ -32,6 +32,8 @@ esac
 [[ -z "${2:-}" ]] && { cat "$f"; exit 0; }
 awk -F: -v k="$2" '$1 == k || $3 == k { print; found = 1; exit } END { exit !found }' "$f"
 SH
+    # No sshd answers, whatever the host: key files are sshd's defaults.
+    _vpssec_stub sshd 255
 }
 
 _account() { printf '%s\n' "$@" >> "$FAKE_PASSWD"; }
@@ -190,4 +192,137 @@ S
     printf 'minlen = 7\n' > "$USERS_PWQUALITY_CONF.d/a-local.conf"
     LC_ALL=en_US.UTF-8 users_audit
     [[ "$(_desc users.pwquality_weak)" == *"minlen=7"* ]]
+}
+
+# ---- one backdoor, one finding --------------------------------------------------
+
+@test "users audit: a second UID 0 account is uid0_found's alone" {
+    _account 'toor:x:0:0::/root:/bin/bash' 'svc1:x:1501:1501::/home/svc1:/bin/bash' \
+        'svc2:x:1501:1501::/home/svc2:/bin/bash'
+    users_audit
+    [ "$(_desc users.uid0_found)" = "toor" ]
+    # Scored once: no duplicate-UID or system-shell finding for the same account.
+    [ "$(_desc users.duplicate_uids)" = "UID=1501:svc1,svc2" ]
+    _vpssec_refute _emitted users.system_with_shell
+}
+
+# ---- empty passwords --------------------------------------------------------------
+
+@test "users audit: a shadow line with no account behind it is not an empty password" {
+    # NIS compat "+" lines and orphans have no passwd entry, so no login.
+    _account 'eve:x:1502:1502::/home/eve:/bin/bash'
+    printf '+::::::::\nghost::19000:0:99999:7:::\neve::19000:0:99999:7:::\n' > "$USERS_SHADOW_FILE"
+    users_audit
+    [ "$(_desc users.empty_password)" = "eve" ]
+}
+
+# ---- cloud-init default accounts ----------------------------------------------------
+
+@test "users audit: the provider's default user is neither suspicious nor recent" {
+    _account "admin:x:1503:1503::$BATS_TEST_TMPDIR/admin:/bin/bash"
+    mkdir -p "$BATS_TEST_TMPDIR/admin"
+    VPSSEC_CLOUD_PROVIDER=aws VPSSEC_CLOUD_TIER=""
+    users_audit
+    _vpssec_refute _emitted users.suspicious_names
+    _vpssec_refute _emitted users.recent_users
+}
+
+@test "users audit: with no recognised provider, admin is still a name to review" {
+    _account "admin:x:1503:1503::$BATS_TEST_TMPDIR/admin:/bin/bash" \
+        "ubuntu:x:1504:1504::$BATS_TEST_TMPDIR/ubuntu:/bin/bash"
+    mkdir -p "$BATS_TEST_TMPDIR/admin" "$BATS_TEST_TMPDIR/ubuntu"
+    VPSSEC_CLOUD_PROVIDER=unknown VPSSEC_CLOUD_TIER=""
+    users_audit
+    [ "$(_desc users.suspicious_names)" = "admin" ]
+    [[ "$(_desc users.recent_users)" == *"ubuntu ("* ]]
+}
+
+# ---- authorized_keys -----------------------------------------------------------------
+
+# $1 user, $2 key file mode; the account's uid owns its files.
+_keyed_account() {
+    local me uid home="$BATS_TEST_TMPDIR/home/$1"
+    me=$(id -u)
+    uid=$me
+    (( me == 0 )) && uid=$(( 1600 + $(wc -l < "$FAKE_PASSWD") ))
+    _account "$1:x:$uid:$uid::$home:/bin/bash"
+    install -d -m 755 "$home" "$home/.ssh"
+    echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample $1@laptop" > "$home/.ssh/authorized_keys"
+    chmod "$2" "$home/.ssh/authorized_keys"
+    (( me == 0 )) && chown -R "$uid" "$home"
+    return 0
+}
+
+@test "users audit: a 644 or 400 authorized_keys is what sshd accepts, not a finding" {
+    _keyed_account alice 644
+    _keyed_account bob 400
+    users_audit
+    _vpssec_refute _emitted users.ssh_keys_perms
+    [[ "$(jq -r '.[] | select(.id == "users.ssh_keys_info") | .title' "$VPSSEC_STATE/checks.json")" == *": 2" ]]
+}
+
+@test "users audit: a home others can write is a key-permission finding" {
+    _keyed_account alice 600
+    chmod 757 "$BATS_TEST_TMPDIR/home/alice"
+    users_audit
+    _emitted users.ssh_keys_perms
+}
+
+@test "users audit: keys are read from the files sshd reads for each user" {
+    # AuthorizedKeysFile moved the keys; the fixed ~/.ssh/authorized_keys saw none.
+    _keyed_account alice 600
+    local home="$BATS_TEST_TMPDIR/home/alice"
+    mv "$home/.ssh/authorized_keys" "$home/.ssh/keys"
+    _vpssec_stub sshd 0 'authorizedkeysfile .ssh/keys'
+    users_audit
+    [[ "$(jq -r '.[] | select(.id == "users.ssh_keys_info") | .title' "$VPSSEC_STATE/checks.json")" == *": 1" ]]
+}
+
+@test "users audit: an authorized_keys over the size cap is reported, never read" {
+    _keyed_account alice 600
+    local f="$BATS_TEST_TMPDIR/home/alice/.ssh/authorized_keys"
+    truncate -s 2M "$f"
+    users_audit
+    [[ "$(_desc users.ssh_keys_unread)" == *"$f"* ]]
+    _vpssec_refute _emitted users.ssh_keys_info
+}
+
+# ---- sudoers syntax ----------------------------------------------------------------------
+
+# visudo -c: $1 is what checking the main file prints (empty: it passes), $2 a
+# drop-in that fails on its own. sudo 1.9 names the file holding the error.
+_stub_visudo() {
+    export VPSSEC_TEST_SUDOERS="$SUDOERS_FILE" VPSSEC_TEST_MAIN_OUT="$1" VPSSEC_TEST_BROKEN="${2:-}"
+    _vpssec_stub_script visudo <<'SH'
+[[ "$1 $2" == "-c -f" ]] || exit 0
+if [[ "$3" == "$VPSSEC_TEST_SUDOERS" && -n "$VPSSEC_TEST_MAIN_OUT" ]]; then
+    echo "$VPSSEC_TEST_MAIN_OUT" >&2; exit 1
+fi
+if [[ -n "$VPSSEC_TEST_BROKEN" && "$3" == "$VPSSEC_TEST_BROKEN" ]]; then
+    echo "$3:1:10: syntax error" >&2; exit 1
+fi
+exit 0
+SH
+}
+
+@test "users audit: one broken drop-in is named alone, not the sudoers that includes it" {
+    mkdir -p "$SUDOERS_FILE.d"
+    : > "$SUDOERS_FILE.d/broken"
+    _stub_visudo "$SUDOERS_FILE.d/broken:1:10: syntax error" "$SUDOERS_FILE.d/broken"
+    users_audit
+    [ "$(_desc users.sudoers_syntax_invalid)" = "$SUDOERS_FILE.d/broken syntax invalid" ]
+}
+
+@test "users audit: an error in the main sudoers names it" {
+    mkdir -p "$SUDOERS_FILE.d"
+    _stub_visudo "$SUDOERS_FILE:55:10: syntax error"
+    users_audit
+    [ "$(_desc users.sudoers_syntax_invalid)" = "$SUDOERS_FILE syntax invalid" ]
+}
+
+@test "users audit: a visudo failure naming no file blames the file it checked" {
+    mkdir -p "$SUDOERS_FILE.d"
+    _stub_visudo "visudo: unable to parse"
+    users_audit
+    [ "$(_desc users.sudoers_syntax_invalid)" = "$SUDOERS_FILE syntax invalid" ]
 }

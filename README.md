@@ -20,10 +20,10 @@ second sshd on a spare port and makes sure you can still get in.
 
 ## Install
 
-A one-shot run that leaves no files on the system: this pulls the latest release
-into a private temp directory, checks its signature, runs, and deletes itself.
-If you save the report when asked at the end, it is copied out to
-`/tmp/vpssec-report-*`.
+A one-shot run that leaves nothing behind but the dependencies it installs
+(below): this pulls the latest release into a private temp directory, checks its
+signature, runs, and deletes itself. If you save the report when asked at the
+end, it is copied out to `/tmp/vpssec-report-*`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/run.sh | sudo bash
@@ -50,13 +50,18 @@ curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.4.0 bash
 
 Beyond what a stock server install already has (bash, coreutils, systemd, `ss`
 from iproute2), the one extra dependency is `jq`, and both scripts install it
-if it is missing. `cosign` gets installed on demand at a pinned version.
+if it is missing. `cosign`, which checks the signature, comes from the
+distribution's packages where they have it, and otherwise from a pinned release
+checked against its hash. Whatever the scripts install stays installed, after a
+one-shot run too.
 
 ## Usage
 
 ```bash
-sudo vpssec audit
+sudo vpssec audit --lang=en_US
 ```
+
+Output is in Chinese unless you pass `--lang=en_US`; the examples below leave it out.
 
 ```bash
 sudo vpssec audit --include=ssh,ufw,networking   # just these modules
@@ -76,25 +81,26 @@ vpssec help ssh      # the checks and fix ids in one module
 Findings come out as `summary.md` for people to read, plus `summary.json` and
 SARIF 2.1.0 for machines to parse — `summary.md` is for humans and its shape will
 change, so don't parse it. All three are available in Chinese and English
-(`VPSSEC_LANG`). An audit asks before writing them to `reports/` (the default is
+(`--lang`). An audit asks before writing them to `reports/` (the default is
 no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 
-`vpssec audit` runs 338 checks across 21 modules:
+`vpssec audit` runs 355 checks across 21 modules:
 
 | Area | Checks | What it covers |
 |---|---|---|
-| System and kernel | 81 | `sysctl` network and memory settings and whether they survive a reboot, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
-| SSH and accounts | 68 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
-| Containers and web apps | 55 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
-| Detection and logging | 49 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
-| Network and firewall | 45 | UFW rules and default policy, listening sockets vs what you meant to expose, nginx reverse-proxy exposure, cloudflared tunnels |
-| Baseline and ops | 40 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
+| System and kernel | 83 | `sysctl` network and memory settings and whether they survive a reboot, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
+| SSH and accounts | 73 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
+| Containers and web apps | 56 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
+| Detection and logging | 53 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
+| Network and firewall | 46 | UFW rules and default policy, listening sockets vs what you meant to expose, nginx reverse-proxy exposure, cloudflared tunnels |
+| Baseline and ops | 44 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
 
-**124 of those checks have a fix attached**, graded by how much impact they can
-have: 27 apply straight away, 19 ask before applying, 5 require you to type a
-confirmation, and 73 are registered but never run automatically.
+**vpssec can apply 50 fixes**, graded by how much impact they can have: 25
+apply straight away, 20 ask before applying, and 5 require you to type a
+confirmation. Another 73 kinds of finding come with advice only, for you to act
+on by hand.
 
 ## Configuration
 
@@ -103,7 +109,7 @@ There's no config file — flags and a few environment variables:
 | Variable | Effect |
 |---|---|
 | `VPSSEC_VERSION` | Pin a release. Defaults to the latest one, never to `main` |
-| `VPSSEC_LANG` | `zh_CN` (default) or `en_US` |
+| `VPSSEC_LANG` | `zh_CN` (default) or `en_US`, same as `--lang=`. `sudo` does not pass it on from your shell, so with `sudo` use the flag |
 | `VPSSEC_INCLUDE` / `VPSSEC_EXCLUDE` | Same as `--include=` / `--exclude=` |
 | `VPSSEC_NO_VERIFY=1` | Skip signature verification — see [Security](#security) |
 | `INSTALL_DIR` | The vpssec directory itself (not its parent), default `/opt/vpssec`. An existing directory that is not vpssec is refused |
@@ -144,8 +150,21 @@ being installed. That doesn't protect you from this repository being compromised
 removes the check entirely.
 
 The bootstrap scripts come from `main`, so installing means trusting this repo at
-the moment you run the command. If you'd rather not, read a release you've
-reviewed and run its scripts instead.
+the moment you run the command. If you'd rather not, take the scripts from a
+release you've reviewed and run them with `VPSSEC_VERSION` set to its tag — left
+unset, they install the newest release, not the one they came from.
+
+These are the only connections vpssec and its two entry scripts make on their own:
+
+| When | Endpoint | Why |
+|---|---|---|
+| `audit` | `www.google.com`, then `www.baidu.com` if that fails | reachability probe, 5 s |
+| `audit` | `169.254.169.254` · `100.100.100.200` (Alibaba) · `metadata.tencentyun.com` (Tencent) · `169.254.42.42` (Scaleway) | instance metadata: which cloud this is, whether IMDS is exposed, and user-data, read to scan for secrets and never stored or printed; 1–2 s |
+| `audit`, with cloudflared installed | Cloudflare's API, through `cloudflared tunnel list` | listing tunnels, 8 s |
+| `status` | `api.github.com` | newer-release check, 5 s; never during `audit` or `guide` |
+| `guide`, for a fix that installs or upgrades packages | the package sources this host already uses | only for fixes you select |
+| the alert scripts `guide` writes, once you set them up | the webhook or mail setup you configure | delivering your alerts; vpssec itself never sends one |
+| `run.sh` / `install.sh` | `github.com` and `api.github.com` · sigstore · when `jq` or `cosign` is missing, your package sources or cosign's GitHub releases | downloading the release (`latest` resolved to a tag through the API) and checking its signature against cosign's trust root; installing what is missing |
 
 Before disabling password or root SSH login, a second sshd comes up on a spare
 port and you have to confirm you can still connect. Before a fix changes a file,

@@ -87,7 +87,7 @@ setup() {
 
     run _backup_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not create the backup templates directory"* ]]
+    [[ "$output" == *"Could not write the template: $BACKUP_TEMPLATES_DIR/restic-backup.sh"* ]]
     _vpssec_refute grep -q "Backup templates generated in" <<<"$output"
 }
 
@@ -97,7 +97,7 @@ setup() {
 
     run _backup_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not write the backup template"* ]]
+    [[ "$output" == *"Could not write the template"* ]]
     # The borg generator runs after restic; a discarded status would have let
     # it run anyway and the function reach its success line.
     _vpssec_refute test -f "$BACKUP_TEMPLATES_DIR/borg-backup.sh"
@@ -154,7 +154,7 @@ setup() {
 
     run _backup_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not write the backup template"* ]]
+    [[ "$output" == *"Could not write the template"* ]]
     _vpssec_refute grep -q "Backup templates generated in" <<<"$output"
 }
 
@@ -196,4 +196,17 @@ setup() {
     run _backup_fix_generate_templates
     [ "$status" -eq 0 ]
     _vpssec_refute test -f "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+}
+
+@test "generate_templates: the service starts on a host without /mnt/backup" {
+    # systemd fails a unit whose ReadWritePaths entry is missing (226/NAMESPACE)
+    # unless the entry is '-'-prefixed; only /var/log exists everywhere.
+    run _backup_fix_generate_templates
+    [ "$status" -eq 0 ]
+    local paths p
+    paths=$(sed -n 's/^ReadWritePaths=//p' "$BACKUP_TEMPLATES_DIR/backup.service")
+    [ -n "$paths" ]
+    for p in $paths; do
+        [[ "$p" == /var/log || "$p" == -/* ]] || { echo "required path: $p"; false; }
+    done
 }

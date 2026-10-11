@@ -22,7 +22,7 @@ run_case "survives/sudo-path-ignored" 1 \
     '    true'
 
 run_case "keylogin/pubkey-off-ignored" 1 \
-    '    _ssh_pubkey_enabled || return 1' \
+    '    _ssh_pubkey_enabled "$user" || return 1' \
     '    :'
 
 run_case "keylogin/root-refusal-ignored" 1 \

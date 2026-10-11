@@ -8,11 +8,20 @@
 DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
 DOCKER_SOCK="/var/run/docker.sock"
 DOCKER_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/docker"
+# Seconds a daemon gets to answer `docker info` before it counts as unreachable.
+DOCKER_PROBE_TIMEOUT=10
 
 # --- Docker Helper Functions ---
 
+# Bounded: a deadlocked dockerd never answers, and the whole audit would wait.
+# Without timeout(1) the probe runs unbounded, as the filesystem walks do.
 _docker_installed() {
-    check_command docker && docker info &>/dev/null
+    check_command docker || return 1
+    if check_command timeout; then
+        timeout "$DOCKER_PROBE_TIMEOUT" docker info &>/dev/null
+    else
+        docker info &>/dev/null
+    fi
 }
 
 # podman-docker's `docker` is podman, which has no dockerd behind it: the
@@ -136,6 +145,8 @@ _docker_get_root_containers() {
     local root_containers=()
     for container in $(docker ps -q 2>/dev/null); do
         local user=$(docker inspect "$container" --format '{{.Config.User}}' 2>/dev/null)
+        # user[:group]; only the user part decides who the process runs as.
+        user="${user%%:*}"
         if [[ -z "$user" || "$user" == "root" || "$user" == "0" ]]; then
             local name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             root_containers+=("$name")
@@ -144,13 +155,14 @@ _docker_get_root_containers() {
     printf '%s\n' "${root_containers[@]}"
 }
 
+# "name: CAP,CAP" for each running container granted capabilities.
 _docker_get_containers_with_caps() {
     local cap_containers=()
     for container in $(docker ps -q 2>/dev/null); do
-        local caps=$(docker inspect "$container" 2>/dev/null | jq -r '.[0].HostConfig.CapAdd // [] | length')
-        if [[ "$caps" -gt 0 ]]; then
+        local caps=$(docker inspect "$container" 2>/dev/null | jq -r '.[0].HostConfig.CapAdd // [] | join(",")')
+        if [[ -n "$caps" ]]; then
             local name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
-            cap_containers+=("$name")
+            cap_containers+=("${name}: ${caps}")
         fi
     done
     printf '%s\n' "${cap_containers[@]}"
@@ -171,16 +183,15 @@ _docker_sock_mode() {
 }
 
 # Return names of running containers that were started with
-# --security-opt seccomp=unconfined (or equivalent), one per line.
+# --security-opt seccomp=unconfined, one per line. dockerd still accepts the
+# old seccomp:unconfined spelling and stores it as typed, so both count.
 _docker_seccomp_unconfined_containers() {
     local unconfined=()
     local container
     for container in $(docker ps -q 2>/dev/null); do
-        # HostConfig.SecurityOpt is a list of strings like
-        # "seccomp=unconfined" or "apparmor:unconfined". jq -e
-        # returns non-zero if the filter produces no matches.
+        # jq -e returns non-zero if the filter produces no matches.
         if docker inspect "$container" 2>/dev/null \
-            | jq -e '.[0].HostConfig.SecurityOpt // [] | any(. == "seccomp=unconfined")' &>/dev/null; then
+            | jq -e '.[0].HostConfig.SecurityOpt // [] | any(test("^seccomp[=:]unconfined$"))' &>/dev/null; then
             local name
             name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             [[ -n "$name" ]] && unconfined+=("$name")
@@ -434,11 +445,12 @@ _docker_audit_capabilities() {
     local count=$(count_lines "$containers")
 
     if ((count > 0)); then
-        local container_list=$(echo "$containers" | tr '\n' ' ')
+        local container_list="${containers//$'\n'/; }"
         check_emit "docker.containers_with_caps" medium failed \
             title="$(i18n 'docker.added_capabilities' "count=$count")" \
-            suggestion="$(i18n 'docker.added_capabilities_desc')"
-        print_severity "medium" "$(i18n 'docker.added_capabilities' "count=$count")"
+            desc="$(i18n 'docker.added_capabilities_desc' "list=$container_list")" \
+            suggestion="$(i18n 'docker.added_capabilities_suggestion')"
+        print_severity "medium" "$(i18n 'docker.added_capabilities' "count=$count"): $container_list"
     else
         check_emit "docker.no_extra_caps" low passed \
             title="$(i18n 'docker.no_added_capabilities')"
@@ -591,8 +603,10 @@ _docker_audit_secrets_in_env() {
     if (( count > 0 )); then
         # Log the FACT of hits; the desc carries kinds, not values.
         log_info "docker env secret hits: $count container(s) with credential-format env vars"
-        # Compress to first 5 lines + total — long lists overflow display.
-        local sample; sample=$(echo "$hits" | head -5 | tr '\n' '; ' | sed 's/; $//')
+        # The first five containers only: longer lists overflow the display,
+        # and the title carries the count.
+        local sample; sample=$(head -5 <<<"$hits")
+        sample="${sample//$'\n'/; }"
         check_emit "docker.secrets_in_env" medium failed \
             title="$(i18n 'docker.secrets_in_env' "count=$count")" \
             desc="$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
@@ -647,15 +661,12 @@ docker_fix() {
 }
 
 _docker_fix_generate_proxy_template() {
-    local ports=$(_docker_get_exposed_ports)
     local template_dir="${DOCKER_TEMPLATES_DIR}"
-    mkdir -p "$template_dir"
-
     local output_file="${template_dir}/docker-compose.proxy.yml"
 
     print_info "$(i18n 'docker.generating_template')"
 
-    cat > "$output_file" <<'EOF'
+    write_template "$output_file" <<'EOF' || return 1
 # vpssec generated template - Docker Reverse Proxy Configuration
 # Publish nothing from app containers; let the reverse proxy be the only
 # ingress. Before first use:   docker network create proxy
@@ -717,8 +728,7 @@ networks:
 EOF
 
     # Generate Traefik config
-    mkdir -p "${template_dir}/traefik"
-    cat > "${template_dir}/traefik/traefik.yml" <<'EOF'
+    write_template "${template_dir}/traefik/traefik.yml" <<'EOF' || return 1
 # Traefik configuration
 api:
   dashboard: false
@@ -749,8 +759,12 @@ certificatesResolvers:
         entryPoint: web
 EOF
 
-    touch "${template_dir}/traefik/acme.json"
-    chmod 600 "${template_dir}/traefik/acme.json"
+    # touch, not a write: an acme.json already there holds issued certificates.
+    local acme="${template_dir}/traefik/acme.json"
+    if ! touch "$acme" || ! chmod 600 "$acme"; then
+        print_error "$(i18n 'common.template_write_failed' "path=$acme")"
+        return 1
+    fi
 
     print_ok "$(i18n 'docker.template_generated' "path=$output_file")"
     print_info "$(i18n 'docker.review_template')"

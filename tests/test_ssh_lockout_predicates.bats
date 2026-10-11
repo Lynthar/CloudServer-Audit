@@ -41,11 +41,15 @@ setup() {
     confirm_critical() { return 0; }
 }
 
-# $1 user, $2 shell, $3 shadow hash (default a usable one), $4 expiry day.
+# $1 user, $2 shell, $3 shadow hash (default a usable one), $4 expiry day. A
+# non-root runner owns every fixture file, so there each account takes its uid:
+# StrictModes refuses a key file its user does not own.
 _account() {
     local uid=$(( $(wc -l < "$BATS_TEST_TMPDIR/passwd") + 1000 ))
     [[ "$1" == root ]] && uid=0
+    [[ "$(id -u)" != 0 ]] && uid=$(id -u)
     mkdir -p "$HOMES/$1"
+    chmod 755 "$HOMES/$1"
     printf '%s:x:%s:%s::%s:%s\n' "$1" "$uid" "$uid" "$HOMES/$1" "$2" >> "$BATS_TEST_TMPDIR/passwd"
     printf '%s:%s:19000:0:99999:7::%s:\n' "$1" "${3-\$y\$j9T\$abc\$def}" "${4:-}" >> "$BATS_TEST_TMPDIR/shadow"
 }
@@ -55,11 +59,13 @@ _key() {
     local user="$1" rel="${2:-.ssh/authorized_keys}"
     shift 2 || shift $#
     mkdir -p "$(dirname "$HOMES/$user/$rel")"
+    chmod 755 "$(dirname "$HOMES/$user/$rel")"
     if (( $# )); then
         printf '%s\n' "$@" >> "$HOMES/$user/$rel"
     else
         echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample $user@laptop" >> "$HOMES/$user/$rel"
     fi
+    chmod 644 "$HOMES/$user/$rel"
 }
 
 _dropin() { printf '%s\n' "${@:2}" > "$SSH_DROPIN_DIR/$1"; }

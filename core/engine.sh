@@ -87,8 +87,8 @@ declare -gA VPSSEC_MODULE_LOADED=()
 declare -gA VPSSEC_MODULE_UNAVAILABLE=()  # Modules unavailable due to missing deps
 
 # Modules that did NOT complete: failed to load, audit returned non-zero, a
-# check could not be recorded, or a filesystem walk was cut short. This is the
-# ONLY signal for an incomplete audit — add new failure modes here, not beside it.
+# check went unrecorded, a filesystem walk was cut short, or the query every
+# check stands on failed. The ONLY incompleteness signal: add new modes here.
 declare -ga VPSSEC_MODULES_FAILED=()
 
 # Load-failed modules, separately: loading happens BEFORE state_init, so
@@ -100,7 +100,7 @@ declare -gA VPSSEC_MODULE_LOAD_FAILED=()
 # inside check_emit, which is the very call that just failed.
 declare -gA VPSSEC_MODULE_EMIT_FAILED=()
 
-# Record a module failure once (kind: load, audit, emit or walk).
+# Record a module failure once (kind: load, audit, emit, walk or query).
 _module_record_failure() {
     local module="$1" kind="$2"
     [[ "$kind" == "load" ]] && VPSSEC_MODULE_LOAD_FAILED[$module]=1
@@ -166,9 +166,9 @@ module_available() {
             return 0
             ;;
         docker)
-            # podman counts: the module's own probe reports an uninspectable
-            # runtime, but only if the module actually loads.
-            check_command docker || check_command podman || return 1
+            # Not gated: docker_audit itself tells "not installed" from a runtime
+            # it cannot reach (rootless Docker, Podman), even with no CLI on PATH.
+            return 0
             ;;
         nginx)
             nginx_present || return 1
@@ -230,8 +230,8 @@ module_load_all() {
         include="preflight,cloud,timezone,${include}"
     fi
 
-    # Unknown include tokens are fatal — a typo would otherwise produce an
-    # empty audit that reads as "everything passed". Unknown exclude tokens
+    # Unknown include tokens are fatal (exit 1) — a typo would otherwise produce
+    # an empty audit that reads as "everything passed". Unknown exclude tokens
     # only warn: a wrong exclude is at worst conservative.
     _module_validate_filter "$include" "include" "fatal"
     _module_validate_filter "$exclude" "exclude" "warn"
@@ -272,7 +272,7 @@ module_load_all() {
 
 # Validate a comma-separated module list.
 # Args: <list> <flag-name: include|exclude> <severity: fatal|warn>
-# fatal exits 2 on any unknown token; warn continues.
+# fatal exits 1 (bad arguments) on any unknown token; warn continues.
 _module_validate_filter() {
     local list="$1"
     local flag="$2"
@@ -305,9 +305,13 @@ _module_validate_filter() {
     (( ${#invalid[@]} == 0 )) && return 0
 
     if [[ "$severity" == "fatal" ]]; then
-        print_error "$(i18n 'error.unknown_modules' "flag=$flag" "list=${invalid[*]}")"
-        print_msg "$(i18n 'error.available_modules' "list=${VPSSEC_MODULE_ORDER[*]}")"
-        exit 2
+        local msg
+        msg=$(i18n 'error.unknown_modules' "flag=$flag" "list=${invalid[*]}")
+        msg+=$'\n'"  $(i18n 'error.available_modules' "list=${VPSSEC_MODULE_ORDER[*]}")"
+        # One call to stderr, so the valid names stay with the error even under
+        # --json-only, where print_msg would drop them.
+        print_error "$msg" >&2
+        exit 1
     else
         print_warn "$(i18n 'error.unknown_modules_ignored' "flag=$flag" "list=${invalid[*]}")"
     fi
@@ -383,6 +387,16 @@ _record_unavailable_modules() {
 # Side effects both callers rely on: checks.json is reset and refilled, and
 # VPSSEC_QUIET_SCAN is 1 during the loop but 0 again on return.
 _run_audit_pass() {
+    # Each pass reports its own completeness: guide's audit after the fixes must
+    # not inherit a crash from the one before. A load failure happened once,
+    # before any pass, and still holds, so it carries over.
+    VPSSEC_MODULES_FAILED=()
+    VPSSEC_MODULE_EMIT_FAILED=()
+    local module
+    for module in "${!VPSSEC_MODULE_LOAD_FAILED[@]}"; do
+        VPSSEC_MODULES_FAILED+=("$module")
+    done
+
     state_init
 
     local -a modules=()
@@ -392,7 +406,6 @@ _run_audit_pass() {
     done < <(module_get_enabled)
 
     local unavailable_count=0
-    local module
     for module in "${!VPSSEC_MODULE_UNAVAILABLE[@]}"; do
         [[ "${VPSSEC_MODULE_UNAVAILABLE[$module]}" == "1" ]] && ((unavailable_count++)) || true
     done
@@ -799,9 +812,9 @@ _guide_resume() {
         return 0
     fi
 
-    # The plan was approved under whatever --include ran then; this run may
-    # have loaded fewer modules, and a missing *_fix would fail every step and
-    # clear the progress. Stop instead, with the progress still there.
+    # The plan was approved under whatever --include ran then, so load each
+    # module its remaining fixes need. One that cannot load stops the resume
+    # with the progress kept: without its *_fix every step would fail.
     local fix_id fix_module
     while IFS= read -r fix_id; do
         fix_module="${fix_id%%.*}"
@@ -927,7 +940,16 @@ guide_mode() {
         fi
         # Show full report same as audit mode
         report_generate_all
-        print_ok "$(i18n 'common.safe') - $(i18n 'guide.complete')"
+        # "Complete" only when nothing failed: a finding no fix covers is left
+        # to the operator, and an unfinished audit exits 3 as audit does.
+        local failed_count
+        failed_count=$(state_get_checks | jq '[.[] | select(.status == "failed")] | length')
+        if (( failed_count > 0 )); then
+            print_warn "$(i18n 'guide.no_auto_fix' "count=$failed_count")"
+        else
+            print_ok "$(i18n 'common.safe') - $(i18n 'guide.complete')"
+        fi
+        (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || return 3
         return 0
     fi
 
@@ -1063,6 +1085,12 @@ guide_mode() {
         pp_sev=$(echo "$pp_fix" | jq -r '.severity')
         pp_title=$(echo "$pp_fix" | jq -r '.title')
         pp_safety=$(get_fix_safety "$pp_id" 2>/dev/null || echo "unknown")
+        case "$pp_sev" in
+            high)   pp_sev=$(i18n 'common.high') ;;
+            medium) pp_sev=$(i18n 'common.medium') ;;
+            low)    pp_sev=$(i18n 'common.low') ;;
+            info)   pp_sev=$(i18n 'common.info') ;;
+        esac
         if [[ "$pp_safety" == "risky" || "$pp_safety" == "confirm" ]]; then
             pp_warn=$(get_fix_warning "$pp_id" 2>/dev/null || echo "")
             echo "- [$pp_sev] $pp_title ($pp_id) [$pp_safety${pp_warn:+: $pp_warn}]" >> "$plan_preview"
@@ -1102,7 +1130,10 @@ guide_mode() {
     # Final report (now reflects the post-fix state)
     report_generate_all
 
-    return "$plan_rc"
+    # A failed fix (1) outranks an unfinished audit (3, as audit exits).
+    (( plan_rc != 0 )) && return "$plan_rc"
+    (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || return 3
+    return 0
 }
 
 # --- Rollback Mode ---

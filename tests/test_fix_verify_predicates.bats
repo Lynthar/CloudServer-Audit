@@ -87,8 +87,8 @@ SH
     # on every such host and ufw.allow_ssh could never be seen to work.
     source "$(_vpssec_repo_root)/core/distro.sh"
     source "$(_vpssec_repo_root)/modules/ufw.sh"
-    # Only Debian/Ubuntu fold no_firewall into ufw.disabled; pinned so the
-    # distro running bats (CI also runs Rocky and Arch) does not decide.
+    # Pinned so the distro running bats (CI also runs Rocky and Arch) does not
+    # decide what an absent UFW would be reported as.
     VPSSEC_DISTRO_FAMILY=debian
     _vpssec_stub ufw 0 "Status: inactive"
     _vpssec_stub systemctl 3
@@ -152,7 +152,7 @@ SH
     # _fs_check_sensitive_file returns 1 for each bad file; under errexit a
     # lister that let that through would stop at the first and hide the rest.
     source "$(_vpssec_repo_root)/modules/filesystem.sh"
-    FS_SENSITIVE_FILES=(["$etc/passwd"]="644" ["$etc/group"]="644")
+    FS_SENSITIVE_FILES=(["$etc/passwd"]="600" ["$etc/group"]="600")
     FS_SUDOERS_D="$etc/sudoers.d"
     FS_SSHD_CONFIG_D="$etc/sshd_config.d"
     mkdir -p "$FS_SUDOERS_D" "$FS_SSHD_CONFIG_D"
@@ -161,17 +161,23 @@ SH
         printf 'x\n' > "$f"
         chmod 666 "$f"
     done
+    # Read bits alone keep a file in its own bucket; a write bit is high anywhere.
+    chmod 644 "$etc/passwd" "$etc/group"
+    chmod 444 "$FS_SUDOERS_D/ops"
 
     run bash -ec "$(declare -f _fs_sensitive_perm_issues _fs_sensitive_perm_issue \
-        _fs_check_sensitive_file _fs_is_critical_perm_path)
+        _fs_check_sensitive_file _fs_is_critical_perm_path _fs_sensitive_expected \
+        _fs_group_grants_access)
         $(declare -p FS_SENSITIVE_FILES FS_SUDOERS_D FS_SSHD_CONFIG_D)
         _fs_sensitive_perm_issues"
     [ "$status" -eq 0 ]
-    [ "$(grep -c '^med' <<<"$output")" -eq 3 ]
+    [ "$(grep -c '^med' <<<"$output")" -eq 2 ]
     grep -q "^high	$FS_SUDOERS_D/ops:" <<<"$output"
+    grep -q "^high	$FS_SSHD_CONFIG_D/10.conf:" <<<"$output"
     _vpssec_refute _fs_sensitive_perms_ok
 
-    chmod 644 "$etc/passwd" "$etc/group" "$FS_SSHD_CONFIG_D/10.conf"
+    chmod 600 "$etc/passwd" "$etc/group"
+    chmod 644 "$FS_SSHD_CONFIG_D/10.conf"
     chmod 440 "$FS_SUDOERS_D/ops"
     _fs_sensitive_perms_ok
 }
@@ -244,7 +250,6 @@ _sysctl_table() {
     SYSCTL[net.ipv6.conf.all.accept_ra]=1
     _kernel_ipv6_uses_ra() { return 0; }     # accept_ra stays: RA host
     _kernel_write_sysctl() { SYSCTL[$1]="$2"; }
-    _kernel_reload_sysctl_dropin() { :; }
     sysctl() { return 0; }
 
     _kernel_fix_network_params

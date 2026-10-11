@@ -102,6 +102,28 @@ setup() {
     rm -rf "$dest"
 }
 
+@test "vpssec runs from a tree that cannot be executed, as on a noexec /tmp" {
+    local src work args
+    src="$(_vpssec_repo_root)/run.sh"
+    work="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$work"
+    eval "$(awk '/^main\(\)/,/^}/' "$src")"
+    print_banner() { :; }; print_info() { :; }; cleanup() { :; }
+    check_requirements() { :; }; resolve_version() { :; }; download_and_verify() { :; }
+    # No execute bit: execve refuses the file as a noexec mount does, root included.
+    printf 'echo "ran:[$*]"\n' > "$work/vpssec"
+    chmod 0644 "$work/vpssec"
+
+    cd "$work"
+    # One entry per call site in main: mode and arguments, either, neither.
+    for args in "audit --json-only" "audit" "--json-only" ""; do
+        # shellcheck disable=SC2086  # split on purpose: each word is one argument
+        run main $args
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"ran:[$args]"* ]]
+    done
+}
+
 @test "vpssec refuses guide and rollback under the marker, however the mode was set" {
     [ "$(id -u)" = "0" ] || skip "the root check runs first and exits 1 for non-root"
     local m

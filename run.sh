@@ -1,7 +1,7 @@
 #!/bin/bash
-# One-shot runner for a sigstore-verified release; nothing persists. Args after
-# `-s --` go to vpssec; VPSSEC_VERSION pins a tag, VPSSEC_NO_VERIFY=1 skips
-# verification. Everything here prints to stderr — stdout belongs to vpssec.
+# One-shot runner for a sigstore-verified release; only the dependencies it installs
+# and a report you save outlive it. Args after `-s --` go to vpssec; VPSSEC_VERSION
+# pins a tag, VPSSEC_NO_VERIFY=1 skips verification. stderr only: stdout is vpssec's.
 
 set -euo pipefail
 
@@ -218,6 +218,7 @@ _validate_version_tag() {
 
 resolve_version() {
     if [[ "$VPSSEC_VERSION" != "latest" ]]; then
+        [[ "$VPSSEC_VERSION" == v* ]] || VPSSEC_VERSION="v${VPSSEC_VERSION}"
         _validate_version_tag "$VPSSEC_VERSION"
         return 0
     fi
@@ -290,7 +291,6 @@ download_and_verify() {
 
     print_info "Extracting..."
     tar -xz --strip-components=1 -f "$archive"
-    chmod +x vpssec
 }
 
 cleanup() {
@@ -347,24 +347,25 @@ main() {
     # VPSSEC_MODE reach them with no mode word for the check above to see.
     export VPSSEC_ONESHOT=1
 
-    # vpssec's status is passed on only after the reports are copied out: an
-    # incomplete scan (3) still saved them, and the EXIT trap deletes this tree.
+    # `bash ./vpssec`: a /tmp mounted noexec, as the audit recommends, refuses to
+    # execute this tree. The status is passed on only after the reports are copied
+    # out: an incomplete scan (3) still saved them, and the EXIT trap deletes the tree.
     local rc=0
     if [[ -n "$mode" ]]; then
         print_info "Running vpssec $mode..."
         echo "" >&2
         if (( ${#args[@]} > 0 )); then
-            ./vpssec "$mode" "${args[@]}" || rc=$?
+            bash ./vpssec "$mode" "${args[@]}" || rc=$?
         else
-            ./vpssec "$mode" || rc=$?
+            bash ./vpssec "$mode" || rc=$?
         fi
     else
         print_info "Starting vpssec..."
         echo "" >&2
         if (( ${#args[@]} > 0 )); then
-            ./vpssec "${args[@]}" || rc=$?
+            bash ./vpssec "${args[@]}" || rc=$?
         else
-            ./vpssec || rc=$?
+            bash ./vpssec || rc=$?
         fi
     fi
 

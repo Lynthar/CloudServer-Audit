@@ -4,8 +4,8 @@
 # The web-root walks follow the filesystem module's rule for a cut walk.
 
 run_case "sensitive/passed-despite-cut" 1 \
-    '    elif (( walked )); then' \
-    '    else'
+    '    elif (( walked )) && [[ -n "$(_webapp_web_roots)" ]]; then' \
+    '    elif [[ -n "$(_webapp_web_roots)" ]]; then'
 
 run_case "backup/cut-unnamed" 1 \
     '    backups=$(_webapp_backup_files) || _FS_CUT_WALKS+=(webapp-backup)' \

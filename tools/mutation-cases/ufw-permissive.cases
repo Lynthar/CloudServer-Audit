@@ -18,14 +18,62 @@ run_case "permissive/outbound-database-port-counted" 1 \
     '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+([A-Z]+\s+)?Anywhere"; then'
 
 run_case "permissive/outbound-counted" 1 \
-    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then' \
-    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+([A-Z]+[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then'
+    '        [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere ]] || continue' \
+    '        [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+(ALLOW|LIMIT)[[:space:]]+([A-Z]+[[:space:]]+)?Anywhere ]] || continue'
 
 # The SSH/web exclusion as a prefix: 2222 then passes for 22.
 run_case "permissive/port-prefix-excluded" 1 \
-    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then' \
-    '        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)"; then'
+    '            [[ "$open_ok" == *" ${tok%%/*} "* ]] && continue' \
+    '            [[ "$open_ok" == *" ${tok:0:2} "* ]] && continue'
 
 run_case "permissive/database-port-also-for-review" 1 \
-    '            if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then' \
-    '            if [[ -n "$rule_port" ]]; then'
+    '            [[ " ${sensitive_ports[*]%%:*} " == *" ${tok%%/*} "* ]] && continue' \
+    '            :'
+
+# Only the fixed 22/80/443: the port sshd was moved to (and that ufw.enable
+# allowed) is flagged on the next audit.
+run_case "permissive/moved-ssh-port-flagged" 1 \
+    "    local open_ok=\" 22 80 443 \$(get_ssh_ports | tr '\\n' ' ')\"" \
+    '    local open_ok=" 22 80 443 "'
+
+# The first word instead of the last: each rule's "(v6)" copy is listed again,
+# and a destination address is read as the port.
+run_case "permissive/first-word-read-as-port" 1 \
+    '        tok="${to##* }"' \
+    '        tok="${to%% *}"'
+
+# A rule bound to an interface whose name has a dot (a VLAN) reads as an address.
+run_case "permissive/interface-rule-listed" 1 \
+    '        [[ "$to" == *" on "* || "$to" == *" (v6)" ]] && continue' \
+    '        [[ "$to" == *" (v6)" ]] && continue'
+
+# Each "(v6)" copy of an app rule is looked up as an app of that name and listed.
+run_case "permissive/v6-copy-listed" 1 \
+    '        [[ "$to" == *" on "* || "$to" == *" (v6)" ]] && continue' \
+    '        [[ "$to" == *" on "* ]] && continue'
+
+# App profiles skipped whatever they open: Samba open to anywhere goes unlisted.
+run_case "permissive/app-ports-ignored" 1 \
+    '                _ufw_ports_expected "$open_ok" "$ports" && continue' \
+    '                continue'
+
+# App profiles listed whatever they open: OpenSSH and Nginx Full back as findings.
+run_case "permissive/app-on-ssh-listed" 1 \
+    '                _ufw_ports_expected "$open_ok" "$ports" && continue' \
+    '                :'
+
+# The name looked up as written in ufw status, not as ufw stores it: no app
+# with a space in its name ever resolves, and Nginx Full is listed.
+run_case "permissive/app-name-undecoded" 1 \
+    '            gsub(/%20/, " ", app)' \
+    '            app = app'
+
+run_case "permissive/app-ports-unchecked" 1 \
+    '            [[ "$ok" == *" $p "* ]] || return 1' \
+    '            :'
+
+# Anything the rule store cannot resolve silently dropped: an app it has no
+# tuple for, an allow-all, a rule for every port of one address.
+run_case "permissive/unresolved-app-dropped" 1 \
+    '                tok="$to"' \
+    '                continue'

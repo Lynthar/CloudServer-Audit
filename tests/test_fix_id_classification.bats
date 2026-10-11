@@ -14,12 +14,12 @@ _classified_fix_ids() {
     { _map_keys FIX_SAFE; _map_keys FIX_CONFIRM; _map_keys FIX_RISKY; } | sort -u
 }
 
-# One line per emitted check, "<id>\t<fix>". Sites: `check_emit "<id>" …` /
+# One line per emitted check, "<id>\t<fix>\t<status>" (status when literal). Sites: `check_emit "<id>" …` /
 # `_malware_emit_finding "<id>" …` with a `fix="…"` continuation line; rows of
 # ssh.sh's SSH_DIRECTIVE_CHECKS; core/state.sh's hand-serialised fallback block.
 _emitted_sites() {
     awk '
-        function flush() { if (id != "") print id "\t" fix; id = ""; fix = "" }
+        function flush() { if (id != "") print id "\t" fix "\t" st; id = ""; fix = ""; st = "" }
         /create_check_json/ { flush(); old = 1; n = 0; next }
         old {
             n++
@@ -36,6 +36,7 @@ _emitted_sites() {
         }
         match($0, /(^|[ \t])(check_emit|_malware_emit_finding) "[a-zA-Z0-9_.]+"/) {
             flush(); split(substr($0, RSTART, RLENGTH), q, "\""); id = q[2]
+            split(substr($0, RSTART + RLENGTH), w, " "); st = w[2]
         }
         id != "" && match($0, /(^|[ \t])fix="[a-zA-Z0-9_.]+"/) {
             split(substr($0, RSTART, RLENGTH), q, "\""); fix = q[2]
@@ -109,6 +110,19 @@ _emitted_check_ids() {
         echo "Classified but never emitted — no check hands the engine this fix_id,"
         echo "so it can never be selected, yet 'vpssec help' advertises it:"
         echo "  $orphans"
+        false
+    fi
+}
+
+# The engine offers fixes for failed checks only, so a fix on a passing one can
+# never be selected, while `vpssec help` lists it.
+@test "no fix is attached to a passing check" {
+    local stray
+    stray=$(_emitted_sites "$REPO"/modules/*.sh "$REPO"/core/*.sh \
+        | awk -F'\t' '$3 == "passed" && $2 != "" { print $1 " -> " $2 }')
+    if [[ -n "$stray" ]]; then
+        echo "Fix attached to a passing check, so never offered:"
+        echo "$stray"
         false
     fi
 }

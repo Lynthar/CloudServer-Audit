@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_logging_journald.bats against modules/logging.sh.
+# mutate-suite: modules/logging.sh tests/test_logging_journald.bats
+#
+# What a volatile journal is said to lose: the logs, unless a syslog daemon
+# writes them to /var/log as well.
+
+run_case "volatile/syslog-never-asked" 1 \
+    '        if daemon=$(_logging_syslog_daemon); then' \
+    '        if false; then'
+
+run_case "volatile/rsyslog-not-a-syslog-daemon" 1 \
+    '    for unit in rsyslog syslog-ng; do' \
+    '    for unit in syslog-ng; do'
+
+# Any unit counts as running: every host gets the "logs survive" wording.
+run_case "volatile/inactive-unit-counted" 1 \
+    '        if systemctl is-active --quiet "$unit" 2>/dev/null; then' \
+    '        if true; then'

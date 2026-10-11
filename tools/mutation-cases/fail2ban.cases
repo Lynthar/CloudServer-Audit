@@ -13,8 +13,7 @@
 #
 # The occurrence index (the rule is in tools/mutate-suite.sh's header) matters in
 # several places: `if _f2b_service_active; then`
-# appears five times at the same indentation, and the drop-in content carries
-# `maxretry = 3` / `bantime = 1h` in both [DEFAULT] and [sshd].
+# appears five times at the same indentation.
 
 # ---------------------------------------------------------------------------
 # The rollback contract. backup_file's second job is recording an ABSENT path in
@@ -37,12 +36,16 @@ run_case "backup/not-taken-at-all" 1 \
 # change exists to remove.
 
 run_case "write/jail-local-again" 1 \
-    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then' \
-    '    if ! write_file_atomic "$F2B_JAIL_LOCAL" "$jail_content"; then'
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"# Never ban these: the jail'"'"'s own list, loopback and the current SSH source."$'"'"'\n'"'"'"ignoreip = $f2b_ignoreip"$'"'"'\n'"'"'"$jail_extra"; then' \
+    '    if ! write_file_atomic "$F2B_JAIL_LOCAL" "$jail_content"$'"'"'\n'"'"'"# Never ban these: the jail'"'"'s own list, loopback and the current SSH source."$'"'"'\n'"'"'"ignoreip = $f2b_ignoreip"$'"'"'\n'"'"'"$jail_extra"; then'
 
 run_case "write/status-discarded" 1 \
-    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then' \
-    '    if write_file_atomic "$F2B_DROPIN" "$jail_content"; false; then'
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"$jail_extra"; then' \
+    '    if write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"$jail_extra"; false; then'
+
+run_case "write/ignoreip-status-discarded" 1 \
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"# Never ban these: the jail'"'"'s own list, loopback and the current SSH source."$'"'"'\n'"'"'"ignoreip = $f2b_ignoreip"$'"'"'\n'"'"'"$jail_extra"; then' \
+    '    if write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"# Never ban these: the jail'"'"'s own list, loopback and the current SSH source."$'"'"'\n'"'"'"ignoreip = $f2b_ignoreip"$'"'"'\n'"'"'"$jail_extra"; false; then'
 
 # ---------------------------------------------------------------------------
 # Validation and the cleanup that follows it.
@@ -64,9 +67,13 @@ run_case "restore/backup-not-put-back" 1 \
     '    if [[ -n "$bak" && -f "$bak" ]]; then' \
     '    if false; then'
 
-# Occurrence 1 of two: the config-test-failure branch. (#2 is the
-# postcondition-failure branch, further down.)
-run_case "restore/not-called-after-bad-config" 1 \
+# Occurrence 1 of three: the failed second (ignoreip) write; the first write
+# already changed the file. #2 the config-test failure, #3 the postcondition.
+run_case "restore/not-called-after-failed-second-write" 1 \
+    '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
+    '        :'
+
+run_case "restore/not-called-after-bad-config" 2 \
     '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
     '        :'
 # No case for the third call site on the failed-WRITE branch: write_file_atomic
@@ -96,8 +103,8 @@ run_case "enable_ssh_jail/does-nothing" 1 \
 # against a real fail2ban: a drop-in that passes `-t` can still make fail2ban
 # fail to initialize the jail, and then the box has no sshd jail at all.
 
-# Occurrence 2: #1 is the same call on the config-test-failure branch above.
-run_case "postcondition/failure-leaves-dropin-live" 2 \
+# Occurrence 3: #1 and #2 are the same call on the write and config-test branches.
+run_case "postcondition/failure-leaves-dropin-live" 3 \
     '        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"' \
     '        :'
 
@@ -123,12 +130,36 @@ run_case "backend/journal-check-dropped" 1 \
 # rather than assume.
 
 run_case "ignoreip/loopback-dropped" 1 \
-    '    local f2b_ignoreip="127.0.0.1/8 ::1"' \
-    '    local f2b_ignoreip="10.255.255.254"'
+    '    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '"'"'%s\n'"'"' 127.0.0.1/8 ::1 ${f2b_current_ip:+"$f2b_current_ip"}; } \' \
+    '    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '"'"'%s\n'"'"' ${f2b_current_ip:+"$f2b_current_ip"}; } \'
 
 run_case "ignoreip/operator-address-dropped" 1 \
-    '    [[ -n "$f2b_current_ip" ]] && f2b_ignoreip+=" $f2b_current_ip"' \
+    '    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '"'"'%s\n'"'"' 127.0.0.1/8 ::1 ${f2b_current_ip:+"$f2b_current_ip"}; } \' \
+    '    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '"'"'%s\n'"'"' 127.0.0.1/8 ::1; } \'
+
+# The list read before the drop-in enables the jail: `-d` has no sshd line on a
+# host where it was off, and the jail's inherited list is lost.
+run_case "ignoreip/read-before-jail-enabled" 1 \
+    '    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'"'"'\n'"'"'"$jail_extra"; then' \
+    '    if false; then'
+
+# The sshd jail's own list replaced rather than added to.
+run_case "ignoreip/existing-list-replaced" 1 \
+    '    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '"'"'%s\n'"'"' 127.0.0.1/8 ::1 ${f2b_current_ip:+"$f2b_current_ip"}; } \' \
+    '    f2b_ignoreip=$( { printf '"'"'%s\n'"'"' 127.0.0.1/8 ::1 ${f2b_current_ip:+"$f2b_current_ip"}; } \'
+
+run_case "ignoreip/unknown-operator-unsaid" 1 \
+    '    [[ -n "$f2b_current_ip" ]] || print_warn "$(i18n '"'"'fail2ban.operator_ip_unknown'"'"')"' \
     '    :'
+
+# The sshd jail's settings back in [DEFAULT], where they reach every jail.
+run_case "default/backend-for-every-jail" 1 \
+    '# runtime). Everything else this tool sets is in [sshd] below.' \
+    'backend = $f2b_backend'
+
+run_case "default/ignoreip-for-every-jail" 1 \
+    '# runtime). Everything else this tool sets is in [sshd] below.' \
+    'ignoreip = $f2b_ignoreip'
 
 # ---------------------------------------------------------------------------
 # The ban action. A choice by "nft has tables" sent nft-only hosts to iptables.
@@ -161,11 +192,11 @@ run_case "jail/not-enabled" 1 \
     'enabled = true' \
     'enabled = false'
 
-run_case "maxretry/left-at-stock-default" 2 \
+run_case "maxretry/left-at-stock-default" 1 \
     'maxretry = 3' \
     'maxretry = 5'
 
-run_case "bantime/left-at-stock-default" 2 \
+run_case "bantime/left-at-stock-default" 1 \
     'bantime = 1h' \
     'bantime = 10m'
 

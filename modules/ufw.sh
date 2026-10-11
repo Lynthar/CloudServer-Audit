@@ -128,6 +128,42 @@ _host_has_global_ipv6() {
     _host_has_global_ipv6_from_text "$out"
 }
 
+# What app profile $1 opens, as ufw resolved it into its rule store: one
+# "<ports>[/<proto>]" per inbound ALLOW/LIMIT tuple naming it (ufw writes a
+# space in the name as %20). Nothing when no tuple names it.
+_ufw_app_ports() {
+    local f
+    local -a files=()
+    for f in "$UFW_USER_RULES" "$UFW_USER6_RULES"; do
+        [[ -r "$f" ]] && files+=("$f")
+    done
+    (( ${#files[@]} > 0 )) || return 0
+    APP="$1" awk '
+        $1 == "###" && $2 == "tuple" && $3 == "###" {
+            n = NF
+            if ($n ~ /^comment=/) n--
+            if (n < 12 || ($4 != "allow" && $4 != "limit") || $n !~ /^in(_|$)/) next
+            app = $10
+            gsub(/%20/, " ", app)
+            if (app != ENVIRON["APP"]) next
+            p = $6 (($5 == "any") ? "" : "/" $5)
+            if (!(p in seen)) { seen[p] = 1; print p }
+        }
+    ' "${files[@]}"
+}
+
+# Is every port in the "<ports>[/<proto>]" lines of $2 in the space-padded list
+# $1? A range is never in it.
+_ufw_ports_expected() {
+    local ok="$1" t list p
+    while read -r t; do
+        list="${t%%/*}"
+        for p in ${list//,/ }; do
+            [[ "$ok" == *" $p "* ]] || return 1
+        done
+    done <<<"$2"
+}
+
 # Detect overly permissive rules (from Anywhere to sensitive ports)
 # Returns: list of problematic rules
 _ufw_find_permissive_rules() {
@@ -171,25 +207,31 @@ _ufw_find_permissive_rules() {
         fi
     done
 
-    # Check for overly broad rules (allow all from specific IP with no port)
-    # This is less critical but worth noting
-    while read -r line; do
-        # "ALLOW Anywhere" has no literal IN and v6 lines end "(v6)", so IN
-        # is optional and there is no end anchor. The port exclusion is
-        # anchored to the WHOLE token, or 2222 matches as "starts with 22".
-        if echo "$line" | grep -qE "(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere" && ! echo "$line" | grep -qE "^(22|80|443)(/|[[:space:]]|$)"; then
-            # Non-standard port open to anywhere
-            local rule_port=$(echo "$line" | awk '{print $1}')
-            if [[ -n "$rule_port" && ! " ${sensitive_ports[*]%%:*} " =~ " ${rule_port%%/*} " ]]; then
-                # Only flag if not already in sensitive_ports and not common web ports
-                case "$rule_port" in
-                    22|80|443|22/tcp|80/tcp|443/tcp) ;;
-                    *)
-                        issues+=("$(i18n 'ufw.f_open_anywhere_review' "port=$rule_port")")
-                        ;;
-                esac
+    # Any other inbound ALLOW/LIMIT from anywhere is listed for review by the port
+    # it ends in, an app profile by the ports ufw resolved it to. Not SSH (each
+    # port sshd listens on) or web; not interface-bound rules or "(v6)" copies.
+    local open_ok=" 22 80 443 $(get_ssh_ports | tr '\n' ' ')"
+    local line to tok ports
+    while IFS= read -r line; do
+        [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere ]] || continue
+        to="${BASH_REMATCH[1]}"
+        [[ "$to" == *" on "* || "$to" == *" (v6)" ]] && continue
+        tok="${to##* }"
+        if [[ "$tok" =~ ^[0-9][0-9,:]*(/(tcp|udp))?$ ]]; then
+            [[ "$open_ok" == *" ${tok%%/*} "* ]] && continue
+            [[ " ${sensitive_ports[*]%%:*} " == *" ${tok%%/*} "* ]] && continue
+        else
+            # An app profile, or every port (Anywhere, one address): what the rule
+            # store resolves it to decides; anything unresolved is listed by name.
+            ports=$(_ufw_app_ports "$to")
+            if [[ -n "$ports" ]]; then
+                _ufw_ports_expected "$open_ok" "$ports" && continue
+                tok="$to ($(paste -sd' ' - <<<"$ports"))"
+            else
+                tok="$to"
             fi
         fi
+        issues+=("$(i18n 'ufw.f_open_anywhere_review' "port=$tok")")
     done <<< "$ufw_output"
 
     printf '%s\n' "${issues[@]}"
@@ -234,27 +276,24 @@ ufw_audit() {
             return
             ;;
         none)
-            # Report it ONCE: when UFW is installed but off, ufw.disabled
-            # carries the finding because its fix_id is what resolves it.
-            # ufw.no_firewall is for when there is nothing to enable.
-            if _ufw_installed && [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
-                log_debug "No active firewall, but UFW is installed — reported as ufw.disabled"
-            else
-                # Distro-aware: UFW is only the right front-end on
-                # Debian/Ubuntu, so do not send RHEL or Arch users to it.
-                local nf_suggestion
+            # One fact, one finding, carried by the id whose fix resolves it:
+            # ufw.disabled when UFW is installed (below), ufw.not_installed on
+            # Debian/Ubuntu, else ufw.no_firewall, with no UFW fix to offer.
+            if ! _ufw_installed; then
                 if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
-                    nf_suggestion=$(i18n 'ufw.fix_install')
+                    check_emit "ufw.not_installed" medium failed \
+                        desc="$(i18n 'ufw.not_installed_desc')" \
+                        suggestion="$(i18n 'ufw.fix_install')" \
+                        fix="ufw.install"
+                    print_severity "medium" "$(i18n 'ufw.not_installed')"
                 else
-                    nf_suggestion=$(i18n 'ufw.fix_enable_firewall')
+                    check_emit "ufw.no_firewall" medium failed \
+                        desc="$(i18n 'ufw.no_firewall_desc')" \
+                        suggestion="$(i18n 'ufw.fix_enable_firewall')"
+                    print_severity "medium" "$(i18n 'ufw.no_firewall')"
                 fi
-                check_emit "ufw.no_firewall" medium failed \
-                    desc="$(i18n 'ufw.no_firewall_desc')" \
-                    suggestion="$nf_suggestion" \
-                    fix="ufw.install"
-                print_severity "medium" "$(i18n 'ufw.no_firewall')"
+                return
             fi
-            # Continue to check if UFW is installed but not enabled
             ;;
         unknown)
             # A status query failed: nothing is claimed, UFW's own state included.
@@ -265,21 +304,8 @@ ufw_audit() {
             ;;
     esac
 
-    # Check if UFW is installed
+    # Only an installed UFW gets here: active, or installed with nothing active.
     print_item "$(i18n 'ufw.check_installed')"
-    if ! _ufw_installed; then
-        # "UFW not installed" is only actionable on Debian/Ubuntu. Elsewhere
-        # the probe above already emitted ufw.no_firewall if nothing is
-        # active, so recommending UFW here would be redundant and wrong.
-        if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then
-            check_emit "ufw.not_installed" low failed \
-                desc="$(i18n 'ufw.not_installed_desc')" \
-                suggestion="$(i18n 'ufw.fix_install')" \
-                fix="ufw.install"
-            print_severity "low" "$(i18n 'ufw.not_installed')"
-        fi
-        return
-    fi
     print_ok "$(i18n 'ufw.ufw_installed')"
 
     # Check if UFW is enabled
@@ -483,9 +509,14 @@ _ufw_fix_enable() {
             print_info "$(i18n 'ufw.current_ip_whitelisted' "ip=$current_ip")"
             undo+=("ufw delete allow from $current_ip")
         else
-            print_warn "$(i18n 'ufw.rescue_rule_failed' "ip=$current_ip")"
+            # Said on the terminal: it is part of what is being confirmed.
+            tty_warn "$(i18n 'ufw.rescue_rule_failed' "ip=$current_ip")"
             current_ip=""
         fi
+    else
+        # No source address (tmux, mosh, no utmp entry): no rescue rule, said
+        # before the question, since it is part of what is being confirmed.
+        tty_warn "$(i18n 'ufw.operator_ip_unknown')"
     fi
 
     # The rules about to be enforced are what the confirmation is about.

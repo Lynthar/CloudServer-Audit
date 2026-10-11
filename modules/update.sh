@@ -87,16 +87,27 @@ _update_audit_apt_lock() {
 
     if (( lock_rc == 0 )); then
         check_emit "update.apt_locked" low failed \
-            desc="$(i18n 'update.apt_locked_desc')" \
+            desc="$(i18n 'update.apt_locked_desc' "pm=${VPSSEC_PKG_MGR:-}")" \
             suggestion="$(i18n 'update.apt_locked_suggestion')"
         print_severity "low" "$(i18n 'update.apt_locked')"
     elif (( lock_rc == 2 )); then
         # failed + info, and both halves are deliberate: a passed check
         # renders as a one-line tick nobody expands, and putting a number on
         # a non-observation is how a host earns a free pass.
-        check_emit "update.lock_state_unknown" low failed \
-            desc="$(i18n 'update.lock_state_unknown_desc')" \
-            suggestion="$(i18n 'update.lock_state_unknown_fix')"
+        local desc fix
+        case "${VPSSEC_PKG_MGR:-}" in
+            # The tool each branch of pkg_manager_locked could not run.
+            apt)
+                desc=$(i18n 'update.lock_state_unknown_desc')
+                fix=$(i18n 'update.lock_state_unknown_fix' "cmd=$(pkg_install_hint lsof)") ;;
+            dnf)
+                desc=$(i18n 'update.lock_state_unknown_desc_dnf')
+                fix=$(i18n 'update.lock_state_unknown_fix_dnf' "cmd=$(pkg_install_hint "$(distro_packages_for_commands pgrep)")") ;;
+            *)
+                desc=$(i18n 'update.lock_state_unknown_desc_other')
+                fix=$(i18n 'update.lock_state_unknown_fix_other') ;;
+        esac
+        check_emit "update.lock_state_unknown" low failed desc="$desc" suggestion="$fix"
         print_severity "low" "$(i18n 'update.lock_state_unknown')"
     else
         check_emit "update.apt_available" low passed

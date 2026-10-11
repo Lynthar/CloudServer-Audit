@@ -26,3 +26,22 @@ run_case "claims/summary-branch-skipped" 1 \
 run_case "claims/bare-command-v-restored" 1 \
     '        if check_command "$candidate"; then found+=("$candidate"); fi' \
     '        command -v "$candidate" &>/dev/null && found+=("$candidate")'
+
+# A web-roots-free host gets its scored sensitive-files pass back.
+run_case "claims/no-root-still-passes" 1 \
+    '    elif (( walked )) && [[ -n "$(_webapp_web_roots)" ]]; then' \
+    '    elif (( walked )); then'
+
+# A source-built nginx off PATH is reported as no web server again.
+run_case "claims/nginx-off-path-unnamed" 1 \
+    '    elif pgrep -x nginx >/dev/null 2>&1; then' \
+    '    elif false; then'
+
+# The Apache advice names a file again without asking which one sets it.
+run_case "claims/apache-file-is-main-only" 1 \
+    '        grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"' \
+    '        :'
+
+run_case "claims/apache-first-setter-wins" 1 \
+    '        grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"' \
+    '        [[ -z "$last" ]] && grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"'

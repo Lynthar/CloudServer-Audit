@@ -58,8 +58,9 @@ _load_docker() {
     [[ "$(_check_field docker.daemon_unreachable desc)" == *"podman"* ]]
 }
 
-@test "docker: a rootless socket under a user's runtime dir is found" {
-    _load_docker
+# A user `dev` whose home holds a rootless Docker socket, and neither docker
+# nor podman on root's PATH.
+_rootless_docker_only() {
     # A real socket, not a regular file: the predicate tests -S, and a plain file
     # would let it pass while the production check stayed broken. Short root on
     # purpose — an AF_UNIX path is capped near 104 bytes.
@@ -75,9 +76,15 @@ _load_docker() {
     python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" \
         "$sock_dir/docker.sock" || skip "cannot create an AF_UNIX socket here"
     _vpssec_absent_command docker
+    _vpssec_absent_command podman
     _vpssec_stub_script getent <<SH
 printf 'dev:x:1000:1000::%s:/bin/bash\n' "$sock_root/h"
 SH
+}
+
+@test "docker: a rootless socket under a user's runtime dir is found" {
+    _load_docker
+    _rootless_docker_only
 
     # Called directly, NOT through `run`: `run` disables errexit, and the
     # defect this pins is a non-zero status mid-function aborting the scan
@@ -86,6 +93,41 @@ SH
     out=$(_docker_unaudited_runtime)
 
     [[ "$out" == *"rootless-docker"* ]]
+}
+
+@test "docker: rootless Docker that root's PATH cannot see is unreachable, not absent" {
+    # The whole run, engine included: the module's own probe is what tells
+    # the two apart, so a gate in front of it decides the answer.
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/security_levels.sh"
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    _rootless_docker_only
+    VPSSEC_MODULE_ORDER=(docker)
+
+    module_load_all "" ""
+    _run_audit_pass >/dev/null
+
+    [[ "$(_emitted_ids)" == *"docker.daemon_unreachable"* ]]
+    [[ "$(_check_field docker.daemon_unreachable desc)" == *"rootless-docker"* ]]
+    _vpssec_refute grep -q 'docker.not_installed' "$VPSSEC_STATE/checks.json"
+}
+
+@test "docker: through the engine, a host with no runtime still reports not installed" {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/security_levels.sh"
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    _vpssec_absent_command docker
+    _vpssec_absent_command podman
+    _vpssec_stub getent 0 ""
+    VPSSEC_MODULE_ORDER=(docker)
+
+    module_load_all "" ""
+    _run_audit_pass >/dev/null
+
+    [ "$(_check_field docker.not_installed status)" = "passed" ]
+    _vpssec_refute grep -q 'docker.daemon_unreachable' "$VPSSEC_STATE/checks.json"
 }
 
 @test "docker: a host with no runtime at all still reports not installed" {
@@ -139,6 +181,7 @@ SH
     # a property of the runner, and a test that depends on it passes in one
     # environment and fails in another.
     run _webapp_other_webserver
+    [ "$status" -eq 0 ]
 
     [ -z "$output" ]
 }
@@ -162,6 +205,53 @@ SH
     [ "$(_check_field webapp.other_webserver status)" = "failed" ]
 }
 
+# webapp_audit on a host with nothing but what the test plants.
+_webapp_bare_host() {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/modules/webapp.sh"
+    NGINX_CONF="$etc/nginx/nginx.conf"
+    APACHE_CONF="$etc/apache2/apache2.conf"
+    APACHE_CONF_ALT="$etc/httpd/conf/httpd.conf"
+    WEB_ROOTS=("$etc/www")
+    _vpssec_absent_command nginx
+    _webapp_php_installed() { return 1; }
+    _webapp_other_webserver() { :; }
+    _vpssec_stub pgrep 1
+}
+
+@test "webapp: no web root at all is no sensitive-files pass" {
+    # Scanning nothing found nothing, and the pass is scored (required).
+    _webapp_bare_host
+    run webapp_audit
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q 'webapp.sensitive_files_ok' "$VPSSEC_STATE/checks.json"
+}
+
+@test "webapp: an empty web root that was scanned still passes" {
+    _webapp_bare_host
+    mkdir -p "$etc/www"
+    run webapp_audit
+    [[ "$(_emitted_ids)" == *"webapp.sensitive_files_ok"* ]]
+}
+
+@test "webapp: an nginx running from outside PATH is named, not 'no web server'" {
+    # A source build in /usr/local/nginx/sbin: sudo's secure_path lacks it.
+    _webapp_bare_host
+    _vpssec_stub pgrep 0
+    run webapp_audit
+    [[ "$(_emitted_ids)" == *"webapp.nginx_not_on_path"* ]]
+    _vpssec_refute grep -q 'webapp.no_webserver' "$VPSSEC_STATE/checks.json"
+    [ "$(_check_field webapp.nginx_not_on_path status)" = "failed" ]
+    _vpssec_stub_called pgrep '-x nginx'
+}
+
+@test "webapp: no nginx binary and no nginx process is still no web server" {
+    _webapp_bare_host
+    run webapp_audit
+    [[ "$(_emitted_ids)" == *"webapp.no_webserver"* ]]
+    _vpssec_refute grep -q 'webapp.nginx_not_on_path' "$VPSSEC_STATE/checks.json"
+}
+
 @test "webapp: detection goes through the project's own command wrapper" {
     # Stub caddy so `command -v caddy` succeeds while check_command reports it
     # absent: the two answers differing is the only way to tell the project's own
@@ -175,11 +265,43 @@ SH
     _vpssec_stub caddy 0
 
     run _webapp_other_webserver
+    [ "$status" -eq 0 ]
 
     # Only caddy is asserted about — the others are declared absent so the host
     # cannot contribute. The claim is narrow: a binary the wrapper calls absent
     # must not appear, however loudly `command -v` answers.
     [[ "$output" != *caddy* ]]
+}
+
+@test "webapp: the Apache advice names the file that sets the directive on this host" {
+    # A RHEL httpd host was told to edit apache2.conf, which it does not have.
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/modules/webapp.sh"
+    NGINX_CONF="$etc/nginx/nginx.conf"
+    APACHE_CONF="$etc/apache2/apache2.conf"
+    APACHE_CONF_ALT="$etc/httpd/conf/httpd.conf"
+    APACHE_CONF_DIRS="$etc/httpd/conf.d"
+    mkdir -p "${APACHE_CONF_ALT%/*}"
+    printf 'ServerRoot "/etc/httpd"\n' > "$APACHE_CONF_ALT"
+    _vpssec_absent_command nginx
+    _vpssec_stub httpd 0
+
+    run webapp_audit
+    [[ "$(_check_field webapp.apache_server_signature suggestion)" == *" $APACHE_CONF_ALT"* ]]
+    [ "$(_check_field webapp.apache_server_signature suggestion)" = \
+        "$(i18n 'webapp.set_signature_off' "conf=$APACHE_CONF_ALT")" ]
+
+    # An included file read later overrides the main one, so it is the one
+    # to edit; a directive set nowhere goes in the main file.
+    printf 'ServerTokens Full\n' >> "$APACHE_CONF_ALT"
+    mkdir -p "$APACHE_CONF_DIRS"
+    printf 'ServerTokens OS\n' > "$APACHE_CONF_DIRS/security.conf"
+    state_init
+    run webapp_audit
+    [ "$(_check_field webapp.apache_server_tokens suggestion)" = \
+        "$(i18n 'webapp.set_tokens_prod' "conf=$APACHE_CONF_DIRS/security.conf")" ]
+    [ "$(_check_field webapp.apache_server_signature suggestion)" = \
+        "$(i18n 'webapp.set_signature_off' "conf=$APACHE_CONF_ALT")" ]
 }
 
 # ==============================================================================
@@ -223,6 +345,7 @@ _load_baseline() {
     mkdir -p "$BASELINE_APPARMOR_DISABLE_DIR"
 
     run _baseline_audit_apparmor_disabled_profiles
+    [ "$status" -eq 0 ]
 
     _vpssec_refute test -s "$VPSSEC_STATE/checks.json"
 }
@@ -233,6 +356,7 @@ _load_baseline() {
     : > "$BASELINE_APPARMOR_DISABLE_DIR/.keep"
 
     run _baseline_apparmor_disabled_profiles
+    [ "$status" -eq 0 ]
 
     [ -z "$output" ]
 }

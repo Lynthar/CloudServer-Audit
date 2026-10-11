@@ -1,0 +1,20 @@
+# Mutation cases: tests/test_query_failure_honesty.bats against modules/users.sh.
+# mutate-suite: modules/users.sh tests/test_query_failure_honesty.bats
+#
+# An account database or shadow that cannot be read is not a scored pass.
+
+run_case "uid0/getent-failure-passes" 1 \
+    '    pw=$(getent passwd 2>/dev/null) || return 1' \
+    '    pw=$(getent passwd 2>/dev/null) || pw=""'
+
+run_case "empty/getent-failure-passes" 1 \
+    '    pw=$(getent passwd 2>/dev/null) || rc=1' \
+    '    pw=$(getent passwd 2>/dev/null) || true'
+
+run_case "empty/unreadable-shadow-passes" 1 \
+    '        rc=1' \
+    '        :'
+
+run_case "empty/unknown-hides-finding" 1 \
+    '    if [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then' \
+    '    if (( empty_read )) && [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then'

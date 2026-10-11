@@ -107,7 +107,11 @@ tui_select_fixes() {
             low)    prefix="[-]" ;;
         esac
 
-        items+=("$fix_id" "$prefix $title" "on")
+        # Only SAFE starts ticked, so a bare Enter cannot plan a fix that
+        # needs confirming.
+        local state="off"
+        [[ "$(echo "$fix" | jq -r '.safety // ""')" == "safe" ]] && state="on"
+        items+=("$fix_id" "$prefix $title" "$state")
     done
 
     local selected

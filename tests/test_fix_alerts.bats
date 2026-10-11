@@ -132,17 +132,62 @@ setup() {
     [[ "$output" == *"Could not create the directory for the alert configuration"* ]]
 }
 
-@test "setup_config: a failed config write is reported, not reported as saved" {
+@test "setup_config: a failed config write is reported, and the old config stays whole" {
     _alerts_should_prompt() { return 1; }
-    # The config path is a directory, so the redirection fails while its
-    # parent exists and mkdir -p succeeds.
-    mkdir -p "$ALERTS_CONFIG_FILE"
+    printf '{"throttle_minutes": 30}\n' > "$ALERTS_CONFIG_FILE"
+    # The replacing rename fails, as on a full or read-only state disk.
+    _mv_fails_outside_backups
 
     run _alerts_fix_setup_config
     [ "$status" -eq 1 ]
     [[ "$output" == *"Could not write the alert configuration"* ]]
     _vpssec_refute grep -q "Alert configuration saved" <<<"$output"
     _vpssec_refute grep -q "Alert configuration template created" <<<"$output"
+    [ "$(cat "$ALERTS_CONFIG_FILE")" = '{"throttle_minutes": 30}' ]
+}
+
+@test "setup_config: a failed first write leaves no empty config behind" {
+    _alerts_should_prompt() { return 1; }
+    _mv_fails_outside_backups
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Could not write the alert configuration"* ]]
+    _vpssec_refute test -e "$ALERTS_CONFIG_FILE"
+}
+
+@test "setup_config: a config that does not parse is refused, not overwritten" {
+    _alerts_should_prompt() { return 1; }
+    # A trailing comma, as hand edits leave one.
+    printf '{"webhook_url": "https://hooks.example.invalid/x", "email": "",}\n' > "$ALERTS_CONFIG_FILE"
+    cp "$ALERTS_CONFIG_FILE" "$BATS_TEST_TMPDIR/before"
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not a JSON object; vpssec will not overwrite it"* ]]
+    [ "$(cat "$ALERTS_CONFIG_FILE")" = "$(cat "$BATS_TEST_TMPDIR/before")" ]
+}
+
+@test "setup_config: an unanswered question never blanks a value the config holds" {
+    _alerts_should_prompt() { return 1; }
+    printf '{"webhook_url": "https://hooks.example.invalid/x"}\n' > "$ALERTS_CONFIG_FILE"
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 0 ]
+    jq -e '.webhook_url == "https://hooks.example.invalid/x"' "$ALERTS_CONFIG_FILE"
+}
+
+@test "setup_config: settings already in the config are kept" {
+    _alerts_should_prompt() { return 1; }
+    printf '{"webhook_url": "", "throttle_minutes": 30, "events": {"firewall_change": false}}\n' \
+        > "$ALERTS_CONFIG_FILE"
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 0 ]
+    jq -e '.throttle_minutes == 30' "$ALERTS_CONFIG_FILE"
+    jq -e '.events.firewall_change == false' "$ALERTS_CONFIG_FILE"
+    # What the file did not set comes from the template.
+    jq -e '.events.ssh_login_failure == true and .email == ""' "$ALERTS_CONFIG_FILE"
 }
 
 @test "setup_config: a failing jq is reported rather than writing a truncated config" {
@@ -207,7 +252,8 @@ setup() {
 
     run _alerts_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not create the alert templates directory"* ]]
+    [[ "$output" == *"Could not write the template: $ALERTS_TEMPLATES_DIR/alert-lib.sh"* ]]
+    _vpssec_refute grep -q "Alert templates generated in" <<<"$output"
 }
 
 @test "generate_templates: a failed hook write is reported and stops the run" {
@@ -215,7 +261,7 @@ setup() {
 
     run _alerts_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not write the alert hook script"* ]]
+    [[ "$output" == *"Could not write the template"* ]]
     # It failed on the first artifact, so the rest were never attempted and
     # the success line was never printed.
     _vpssec_refute test -f "$ALERTS_TEMPLATES_DIR/ssh-login-monitor.sh"
@@ -237,7 +283,7 @@ setup() {
         run _alerts_fix_generate_templates
         echo "artifact under test: $artifact"   # shown by bats on failure
         [ "$status" -eq 1 ]
-        [[ "$output" == *"Could not write the alert hook script"* ]]
+        [[ "$output" == *"Could not write the template"* ]]
         _vpssec_refute grep -q "Alert templates generated in" <<<"$output"
     done
 }
@@ -247,7 +293,7 @@ setup() {
 
     run _alerts_fix_generate_templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not write the alert hook script"* ]]
+    [[ "$output" == *"Could not write the template"* ]]
 }
 
 @test "generate_templates: a failed path rewrite is reported rather than swallowed" {
@@ -328,6 +374,51 @@ SH
     _load_generated_lib "file://$BATS_TEST_TMPDIR/absent"
     run vpssec_alert_webhook "t" "m"
     [ "$status" -ne 0 ]
+}
+
+# Send one alert email through MAILER alone: PATH holds a stub of it (argv to
+# $BATS_TEST_TMPDIR/<mailer>-args, the message to <mailer>-in) and nothing that
+# could answer first. The subject carries a line break, as a crafted login name can.
+_mail_through() {
+    _alerts_fix_generate_templates >/dev/null
+    local mailer="$1" bin="$BATS_TEST_TMPDIR/only-$1"
+    mkdir -p "$bin"
+    # Arch ships no hostname(1); the lib only prints what it answers.
+    printf '#!/bin/sh\necho vpssec-test-host\n' > "$bin/hostname"
+    chmod +x "$bin/hostname"
+    ln -s "$(command -v date)" "$bin/date"
+    cat > "$bin/$mailer" <<SH
+#!$BASH
+printf '%s\n' "\$*" > "$BATS_TEST_TMPDIR/$mailer-args"
+$(command -v cat) > "$BATS_TEST_TMPDIR/$mailer-in"
+SH
+    chmod +x "$bin/$mailer"
+    run env -i PATH="$bin" "$BASH" -c \
+        'source "$1"; ALERT_EMAIL=ops@example.invalid; vpssec_alert_email "$2" body' \
+        _ "$ALERTS_TEMPLATES_DIR/alert-lib.sh" $'SSH Login: x\nBcc: thief@example.invalid'
+}
+
+@test "alert-lib: with only sendmail, an email goes out through it, headers intact" {
+    _mail_through sendmail
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/sendmail-args")" = "-t -i" ]
+    [ "$(sed -n 1p "$BATS_TEST_TMPDIR/sendmail-in")" = "To: ops@example.invalid" ]
+    [ "$(sed -n 2p "$BATS_TEST_TMPDIR/sendmail-in")" = "Subject: [vpssec] SSH Login: x Bcc: thief@example.invalid" ]
+    _vpssec_refute grep -q '^Bcc:' "$BATS_TEST_TMPDIR/sendmail-in"
+}
+
+@test "alert-lib: through msmtp, a line break in the subject opens no header" {
+    _mail_through msmtp
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/msmtp-args")" = "ops@example.invalid" ]
+    [ "$(sed -n 1p "$BATS_TEST_TMPDIR/msmtp-in")" = "Subject: [vpssec] SSH Login: x Bcc: thief@example.invalid" ]
+    _vpssec_refute grep -q '^Bcc:' "$BATS_TEST_TMPDIR/msmtp-in"
+}
+
+@test "alert-lib: through mail, the subject reaches -s as one line" {
+    _mail_through mail
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/mail-args")" = "-s [vpssec] SSH Login: x Bcc: thief@example.invalid ops@example.invalid" ]
 }
 
 @test "alert-lib: a URL with a control character is refused, never split into config lines" {

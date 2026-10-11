@@ -40,6 +40,19 @@ _logging_journald_persistent() {
     return 1
 }
 
+# The syslog daemon writing /var/log, if one runs: with it, a volatile
+# journal loses only the journal across a reboot, not the system logs.
+_logging_syslog_daemon() {
+    local unit
+    for unit in rsyslog syslog-ng; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            echo "$unit"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Pure-data variant for tests. Argument is the merged journald config
 # text. Echoes the last SystemMaxUse= value found, or empty.
 _logging_journald_max_size_from_text() {
@@ -159,8 +172,14 @@ _logging_audit_journald() {
             desc="$(i18n 'logging.journald_max_size' "size=$max_size")"
         print_ok "$(i18n 'logging.journald_persistent') ($(i18n 'logging.journald_max_size' "size=$max_size"))"
     else
+        local desc daemon
+        if daemon=$(_logging_syslog_daemon); then
+            desc=$(i18n 'logging.journald_volatile_syslog_desc' "daemon=$daemon")
+        else
+            desc=$(i18n 'logging.journald_volatile_desc')
+        fi
         check_emit "logging.journald_volatile" low failed \
-            desc="$(i18n 'logging.journald_volatile_desc')" \
+            desc="$desc" \
             suggestion="$(i18n 'logging.fix_enable_persistent')" \
             fix="logging.enable_persistent_journal"
         print_severity "low" "$(i18n 'logging.journald_volatile')"
@@ -319,6 +338,8 @@ _logging_fix_enable_persistent_journal() {
 
     # Under the default Storage=auto, this directory alone makes the journal
     # persistent; the drop-in pins it for hosts that set something else.
+    local made_dir=0
+    [[ -d "$JOURNAL_DIR" ]] || made_dir=1
     if ! mkdir -p "$JOURNAL_DIR"; then
         print_error "$(i18n 'logging.persistent_failed')"
         return 1
@@ -349,6 +370,10 @@ MaxRetentionSec=1month'; then
         print_warn "$(i18n 'logging.journald_flush_failed')"
     fi
     print_info "$(i18n 'logging.journald_limits_next_start' "file=$JOURNALD_DROPIN")"
+    # Rollback deletes the drop-in, not this directory, which alone keeps
+    # Storage=auto persistent; removing it deletes the logs stored since.
+    (( made_dir )) && record_undo logging.enable_persistent_journal \
+        "journalctl --relinquish-var && rm -rf $JOURNAL_DIR"
     return 0
 }
 
@@ -502,13 +527,18 @@ EOF
     # augenrules rewrites the compiled audit.rules from rules.d.
     backup_file "$AUDIT_RULES_COMPILED" >/dev/null || return 1
 
-    # Report whether the KERNEL took the rules (auditctl -l), not whether the
-    # file exists: augenrules can fail while the file looks fine on disk.
+    # Report whether the KERNEL took the rules, not whether the file exists:
+    # augenrules can fail while the file looks fine on disk, and auditctl -l
+    # prints "No rules" for an empty set, so look for one of these rules.
     augenrules --load 2>/dev/null || auditctl -R "$AUDIT_RULES_FILE" 2>/dev/null || true
 
-    if auditctl -l 2>/dev/null | grep -q '.'; then
+    local loaded
+    loaded=$(auditctl -l 2>/dev/null) || loaded=""
+    if grep -qF -- '-w /etc/passwd -p wa -k identity' <<<"$loaded"; then
         print_ok "$(i18n 'logging.audit_rules_configured')"
         print_info "$(i18n 'logging.audit_immutable_hint')"
+        # Rollback restores the rule files; the kernel keeps these until reloaded.
+        record_undo logging.setup_audit_rules "vpssec rollback && augenrules --load"
         return 0
     elif _logging_check_audit_rules; then
         # File correctly persisted but not live yet (e.g. auditd not running in

@@ -2,7 +2,8 @@
 # mutate-suite: modules/preflight.sh tests/test_preflight_optional.bats
 #
 # Missing optional tools are one check, one entry per capability, and a
-# capability is there when any one of its tools is.
+# capability is there when any one of its tools is. The package-lock check's
+# tool is the one this host's package manager uses.
 
 run_case "group/tui-needs-both" 1 \
     '    if ! check_command whiptail && ! check_command dialog; then' \
@@ -10,9 +11,21 @@ run_case "group/tui-needs-both" 1 \
 run_case "group/network-needs-both" 1 \
     '    if ! check_command curl && ! check_command wget; then' \
     '    if ! check_command curl || ! check_command wget; then'
-run_case "lsof/unchecked" 1 \
-    '    if ! check_command lsof; then' \
+run_case "lock-tool/unchecked" 1 \
+    '    if [[ -n "$lock_tool" ]] && ! check_command "$lock_tool"; then' \
     '    if false; then'
+# The lock check's tool by package manager: dnf told lsof, which it never uses.
+run_case "lock-tool/dnf-told-lsof" 1 \
+    '        dnf) lock_tool=pgrep lock_cap=preflight.cap_pgrep ;;' \
+    '        dnf) lock_tool=lsof  lock_cap=preflight.cap_lsof ;;'
+# Every manager told lsof, pacman included.
+run_case "lock-tool/everyone-told-lsof" 1 \
+    '        apt) lock_tool=lsof  lock_cap=preflight.cap_lsof ;;' \
+    '        *) lock_tool=lsof  lock_cap=preflight.cap_lsof ;;'
+# Command names offered as package names: dnf install pgrep.
+run_case "hint/command-as-package" 1 \
+    '        opt_pkgs=$(distro_packages_for_commands "${lacking_cmds[@]}")' \
+    '        opt_pkgs="${lacking_cmds[*]}"'
 # Back to a line nobody sees during the scan.
 run_case "emit/not-a-check" 1 \
     '        check_emit "preflight.optional_missing" low failed \' \

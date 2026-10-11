@@ -1,0 +1,9 @@
+# Mutation cases: tests/test_absence_assertions.bats against tests/test_webapp_nginx_scope.bats.
+# mutate-suite: tests/test_webapp_nginx_scope.bats tests/test_absence_assertions.bats
+
+# The server_tokens test's status check (the file's first) dropped: the test is
+# left asserting only that nothing was printed, which a function that died also
+# satisfies. Every status check reads the same, so the anchor cannot be unique.
+run_case "lint/status-check-dropped" 1 \
+    '    [ "$status" -eq 0 ]' \
+    '    :'

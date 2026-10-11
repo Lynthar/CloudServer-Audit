@@ -29,7 +29,9 @@
 #      A case with ROLLBACK_BY="undo" names a fix that backs up no file:
 #      it must leave no session, and the undo command it logged is run
 #      instead of the rollback, with the same assertions on the result
-#   7. runs restore() to revert the planted defect
+#   7. runs restore() to revert the planted defect, also when mutate() or
+#      the audit failed; a restore that fails errors the run, since every
+#      later case would start from a dirty host
 #
 # Every audit must exit 0 with meta.complete true, or 3 with it false; any
 # other pairing is the exit-code contract broken, and the case does not pass.
@@ -37,7 +39,8 @@
 # A case whose precheck() is false is skipped (failed under --strict), and
 # the condition it stopped at is printed. A case with MANUAL_ONLY="<why>"
 # needs what the container cannot provide (a docker daemon): it is listed as
-# MANUAL and not run unless --manual is given.
+# MANUAL and not run unless --manual is given. A filter that matches no case
+# at all, MANUAL ones included, fails the run.
 #
 # IMPORTANT: run only on a disposable VM or container. Restore is
 # best-effort — if a case crashes between mutate and restore, the
@@ -293,6 +296,7 @@ run_case() {
         echo "  $(color red '[ERROR]') mutate() returned non-zero"
         results+=("ERROR | $case_name | mutate failed")
         errored+=1
+        restore_case "$case_name"
         return
     fi
 
@@ -303,7 +307,7 @@ run_case() {
         echo "  $(color red '[ERROR]') audit gave no verdict: $AUDIT_WHY"
         results+=("ERROR | $case_name | $AUDIT_WHY")
         errored+=1
-        restore >/dev/null 2>&1 || true
+        restore_case "$case_name"
         return
     fi
 
@@ -372,10 +376,16 @@ run_case() {
         fi
     fi
 
-    if ! restore; then
-        echo "  $(color yellow '[WARN]') restore() failed — system may be in dirty state"
-        results+=("WARN  | $case_name | restore failed (manual cleanup needed)")
-    fi
+    restore_case "$case_name"
+}
+
+# The case's restore(). One that fails is an error, not a warning: a half-planted
+# defect left behind changes the verdict of every case after it.
+restore_case() {
+    restore && return 0
+    echo "  $(color red '[ERROR]') restore() failed — later cases run on a dirty host"
+    results+=("ERROR | $1 | restore failed (manual cleanup needed)")
+    errored+=1
 }
 
 # Stage 2 (fix → re-audit) and stage 3 (rollback → re-audit); returns 1 on the
@@ -560,6 +570,12 @@ if (( ${#results[@]} > 0 )); then
 fi
 echo ""
 echo "Total: $total  Passed: $(color green "$passed")  Failed: $(color red "$failed")  Errored: $(color red "$errored")  Skipped: $(color yellow "$skipped")  Manual: $manual"
+
+# A mistyped filter runs nothing; that must not read as a clean run.
+if (( total == 0 )); then
+    echo "No case matched '${PATTERN:-<all>}' in $CASES_DIR"
+    exit 1
+fi
 
 # Non-zero exit if anything failed or errored — for CI
 (( failed == 0 && errored == 0 ))

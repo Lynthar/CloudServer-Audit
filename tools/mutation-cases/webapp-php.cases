@@ -1,0 +1,7 @@
+# Mutation cases: tests/test_webapp_php_regex.bats against modules/webapp.sh.
+# mutate-suite: modules/webapp.sh tests/test_webapp_php_regex.bats
+
+# Values only: a pool turning allow_url_include on with php_admin_flag is missed.
+run_case "pool/flag-form-ignored" 1 \
+    '    grep -hE "^[[:space:]]*php_(admin_)?(value|flag)\[${key}\][[:space:]]*=" \' \
+    '    grep -hE "^[[:space:]]*php_(admin_)?value\[${key}\][[:space:]]*=" \'

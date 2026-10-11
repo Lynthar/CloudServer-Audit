@@ -1,0 +1,15 @@
+# Mutation cases: tests/test_report_distro_meta.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_report_distro_meta.bats
+#
+# What the report says the host runs on. systemd-detect-virt prints "none" and
+# exits 1 on bare metal, so its exit status cannot choose a fallback.
+
+# The fallback runs on the exit status again: bare metal reads "none\nnone".
+run_case "virt/fallback-on-exit-status" 1 \
+    '        virt=$(systemd-detect-virt 2>/dev/null) || true' \
+    '        virt=$(systemd-detect-virt 2>/dev/null || echo none) || true'
+
+# A detector that failed without an answer is reported as bare metal.
+run_case "virt/failure-reads-none" 1 \
+    '        echo "${virt:-unknown}"' \
+    '        echo "${virt:-none}"'

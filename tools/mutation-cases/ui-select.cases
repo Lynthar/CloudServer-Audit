@@ -15,3 +15,13 @@ run_case "tuiselect/check-id-tag" 1 \
 run_case "tuiselect/dedup-removed" 1 \
     "        [[ -n \"\${seen[\$fix_id]:-}\" ]] && continue" \
     "        :"
+
+# Every row ticked again: a bare Enter plans the risky fixes too.
+run_case "tuiselect/all-preticked" 1 \
+    '        local state="off"' \
+    '        local state="on"'
+
+# Ticked by the wrong class.
+run_case "tuiselect/preticks-non-safe" 1 \
+    "        [[ \"\$(echo \"\$fix\" | jq -r '.safety // \"\"')\" == \"safe\" ]] && state=\"on\"" \
+    "        [[ \"\$(echo \"\$fix\" | jq -r '.safety // \"\"')\" != \"safe\" ]] && state=\"on\""

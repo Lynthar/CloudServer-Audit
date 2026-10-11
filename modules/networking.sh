@@ -43,13 +43,6 @@ declare -ga NET_PUBLIC_PORTS_OK=(
             # a "non-standard public listener" was a scored false positive.
 )
 
-# Processes whose listeners are expected public on ANY port. Port 22 alone
-# is not enough: ssh.sh approves a moved SSH port, so matching by port would
-# make this module contradict it on the same listener.
-declare -ga NET_PUBLIC_PROCESSES_OK=(
-    sshd
-)
-
 # --- Helpers ---
 
 _net_have_ss() { command -v ss >/dev/null 2>&1; }
@@ -103,7 +96,8 @@ _net_list_listeners() {
 
         # Extract process name. ss emits users:(("name",pid=N,fd=N));
         # netstat emits pid/name as last column.
-        if _net_have_ss && [[ "$line" =~ users:\(\(\"([^\"]+)\" ]]; then
+        # A name may itself hold a quote (comm is settable): it ends at `",pid=`.
+        if _net_have_ss && [[ "$line" =~ users:\(\(\"(([^\"]|\"[^,])+)\",pid= ]]; then
             proc="${BASH_REMATCH[1]}"
         elif ! _net_have_ss; then
             proc=$(awk '{print $NF}' <<< "$line" | sed 's|.*/||;s|^-$||')
@@ -161,17 +155,6 @@ _net_specific_addr_is_public() {
 _net_port_in() {
     local needle="$1"
     shift
-    local p
-    for p in "$@"; do
-        [[ "$needle" == "$p" ]] && return 0
-    done
-    return 1
-}
-
-_net_proc_in() {
-    local needle="$1"
-    shift
-    [[ -z "$needle" ]] && return 1
     local p
     for p in "$@"; do
         [[ "$needle" == "$p" ]] && return 0
@@ -253,6 +236,7 @@ _net_audit_listeners() {
     done <<< "$listeners"
 
     # Second pass: classify deduplicated wildcard listeners.
+    local ssh_ports=" $(get_ssh_ports | tr '\n' ' ')"
     local dangerous=()  # known-bad ports on wildcard
     local exposed=()    # any other non-whitelisted port/proc on wildcard
 
@@ -263,12 +247,9 @@ _net_audit_listeners() {
         proc="${rest#*/}"
         [[ "$proc" == "?" ]] && proc=""
 
-        # Process-name whitelist wins first. sshd on a non-default
-        # port is approved by ssh.sh; networking would otherwise
-        # flag the same listener and contradict.
-        if _net_proc_in "$proc" "${NET_PUBLIC_PROCESSES_OK[@]}"; then
-            continue
-        fi
+        # A port sshd listens on is SSH, wherever ssh.sh approved moving it.
+        # Never by process name: any local user can set one, `sshd` included.
+        [[ "$proto" == tcp* && "$ssh_ports" == *" $port "* ]] && continue
 
         if _net_port_in "$port" "${NET_DANGEROUS_PUBLIC_PORTS[@]}"; then
             dangerous+=("${proto}/${port}${proc:+ ($proc)}")
@@ -289,9 +270,7 @@ _net_audit_listeners() {
         proc="${rest##*/}"
         [[ "$proc" == "?" ]] && proc=""
 
-        if _net_proc_in "$proc" "${NET_PUBLIC_PROCESSES_OK[@]}"; then
-            continue
-        fi
+        [[ "$proto" == tcp* && "$ssh_ports" == *" $port "* ]] && continue
 
         if _net_port_in "$port" "${NET_DANGEROUS_PUBLIC_PORTS[@]}"; then
             dangerous+=("${proto}/${port}@${addr}${proc:+ ($proc)}")

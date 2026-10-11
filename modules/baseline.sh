@@ -23,12 +23,14 @@ BASELINE_APPARMOR_DISABLE_DIR="/etc/apparmor.d/disable"
 # AppArmor Functions
 # ------------------------------------------------------------------------------
 
+# Enabled means profiles are loaded, which aa-status reports only with the
+# kernel LSM on: `aa-status --enabled` asks just the kernel, and passed a host
+# whose profiles never loaded (the unit disabled). Complain mode is its own check.
 _baseline_apparmor_enabled() {
-    if check_command aa-status; then
-        aa-status --enabled 2>/dev/null
-        return $?
-    fi
-    return 1
+    check_command aa-status || return 1
+    local counts
+    counts=$(_baseline_apparmor_count_profiles) || return 1
+    (( ${counts%%:*} + ${counts##*:} > 0 ))
 }
 
 _baseline_apparmor_installed() {
@@ -297,7 +299,7 @@ _baseline_audit_integrity() {
     local found=""
     local t
     for t in aide aide.wrapper tripwire samhain afick integrit; do
-        if command -v "$t" &>/dev/null; then
+        if check_command "$t"; then
             found="$t"
             break
         fi
@@ -339,25 +341,56 @@ _baseline_audit_integrity() {
 _baseline_audit_mac() {
     local mac_system=$(_baseline_detect_mac_system)
 
-    case "$mac_system" in
-        selinux)
-            _baseline_audit_selinux
-            ;;
-        apparmor)
-            _baseline_audit_apparmor
-            ;;
-        selinux_disabled)
-            _baseline_audit_selinux_disabled
-            ;;
-        apparmor_disabled)
-            _baseline_audit_apparmor_disabled
-            ;;
-        none)
-            _baseline_audit_no_mac
-            ;;
-    esac
+    # A container's MAC policy is the host kernel's, which nothing inside can
+    # change: reported either way, scored neither way, and offered no fix.
+    if detect_container >/dev/null; then
+        _baseline_audit_mac_host_managed "$mac_system"
+    else
+        case "$mac_system" in
+            selinux)
+                _baseline_audit_selinux
+                ;;
+            apparmor)
+                _baseline_audit_apparmor
+                ;;
+            selinux_disabled)
+                _baseline_audit_selinux_disabled
+                ;;
+            apparmor_disabled)
+                _baseline_audit_apparmor_disabled
+                ;;
+            none)
+                _baseline_audit_no_mac
+                ;;
+        esac
+    fi
 
     _baseline_audit_apparmor_disabled_profiles
+}
+
+# The container side of _baseline_audit_mac; $1 is the MAC dispatch it got.
+_baseline_audit_mac_host_managed() {
+    local state="" counts
+    case "$1" in
+        apparmor)
+            counts=$(_baseline_apparmor_count_profiles) || counts="0:0"
+            state=$(i18n 'baseline.apparmor_enabled_desc' "enforced=${counts%%:*}" "complain=${counts##*:}")
+            ;;
+        selinux)
+            [[ "$(_baseline_selinux_get_status)" == enforcing ]] && state=$(i18n 'baseline.selinux_enforcing')
+            ;;
+    esac
+    if [[ -n "$state" ]]; then
+        check_emit "baseline.mac_host_managed" low passed \
+            title="$(i18n 'baseline.mac_host_managed_ok')" \
+            desc="$(i18n 'baseline.mac_host_managed_ok_desc' "state=$state")"
+        print_ok "$(i18n 'baseline.mac_host_managed_ok')"
+    else
+        check_emit "baseline.mac_host_managed" low failed \
+            desc="$(i18n 'baseline.mac_host_managed_desc')" \
+            suggestion="$(i18n 'baseline.mac_host_managed_suggestion')"
+        print_info "$(i18n 'baseline.mac_host_managed')"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -574,7 +607,8 @@ _baseline_fix_enable_apparmor() {
     fi
 
     # Neither status is decisive alone: a unit can be enabled and still refuse
-    # to start. FIX_VERIFY's _baseline_apparmor_enabled decides the outcome.
+    # to start or load nothing. FIX_VERIFY's _baseline_apparmor_enabled, which
+    # needs loaded profiles, decides the outcome.
     local undo_svc
     undo_svc=$(service_undo_cmd apparmor)
     systemctl enable apparmor || log_warn "systemctl enable apparmor failed"

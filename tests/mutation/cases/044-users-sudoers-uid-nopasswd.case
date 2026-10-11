@@ -22,7 +22,7 @@ mutate() {
     useradd -M -s /usr/sbin/nologin "$_USER" || return 1
     printf '#%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -u "$_USER")" > "$_DROPIN"
     chmod 440 "$_DROPIN"
-    visudo -c -f "$_DROPIN" >/dev/null 2>&1 || { rm -f "$_DROPIN"; userdel "$_USER"; return 1; }
+    visudo -c -f "$_DROPIN" >/dev/null 2>&1 || return 1
     return 0
 }
 

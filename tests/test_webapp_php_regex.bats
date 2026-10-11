@@ -115,3 +115,32 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "configured" ]
 }
+
+# --- FPM pool overrides ---
+
+# A pool.d/www.conf holding $1, beside the php.ini the reader is given.
+_pool_says() {
+    fpm="$BATS_TEST_TMPDIR/php/8.2/fpm"
+    mkdir -p "$fpm/pool.d"
+    : > "$fpm/php.ini"
+    printf '[www]\n%s\n' "$1" > "$fpm/pool.d/www.conf"
+}
+
+@test "pool: php_admin_flag, the boolean form, is read" {
+    # Debian's stock www.conf documents booleans with php_admin_flag.
+    _pool_says 'php_admin_flag[allow_url_include] = on'
+    run _webapp_read_pool_directive allow_url_include "$fpm/php.ini"
+    [ "$output" = "on" ]
+}
+
+@test "pool: php_flag is read too" {
+    _pool_says 'php_flag[display_errors] = On'
+    run _webapp_read_pool_directive display_errors "$fpm/php.ini"
+    [ "$output" = "On" ]
+}
+
+@test "pool: php_admin_value is still read" {
+    _pool_says 'php_admin_value[allow_url_include] = 1'
+    run _webapp_read_pool_directive allow_url_include "$fpm/php.ini"
+    [ "$output" = "1" ]
+}

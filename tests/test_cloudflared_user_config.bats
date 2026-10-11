@@ -90,3 +90,13 @@ alice:x:1001:1001::$BATS_TEST_TMPDIR/home/alice:/bin/bash"
     [ "$status" -eq 0 ]
     [[ "$output" == *"alice"* ]]
 }
+
+@test "user config: cloudflared's other names and directories count too" {
+    # config.yaml, and ~/.cloudflare-warp, are in cloudflared's own search list.
+    mkdir -p "$BATS_TEST_TMPDIR/home/alice/.cloudflare-warp"
+    touch "$BATS_TEST_TMPDIR/home/alice/.cloudflare-warp/config.yaml"
+    local passwd_text="alice:x:1001:1001::$BATS_TEST_TMPDIR/home/alice:/bin/bash"
+    run _cloudflared_find_user_config_from_passwd "$passwd_text"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$BATS_TEST_TMPDIR/home/alice/.cloudflare-warp/config.yaml" ]
+}

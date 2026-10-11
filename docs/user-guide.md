@@ -22,9 +22,11 @@
 > sensitive 文件清单（`/etc/shadow-`、`/boot/grub/grub.cfg` 等），
 > kernel 的 8 条新 sysctl，docker 的
 > `host_network_used` / `secrets_in_env` / `unlimited_memory` 等。
-> 上述新增项**没有**在本指南详细展开，但每条检查的 Recommendations
-> 字段已自带具体修复命令，可直接在审计报告里看到。设计依据
-> （CIS 控件、NIST、Lynis 对照）保留在各检测函数的代码注释中。
+> 上述新增项**没有**在本指南详细展开。审计报告里每条检查的 Recommendations
+> 字段给出处理方向：有的是可以直接执行的命令，有的只是一句方向（如「加固内核
+> 参数」），这时看 `vpssec help <模块>` 列出的修复项，或在 Debian / Ubuntu 上用
+> `vpssec guide` 让它代劳。设计依据（CIS 控件、NIST、Lynis 对照）保留在各检测
+> 函数的代码注释中。
 
 ## 目录
 
@@ -352,7 +354,9 @@ systemctl reload ssh       # RHEL / Arch 用 sshd
 
 **通过条件**: MaxAuthTries 设置为 4 或更小（推荐 3-4）
 
-**自动修复**: `ssh.set_max_auth_tries`（安全，写入 `MaxAuthTries 4`）
+**自动修复**: `ssh.set_max_auth_tries`（需确认，写入 `MaxAuthTries 4`）。客户端递出的每把密钥都算一次尝试，
+agent 在正确密钥之前先递出四把或更多别的密钥的客户端会被断开；这类客户端请设 `IdentitiesOnly yes`
+并指定正确的 `IdentityFile`
 
 **修复方法**:
 ```bash
@@ -408,6 +412,10 @@ RHEL 系的 sshd 算法列表来自系统的 crypto-policies，在 drop-in 里�
 而 Debian 13、Ubuntu 26.04 开机时根本不读这个文件。重新套用会把别的服务运行时改过、
 又被某个文件写死的值一并改回去（例如 Docker 打开的 `ip_forward`），容器主机上留意。
 
+**在容器里**（LXC / OpenVZ / Docker / nspawn 型 VPS）ASLR 与 `kernel.*` `fs.*` `dev.*` 参数是宿主机内核的设置，
+容器里改不了：达标与否都只列出（`kernel.aslr_host_managed`、`kernel.kernel_params_host_managed`），
+两个方向都不计分，也不提供修复；`net.*` 在容器自己的网络命名空间里，照常判。
+
 ### 1. ASLR (地址空间布局随机化) 检测
 
 **检测内容**: 检查内核是否启用了地址空间布局随机化
@@ -437,14 +445,14 @@ sysctl kernel.randomize_va_space
 
 | 参数 | 推荐值 | 说明 |
 |------|--------|------|
-| `net.ipv4.ip_forward` | 0 | 禁用 IP 转发；本机跑着 Docker / Podman / LXC / libvirt、Kubernetes 节点，或 Tailscale / WireGuard / OpenVPN 时不判 |
+| `net.ipv4.ip_forward` | 0 | 禁用 IP 转发；本机跑着 Docker / Podman / LXC / libvirt、Kubernetes 节点，Tailscale / WireGuard / OpenVPN / strongSwan，或有网桥、vxlan、WireGuard、tun/tap 网卡（snap 版 LXD、CNI、ZeroTier 等）时不判 |
 | `net.ipv4.tcp_syncookies` | 1 | 防止 SYN 洪水攻击 |
 | `net.ipv4.conf.all.accept_redirects` | 0 | 拒绝 ICMP 重定向 |
 | `net.ipv4.conf.all.send_redirects` | 0 | 不发送 ICMP 重定向 |
-| `net.ipv4.conf.all.rp_filter` | 1 | 反向路径过滤 |
+| `net.ipv4.conf.all.rp_filter` | 1 | 反向路径过滤；上面那类转发主机上 2（宽松）也算通过，修复写 2 而不是 1 |
 
-**自动修复**: `kernel.harden_network`（需确认；可能影响容器网络。这一项也包含 IPv6 的
-`accept_ra`，靠路由通告拿 IPv6 默认路由的主机会自动跳过它，见下一节）
+**自动修复**: `kernel.harden_network`（需确认；可能影响容器网络）。IPv6 的
+`accept_ra`、`accept_redirects`、`use_tempaddr` 归下一节的 IPv6 检测与 `kernel.harden_ipv6`
 
 **修复方法**:
 ```bash
@@ -523,8 +531,9 @@ systemctl restart systemd-sysctl
 
 ### 4. 核心转储(Core Dump)检测
 
-**检测内容**: 检查是否限制了核心转储：`fs.suid_dumpable` 为 0、`limits.conf` 里有
-`* hard core 0`（或 `soft`）、systemd-coredump 设了 `Storage=none`（主配置或 drop-in 均可）
+**检测内容**: 检查是否限制了核心转储：`fs.suid_dumpable` 为 0（容器里它归宿主机，不判）；
+`limits.conf` 与 `limits.d/*.conf` 按 pam_limits 的顺序读下来，最后一条 `*` 的硬限制
+（`hard` 或 `-`）是 0，只设 `soft` 不算；systemd-coredump 设了 `Storage=none`（主配置或 drop-in 均可）
 
 **为什么重要**: 核心转储可能包含敏感信息（密码、密钥等）
 
@@ -603,7 +612,8 @@ sudo vpssec audit --include=kernel
 
 ### 1. SUID/SGID 文件检测
 
-**检测内容**: 查找系统中异常的 SUID/SGID 文件
+**检测内容**: 查找根文件系统上异常的 SUID/SGID 文件（`find -xdev`：独立挂载的 `/home`、
+`/var`、`/srv` 等不遍历，全局可写与无主文件两项同理）
 
 **为什么重要**:
 - SUID 文件以文件所有者权限运行
@@ -661,7 +671,9 @@ chmod +t /path/to/directory
 ### 3. 敏感文件权限检测
 
 **检测内容**: 检查关键配置文件的权限与属主。权限只看有没有**多出**下表以外的位，
-比表里更严（例如 RHEL 出厂的 `/etc/shadow` 是 000）照样通过；属主必须是 root
+比表里更严（例如 RHEL 出厂的 `/etc/shadow` 是 000）照样通过；属主必须是 root。
+组或其他人多出写位的一律算高危（任何本地用户都能把文件改写成提权）；只多出读位的，
+凭证类文件（shadow、sudoers、SSH 私钥）算高危，其余算低危
 
 | 文件 | 最宽允许 | 说明 |
 |------|----------|------|
@@ -671,8 +683,8 @@ chmod +t /path/to/directory
 | `/etc/ssh/ssh_host_*_key` | 600 | SSH 私钥；RHEL 出厂是 640 root:ssh_keys，也算通过 |
 | `/etc/sudoers` | 440 | sudo 配置 |
 
-**自动修复**: `filesystem.fix_sensitive_perms`（安全）。只动多出了权限位的文件，把它们
-chmod 成表里的值，不改属主
+**自动修复**: `filesystem.fix_sensitive_perms`（安全）。只去掉多出来的权限位，不补文件原本
+没有的位；属主不是 root、或属组不该有的访问权限，改回 root（以 root 运行时才查属主属组）
 
 **修复方法**:
 ```bash
@@ -722,7 +734,8 @@ rm /path/to/orphan/file
 
 ### 5. 可疑 Cron 任务检测
 
-**检测内容**: 检查计划任务中是否存在可疑命令
+**检测内容**: 检查计划任务中是否存在可疑命令。注释行不看；包管理器（dpkg / rpm）确认
+内容未改动的软件包自带文件不报，例如 certbot 自带的 `/etc/cron.d/certbot`（它用 `perl -e` 随机延时）
 
 **检测的可疑模式**:
 - `curl ... | sh` 或 `wget ... | sh` - 从网络下载并执行
@@ -940,7 +953,8 @@ jail 要读这个文件：服务会起不来，`fail2ban-client -t` 报
 
 **自动修复**: `fail2ban.enable_ssh_jail` / `fail2ban.configure_ssh_jail`（需确认）。写入
 `jail.d/99-vpssec-sshd.local`：覆盖 sshd 的全部端口；只有能用 journald 时才设
-`backend = systemd`；封禁动作按本机防火墙选；`ignoreip` 带上回环地址和你当前的 SSH 来源 IP。
+`backend = systemd`；封禁动作按本机防火墙选（写在 `[DEFAULT]`，所有 jail 都用它）；
+`ignoreip` 在 sshd jail 原有的列表上加回环地址和你当前的 SSH 来源 IP。
 写完先 `fail2ban-client -t` 检查，加载后确认 jail 能封禁，不能就撤回这个文件
 
 **修复方法**:
@@ -970,7 +984,8 @@ EOF
   或 `/var/log/secure` 时删掉这一行，按发行版默认读日志文件；两样都没有就先装
   `python3-systemd` 包（Debian / Ubuntu、RHEL 都叫这个名字）。
 - `ignoreip`：把示例里的 203.0.113.7 换成你自己的管理 IP，否则手滑输错几次密码，
-  会被自己的 jail 封上一小时。
+  会被自己的 jail 封上一小时。`jail.local` 的 `[DEFAULT]` 里已经列着的地址也抄进这一行：
+  `[sshd]` 里写了 `ignoreip`，就取代继承来的那份。
 - 封禁动作：UFW 在管防火墙时加一行 `banaction = ufw`。Debian 12 默认的动作是
   `iptables-multiport`，精简安装却可能只有 `nft`、没有 `iptables` 命令，这时加一行
   `banaction = nftables-multiport`。RHEL 系从 EPEL 装的 fail2ban 带着 firewalld 的动作，不用写。
@@ -1119,7 +1134,9 @@ docker info --format '{{json .SecurityOptions}}'   # Engine 24 起应含 name=no
 
 ### 1. 隐藏进程检测
 
-**检测内容**: 通过比较 `/proc` 和 `ps` 输出检测隐藏进程
+**检测内容**: 通过比较 `/proc` 和 `ps` 输出检测隐藏进程。没装 procps（没有 `ps`、`pgrep`）时，
+隐藏进程、挖矿进程、CPU 异常与反向 Shell 四项不跑，改报一条不计分的 `malware.procps_missing`，
+并且不再给出「未发现恶意软件迹象」
 
 **为什么重要**: Rootkit 通常会隐藏其进程
 
@@ -1139,20 +1156,24 @@ cat /proc/<PID>/maps
 
 ### 2. LD_PRELOAD 劫持检测
 
-**检测内容**: 检查是否存在 LD_PRELOAD 环境变量劫持，以及 `/etc/ld.so.preload` 是否非空
+**检测内容**: 检查是否存在 LD_PRELOAD 环境变量劫持，以及 `/etc/ld.so.preload` 是否列有要预加载的库
 
 **为什么重要**: LD_PRELOAD 可被用于库注入攻击
 
 **检查位置**:
-- `/etc/ld.so.preload`（非空即报）
+- `/etc/ld.so.preload`（按 ld.so 的读法：`#` 起注释，空白与 `:` 分隔库名；只有空行和注释不报）
 - `/etc/profile`、`/etc/profile.d/*.sh`、`/etc/environment`、`/etc/bash.bashrc`
 - root 和每个普通用户（UID ≥ 1000）家目录下的 `.bashrc`、`.bash_profile`、`.bash_login`、
-  `.profile`、`.zshrc`、`.zshenv`（只认真正的赋值或 export 行，注释掉的不算）
+  `.profile`、`.zshrc`、`.zshenv`（认真正设置它的行：直接赋值、`export` / `declare -x` / `typeset` / `readonly` / `env`、
+  `条件 && export …`、alias 里的前缀；注释行与只是提到它的行不算）
+
+预加载的库若属于某个软件包、且内容与包管理器记录的校验和一致（dpkg 与 rpm 能校验，pacman
+不能），改报一条不计分的提示并写明是哪个包，例如 snoopy 写进 ld.so.preload 的那一条。核不上的库
+照报高危；init 文件里只要有一行 LD_PRELOAD 赋值核不上，整个文件按高危报。
 
 **修复方法**:
 ```bash
-# 1. 先留证据，再清空 ld.so.preload。用 `: >` 清空；`echo "" >` 会留下一个换行，
-#    文件仍然非空，这一项会一直报
+# 1. 先留证据，再清空 ld.so.preload
 cat /etc/ld.so.preload
 cp -a /etc/ld.so.preload /root/ld.so.preload.evidence
 : > /etc/ld.so.preload
@@ -1240,7 +1261,8 @@ kill -9 <PID>
 
 ### 6. 反向 Shell 检测
 
-**检测内容**: 检测 Shell 进程是否具有网络连接
+**检测内容**: 检测 Shell 进程的标准输入、输出或错误是否接在一条已建立（ESTABLISHED）的 TCP 连接上。
+挂在别的 fd 上的连接（例如用 `/dev/tcp` 做健康检查的脚本）与继承来的监听套接字不算
 
 **为什么重要**: 反向 Shell 是入侵者远程控制系统的常用方法
 
@@ -1289,11 +1311,16 @@ sudo ./vpssec audit --exclude=docker,cloudflared
 
 ### Q: 如何定期运行检测？
 
-A: 可以设置 cron 任务，配合 `--json-only` 让输出适合采集：
+A: 用 root 的 crontab（`sudo crontab -e`），配合 `--json-only` 让输出适合采集：
 ```bash
 # 每周日凌晨 3 点运行检测，JSON 报告写入 reports/summary.json
-0 3 * * 0 cd /path/to/CloudServer-Audit && sudo ./vpssec audit --json-only > /var/log/vpssec-audit.log 2>&1
+0 3 * * 0 cd /opt/vpssec && ./vpssec audit --json-only > /var/log/vpssec-audit.json 2> /var/log/vpssec-audit.err
 ```
+- 不要在普通用户的 crontab 里写 `sudo`：cron 没有终端，`sudo` 要口令时直接失败，什么也不跑。
+  写成 `/etc/cron.d/vpssec` 也行，时间字段之后多一列用户名 `root`。
+- stdout 只有 JSON；进度与错误走 stderr，分开落盘，日志里才不会混进 JSON。
+- 退出码 3 表示扫描不完整（有模块没跑完），报告照常写出，`meta.modules_failed`
+  里是没跑完的模块；退出码 1 表示没能跑起来或报告写入失败。
 
 ### Q: 检测到恶意软件该怎么办？
 
@@ -1347,6 +1374,11 @@ vpssec [mode] [options]
 | 变量 | 说明 |
 |---|---|
 | `VPSSEC_FS_TIMEOUT=N` | 单次文件系统遍历的超时秒数，大于 0 的整数（默认 60），用于 SUID/SGID/世界可写/无主文件/文件能力与网站目录扫描；值不合法时 `audit`/`guide` 直接拒绝并退出 1。遍历超时或没跑成时，相应的「未发现」通过项不再给出，报告多一条 `filesystem.scan_incomplete`（或 `webapp.scan_incomplete`），审计退出 3 |
+
+### 网络访问
+
+vpssec 自己会连哪些地址（连通性探测、云实例元数据、版本检查等）、在什么时候连、超时多少，
+列在 [README 的「安全」一节](../README.zh-CN.md#安全)。
 
 ---
 
@@ -1467,7 +1499,7 @@ vpssec/
 ├── vpssec              # 主入口脚本
 ├── VERSION             # 版本号唯一来源；release.yml 拒绝与它不一致的 tag
 ├── run.sh              # 一次性运行入口（拉 release tarball + cosign 验签，跑完自删）
-├── install.sh          # 安装到 /opt/vpssec（同样 cosign 验签，升级保留 state/backups）
+├── install.sh          # 安装到 /opt/vpssec（同样 cosign 验签，升级保留 state/backups/templates）
 ├── core/               # 核心引擎
 │   ├── common.sh       # 公共工具（日志、i18n、校验、原子写、单例锁）
 │   ├── engine.sh       # 模块加载、audit/guide 调度、计划恢复
@@ -1544,11 +1576,16 @@ mymodule_fix() {
 3. **同时**在 `core/i18n/en_US.json` 和 `core/i18n/zh_CN.json` 添加翻译——
    `tests` workflow 的 `i18n-parity` job 会校验两边的 key 集合相同。
 
-4. 在 `core/security_levels.sh` 给每个 `fix_id` 分类（`FIX_SAFE` /
-   `FIX_CONFIRM` / `FIX_RISKY` / `FIX_ALERT_ONLY`；只写出模板、解决不了发现的另登记
-   `FIX_TEMPLATE_ONLY`），以及给每个 `check_id` 加 `CHECK_SCORE_CATEGORY` 条目。
-   `FIX_SAFE`、`FIX_CONFIRM`、`FIX_RISKY` 里的 fix（`FIX_TEMPLATE_ONLY` 除外）还要在
-   `FIX_VERIFY` 登记审计判定通过的那个函数，修复跑完由引擎再问一次；漏登记 `bats` 会报红。
+4. 在 `core/security_levels.sh` 里登记：
+   - 每个 `fix_id` 按影响分进 `FIX_SAFE` / `FIX_CONFIRM` / `FIX_RISKY` 之一；只写出模板、
+     解决不了发现的，再另外登记进 `FIX_TEMPLATE_ONLY`。不是模板型的 fix 还要在 `FIX_VERIFY`
+     登记审计判定通过的那个函数，修复跑完由引擎再问一次。
+   - 每个 `check_id` 在 `CHECK_SCORE_CATEGORY` 里有一条计分类别。
+   - 没有修复、只给人工建议的发现，按 **check_id**（不是 fix_id）登记进 `FIX_ALERT_ONLY`，
+     值写为什么不自动修，`vpssec help <模块>` 把它列在「仅告警」一栏。这类发现不带 `fix=`，
+     它的 check_id 作为 fix_id 发出时 `bats` 会报红。
+
+   fix_id 漏了分类、可修复的 fix 漏了 `FIX_VERIFY`、check_id 漏了计分类别，`bats` 都会报红。
 
 `module-contract` CI job 会验证每个 `VPSSEC_MODULE_ORDER` 里的名字
 都对应 `modules/<name>.sh`，并且导出了 `<name>_audit()` 和 `<name>_fix()`。
@@ -1643,13 +1680,20 @@ sudo bash tests/uninstall/run.sh          # 仅在可丢弃 VM 或容器
 `tests/test_install_uninstaller.bats` 覆盖，需要真实目录和真实
 `rm -rf` 的那一半在这里。
 
-这个脚本只在 `/opt/vpssec-proof-*` 与 `/srv/vpssec-proof-*` 下操作，
-但它确实执行删除，因此同样**只在可丢弃主机上跑**。
+这个脚本只在 `/opt/vpssec-proof-*` 与 `/srv/vpssec-proof-*` 下操作（其余输出写进一个
+用完即删的私有临时目录），但它确实执行删除，因此同样**只在可丢弃主机上跑**。
 
 **期望基线：** 每一行都是 `ok`，末行 `UNINSTALLER PROOF: ALL PASS`，
-退出码 0。五组分别验证：路径被正确烤进脚本、默认保留 state/backups、
-`VPSSEC_UNINSTALL_PURGE=1` 时全清、白名单外的路径拒绝且不动任何东西、
-含 shell 元字符的路径被引用而不是被执行。
+退出码 0。八组分别验证：
+
+1. 默认（没有终端）删掉代码与命令链接，保留 state/backups，并告诉用户放在哪；
+2. `VPSSEC_UNINSTALL_PURGE=1` 时全清、不问；
+3. 白名单外的路径拒绝，且不动任何东西；
+4. 含 shell 元字符的路径被引用而不是被执行；
+5. 重跑一次卸载器无害；
+6. 第二次保留式卸载并入第一次留下的数据；
+7. 备份会话重名时，在删除任何东西之前停下；
+8. `install.sh` 不替换一个已存在、但不是 vpssec 的目录（空目录可以）。
 
 ---
 
@@ -1662,6 +1706,19 @@ self-hosted runner），不是在 `ubuntu-latest` 上跑出有意义结果的用
 
 ### GitHub Actions（self-hosted runner 示例）
 
+workflow 只运行主机上装好的 `vpssec`，不运行检出的仓库代码。先在这台主机上用
+`install.sh` 装一个验过签名的 release，并用 `VPSSEC_VERSION` 钉住你审过的那个版本
+（不钉就装最新版，见 README「安全」一节）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lynthar/CloudServer-Audit/main/install.sh \
+  | sudo env VPSSEC_VERSION=v1.4.0 bash
+```
+
+runner 的账号要能免密 `sudo` 执行下面那两条命令。报告写在默认安装目录的
+`/opt/vpssec/reports/`，只有 root 可读，所以审计那一步顺手把 SARIF 拷到 runner 的临时目录，
+上传那一步才读得到。
+
 ```yaml
 name: Security Audit
 
@@ -1670,24 +1727,35 @@ on:
     - cron: '0 6 * * 1'  # 每周一早上 6:00
   workflow_dispatch:
 
+permissions:
+  security-events: write  # 上传 SARIF
+  # 下面两项只有私有仓库需要
+  actions: read
+  contents: read
+
 jobs:
   audit:
     # 替换为指向你要审计的生产服务器的 self-hosted runner 标签
     runs-on: [self-hosted, my-production-host]
     steps:
-      - uses: actions/checkout@v4
-
       - name: Run Security Audit
-        # 用 --yes 让审计非交互地保存全部报告格式（md/json/sarif）——
-        # 审计是只读的，没有破坏性操作需要确认。（--json-only 也会重新生成
-        # 全部三个报告文件、只把 JSON 打到 stdout；这里用 --yes 是为了保留
-        # 终端可读输出。）
-        run: sudo ./vpssec audit --yes
+        # --yes 让审计非交互地写出全部报告（md/json/sarif）。退出 3 表示有模块没跑完，
+        # 报告照样写了，先拷出 SARIF 再按退出码让这一步失败；其他非零退出码不拷，
+        # 免得把上一次的旧报告当成这一次的传上去。
+        run: |
+          rc=0
+          sudo vpssec audit --yes || rc=$?
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+            sudo cat /opt/vpssec/reports/summary.sarif > "$RUNNER_TEMP/vpssec.sarif"
+          fi
+          exit "$rc"
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v2
+        # 审计退出 3 时上一步是失败的，这一步照样上传：没跑完的扫描更要看；运行被取消时不传
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: reports/summary.sarif
+          sarif_file: ${{ runner.temp }}/vpssec.sarif
 ```
 
 ---

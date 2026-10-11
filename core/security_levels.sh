@@ -5,7 +5,7 @@
 
 # --- Fix safety: SAFE = auto-applied, CONFIRM = warned, RISKY = explicit
 # confirmation with safeguards, ALERT_ONLY = never auto-fixed. A SAFE fix may
-# neither restart a service nor prompt. Membership notes: see the design notes ---
+# neither restart a service nor prompt; one that might is CONFIRM at least. ---
 
 # Safe fixes - can be auto-applied in guide mode
 declare -gA FIX_SAFE=(
@@ -40,7 +40,6 @@ declare -gA FIX_SAFE=(
     # SSH - safe settings that don't affect access
     ["ssh.enable_pubkey"]="true"
     ["ssh.disable_empty_password"]="true"
-    ["ssh.set_max_auth_tries"]="true"
     ["ssh.set_login_grace_time"]="true"
     ["ssh.disable_x11_forwarding"]="true"
 
@@ -54,7 +53,6 @@ declare -gA FIX_SAFE=(
     # Template generation only
     ["docker.generate_proxy_template"]="true"
     ["cloudflared.generate_config"]="true"
-    ["cloudflared.setup_service"]="true"
     ["backup.generate_templates"]="true"
     # alerts.setup_config is CONFIRM: it asks for a webhook and an email on a
     # tty. No alerts.generate_templates: no check emits it as a fix_id.
@@ -99,8 +97,8 @@ declare -gA FIX_CONFIRM=(
 
     # Overrides the operator's sshd-jail settings via a drop-in, without
     # replacing their files (enable_ssh_jail is the same writer)
-    ["fail2ban.configure_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/maxretry/ignoreip you set in jail.local or jail.d/*.conf for the sshd jail"
-    ["fail2ban.enable_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/maxretry/ignoreip you set in jail.local or jail.d/*.conf for the sshd jail"
+    ["fail2ban.configure_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/findtime/maxretry and log backend you set for the sshd jail in jail.local or jail.d/*.conf (its ignoreip is kept, with loopback and your SSH address added), and sets banaction for every jail to the firewall tool this host has"
+    ["fail2ban.enable_ssh_jail"]="Writes /etc/fail2ban/jail.d/99-vpssec-sshd.local; existing files are kept, but it overrides the bantime/findtime/maxretry and log backend you set for the sshd jail in jail.local or jail.d/*.conf (its ignoreip is kept, with loopback and your SSH address added), and sets banaction for every jail to the firewall tool this host has"
 
     # Enables unattended, automatic installation of (security) updates
     ["update.install_unattended"]="Installs and enables automatic unattended security updates"
@@ -120,6 +118,8 @@ declare -gA FIX_CONFIRM=(
 
     # Could break old SSH clients
     ["ssh.harden_algorithms"]="Removes SHA-1/MD5 MACs and SHA-1 key exchange from the defaults: clients offering nothing newer can no longer connect"
+    # Every key a client offers counts as an attempt
+    ["ssh.set_max_auth_tries"]="Lowers MaxAuthTries to 4: every key a client offers counts as an attempt, so one whose agent offers four or more other keys first is disconnected; set IdentitiesOnly yes with the right IdentityFile on such clients"
 
     # Webapp - SSL changes may affect connectivity
     ["webapp.nginx_ssl_protocols"]="May break old browser/client connections"
@@ -254,14 +254,14 @@ declare -gA FIX_SELF_CONFIRMED=(
     ["docker.enable_no_new_privileges"]="true"  # confirm_critical before daemon restart (modules/docker.sh)
 )
 
-# Fixes that CANNOT resolve the finding they hang off. They still return 0;
-# execute_fix skips the completion record and prints the value as the manual
-# step. Membership claims the fix's REACH, always (see the design notes).
+# Fixes that can NEVER resolve the finding they hang off, on any host. They
+# return 0; execute_fix skips the completion record and prints the value as the
+# manual step. A fix that only sometimes leaves a step returns 1 on that branch.
 declare -gA FIX_TEMPLATE_ONLY=(
     ["docker.generate_proxy_template"]="A reverse-proxy template was written for you to review and deploy; the ports stay exposed until you do"
     ["cloudflared.generate_config"]="A tunnel config template was written; copy it to /etc/cloudflared and create the tunnel to finish"
     ["backup.generate_templates"]="Backup script templates were written; no backup tool is installed and nothing is scheduled yet"
-    ["alerts.setup_config"]="The alert config and monitor scripts were written; schedule them and set a webhook to start receiving alerts"
+    ["alerts.setup_config"]="The alert config and monitor scripts were written; install the monitors as their README shows (PAM hook, cron) to start receiving alerts, and add a webhook or email to the config if you skipped it"
     ["webapp.nginx_ssl_protocols"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf's http block instead"
     ["webapp.nginx_ssl_ciphers"]="A hardened SSL snippet was written to nginx snippets/; it does nothing until you include it in each server the finding names. A value the finding says is set in the http block is fixed in nginx.conf's http block instead"
     ["webapp.nginx_hsts"]="An HSTS template was written with the header commented out; uncomment it in your HTTPS server blocks once you are sure every site is HTTPS-only"
@@ -296,7 +296,6 @@ declare -gA FIX_VERIFY=(
     ["ssh.disable_x11_forwarding"]="_ssh_x11_forwarding_disabled"
     ["ufw.install"]="_ufw_installed"
     ["ufw.allow_ssh"]="_ufw_ssh_allowed"
-    ["cloudflared.setup_service"]="_cloudflared_service_active"
     # Enabled, not synced: sync takes minutes, a re-check runs at once.
     ["timezone.enable_ntp"]="_timezone_ntp_enabled"
     ["timezone.set_rtc_utc"]="_timezone_rtc_utc"
@@ -339,6 +338,8 @@ get_fix_verify() {
 
 declare -gA CHECK_SCORE_CATEGORY=(
     # === SSH Module - required (core security) ===
+    ["ssh.not_installed"]="info"
+    ["ssh.config_unreadable"]="info"          # not measured: no score either way
     ["ssh.password_auth_enabled"]="required"
     ["ssh.password_auth_disabled"]="required"
     ["ssh.root_login_enabled"]="required"
@@ -413,7 +414,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["fail2ban.maxretry_high"]="optional"
     ["fail2ban.custom_config"]="optional"
     ["fail2ban.default_config"]="optional"
-    # Lynis TOOL-5104 cross-check
+    # Lynis TOOL-5104 cross-check. Penalised when failing, unscored when
+    # passing, on purpose: the fix restores the score without adding to it.
     ["fail2ban.jails_active"]="info"
     ["fail2ban.no_jails_active"]="recommended"
 
@@ -495,6 +497,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["baseline.selinux_disabled"]="recommended"
     ["baseline.selinux_many_denials"]="info"
     ["baseline.no_mac_system"]="recommended"
+    # In a container, passed or failed: the host kernel's policy, which nothing
+    # there can change, so it scores in neither direction.
+    ["baseline.mac_host_managed"]="info"
     ["baseline.unused_services"]="recommended"
     ["baseline.no_unused_services"]="recommended"
     ["baseline.integrity_installed"]="info"
@@ -528,6 +533,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["cloudflared.tunnel_running"]="conditional"
     ["cloudflared.config_ok"]="conditional"
     ["cloudflared.config_issues"]="conditional"
+    ["cloudflared.config_remote"]="info"         # ingress in the dashboard: not measured here
     ["cloudflared.no_config"]="conditional"
     ["cloudflared.tunnels_configured"]="conditional"
     ["cloudflared.no_tunnels"]="conditional"
@@ -537,6 +543,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["backup.tools_installed"]="info"
     ["backup.no_schedule"]="info"
     ["backup.scheduled"]="info"
+    ["backup.schedule_failing"]="info"
     ["backup.critical_paths"]="info"
 
     # === Networking Module - required (Lynis NETW-* cross-check) ===
@@ -552,12 +559,13 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["scheduling.at_jobs_present"]="info"
     ["scheduling.no_at_jobs"]="info"
     ["scheduling.cron_fetches_internet"]="info"
-    ["scheduling.cron_clean"]="recommended"
+    ["scheduling.cron_clean"]="info"
 
     # === Alerts Module - optional ===
     ["alerts.configured"]="info"
     ["alerts.not_configured"]="info"
     ["alerts.no_config"]="info"
+    ["alerts.config_invalid"]="info"
     ["alerts.capabilities_ok"]="info"
     ["alerts.no_capabilities"]="info"
 
@@ -565,7 +573,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.aslr_full"]="required"
     ["kernel.aslr_partial"]="required"
     ["kernel.aslr_disabled"]="required"
-    ["kernel.aslr_unknown"]="required"
+    # ASLR unreadable — a non-observation, not a finding.
+    ["kernel.aslr_unknown"]="info"
+    # In a container, passed or failed: the host kernel's value, scored neither way.
+    ["kernel.aslr_host_managed"]="info"
     ["kernel.network_params_high"]="recommended"
     ["kernel.network_params_medium"]="recommended"
     ["kernel.network_params_ok"]="recommended"
@@ -573,6 +584,8 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.network_params_unreadable"]="info"
     ["kernel.kernel_params_ok"]="recommended"
     ["kernel.kernel_params_weak"]="recommended"
+    # In a container, passed or failed: the host kernel's values, scored neither way.
+    ["kernel.kernel_params_host_managed"]="info"
     ["kernel.core_dump_ok"]="recommended"
     ["kernel.core_dump_enabled"]="recommended"
     ["kernel.unused_protocols_blocked"]="info"
@@ -616,7 +629,9 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["cloud.agents_found"]="info"
     ["cloud.no_known_agents"]="info"
     ["cloud.suspicious_agents"]="info"
-    # IMDS posture (tier1 / tier2 cloud-only checks)
+    # IMDS posture (tier1 / tier2 cloud-only checks). The passes are unscored on
+    # purpose, so that a cloud host and a non-cloud one remain comparable; only
+    # the failures cost points.
     ["cloud.imds_v1_enabled"]="required"
     ["cloud.imds_v2_only"]="info"
     ["cloud.imds_alibaba_normal_mode"]="required"
@@ -625,17 +640,22 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["cloud.user_data_clean"]="info"
     ["cloud.imds_unrestricted"]="info"
     ["cloud.imds_restricted"]="info"
+    ["cloud.imds_not_checked"]="info"        # not measured: no score either way
+    ["cloud.user_data_not_scanned"]="info"   # not measured: no score either way
 
     # === Users Module ===
     ["users.uid0_found"]="required"
     ["users.uid0_ok"]="required"
+    ["users.uid0_unknown"]="info"             # not measured: no score either way
     ["users.empty_password"]="required"
     ["users.no_empty_password"]="required"
+    ["users.empty_password_unknown"]="info"   # not measured: no score either way
     ["users.nopasswd_sudo"]="required"
     ["users.system_with_shell"]="recommended"
     ["users.sudo_users"]="info"
     ["users.recent_users"]="info"
     ["users.ssh_keys_perms"]="recommended"
+    ["users.ssh_keys_unread"]="info"
     ["users.ssh_keys_info"]="info"
     # Heuristic name match: shown for review, but these names are frequently
     # legitimate and a likely false positive must not lower the score.
@@ -682,6 +702,10 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["malware.c2_connection"]="info"
     ["malware.unusual_outbound"]="info"
     ["malware.clean"]="info"
+    # A preload of a library whose package verifies it: shown, not scored.
+    ["malware.ld_preload_packaged"]="info"
+    ["malware.ld_so_preload_packaged"]="info"
+    ["malware.procps_missing"]="info"           # not measured: no score either way
 
     # === Webapp Module - conditional (only if webserver installed) ===
     ["webapp.nginx_server_tokens"]="conditional"
@@ -710,6 +734,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     # Mirrors no_webserver: the web checks did not run. Reporting it is
     # honest, scoring it would penalise a host for vpssec's own gap.
     ["webapp.other_webserver"]="info"
+    ["webapp.nginx_not_on_path"]="info"
 
     # === Heuristic IOC / advisory: shown, never scored. ===
     ["filesystem.suspicious_cron"]="info"

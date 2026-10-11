@@ -18,15 +18,5 @@ run_case "keylogin/root-refusal-ignored" 1 \
     '        :'
 
 run_case "keylogin/pubkey-off-ignored" 1 \
-    '    _ssh_pubkey_enabled || return 1' \
+    '    _ssh_pubkey_enabled "$user" || return 1' \
     '    :'
-
-# %h left literal: the key file sshd reads is never the one counted.
-run_case "keys/home-token-unexpanded" 1 \
-    '        path="${path//%h/"$home_dir"}"' \
-    '        :'
-
-# Relative AuthorizedKeysFile resolved against the cwd instead of the home.
-run_case "keys/relative-path-not-under-home" 1 \
-    '        [[ "$path" != /* ]] && path="$home_dir/$path"' \
-    '        :'

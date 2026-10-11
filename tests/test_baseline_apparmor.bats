@@ -15,12 +15,14 @@ setup() {
 }
 
 # Install a fake aa-status that prints the contents of $1 to stdout
-# (and respects --json by checking $1 vs $2).
+# (and respects --json by checking $1 vs $2). Like the real one, --enabled
+# prints nothing and answers yes: the kernel LSM is on.
 _install_aa_stub() {
     local human="$1"
     local json="$2"
     cat >"$BATS_TEST_TMPDIR/bin/aa-status" <<EOF
 #!/usr/bin/env bash
+[[ "\$1" == "--enabled" ]] && exit 0
 if [[ "\$1" == "--json" ]]; then
     if [[ -z "$json" ]]; then exit 1; fi
     cat <<'JSON'
@@ -90,4 +92,43 @@ EOF
     run _baseline_apparmor_count_profiles
     [ "$status" -eq 0 ]
     [ "$output" = "5:2" ]
+}
+
+# ---- enabled means profiles are loaded ---------------------------------------
+
+@test "apparmor: a kernel LSM with no profile loaded is not enabled" {
+    # `aa-status --enabled` asks only the kernel: with the unit disabled and
+    # nothing loaded, the old predicate passed a host that confines nothing.
+    _install_aa_stub "" '{"version":"1","profiles":{},"processes":{}}'
+    run aa-status --enabled
+    [ "$status" -eq 0 ]
+
+    run _baseline_apparmor_enabled
+    [ "$status" -eq 1 ]
+}
+
+@test "apparmor: profiles loaded only in complain mode still count as enabled" {
+    # Starting the unit cannot switch complain to enforce, so offering the
+    # enable fix there could never verify; apparmor_many_complain reports it.
+    _install_aa_stub "" '{"version":"1","profiles":{"/usr/sbin/mysqld":"complain"},"processes":{}}'
+    _baseline_apparmor_enabled
+}
+
+@test "apparmor: a kernel LSM with an enforced profile is enabled" {
+    _install_aa_stub "" '{"version":"1","profiles":{"/usr/sbin/sshd":"enforce"},"processes":{}}'
+    _baseline_apparmor_enabled
+}
+
+@test "apparmor: no profile loaded is reported as not enabled, with the fix offered" {
+    source "$(_vpssec_repo_root)/core/state.sh"
+    i18n_load en_US
+    state_init
+    detect_container() { return 1; }
+    BASELINE_SELINUX_FS_ENFORCE="$BATS_TEST_TMPDIR/no-selinux"
+    BASELINE_APPARMOR_DISABLE_DIR="$BATS_TEST_TMPDIR/no-disable-dir"
+    _install_aa_stub "" '{"version":"1","profiles":{},"processes":{}}'
+
+    _baseline_audit_mac
+    run jq -r '.[] | "\(.id) \(.status) \(.fix_id)"' "$VPSSEC_STATE/checks.json"
+    [ "$output" = "baseline.apparmor_disabled failed baseline.enable_apparmor" ]
 }

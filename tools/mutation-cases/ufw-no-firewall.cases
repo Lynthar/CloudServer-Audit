@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_ufw_no_firewall.bats against modules/ufw.sh.
+# mutate-suite: modules/ufw.sh tests/test_ufw_no_firewall.bats
+
+# Debian without UFW reported as no_firewall: the install fix goes missing.
+run_case "none/debian-not-installed-dropped" 1 \
+    '                if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "debian" ]]; then' \
+    '                if false; then'
+
+# An installed UFW no longer carries the finding: no_firewall again, beside it.
+run_case "none/installed-ufw-ignored" 1 \
+    '            if ! _ufw_installed; then' \
+    '            if true; then'

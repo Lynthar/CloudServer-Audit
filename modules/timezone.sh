@@ -225,13 +225,37 @@ _timezone_check_drift() {
     fi
 }
 
-# The system LANG from localectl, else this process's LANG, else C.
+# The system LANG, empty when none is set: localectl's answer when it gives
+# one, else the first locale file that exists. Never this process's LANG,
+# which sudo and ssh carry over from the operator's own terminal.
 _timezone_current_locale() {
-    local current_locale=""
-    if command -v localectl &>/dev/null; then
-        current_locale=$(localectl status 2>/dev/null | grep "System Locale" | sed 's/.*LANG=//' | cut -d' ' -f1)
+    local out f
+    if check_command localectl && out=$(localectl status 2>/dev/null) \
+       && grep -q 'System Locale:' <<<"$out"; then
+        # "(unset)" or "n/a" has no LANG= and yields nothing.
+        sed -n '/System Locale:/s/.*LANG=\([^ ,]*\).*/\1/p' <<<"$out"
+        return 0
     fi
-    echo "${current_locale:-${LANG:-C}}"
+    for f in "$TZ_LOCALE_CONF" "$TZ_DEFAULT_LOCALE"; do
+        [[ -e "$f" ]] || continue
+        sed -n 's/^[[:space:]]*LANG=//p' "$f" 2>/dev/null | tail -n 1 | tr -d "\"'"
+        return 0
+    done
+}
+
+# Is locale $1 compiled on this host? `locale -a` spells the codeset
+# normalised (UTF-8 as utf8), so both sides are compared in that form.
+_timezone_locale_installed() {
+    locale -a 2>/dev/null | awk -v want="$1" '
+        function norm(s,   i, c) {
+            i = index(s, ".")
+            if (i == 0) return s
+            c = tolower(substr(s, i + 1))
+            gsub(/[^a-z0-9@]/, "", c)
+            return substr(s, 1, i) c
+        }
+        norm($0) == norm(want) { found = 1 }
+        END { exit !found }'
 }
 
 # Pass condition of the locale check: anything but C / POSIX / empty.
@@ -469,6 +493,13 @@ _timezone_fix_set_locale() {
                 locale-gen &>/dev/null
             fi
         fi
+    fi
+
+    # Both branches below would record a locale that cannot be set: localectl
+    # refuses it, and the file written by hand makes every login warn.
+    if ! _timezone_locale_installed "$target_locale"; then
+        print_error "$(i18n 'timezone.locale_not_installed' "locale=$target_locale")"
+        return 1
     fi
 
     # localed writes whichever of these the distro uses (Debian 13 links one

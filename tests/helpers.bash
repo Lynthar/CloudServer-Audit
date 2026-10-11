@@ -202,6 +202,7 @@ LC_ALL=C awk '
         d["kbdinteractiveauthentication"] = "yes"; d["usepam"] = "no"
         d["permitemptypasswords"] = "no"; d["authenticationmethods"] = "any"
         d["authorizedkeysfile"] = ".ssh/authorized_keys .ssh/authorized_keys2"
+        d["strictmodes"] = "yes"
         for (k in d) if (!(k in v)) v[k] = d[k]
         print "port " v["port"]
         print "listenaddress [::]:" v["port"]

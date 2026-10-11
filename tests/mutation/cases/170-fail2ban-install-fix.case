@@ -4,7 +4,8 @@
 # the fix installs, enables and starts the service and writes the sshd jail
 # drop-in, so the post-fix audit must see a RUNNING fail2ban, not just a package.
 # Rollback deletes the drop-in it created (rc 0) but cannot uninstall or stop
-# anything, so the service stays active.
+# anything, so the service stays active: the drop-in is what tells a done
+# rollback from one that changed nothing.
 TEST_DESC="fail2ban absent: fail2ban.install converges to a running service; rollback only removes its drop-in"
 EXPECT_ID="fail2ban.not_installed"
 EXPECT_STATUS="failed"
@@ -16,6 +17,8 @@ EXPECT_ROLLBACK_ID="fail2ban.service_active"
 EXPECT_ROLLBACK_STATUS="passed"
 EXPECT_ROLLBACK_RC=0
 
+_DROPIN="/etc/fail2ban/jail.d/99-vpssec-sshd.local"
+
 precheck() {
     ! command -v fail2ban-client >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1
 }
@@ -24,7 +27,15 @@ mutate() {
     host_snapshot /etc/fail2ban /var/lib/fail2ban /run/fail2ban /var/log/fail2ban.log
 }
 
+postfix() {
+    [[ -e "$_DROPIN" ]] || { echo "         the fix wrote no $_DROPIN"; return 1; }
+}
+
+postrollback() {
+    [[ ! -e "$_DROPIN" ]] || { echo "         rollback left $_DROPIN"; return 1; }
+}
+
 restore() {
-    rm -f /etc/fail2ban/jail.d/99-vpssec-sshd.local
+    rm -f "$_DROPIN"
     host_restore fail2ban.service
 }

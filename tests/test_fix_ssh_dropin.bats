@@ -91,13 +91,14 @@ _sshd_matched() { printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/sshd-TC.out"; }
 }
 
 @test "ssh write: an existing drop-in is backed up before being replaced" {
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/core/state.sh"
     printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN"
     _vpssec_begin_backup_session
 
     _ssh_write_hardening_config "PasswordAuthentication no"
-    [ -n "$SSH_LAST_DROPIN_BACKUP" ]
-    [ "$SSH_LAST_DROPIN_BACKUP" != "NEW" ]
-    grep -q 'X11Forwarding no' "$SSH_LAST_DROPIN_BACKUP"
+    backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$(cat "$SSH_HARDENING_DROPIN")" = "X11Forwarding no" ]
 }
 
 @test "ssh write: a first-run drop-in is registered for deletion on rollback" {
@@ -293,6 +294,76 @@ PasswordAuthentication no"
     _ssh_rollback_dropin
     grep -qx 'X11Forwarding no' "$SSH_HARDENING_DROPIN"
     _vpssec_refute grep -q 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
+}
+
+@test "ssh rollback: a failed second fix keeps the first one, over a drop-in from before the plan" {
+    # The session copy is the pre-plan file; restoring it would also undo the
+    # first fix, already reported done.
+    printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN"
+    _vpssec_begin_backup_session
+    _ssh_write_hardening_config "X11Forwarding no
+MaxAuthTries 4"
+    _ssh_write_hardening_config "X11Forwarding no
+MaxAuthTries 4
+PasswordAuthentication no"
+
+    _ssh_rollback_dropin
+    grep -qx 'MaxAuthTries 4' "$SSH_HARDENING_DROPIN"
+    _vpssec_refute grep -q 'PasswordAuthentication' "$SSH_HARDENING_DROPIN"
+}
+
+@test "ssh reload: a change that loses the merge is reloaded away again" {
+    # The reload already put it live; the rolled-back file must be loaded too.
+    _vpssec_begin_backup_session
+    _ssh_write_hardening_config "PasswordAuthentication no"
+    _sshd_effective "passwordauthentication yes"
+
+    run _ssh_reload_safe PasswordAuthentication no
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"read before vpssec's wins"* ]]
+    [ "$(_vpssec_stub_calls | grep -c '^systemctl reload')" -eq 2 ]
+}
+
+@test "ssh reload: a change that fails sshd -t was never live and is not reloaded" {
+    _vpssec_begin_backup_session
+    _ssh_write_hardening_config "PasswordAuthentication no"
+    _sshd_fullcontext_check 1
+
+    run _ssh_reload_safe PasswordAuthentication no
+    [ "$status" -eq 1 ]
+    _vpssec_refute _vpssec_stub_called systemctl 'reload'
+}
+
+# ---- ssh_fix: sshd must read the drop-in -------------------------------
+
+@test "ssh fix: with no Include of the drop-in directory, a fix stops before writing" {
+    printf 'PasswordAuthentication yes\n' > "$SSH_CONFIG"
+
+    run ssh_fix ssh.set_max_auth_tries
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"has no Include that reads $SSH_DROPIN_DIR"* ]]
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+    _vpssec_refute _vpssec_stub_called systemctl
+}
+
+@test "ssh fix: an Include of the directory, relative or absolute, lets the fix run" {
+    _sshd_effective "maxauthtries 4"
+    printf 'Include sshd_config.d/*.conf\n' > "$SSH_CONFIG"
+    run ssh_fix ssh.set_max_auth_tries
+    [ "$status" -eq 0 ]
+
+    printf 'Include %s/*.conf\n' "$SSH_DROPIN_DIR" > "$SSH_CONFIG"
+    run ssh_fix ssh.set_max_auth_tries
+    [ "$status" -eq 0 ]
+    grep -qx 'MaxAuthTries 4' "$SSH_HARDENING_DROPIN"
+}
+
+@test "ssh fix: an Include that names another directory does not count" {
+    mkdir -p "$etc/ssh/other.d"
+    printf 'Include %s/*.conf\n' "$etc/ssh/other.d" > "$SSH_CONFIG"
+    run ssh_fix ssh.set_max_auth_tries
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"has no Include"* ]]
 }
 
 # ---- the backup contract ---------------------------------------------

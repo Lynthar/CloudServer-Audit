@@ -75,3 +75,32 @@ _simulate_module_load_all() {
     run _is_suspicious_username "admin"
     [ "$status" -eq 0 ]
 }
+
+# "file:line" for each top-level declare / typeset / local in modules/*.sh under
+# $1 that is not -g. Only these three make a local; readonly and export do not.
+_module_local_declares() {
+    awk '
+        /^(declare|typeset|local)([ \t]|$)/ {
+            n = split($0, w, /[ \t]+/); g = 0
+            for (i = 2; i <= n && w[i] ~ /^-/; i++) if (w[i] ~ /g/) g = 1
+            if (!g || w[1] == "local") print FILENAME ":" FNR
+        }
+    ' "$1"/modules/*.sh | sed "s|^$1/||"
+}
+
+@test "every top-level declare in modules/ is global, not just the six above" {
+    run _module_local_declares "$(_vpssec_repo_root)"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ] || { echo "local to module_load (add -g):"; echo "$output"; false; }
+}
+
+@test "lint: a declare without -g is flagged at top level, not inside a function" {
+    local root="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$root/modules"
+    printf '%s\n' 'declare -ga A=(x)' 'declare -A B=()' 'declare -gA C=()' 'typeset -a D' \
+        'local E=1' 'f() {' '    declare -a inner=()' '}' 'declare F=1' 'readonly G=1' \
+        > "$root/modules/m.sh"
+    run _module_local_declares "$root"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'modules/m.sh:%s\n' 2 4 5 9)" ]
+}

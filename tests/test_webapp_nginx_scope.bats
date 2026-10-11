@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh
+    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh
     i18n_load en_US
     state_init
     # shellcheck source=/dev/null
@@ -107,6 +107,7 @@ b.example" ]
     nginx_dump_reset
     nginx_dump_load
     run _webapp_nginx_server_tokens
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 
@@ -130,9 +131,11 @@ b.example" ]
     _webapp_php_installed() { return 1; }
     cp "$FIXTURE" "$BATS_TEST_TMPDIR/dump"
 
-    run webapp_audit
+    if webapp_audit >/dev/null; then :; fi
     grep -qE '^webapp\.nginx_server_tokens' <<<"$(_ids)"
     _vpssec_refute grep -qxF webapp.no_webserver <<<"$(_ids)"
+    # A config nginx could read: the module finished.
+    [ "${#VPSSEC_MODULES_FAILED[@]}" -eq 0 ]
 }
 
 @test "unreadable: a config nginx -t rejects gets one finding and no nginx passes" {
@@ -149,11 +152,14 @@ echo 'nginx: [emerg] unknown directive "sevrer" in /etc/nginx/sites-enabled/x:1'
 exit 1
 SH
 
-    run webapp_audit
+    # In a condition, as the engine calls it, so the module's record survives.
+    if webapp_audit >/dev/null; then :; fi
     grep -qxF webapp.nginx_config_unreadable <<<"$(_ids)"
     [[ "$(_desc webapp.nginx_config_unreadable)" == *'unknown directive "sevrer"'* ]]
     _vpssec_refute grep -qE '^webapp\.nginx_.*_ok$' <<<"$(_ids)"
     _vpssec_refute grep -qxF webapp.no_webserver <<<"$(_ids)"
+    # None of the nginx checks ran: the audit is incomplete (exit 3).
+    [[ " ${VPSSEC_MODULES_FAILED[*]} " == *" webapp "* ]]
 }
 
 @test "sensitive files: an .htaccess is not one" {
@@ -165,4 +171,83 @@ SH
 
     run _webapp_sensitive_files
     [ "$output" = "$BATS_TEST_TMPDIR/www/blog/.htpasswd" ]
+}
+
+# ---- certificate expiry: what nginx serves is checked -------------------------
+
+# A self-signed certificate as `openssl req -x509` makes it, expiring in $2 days.
+# OpenSSL 3 marks it CA:TRUE, the shape that read as a CA and was never checked.
+_self_signed() {
+    command -v openssl >/dev/null || skip "openssl not installed"
+    mkdir -p "${1%/*}"
+    openssl req -x509 -nodes -newkey rsa:2048 -days "$2" -subj /CN=self \
+        -keyout "$BATS_TEST_TMPDIR/self.key" -out "$1" 2>/dev/null
+}
+
+# The same without extensions (`x509 -req`), so not a CA: kept by the scan too.
+_leaf_cert() {
+    command -v openssl >/dev/null || skip "openssl not installed"
+    mkdir -p "${1%/*}"
+    openssl req -new -nodes -newkey rsa:2048 -subj /CN=leaf \
+        -keyout "$BATS_TEST_TMPDIR/leaf.key" -out "$BATS_TEST_TMPDIR/leaf.csr" 2>/dev/null
+    openssl x509 -req -in "$BATS_TEST_TMPDIR/leaf.csr" -signkey "$BATS_TEST_TMPDIR/leaf.key" \
+        -days "$2" -out "$1" 2>/dev/null
+}
+
+@test "certs: a self-signed CA:TRUE certificate nginx serves is checked" {
+    _self_signed "$BATS_TEST_TMPDIR/ssl/self.crt" 3
+    _webapp_cert_is_ca "$BATS_TEST_TMPDIR/ssl/self.crt" || skip "this openssl does not mark it CA:TRUE"
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")
+    _dump_with_site "server { listen 443 ssl; ssl_certificate $BATS_TEST_TMPDIR/ssl/self.crt; }"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/ssl/self.crt|expiring|"* ]]
+}
+
+@test "certs: the same CA certificate, served by nothing, is still skipped" {
+    _self_signed "$BATS_TEST_TMPDIR/ssl/self.crt" 3
+    _webapp_cert_is_ca "$BATS_TEST_TMPDIR/ssl/self.crt" || skip "this openssl does not mark it CA:TRUE"
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")
+    cp "$FIXTURE" "$BATS_TEST_TMPDIR/dump"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "certs: a served certificate outside the scanned directories is checked, once" {
+    _self_signed "$BATS_TEST_TMPDIR/elsewhere/site.crt" 3
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")
+    _dump_with_site "server { listen 443 ssl; ssl_certificate $BATS_TEST_TMPDIR/elsewhere/site.crt; }
+server { listen 8443 ssl; ssl_certificate $BATS_TEST_TMPDIR/elsewhere/site.crt; }"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/elsewhere/site.crt|expiring|"* ]]
+    [ "$(wc -l <<<"$output")" -eq 1 ]
+}
+
+@test "certs: a served certificate inside a scanned directory is reported once" {
+    _leaf_cert "$BATS_TEST_TMPDIR/ssl/leaf.crt" 3
+    _vpssec_refute _webapp_cert_is_ca "$BATS_TEST_TMPDIR/ssl/leaf.crt"
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")
+    _dump_with_site "server { listen 443 ssl; ssl_certificate $BATS_TEST_TMPDIR/ssl/leaf.crt; }"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/ssl/leaf.crt|expiring|"* ]]
+    [ "$(wc -l <<<"$output")" -eq 1 ]
+}
+
+@test "certs: a relative ssl_certificate resolves against nginx.conf's directory" {
+    _self_signed "$BATS_TEST_TMPDIR/conf/certs/r.crt" 3
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")
+    printf '# configuration file %s:\nhttp { server { listen 443 ssl; ssl_certificate certs/r.crt; } }\n' \
+        "$BATS_TEST_TMPDIR/conf/nginx.conf" > "$BATS_TEST_TMPDIR/dump"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/conf/certs/r.crt|expiring|"* ]]
 }

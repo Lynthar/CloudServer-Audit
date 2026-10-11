@@ -135,7 +135,8 @@ SH
 }
 
 @test "filesystem audit: a full page of findings stops reading before the cut record" {
-    # The check fails on the page alone, so the unread rest of the walk is moot.
+    # The check fails on the page alone, so the unread rest of the walk is moot;
+    # the title says the count is a floor, since the walk was not read to its end.
     _only_walks
     _FS_FIND_TIMEOUT=1
     _vpssec_stub_script find <<'SH'
@@ -147,7 +148,8 @@ SH
     _audit filesystem_audit
 
     run jq -r '.[] | select(.id == "filesystem.suspicious_suid") | .title' "$STATE_CHECKS_FILE"
-    [ "$output" = "$(i18n 'filesystem.suspicious_suid' "count=$FS_MAX_REPORT_ITEMS")" ]
+    [ "$output" = "$(i18n 'filesystem.suspicious_suid' "count=$(i18n 'filesystem.count_at_least' "count=$FS_MAX_REPORT_ITEMS")")" ]
+    [[ "$output" == "at least $FS_MAX_REPORT_ITEMS "* ]]
     [ "${#_FS_CUT_WALKS[@]}" -eq 0 ]
     _vpssec_refute _has_check filesystem.scan_incomplete
 }

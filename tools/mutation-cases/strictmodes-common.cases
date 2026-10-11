@@ -1,0 +1,41 @@
+# Mutation cases: tests/test_ssh_authkeys.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_ssh_authkeys.bats
+#
+# strictmodes_refused_path must refuse what sshd refuses and accept the rest.
+
+run_case "strict/foreign-owner-accepted" 1 \
+    '        if [[ "$owner" != 0 && "$owner" != "$uid" ]] || (( 8#$mode & 8#002 )) \' \
+    '        if (( 8#$mode & 8#002 )) \'
+
+run_case "strict/world-write-accepted" 1 \
+    '        if [[ "$owner" != 0 && "$owner" != "$uid" ]] || (( 8#$mode & 8#002 )) \' \
+    '        if [[ "$owner" != 0 && "$owner" != "$uid" ]] \'
+
+run_case "strict/group-write-accepted" 1 \
+    '           || { (( 8#$mode & 8#020 )) && ! _strictmodes_private_group "$gid" "$user"; }; then' \
+    '           ; then'
+
+run_case "strict/private-group-refused" 1 \
+    '           || { (( 8#$mode & 8#020 )) && ! _strictmodes_private_group "$gid" "$user"; }; then' \
+    '           || (( 8#$mode & 8#020 )); then'
+
+run_case "strict/walk-past-home" 1 \
+    '        [[ "$path" == "$home" || "$path" == / ]] && return 1' \
+    '        [[ "$path" == / ]] && return 1'
+
+run_case "strict/file-only" 1 \
+    '        path="${path%/*}"' \
+    '        return 1'
+
+run_case "private/any-family" 1 \
+    '    [[ "${VPSSEC_DISTRO_FAMILY:-}" == debian ]] || return 1' \
+    '    :'
+
+run_case "private/other-members-ignored" 1 \
+    '    [[ -n "$members$primaries" && "${members:-$2}" == "$2" && "${primaries:-$2}" == "$2" ]]' \
+    '    [[ -n "$members$primaries" && "${primaries:-$2}" == "$2" ]]'
+
+# The user's own Match blocks decide which file sshd reads for them.
+run_case "akf/match-user-ignored" 1 \
+    '    dump=$(sshd_effective_config "$user") || dump=""' \
+    '    dump=$(sshd_effective_config) || dump=""'

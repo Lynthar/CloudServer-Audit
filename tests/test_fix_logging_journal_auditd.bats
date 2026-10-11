@@ -125,6 +125,21 @@ _block_path_under() {
     [ -d "$JOURNAL_DIR" ]
 }
 
+@test "journal: a journal directory the fix created logs the command that removes it" {
+    # Rollback deletes the drop-in only; the directory alone keeps it persistent.
+    run _logging_fix_enable_persistent_journal
+    [ "$status" -eq 0 ]
+    grep -qF "Undo for logging.enable_persistent_journal: journalctl --relinquish-var && rm -rf $JOURNAL_DIR" \
+        "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "journal: a journal directory that was already there is not offered for removal" {
+    mkdir -p "$JOURNAL_DIR"
+    run _logging_fix_enable_persistent_journal
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q 'Undo for logging.enable_persistent_journal' "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "journal: a newly created drop-in is recorded so rollback deletes it" {
     # The regression. backup_file was called only when the file already
     # existed, so on a first run nothing entered .vpssec_created and the
@@ -233,6 +248,26 @@ _block_path_under() {
     run _logging_fix_setup_audit_rules
     [ "$status" -eq 0 ]
     _vpssec_stub_called augenrules '--load'
+}
+
+@test "audit rules: an empty kernel rule set is not reported as loaded" {
+    # auditctl -l prints "No rules" when the set is empty.
+    _vpssec_stub_script auditctl <<'SH'
+[[ "$1" == -l ]] && echo "No rules"
+exit 0
+SH
+    VPSSEC_QUIET_SCAN=0
+
+    run _logging_fix_setup_audit_rules
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"written but not loaded yet"* ]]
+    [[ "$output" != *"Audit rules configured"* ]]
+}
+
+@test "audit rules: rules the kernel took log how to drop them after a rollback" {
+    run _logging_fix_setup_audit_rules
+    [ "$status" -eq 0 ]
+    grep -qF 'Undo for logging.setup_audit_rules: vpssec rollback && augenrules --load' "$VPSSEC_LOGS/vpssec.log"
 }
 
 @test "audit rules: the file persisting is still success when nothing can load it" {

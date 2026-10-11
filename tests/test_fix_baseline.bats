@@ -312,6 +312,16 @@ SH
     grep -qF 'Fix verify failed: baseline.enable_apparmor' "$VPSSEC_LOGS/vpssec.log"
 }
 
+@test "apparmor: a service that comes up with no profile loaded is not recorded" {
+    # The kernel LSM can be on with nothing loaded; that confines nothing.
+    _vpssec_stub aa-status 0 '{"version":"1","profiles":{},"processes":{}}'
+    confirm() { return 0; }
+
+    run execute_fix baseline.enable_apparmor
+    [ "$status" -eq 1 ]
+    grep -qF 'Fix verify failed: baseline.enable_apparmor' "$VPSSEC_LOGS/vpssec.log"
+}
+
 @test "apparmor: a failing systemctl enable does not skip the start" {
     # enable is best-effort — the unit may be static, or already enabled — so its
     # failure is logged and the postcondition decides the outcome. What must not
@@ -555,4 +565,68 @@ SH
     run _baseline_fix_selinux_enforcing
     [ "$status" -ne 0 ]
     grep -qx 'SELINUX=permissive' "$BASELINE_SELINUX_CONFIG"
+}
+
+# ==============================================================================
+# In a container the MAC policy is the host's
+# ==============================================================================
+
+# The MAC audit's checks as "id status fix_id", with no disabled-profile noise.
+_checks() {
+    BASELINE_APPARMOR_DISABLE_DIR="$BATS_TEST_TMPDIR/no-disable-dir"
+    _baseline_audit_mac
+    jq -r '.[] | "\(.id) \(.status) \(.fix_id)"' "$VPSSEC_STATE/checks.json"
+}
+
+@test "container: AppArmor off is the host's, listed unscored and offered no fix" {
+    # enable_apparmor's FIX_VERIFY can never pass where securityfs is hidden,
+    # so every guide run offered it again and exited non-zero.
+    detect_container() { echo lxc; }
+    _vpssec_stub aa-status 1
+
+    run _checks
+    [ "$output" = "baseline.mac_host_managed failed " ]
+    [ "${CHECK_SCORE_CATEGORY[baseline.mac_host_managed]}" = "info" ]
+}
+
+@test "container: no MAC tooling at all is the host's too" {
+    detect_container() { echo lxc; }
+    _vpssec_absent_command aa-status
+    _vpssec_absent_command apparmor_status
+
+    run _checks
+    [ "$output" = "baseline.mac_host_managed failed " ]
+}
+
+@test "container: AppArmor confining the container is the host's too, scored neither way" {
+    detect_container() { echo lxc; }
+    _vpssec_stub aa-status 0 '{"version":"1","profiles":{"/usr/sbin/sshd":"enforce"},"processes":{}}'
+
+    run _checks
+    [ "$output" = "baseline.mac_host_managed passed " ]
+    run jq -r '.[0].desc' "$VPSSEC_STATE/checks.json"
+    [[ "$output" == "AppArmor enabled: 1 profiles enforcing, 0 in complain mode."* ]]
+}
+
+@test "container: SELinux is the host's, enforcing or not, and setenforce is never offered" {
+    detect_container() { echo lxc; }
+    _vpssec_absent_command aa-status
+    _vpssec_absent_command apparmor_status
+    _selinux_present
+
+    run _checks
+    [ "$output" = "baseline.mac_host_managed failed " ]
+
+    : > "$BATS_TEST_TMPDIR/enforcing"
+    state_init
+    run _checks
+    [ "$output" = "baseline.mac_host_managed passed " ]
+}
+
+@test "container: off a container, AppArmor off still offers the fix" {
+    detect_container() { return 1; }
+    _vpssec_stub aa-status 1
+
+    run _checks
+    [ "$output" = "baseline.apparmor_disabled failed baseline.enable_apparmor" ]
 }

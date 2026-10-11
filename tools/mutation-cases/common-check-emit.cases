@@ -12,6 +12,12 @@ run_case "derive/title-default-dropped" 1 \
     '    [[ -n "$title" ]] || title=$(i18n "$id")' \
     '    :'
 
+# The bare id as the title: only a suite that loaded the language file can tell
+# it from the i18n text, which echoes the key when nothing is loaded.
+run_case "derive/title-is-bare-id" 1 \
+    '    [[ -n "$title" ]] || title=$(i18n "$id")' \
+    '    [[ -n "$title" ]] || title="$id"'
+
 # bash 5.2+ only: an unquoted replacement turns & into the matched {var}.
 run_case "i18n/replacement-unquoted" 1 \
     '        text="${text//\{$var\}/"$val"}"' \

@@ -11,3 +11,13 @@ run_case "score/sudo-logging-ok-scored" 1 \
 run_case "score/sudo-no-events-scored" 1 \
     '    ["logging.sudo_no_events"]="info"' \
     '    ["logging.sudo_no_events"]="recommended"'
+
+# A heuristic that matches nothing proves nothing, so its clean result is info.
+run_case "score/cron-clean-scored" 1 \
+    '    ["scheduling.cron_clean"]="info"' \
+    '    ["scheduling.cron_clean"]="recommended"'
+
+# Dropped from FIX_CONFIRM, MaxAuthTries is no longer a fix that asks first.
+run_case "fix/max-auth-tries-unasked" 1 \
+    '    ["ssh.set_max_auth_tries"]="Lowers MaxAuthTries to 4: every key a client offers counts as an attempt, so one whose agent offers four or more other keys first is disconnected; set IdentitiesOnly yes with the right IdentityFile on such clients"' \
+    '    # ssh.set_max_auth_tries left out'

@@ -100,6 +100,12 @@ FS_MAX_REPORT_ITEMS=20
 # The _fs_find_* walkers return 1 when their walk was cut short. A full page of
 # findings stops reading before the cut record; that check fails either way.
 
+# A walker stops at FS_MAX_REPORT_ITEMS, so a count that reached it is only a
+# floor. $1: the count; $2: 1 when a walk behind it filled its page.
+_fs_count_shown() {
+    if (( $2 )); then i18n 'filesystem.count_at_least' "count=$1"; else echo "$1"; fi
+}
+
 # Variables, not literals, for two reasons: the audit predicate and the fix
 # must not be able to point at different files, and a fix with a hardcoded
 # /etc path cannot be exercised against a scratch tree.
@@ -113,6 +119,8 @@ declare -ga FS_PAM_SESSION_FILES=()
 # fix mirrors the audit's expected modes (sudoers.d 0440, sshd_config.d 0644).
 FS_SUDOERS_D="/etc/sudoers.d"
 FS_SSHD_CONFIG_D="/etc/ssh/sshd_config.d"
+FS_CRONTAB="/etc/crontab"
+declare -ga FS_CRON_DIRS=(/etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly)
 
 # The filesystem-walk helpers live in core/common.sh so webapp and malware
 # can use them without filesystem.sh being in the include set.
@@ -367,6 +375,19 @@ _fs_find_no_owner() {
     return "$cut"
 }
 
+# True when group $2 gets access bits from mode $3 (a number) on sensitive file
+# $1 and is not one that file legitimately uses: root/shadow/ssh_keys anywhere;
+# daemon only on /etc/at.*, crontab only on /etc/cron* (their setgid readers).
+_fs_group_grants_access() {
+    [[ -n "$2" ]] && (( $3 & 070 )) || return 1
+    case "$2" in
+        root|shadow|ssh_keys) return 1 ;;
+        daemon)  [[ "$1" != /etc/at.* ]] ;;
+        crontab) [[ "$1" != /etc/cron* ]] ;;
+        *) return 0 ;;
+    esac
+}
+
 # Check a sensitive file's permissions AND ownership. Mode alone is not
 # enough: /etc/shadow at 640 owned by nobody is as readable to the wrong
 # party as a world-readable one.
@@ -410,16 +431,8 @@ _fs_check_sensitive_file() {
             problems+=("$(i18n 'filesystem.f_owner_expected' "owner=$owner")")
         fi
 
-        # Group only matters when it actually gets access bits AND is outside
-        # what THIS file legitimately uses: root/shadow/ssh_keys anywhere;
-        # daemon only on /etc/at.*, crontab only on /etc/cron* (setgid readers).
-        if [[ -n "$group" ]] && (( actual_num & 070 )) ; then
-            case "$group" in
-                root|shadow|ssh_keys) : ;;
-                daemon) [[ "$file" == /etc/at.* ]] || problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
-                crontab) [[ "$file" == /etc/cron* ]] || problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
-                *) problems+=("$(i18n 'filesystem.f_group_access' "group=$group")") ;;
-            esac
+        if _fs_group_grants_access "$file" "$group" "$actual_num"; then
+            problems+=("$(i18n 'filesystem.f_group_access' "group=$group")")
         fi
     fi
 
@@ -704,37 +717,16 @@ _fs_find_suspicious_cron() {
         "/tmp/\\."
     )
 
-    # Check system crontabs
-    local cron_dirs=(
-        "/etc/cron.d"
-        "/etc/cron.daily"
-        "/etc/cron.hourly"
-        "/etc/cron.weekly"
-        "/etc/cron.monthly"
-    )
-
-    # Check /etc/crontab
-    if [[ -f /etc/crontab ]]; then
-        for pattern in "${patterns[@]}"; do
-            local matches=$(grep -iE "$pattern" /etc/crontab 2>/dev/null | head -2)
-            if [[ -n "$matches" ]]; then
-                suspicious+=("$(i18n 'filesystem.f_cron_match' "src=/etc/crontab" "pattern=$pattern")")
-            fi
-        done
-    fi
-
-    # Check cron directories
-    for dir in "${cron_dirs[@]}"; do
-        [[ -d "$dir" ]] || continue
-        for file in "$dir"/*; do
-            [[ -f "$file" ]] || continue
-            for pattern in "${patterns[@]}"; do
-                local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
-                if [[ -n "$matches" ]]; then
-                    suspicious+=("$(i18n 'filesystem.f_cron_match' "src=$file" "pattern=$pattern")")
-                fi
-            done
-        done
+    local dir file pattern
+    local -a files=("$FS_CRONTAB")
+    for dir in "${FS_CRON_DIRS[@]}"; do
+        files+=("$dir"/*)
+    done
+    for file in "${files[@]}"; do
+        [[ -f "$file" ]] || continue
+        while IFS= read -r pattern; do
+            suspicious+=("$(i18n 'filesystem.f_cron_match' "src=$file" "pattern=$pattern")")
+        done < <(_fs_cron_file_matches "$file" "${patterns[@]}")
     done
 
     # Check user crontabs
@@ -744,16 +736,29 @@ _fs_find_suspicious_cron() {
         for file in "$spool"/*; do
             [[ -f "$file" ]] || continue
             local username=$(basename "$file")
-            for pattern in "${patterns[@]}"; do
-                local matches=$(grep -iE "$pattern" "$file" 2>/dev/null | head -2)
-                if [[ -n "$matches" ]]; then
-                    suspicious+=("$(i18n 'filesystem.f_cron_user_match' "user=$username" "pattern=$pattern")")
-                fi
-            done
+            while IFS= read -r pattern; do
+                suspicious+=("$(i18n 'filesystem.f_cron_user_match' "user=$username" "pattern=$pattern")")
+            done < <(_fs_cron_file_matches "$file" "${patterns[@]}")
         done
     fi
 
     printf '%s\n' "${suspicious[@]}"
+}
+
+# The patterns $2... that cron file $1 matches, one per line. Comment lines are
+# not read, and a file its package ships unmodified is not reported: Debian's
+# own /etc/cron.d/certbot runs `perl -e 'sleep int(rand(43200))'`.
+_fs_cron_file_matches() {
+    local file="$1" lines pattern
+    local -a hits=()
+    shift
+    lines=$(grep -vE '^[[:space:]]*(#|$)' "$file" 2>/dev/null) || return 0
+    for pattern in "$@"; do
+        grep -qiE -- "$pattern" <<<"$lines" && hits+=("$pattern")
+    done
+    (( ${#hits[@]} > 0 )) || return 0
+    file_package_verified "$file" >/dev/null && return 0
+    printf '%s\n' "${hits[@]}"
 }
 
 # Count user crontabs
@@ -825,11 +830,13 @@ _fs_audit_suid() {
 
     if ((count > 0)); then
         local file_list=$(echo "$suid_files" | head -5 | tr '\n' ' ')
+        local shown
+        shown=$(_fs_count_shown "$count" $(( count >= FS_MAX_REPORT_ITEMS )))
         check_emit "filesystem.suspicious_suid" medium failed \
-            title="$(i18n 'filesystem.suspicious_suid' "count=$count")" \
+            title="$(i18n 'filesystem.suspicious_suid' "count=$shown")" \
             desc="$(i18n 'filesystem.suspicious_suid_desc' "list=$file_list")" \
             suggestion="$(i18n 'filesystem.review_suid')"
-        print_severity "medium" "$(i18n 'filesystem.suspicious_suid' "count=$count")"
+        print_severity "medium" "$(i18n 'filesystem.suspicious_suid' "count=$shown")"
         log_info "Suspicious SUID files: $suid_files"
     elif (( walked )); then
         check_emit "filesystem.suid_ok" low passed \
@@ -845,11 +852,13 @@ _fs_audit_sgid() {
 
     if ((count > 0)); then
         local file_list=$(echo "$sgid_files" | head -5 | tr '\n' ' ')
+        local shown
+        shown=$(_fs_count_shown "$count" $(( count >= FS_MAX_REPORT_ITEMS )))
         check_emit "filesystem.suspicious_sgid" low failed \
-            title="$(i18n 'filesystem.suspicious_sgid' "count=$count")" \
+            title="$(i18n 'filesystem.suspicious_sgid' "count=$shown")" \
             desc="$(i18n 'filesystem.suspicious_sgid_desc' "list=$file_list")" \
             suggestion="$(i18n 'filesystem.review_sgid')"
-        print_severity "low" "$(i18n 'filesystem.suspicious_sgid' "count=$count")"
+        print_severity "low" "$(i18n 'filesystem.suspicious_sgid' "count=$shown")"
     elif (( walked )); then
         check_emit "filesystem.sgid_ok" low passed \
             desc="$(i18n 'filesystem.sgid_ok_desc')"
@@ -869,11 +878,14 @@ _fs_audit_world_writable() {
     if ((count > 0 || dir_count > 0)); then
         local total=$((count + dir_count))
         local items=$(printf '%s\n' "$ww_files" "$ww_dirs" | sed '/^$/d' | head -5 | tr '\n' ' ')
+        local shown
+        shown=$(_fs_count_shown "$total" \
+            $(( count >= FS_MAX_REPORT_ITEMS || dir_count >= FS_MAX_REPORT_ITEMS )))
         check_emit "filesystem.world_writable" medium failed \
-            title="$(i18n 'filesystem.world_writable' "count=$total")" \
+            title="$(i18n 'filesystem.world_writable' "count=$shown")" \
             desc="$(i18n 'filesystem.world_writable_desc' "items=$items")" \
             suggestion="$(i18n 'filesystem.fix_world_writable')"
-        print_severity "medium" "$(i18n 'filesystem.world_writable' "count=$total")"
+        print_severity "medium" "$(i18n 'filesystem.world_writable' "count=$shown")"
     elif (( walked )); then
         check_emit "filesystem.no_world_writable" low passed
         print_ok "$(i18n 'filesystem.no_world_writable')"
@@ -887,19 +899,22 @@ _fs_audit_no_owner() {
 
     if ((count > 0)); then
         local file_list=$(echo "$no_owner_files" | head -5 | tr '\n' ' ')
+        local shown
+        shown=$(_fs_count_shown "$count" $(( count >= FS_MAX_REPORT_ITEMS )))
         check_emit "filesystem.no_owner" low failed \
-            title="$(i18n 'filesystem.no_owner' "count=$count")" \
+            title="$(i18n 'filesystem.no_owner' "count=$shown")" \
             desc="$(i18n 'filesystem.no_owner_desc' "list=$file_list")" \
             suggestion="$(i18n 'filesystem.fix_no_owner')"
-        print_severity "low" "$(i18n 'filesystem.no_owner' "count=$count")"
+        print_severity "low" "$(i18n 'filesystem.no_owner' "count=$shown")"
     elif (( walked )); then
         check_emit "filesystem.owner_ok" low passed
         print_ok "$(i18n 'filesystem.owner_ok')"
     fi
 }
 
-# HIGH for direct priv-esc / credential-leak primitives (shadow, sudoers,
-# SSH host keys); every other sensitive file is MEDIUM (read-only exposure).
+# The files whose wrong permissions are HIGH even when only read access leaks:
+# credential and priv-esc primitives (shadow, sudoers, SSH host keys). A wrong
+# read bit elsewhere is LOW; a wrong write bit is HIGH anywhere.
 _fs_is_critical_perm_path() {
     case "$1" in
         # The rotated backups hold the SAME hashes as the live files,
@@ -911,13 +926,31 @@ _fs_is_critical_perm_path() {
     esac
 }
 
-# Prints "$1<TAB>problem" when file $2 fails expected mode $3. Always returns
-# 0, so a caller under errexit keeps going past the first bad file.
+# Prints "bucket<TAB>problem" when file $2 fails expected mode $3: bucket $1,
+# or high when group or other may write beyond $3, since that write rewrites any
+# of these files into a privilege escalation. Always returns 0 (errexit).
 _fs_sensitive_perm_issue() {
-    local result
+    local result mode bucket="$1"
     result=$(_fs_check_sensitive_file "$2" "$3") && return 0
-    [[ -n "$result" ]] && printf '%s\t%s\n' "$1" "$result"
+    [[ -n "$result" ]] || return 0
+    mode=$(stat -L -c '%a' "$2" 2>/dev/null) || true
+    if [[ "$mode" =~ ^[0-7]+$ ]] && (( (8#$mode & ~8#$3) & 022 )); then
+        bucket=high
+    fi
+    printf '%s\t%s\n' "$bucket" "$result"
     return 0
+}
+
+# The mode sensitive file $1 is expected to have. RHEL ships host private keys
+# as 640 root:ssh_keys, its default rather than a slip: accepted ONLY when the
+# group really is ssh_keys, and 640 still forbids world bits.
+_fs_sensitive_expected() {
+    if [[ "$1" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" \
+          && "$(stat -L -c '%G' "$1" 2>/dev/null)" == "ssh_keys" ]]; then
+        echo 640
+    else
+        echo "${FS_SENSITIVE_FILES[$1]}"
+    fi
 }
 
 # One "high|med<TAB>problem" line per sensitive file whose mode or ownership
@@ -925,13 +958,7 @@ _fs_sensitive_perm_issue() {
 _fs_sensitive_perm_issues() {
     local file expected bucket
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
-        expected="${FS_SENSITIVE_FILES[$file]}"
-        # RHEL ships host private keys as 640 root:ssh_keys, which is the
-        # default rather than a slip. Accepted ONLY when the group really is
-        # ssh_keys; 640 still forbids world bits. Debian and Arch keep 600.
-        if [[ "$file" == /etc/ssh/ssh_host_*_key && "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" && "$(stat -L -c '%G' "$file" 2>/dev/null)" == "ssh_keys" ]]; then
-            expected="640"
-        fi
+        expected=$(_fs_sensitive_expected "$file")
         bucket=med
         _fs_is_critical_perm_path "$file" && bucket=high
         _fs_sensitive_perm_issue "$bucket" "$file" "$expected"
@@ -1033,9 +1060,9 @@ _fs_audit_umask() {
     usergroups=$(_fs_get_usergroups_enab)
     effective=$(_fs_umask_effective)
 
-    # Severity keys on the EFFECTIVE umask, not the login.defs literal.
-    # The wording qualifies a claim the operator could disprove by typing
-    # `umask` (see the design notes), and compares NORMALISED values.
+    # Severity keys on the EFFECTIVE umask, not the login.defs literal. The
+    # group-bit rewrite is worded as possible, not fact: one `umask` in a session
+    # can disprove it. Values are compared NORMALISED (027 against 0027).
     local normalized
     normalized=$(_fs_compute_effective_umask "$configured" "no")
 
@@ -1078,6 +1105,7 @@ _fs_audit_caps() {
     caps_files=$(_fs_find_caps_files) || { walked=0; _FS_CUT_WALKS+=(caps); }
     local total_count=$(count_lines "$caps_files")
     local dangerous_count=$(count_lines "$caps_files" '^DANGEROUS:')
+    local capped=$(( total_count >= FS_MAX_REPORT_ITEMS )) shown
 
     if ((dangerous_count > 0)); then
         # Extract dangerous files list
@@ -1091,11 +1119,12 @@ _fs_audit_caps() {
         done <<< "$caps_files"
         dangerous_list="${dangerous_list%; }"
 
+        shown=$(_fs_count_shown "$dangerous_count" "$capped")
         check_emit "filesystem.dangerous_caps" medium failed \
-            title="$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")" \
+            title="$(i18n 'filesystem.dangerous_caps' "count=$shown")" \
             desc="$(i18n 'filesystem.dangerous_caps_desc' "list=$dangerous_list")" \
             suggestion="$(i18n 'filesystem.review_caps')"
-        print_severity "medium" "$(i18n 'filesystem.dangerous_caps' "count=$dangerous_count")"
+        print_severity "medium" "$(i18n 'filesystem.dangerous_caps' "count=$shown")"
     elif ((total_count > 0)); then
         local caps_list=""
         while IFS= read -r line; do
@@ -1105,11 +1134,12 @@ _fs_audit_caps() {
         done <<< "$caps_files"
         caps_list="${caps_list%; }"
 
+        shown=$(_fs_count_shown "$total_count" "$capped")
         check_emit "filesystem.non_standard_caps" low failed \
-            title="$(i18n 'filesystem.non_standard_caps' "count=$total_count")" \
+            title="$(i18n 'filesystem.non_standard_caps' "count=$shown")" \
             desc="$(i18n 'filesystem.non_standard_caps_desc' "list=$caps_list")" \
             suggestion="$(i18n 'filesystem.non_standard_caps_suggestion')"
-        print_severity "low" "$(i18n 'filesystem.non_standard_caps' "count=$total_count")"
+        print_severity "low" "$(i18n 'filesystem.non_standard_caps' "count=$shown")"
     elif (( walked )); then
         check_emit "filesystem.caps_ok" low passed
         print_ok "$(i18n 'filesystem.caps_ok')"
@@ -1184,29 +1214,44 @@ _fs_fix_sensitive_perms() {
         local expected_num=$((8#$expected))
 
         # Same bitmask test as the audit side, so the fix cannot skip a file
-        # the audit flagged: an arithmetic comparison misses 0604.
+        # the audit flagged: an arithmetic comparison misses 0604. Only those
+        # bits are cleared: 0602 must not gain group and world read.
         local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
-        if (( extra_bits != 0 )); then
-            print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$expected")"
-            # Back up before chmod so the prior mode can be restored on rollback
-            # (cp -p preserves the mode). Counted, not just returned: the loops
-            # below ignore this helper's status, so a bare return would be silent.
-            if ! backup_file "$file" >/dev/null; then
-                ((failed++)) || true
-                return 1
-            fi
-            if chmod "$expected" "$file" 2>/dev/null; then
-                ((fixed++)) || true
-                print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"
-            else
-                ((failed++)) || true
-                print_error "$(i18n 'filesystem.file_fix_failed' "file=$file")"
-            fi
+        local target=$(( actual_num & expected_num & 07777 ))
+
+        # Owner and group as the audit judges them, which it does only as root.
+        local owner="" group="" chown_owner=0 chown_group=0
+        if [[ "$(id -u)" == "0" ]]; then
+            owner=$(stat -L -c "%U" "$file" 2>/dev/null)
+            group=$(stat -L -c "%G" "$file" 2>/dev/null)
+            [[ -n "$owner" && "$owner" != "root" ]] && chown_owner=1
+            _fs_group_grants_access "$file" "$group" "$target" && chown_group=1
+        fi
+        (( extra_bits != 0 || chown_owner || chown_group )) || return 0
+
+        print_info "$(i18n 'filesystem.fixing_file' "file=$file" "from=$actual" "to=$(printf '%o' "$target")")"
+        # Back up first so rollback restores the prior mode and owner (cp -p
+        # keeps both). Counted, not just returned: the loops below ignore this
+        # helper's status, so a bare return would be silent.
+        if ! backup_file "$file" >/dev/null; then
+            ((failed++)) || true
+            return 1
+        fi
+        local ok=1
+        (( chown_owner )) && { chown root "$file" 2>/dev/null || ok=0; }
+        (( chown_group )) && { chgrp root "$file" 2>/dev/null || ok=0; }
+        (( extra_bits != 0 )) && { chmod "$(printf '%o' "$target")" "$file" 2>/dev/null || ok=0; }
+        if (( ok )); then
+            ((fixed++)) || true
+            print_ok "$(i18n 'filesystem.file_fixed' "file=$file")"
+        else
+            ((failed++)) || true
+            print_error "$(i18n 'filesystem.file_fix_failed' "file=$file")"
         fi
     }
 
     for file in "${!FS_SENSITIVE_FILES[@]}"; do
-        _fs_fix_one "$file" "${FS_SENSITIVE_FILES[$file]}"
+        _fs_fix_one "$file" "$(_fs_sensitive_expected "$file")"
     done
 
     # Mirrors the audit-side drop-in expansion — without it the fix is a

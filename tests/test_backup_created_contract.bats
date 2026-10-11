@@ -294,7 +294,6 @@ _CREATES_NOTHING=(
     baseline.enable_apparmor            # apt + systemctl
     baseline.selinux_set_enforcing      # setenforce + edits an existing file
     cloudflared.generate_config         # vpssec's own template dir
-    cloudflared.setup_service           # cloudflared's installer + systemctl
     docker.generate_proxy_template      # vpssec's own template dir
     fail2ban.enable_service             # systemctl only
     filesystem.fix_sensitive_perms      # chmod only; .vpssec_modes covers it
@@ -318,11 +317,17 @@ _CREATES_NOTHING=(
 _RECORDS_UNDO=(
     baseline.disable_unused
     baseline.enable_apparmor
-    cloudflared.setup_service
     fail2ban.enable_service
     fail2ban.install
+    kernel.disable_core_dump
+    kernel.enable_aslr
+    kernel.harden_ipv6
+    kernel.harden_kernel
+    kernel.harden_network
     logging.enable_auditd
+    logging.enable_persistent_journal
     logging.install_auditd
+    logging.setup_audit_rules
     logging.setup_logrotate
     timezone.enable_ntp
     timezone.set_timezone

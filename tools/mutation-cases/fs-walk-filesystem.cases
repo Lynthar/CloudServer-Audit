@@ -40,3 +40,8 @@ run_case "cut/module-not-marked" 1 \
 run_case "suid/cut-record-exact-match" 1 \
     '        [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }' \
     '        [[ "$file" == "$_FS_WALK_CUT" ]] && { cut=1; continue; }'
+
+# A walk that filled its page was not read to its end: the count is a floor.
+run_case "count/capped-count-as-exact" 1 \
+    '    if (( $2 )); then i18n '"'"'filesystem.count_at_least'"'"' "count=$1"; else echo "$1"; fi' \
+    '    echo "$1"'

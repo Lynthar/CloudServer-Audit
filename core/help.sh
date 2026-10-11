@@ -48,15 +48,19 @@ _help_fix_summary() {
     r=$(count_lines "${_help_fix_table[risky]}")
     a=$(count_lines "${_help_fix_table[alert_only]}")
 
-    (( s > 0 )) && parts+=("${s} safe")
-    (( c > 0 )) && parts+=("${c} confirm")
-    (( r > 0 )) && parts+=("${r} risky")
-    (( a > 0 )) && parts+=("${a} alert")
+    (( s > 0 )) && parts+=("$(i18n 'help.count_safe' "n=$s")")
+    (( c > 0 )) && parts+=("$(i18n 'help.count_confirm' "n=$c")")
+    (( r > 0 )) && parts+=("$(i18n 'help.count_risky' "n=$r")")
+    (( a > 0 )) && parts+=("$(i18n 'help.count_alert' "n=$a")")
 
     if (( ${#parts[@]} == 0 )); then
-        echo "audit-only"
+        i18n 'help.audit_only'
     else
-        local IFS=', '; echo "${parts[*]}"
+        # Joined by hand: "${parts[*]}" separates with only IFS's first character.
+        local sep out="" p
+        sep=$(i18n 'help.count_sep')
+        for p in "${parts[@]}"; do out+="${out:+$sep}$p"; done
+        echo "$out"
     fi
 }
 
@@ -158,23 +162,26 @@ _help_show_module() {
     print_msg "$(i18n 'help.module_id'): ${module}"
 
     _help_collect_fixes "$module"
-    local total=0
-    local k
-    for k in safe confirm risky alert_only; do
-        local n
+    # Alert-only entries have nothing to run, so they are not fixes; their own
+    # section below still lists them.
+    local fixes=0 alerts k n
+    for k in safe confirm risky; do
         n=$(count_lines "${_help_fix_table[$k]}")
-        total=$(( total + n ))
+        fixes=$(( fixes + n ))
     done
+    alerts=$(count_lines "${_help_fix_table[alert_only]}")
 
-    if (( total == 0 )); then
+    if (( fixes == 0 && alerts == 0 )); then
         print_msg ""
         print_msg "  ${DIM}$(i18n 'help.audit_only_module')${NC}"
         print_msg ""
         return 0
     fi
 
-    print_msg ""
-    print_msg "${BOLD}$(i18n 'help.available_fixes' "count=$total"):${NC}"
+    if (( fixes > 0 )); then
+        print_msg ""
+        print_msg "${BOLD}$(i18n 'help.available_fixes' "count=$fixes"):${NC}"
+    fi
 
     _help_print_class_section "$(i18n 'help.class_safe')"       "${_help_fix_table[safe]}"       "FIX_SAFE"
     _help_print_class_section "$(i18n 'help.class_confirm')"    "${_help_fix_table[confirm]}"    "FIX_CONFIRM"

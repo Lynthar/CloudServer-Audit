@@ -1,0 +1,22 @@
+# Mutation cases: tests/test_write_template.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_write_template.bats
+#
+# The one writer behind every generated template; the call sites' own
+# `|| return 1` are pinned in each module's cases file.
+
+run_case "writer/write-status-discarded" 1 \
+    '    if ! mkdir -p "${path%/*}" || ! cat > "$path"; then' \
+    '    if false; then'
+
+# Without the mkdir, a template whose directory does not exist yet fails.
+run_case "writer/parent-not-created" 1 \
+    '    if ! mkdir -p "${path%/*}" || ! cat > "$path"; then' \
+    '    if ! cat > "$path"; then'
+
+run_case "writer/chmod-status-discarded" 1 \
+    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then' \
+    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path" && false; then'
+
+run_case "writer/mode-ignored" 1 \
+    '    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then' \
+    '    if false; then'

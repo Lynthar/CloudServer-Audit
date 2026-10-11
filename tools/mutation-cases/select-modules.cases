@@ -1,5 +1,7 @@
 # Mutation cases: tests/test_select_modules.bats against core/common.sh.
 # mutate-suite: core/common.sh tests/test_select_modules.bats
+#
+# Which start-up menus a terminal gets: the module menu, and the language menu.
 
 # rollback shows the menu again, and the menu eats its confirmation answer.
 run_case "select-modules/rollback-shows-menu" 1 \
@@ -15,3 +17,8 @@ run_case "select-modules/status-shows-menu" 1 \
 run_case "select-modules/menu-gone-for-audit" 1 \
     '        rollback|status) return 0 ;;' \
     '        *) return 0 ;;'
+
+# VPSSEC_LANG from the environment no longer answers the language menu.
+run_case "select-language/env-ignored" 1 \
+    '    VPSSEC_LANG_SET=1' \
+    '    :'

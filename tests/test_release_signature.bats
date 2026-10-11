@@ -92,6 +92,24 @@ _cosign_fails_first() {
     done
 }
 
+@test "both entry points take a bare version as the tag it names" {
+    local f
+    _resolved() { VPSSEC_VERSION="$1"; resolve_version; echo "$VPSSEC_VERSION"; }
+    for f in run.sh install.sh; do
+        eval "$(awk '/^_validate_version_tag\(\)/,/^}/' "$(_vpssec_repo_root)/$f")"
+        eval "$(awk '/^resolve_version\(\)/,/^}/' "$(_vpssec_repo_root)/$f")"
+        run _resolved 1.4.0
+        [ "$status" -eq 0 ]
+        [ "$output" = "v1.4.0" ]
+        run _resolved v1.4.0
+        [ "$output" = "v1.4.0" ]
+        # Accepting the bare form must not open the filter behind it.
+        run _resolved main
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"Refusing suspicious release tag"* ]]
+    done
+}
+
 # ---- what cosign is asked to accept --------------------------------------
 # The whole argv is pinned, not just the identity: a regexp flag, a dropped
 # issuer or an --insecure-* switch each widens who may sign a release root runs.

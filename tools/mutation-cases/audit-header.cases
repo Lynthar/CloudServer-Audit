@@ -6,8 +6,8 @@
 # The raw --include again: the injected context modules go unnamed, and an
 # --exclude run says nothing true.
 run_case "header/raw-include" 1 \
-    '                print_msg "Modules: $(_report_modules_scope)"' \
-    '                print_msg "Modules: ${VPSSEC_INCLUDE}"'
+    '                print_msg "$(i18n '"'"'report.host_modules'"'"'): $(_report_modules_scope)"' \
+    '                print_msg "$(i18n '"'"'report.host_modules'"'"'): ${VPSSEC_INCLUDE}"'
 
 # Only --include counts as partial, so an --exclude run gets no Modules line.
 run_case "header/exclude-unsaid" 1 \

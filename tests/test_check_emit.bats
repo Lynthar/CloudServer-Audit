@@ -7,6 +7,9 @@ load helpers.bash
 
 setup() {
     _vpssec_load core/state.sh
+    # Without it i18n echoes the key, so "the title is the id's i18n text"
+    # would hold for a title that is the bare id.
+    i18n_load en_US
     REPO="$(_vpssec_repo_root)"
     _log_file="$BATS_TEST_TMPDIR/vpssec.log"
 }

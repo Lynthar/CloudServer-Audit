@@ -61,12 +61,14 @@ _rule() {
     _rule 90-deploy.bak 'deploy ALL=(ALL) ALL'
     _rule 91-deploy~ 'deploy ALL=(ALL) ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" != *deploy* ]]
 }
 
 @test "a command-restricted rule is not a way to root" {
     _rule 90-zabbix 'zabbix ALL=(ALL) NOPASSWD: /usr/bin/zabbix_get'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" != *zabbix* ]]
 }
 
@@ -85,6 +87,7 @@ _rule() {
     _rule 91-admins 'ADMINS ALL=(ALL) ALL'
     _rule 92-ghost 'ghost ALL=(ALL) ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" != *ADMINS* ]]
     [[ "$output" != *ghost* ]]
 }
@@ -126,6 +129,7 @@ _rule() {
     _rule 90-alias 'User_Alias ADMINS = carol, %ops'
     _rule 91-admins 'ADMINS ALL=(ALL) NOPASSWD: ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" == *carol* && "$output" == *deploy* && "$output" != *ADMINS* ]]
     sudo_nopasswd_admin carol
     sudo_nopasswd_admin deploy
@@ -178,6 +182,7 @@ _rule() {
     sudo_nopasswd_admin dave
     _rule 90-cmnd 'Cmnd_Alias EVERYTHING = /bin/ls, !ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" != *dave* ]]
 }
 
@@ -227,12 +232,14 @@ _rule() {
 @test "runas only as a group runs as the invoking user, not root" {
     _rule 90-carol 'carol ALL=(:ALL) NOPASSWD: ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" != *carol* ]]
 }
 
 @test "a negated name is taken out of the list" {
     _rule 90-all '%ops, carol, !carol ALL=(ALL) ALL'
     run sudo_admin_users
+    [ "$status" -eq 0 ]
     [[ "$output" == *deploy* && "$output" != *carol* ]]
 }
 

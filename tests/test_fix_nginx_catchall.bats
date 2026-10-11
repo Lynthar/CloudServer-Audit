@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh
+    _vpssec_load core/state.sh core/engine.sh
     i18n_load en_US
     export TMPDIR="$BATS_TEST_TMPDIR"
     export _log_file="$BATS_TEST_TMPDIR/vpssec.log"
@@ -18,8 +18,9 @@ setup() {
     NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
     NGINX_CATCHALL_CONF="$NGINX_SITES_ENABLED/99-catchall.conf"
     NGINX_SSL_DIR="$NGINX_CONF_DIR/ssl"
-    NGINX_CATCHALL_CERT="$NGINX_SSL_DIR/default.crt"
-    NGINX_CATCHALL_KEY="$NGINX_SSL_DIR/default.key"
+    # The shipped file names, moved into the scratch tree.
+    NGINX_CATCHALL_CERT="$NGINX_SSL_DIR/${NGINX_CATCHALL_CERT##*/}"
+    NGINX_CATCHALL_KEY="$NGINX_SSL_DIR/${NGINX_CATCHALL_KEY##*/}"
     mkdir -p "$NGINX_SITES_ENABLED"
 
     _vpssec_stub systemctl
@@ -97,6 +98,21 @@ done
 [[ -n "$out" ]] && printf -- '-----BEGIN CERTIFICATE-----\n' > "$out"
 exit 0
 SH
+}
+
+# ---- whose certificate -------------------------------------------------------
+
+@test "catchall: an operator's own default.crt is neither served nor touched" {
+    # An existing catchall certificate is reused as is, so a name an operator
+    # might have chosen would show unknown SNI clients their real hostname.
+    mkdir -p "$NGINX_SSL_DIR"
+    printf 'OPERATOR CERT\n' > "$NGINX_SSL_DIR/default.crt"
+
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    [ "$(cat "$NGINX_SSL_DIR/default.crt")" = "OPERATOR CERT" ]
+    grep -qxF "    ssl_certificate $NGINX_CATCHALL_CERT;" "$NGINX_CATCHALL_CONF"
+    _vpssec_refute grep -q 'default\.crt' "$NGINX_CATCHALL_CONF"
 }
 
 # ---- the rollback contract -------------------------------------------------
@@ -495,6 +511,8 @@ _emitted() { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
 @test "audit: a port-80 catchall passes where nginx serves nothing on 443" {
     _nginx_audit_with_dump 'http { server { listen 80; } server { listen 80 default_server; return 444; } }'
     grep -qxF nginx.catchall_exists <<<"$(_emitted)"
+    # A config nginx could read: the module finished.
+    [ "${#VPSSEC_MODULES_FAILED[@]}" -eq 0 ]
 }
 
 @test "audit: serving 443 without a 443 catchall is still partial" {
@@ -513,6 +531,8 @@ SH
     state_init
     nginx_audit
     [ "$(_emitted)" = "nginx.config_unreadable" ]
+    # None of the nginx checks ran: the audit is incomplete (exit 3).
+    [[ " ${VPSSEC_MODULES_FAILED[*]} " == *" nginx "* ]]
 }
 
 # ---- the live probe, against a real socket ----------------------------------

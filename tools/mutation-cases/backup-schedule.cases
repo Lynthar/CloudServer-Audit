@@ -2,12 +2,12 @@
 # mutate-suite: modules/backup.sh tests/test_backup_schedule.bats
 #
 # The cron root is a fake /etc holding Debian's stock cron.daily/dpkg and passwd;
-# crontab and systemctl are stubs, restic is installed and borg/rclone are not.
+# crontab and systemctl are stubs, restic is installed and the other tools are not.
 
 # The old pattern: dpkg's dpkg-db-backup passes on every Debian host, and a word
 # that only contains "borg" counts as well.
 run_case "cron/bare-backup-counts" 1 \
-    "BACKUP_TOOL_RE='(^|[^[:alnum:]_-])(restic|borg|borgmatic|rclone|rsnapshot)([^[:alnum:]_-]|\$)'" \
+    'BACKUP_TOOL_RE="(^|[^[:alnum:]_-])(${_BACKUP_TOOL_ALT})([^[:alnum:]_-]|\$)"' \
     "BACKUP_TOOL_RE='(restic|borg|backup)'"
 
 run_case "cron/comments-count" 1 \
@@ -28,5 +28,32 @@ run_case "timer/dpkg-db-backup-counts" 1 \
     "        | grep -oE '[^[:space:]]+[.]timer') || true"
 
 run_case "timer/names-ignored" 1 \
-    "    grep -qiE '(restic|borg|rclone|rsnapshot|backup)' <<<\"\$timers\"" \
-    '    false'
+    '    grep -iE "(${_BACKUP_TOOL_ALT}|backup)" <<<"$timers" || true' \
+    '    true'
+
+# A timer whose unit failed its last run still counted as a working schedule.
+run_case "timer/failed-run-counts" 1 \
+    '        if [[ -n "$unit" ]]; then' \
+    '        if false; then'
+
+run_case "timer/success-read-as-failure" 1 \
+    '    if [[ -n "$result" && "$result" != success ]]; then' \
+    '    if [[ -n "$result" ]]; then'
+
+# A failing timer must not silence a working cron schedule beside it, nor be
+# reported as no schedule at all.
+run_case "schedule/failing-hides-cron" 1 \
+    '    if ((scheduled > 0)); then' \
+    '    if ((scheduled > 0 && ${#failing[@]} == 0)); then'
+
+run_case "schedule/failing-read-as-none" 1 \
+    '    elif ((${#failing[@]} == 0)); then' \
+    '    else'
+
+# ---- which tools count -------------------------------------------------------
+
+# Detection forgets the table: rsnapshot hosts are told no tool is installed and
+# their schedule is never looked at.
+run_case "tools/table-not-read" 1 \
+    '    for tool in "${BACKUP_TOOLS[@]}"; do' \
+    '    for tool in restic borg rclone; do'

@@ -31,7 +31,11 @@ VPSSEC_TEMPLATES="${VPSSEC_ROOT}/templates"
 # Upstream identity, used only to look up the newest release tag.
 VPSSEC_REPO="${VPSSEC_REPO:-Lynthar/CloudServer-Audit}"
 
-# Default settings
+# Default settings. A VPSSEC_LANG from the environment answers the language
+# menu, as --lang does.
+if [[ -n "${VPSSEC_LANG:-}" ]]; then
+    VPSSEC_LANG_SET=1
+fi
 VPSSEC_LANG="${VPSSEC_LANG:-zh_CN}"
 VPSSEC_COLOR="${VPSSEC_COLOR:-1}"
 VPSSEC_JSON_ONLY="${VPSSEC_JSON_ONLY:-0}"
@@ -66,14 +70,14 @@ vpssec_cloud_provider() {
 
 # Coarse tier for modules that vary on "what kind of cloud", not which vendor:
 # tier1 = IAM credentials in IMDS, tier2 = link-local IMDS without them,
-# unknown = no network IMDS. Membership and rationale: see the design notes.
+# unknown = no network IMDS. aws-or-compatible is tier1: an EC2-shaped IMDS answered.
 vpssec_cloud_tier() {
     if [[ -n "$VPSSEC_CLOUD_TIER" ]]; then
         echo "$VPSSEC_CLOUD_TIER"
         return
     fi
     case "$(vpssec_cloud_provider)" in
-        aws|azure|gcp|alibaba|tencent|huawei|oracle)
+        aws|aws-or-compatible|azure|gcp|alibaba|tencent|huawei|oracle)
             VPSSEC_CLOUD_TIER="tier1" ;;
         digitalocean|vultr|linode|hetzner|ovh|scaleway)
             VPSSEC_CLOUD_TIER="tier2" ;;
@@ -83,53 +87,43 @@ vpssec_cloud_tier() {
     echo "$VPSSEC_CLOUD_TIER"
 }
 
-# Scan for known-format credentials. Shared by cloud.sh and docker.sh.
-# Emits "<kind>(<n>) ..." — kinds and counts only, NEVER matched values.
-# Generic PASSWORD=/SECRET= markers are deliberately not matched.
+# Known-format credentials, one "<kind> <grep flags> <ERE>" each. Vendor-fixed
+# prefixes and PEM headers only, for near-zero false positives: generic
+# PASSWORD= / SECRET= markers are deliberately absent.
+declare -ga _VPSSEC_SECRET_PATTERNS=(
+    # PEM keys of any flavor, and PGP's armor, whose header ends "KEY BLOCK".
+    'private_key -E -----BEGIN[[:space:]]+(RSA|OPENSSH|EC|DSA|ENCRYPTED|PGP)?[[:space:]]?PRIVATE[[:space:]]+KEY([[:space:]]+BLOCK)?-----'
+    # AKIA = long-lived user key, ASIA = temporary session key.
+    'aws_access_key -E (AKIA|ASIA)[0-9A-Z]{16}'
+    # After its variable name, as env (=), YAML (:) or JSON ("...": "...").
+    "aws_secret_key -iE aws_secret_access_key[\"']?[[:space:]]*[:=][[:space:]]*[\"']?[A-Za-z0-9/+=]{40}"
+    # The AccessKey ID, whose length after LTAI has varied over the years.
+    'alibaba_access_key -E LTAI[A-Za-z0-9]{12,}'
+    'tencent_secret_id -E AKID[A-Za-z0-9]{32}'
+    # Personal access, OAuth and refresh tokens.
+    'digitalocean_token -E do[opr]_v1_[a-f0-9]{64}'
+    # Classic tokens (2021+ prefixes) and fine-grained PATs (2022+).
+    'github_token -E gh[posu]_[A-Za-z0-9]{36}'
+    'github_pat -E github_pat_[A-Za-z0-9_]{22,}'
+    'gitlab_token -E glpat-[A-Za-z0-9_-]{20}'
+    'slack_token -E xox[bpoasr]-[0-9A-Za-z-]{10,}'
+    # a.b.c with base64url segments, the first two JSON objects (eyJ).
+    'jwt -E eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'
+    'stripe_live_key -E sk_live_[0-9a-zA-Z]{24,}'
+)
+
+# Scan for those credentials. Shared by cloud.sh and docker.sh.
+# Emits "<kind>(x<n>) ..." — kinds and counts only, NEVER matched values.
 _vpssec_scan_secrets_in_content() {
     local content="$1"
     [[ -z "$content" ]] && return 0
-    local found=() n
-
-    # PEM private keys (any flavor).
-    n=$(grep -cE -- '-----BEGIN[[:space:]]+(RSA|OPENSSH|EC|DSA|ENCRYPTED|PGP)?[[:space:]]?PRIVATE[[:space:]]+KEY-----' \
-        <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("private_key(x$n)")
-
-    # AWS access key IDs (AKIA = long-lived user; ASIA = temporary session).
-    n=$(grep -cE '(AKIA|ASIA)[0-9A-Z]{16}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("aws_access_key(x$n)")
-
-    # AWS secret access key (after canonical variable name).
-    n=$(grep -cE 'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}' \
-        <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("aws_secret_key(x$n)")
-
-    # GitHub tokens (vendor-strict 2021+ prefix: ghp_, ghs_, gho_, ghu_).
-    n=$(grep -cE 'gh[posu]_[A-Za-z0-9]{36}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("github_token(x$n)")
-
-    # GitHub fine-grained PAT (2022+): github_pat_<base62>_<base62>, a distinct
-    # prefix the classic gh[posu]_ pattern above does not cover.
-    n=$(grep -cE 'github_pat_[A-Za-z0-9_]{22,}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("github_pat(x$n)")
-
-    # GitLab PAT.
-    n=$(grep -cE 'glpat-[A-Za-z0-9_-]{20}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("gitlab_token(x$n)")
-
-    # Slack tokens.
-    n=$(grep -cE 'xox[bpoasr]-[0-9A-Za-z-]{10,}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("slack_token(x$n)")
-
-    # JWT (a.b.c with base64url-format segments starting with eyJ).
-    n=$(grep -cE 'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' \
-        <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("jwt(x$n)")
-
-    # Stripe live keys.
-    n=$(grep -cE 'sk_live_[0-9a-zA-Z]{24,}' <<<"$content" 2>/dev/null) || n=0
-    (( n > 0 )) && found+=("stripe_live_key(x$n)")
+    local found=() entry kind flags re n
+    for entry in "${_VPSSEC_SECRET_PATTERNS[@]}"; do
+        read -r kind flags re <<<"$entry"
+        # Occurrences, not lines: two keys on one line are two keys.
+        n=$(grep -o "$flags" -- "$re" <<<"$content" 2>/dev/null | wc -l) || n=0
+        (( n > 0 )) && found+=("${kind}(x$n)")
+    done
 
     printf '%s ' "${found[@]}"
 }
@@ -541,7 +535,11 @@ detect_os_codename() {
 
 detect_virtualization() {
     if command -v systemd-detect-virt &>/dev/null; then
-        systemd-detect-virt 2>/dev/null || echo "none"
+        # It prints "none" AND exits 1 on bare metal, so the exit status cannot
+        # pick the fallback; an empty answer is a failed query, not "none".
+        local virt
+        virt=$(systemd-detect-virt 2>/dev/null) || true
+        echo "${virt:-unknown}"
     elif [[ -f /proc/1/cgroup ]]; then
         if grep -q docker /proc/1/cgroup 2>/dev/null; then
             echo "docker"
@@ -553,6 +551,33 @@ detect_virtualization() {
     else
         echo "unknown"
     fi
+}
+
+# The container type (openvz, lxc, docker, nspawn, container) when vpssec runs
+# inside one, else nothing and 1. Kernel parameters and the MAC policy there
+# belong to the host kernel, which nothing inside the container can change.
+detect_container() {
+    if [[ -f /proc/vz/veinfo ]] || [[ -d /proc/vz ]]; then
+        echo "openvz"
+        return 0
+    fi
+    if grep -qa "lxc" /proc/1/cgroup 2>/dev/null; then
+        echo "lxc"
+        return 0
+    fi
+    if [[ -f /.dockerenv ]] || grep -qa "docker" /proc/1/cgroup 2>/dev/null; then
+        echo "docker"
+        return 0
+    fi
+    if grep -qa "machine.slice" /proc/1/cgroup 2>/dev/null; then
+        echo "nspawn"
+        return 0
+    fi
+    if grep -qa "container=" /proc/1/environ 2>/dev/null; then
+        echo "container"
+        return 0
+    fi
+    return 1
 }
 
 is_debian_based() {
@@ -710,8 +735,8 @@ validate_ip() {
 VPSSEC_CREATED_MANIFEST=".vpssec_created"
 
 # Per-directory manifest of each backed-up file's ORIGINAL mode, one
-# "<mode> <path>" per line. Needed because backup_file chmods its copy to 600
-# and cp -p would otherwise restore that mode (see the design notes).
+# "<mode> <path>" per line. backup_file chmods its copy to 600 and cp -p keeps
+# that, so without it a rollback leaves /etc/passwd at 600 and breaks lookups.
 VPSSEC_MODES_MANIFEST=".vpssec_modes"
 
 # Scratch name of a copy still being written, at the session root. Never a
@@ -743,6 +768,17 @@ backup_track_mode() {
     chmod 600 "$manifest" 2>/dev/null || true
 }
 
+# Create backup directory $1 (700) with an empty created-files manifest. Every
+# backup directory has one, so a rollback can tell a deleted manifest, which
+# would leave the plan's new files behind unnoticed, from "nothing was created".
+_backup_dir_open() {
+    local dir="$1" manifest="$1/$VPSSEC_CREATED_MANIFEST"
+    mkdir -p "$dir" || return 1
+    chmod 700 "$dir" || return 1
+    [[ -e "$manifest" ]] && return 0
+    : > "$manifest" && chmod 600 "$manifest"
+}
+
 # True if $1 is already recorded as created this session.
 backup_is_tracked_created() {
     local path="$1"
@@ -758,8 +794,7 @@ backup_track_created() {
     local path="$1"
     [[ -n "${VPSSEC_BACKUP_SESSION:-}" ]] || return 0
     validate_path "$path" || return 1
-    mkdir -p "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
-    chmod 700 "$VPSSEC_BACKUP_SESSION" 2>/dev/null || true
+    _backup_dir_open "$VPSSEC_BACKUP_SESSION" 2>/dev/null || return 1
     if ! backup_is_tracked_created "$path"; then
         # Checked: this manifest is the only thing that lets a rollback delete
         # the file the caller is about to create, so a failed append must not
@@ -805,13 +840,11 @@ backup_file() {
         backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
     fi
 
-    # Create backup directory with secure permissions
-    if ! mkdir -p "$backup_dir"; then
+    if ! _backup_dir_open "$backup_dir"; then
         log_error "Backup failed (mkdir): $backup_dir"
         print_error "$(i18n 'backup.snapshot_failed' "file=$file")" >&2
         return 1
     fi
-    chmod 700 "$backup_dir"
 
     if [[ -f "$file" ]]; then
         local relative_path="${file#/}"
@@ -954,7 +987,8 @@ write_file_atomic() {
         chmod 644 "$temp_file"
     fi
 
-    if mv -f "$temp_file" "$target"; then
+    # -T: a directory at $target is an error, not a place to move the file into.
+    if mv -fT "$temp_file" "$target"; then
         log_info "Atomically wrote: $target"
         return 0
     else
@@ -962,6 +996,22 @@ write_file_atomic() {
         log_error "Failed to write: $target"
         return 1
     fi
+}
+
+# Write a generated template from stdin to PATH in vpssec's own templates tree,
+# then chmod MODE (verbatim; `+x` leaves umask in charge of read). Reports and
+# returns 1 when either fails: a bare `cat >` says "generated" on a full disk.
+write_template() {
+    local path="$1" mode="${2:-}"
+    if ! mkdir -p "${path%/*}" || ! cat > "$path"; then
+        print_error "$(i18n 'common.template_write_failed' "path=$path")"
+        return 1
+    fi
+    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then
+        print_error "$(i18n 'common.template_write_failed' "path=$path")"
+        return 1
+    fi
+    print_item "$(i18n 'common.template_created' "name=${path##*/}")"
 }
 
 # --- Service Operations ---
@@ -1083,18 +1133,99 @@ count_lines() {
     echo "$n"
 }
 
-# Count usable public keys: a non-comment, non-blank line whose key-type token
-# starts the line or follows an options prefix. Commented-out keys must never
-# count — reporting one that is not usable risks a password-auth lockout.
+# sshd's effective configuration for a connection as user $1 (default: one no
+# Match User block names), Match blocks applied; addr=none never matches Match
+# Address. Plain -T where -C is rejected. Returns 1 when sshd cannot answer.
+sshd_effective_config() {
+    local dump
+    if dump=$(sshd -T -C "user=${1:-doesnotexist},host=none,addr=none" 2>/dev/null) && [[ -n "$dump" ]]; then
+        printf '%s\n' "$dump"
+        return 0
+    fi
+    dump=$(sshd -T 2>/dev/null) && [[ -n "$dump" ]] || return 1
+    printf '%s\n' "$dump"
+}
+
+# The key files sshd reads for user $1, its Match blocks applied: %h, %u and %%
+# expanded, relative paths under the home, one absolute path per line. None for
+# "AuthorizedKeysFile none" or an unknown home; sshd's default when it cannot answer.
+sshd_authorized_keys_files() {
+    local user="$1" home dump akf tok path
+    local -a toks=()
+    home=$(getent passwd "$user" 2>/dev/null | cut -d: -f6) || home=""
+    [[ -n "$home" ]] || return 0
+    # Captured, then read: a pipe into an awk that exits early would SIGPIPE sshd.
+    dump=$(sshd_effective_config "$user") || dump=""
+    akf=$(awk 'tolower($1) == "authorizedkeysfile" { $1 = ""; sub(/^[[:space:]]+/, ""); print; exit }' <<<"$dump")
+    [[ -n "$akf" ]] || akf=".ssh/authorized_keys .ssh/authorized_keys2"
+    [[ "${akf,,}" == none ]] && return 0
+    read -ra toks <<<"$akf"
+    for tok in "${toks[@]}"; do
+        path="${tok//%%/$'\x01'}"   # protect literal %% before %h/%u
+        path="${path//%h/"$home"}"
+        path="${path//%u/"$user"}"
+        path="${path//$'\x01'/%}"
+        [[ "$path" != /* ]] && path="$home/$path"
+        printf '%s\n' "$path"
+    done
+}
+
+# Larger key files are not read: any local user can make one big enough to
+# stall a root audit, and a real one is a few KB.
+AUTHKEYS_MAX_BYTES=1048576
+
+# Usable public keys in $1: non-comment lines with a key-type token at the start
+# or after an options prefix (counting a commented-out key risks a lockout). A
+# file not regular or over AUTHKEYS_MAX_BYTES is not read: prints 0, returns 2.
 count_authorized_keys() {
-    local file="$1"
-    [[ -f "$file" ]] || { echo 0; return 0; }
+    local file="$1" size
+    [[ -e "$file" ]] || { echo 0; return 0; }
+    size=$(stat -L -c %s -- "$file" 2>/dev/null) || size=""
+    if [[ ! -f "$file" || ! "$size" =~ ^[0-9]+$ ]] || (( size > AUTHKEYS_MAX_BYTES )); then
+        echo 0
+        return 2
+    fi
     awk '
         /^[[:space:]]*#/ { next }
         /^[[:space:]]*$/ { next }
         /(^|[[:space:]])(ssh-|ecdsa-|sk-)/ { c++ }
         END { print c + 0 }
     ' "$file" 2>/dev/null || echo 0
+}
+
+# sshd's StrictModes check of user $1's key file $2: the file, then each directory
+# up to the home (or /), owned by root or the user and not group/world-writable.
+# Prints the first refused component as "path<TAB>mode<TAB>owner"; 1 = accepted.
+strictmodes_refused_path() {
+    local user="$1" pw uid home path st owner mode gid name
+    [[ -e "$2" ]] || return 1
+    pw=$(getent passwd "$user" 2>/dev/null) || return 1
+    IFS=: read -r _ _ uid _ _ home _ <<<"$pw"
+    path=$(readlink -f -- "$2") || return 1
+    home=$(readlink -f -- "$home" 2>/dev/null) || home=""
+    while :; do
+        st=$(stat -L -c '%u %a %g %U' -- "$path" 2>/dev/null) || st="? 0 ? ?"
+        read -r owner mode gid name <<<"$st"
+        if [[ "$owner" != 0 && "$owner" != "$uid" ]] || (( 8#$mode & 8#002 )) \
+           || { (( 8#$mode & 8#020 )) && ! _strictmodes_private_group "$gid" "$user"; }; then
+            printf '%s\t%s\t%s\n' "$path" "$mode" "$name"
+            return 0
+        fi
+        [[ "$path" == "$home" || "$path" == / ]] && return 1
+        path="${path%/*}"
+        path="${path:-/}"
+    done
+}
+
+# Debian's OpenSSH also lets group $1 write a key path when the group's only
+# member, primary or supplementary, is user $2: a private user group.
+_strictmodes_private_group() {
+    [[ "${VPSSEC_DISTRO_FAMILY:-}" == debian ]] || return 1
+    local members primaries
+    members=$(getent group "$1" 2>/dev/null | cut -d: -f4) || members=""
+    primaries=$(getent passwd 2>/dev/null \
+        | awk -F: -v g="$1" '$4 == g && !s[$1]++ { printf "%s%s", (n++ ? "," : ""), $1 }') || primaries=""
+    [[ -n "$members$primaries" && "${members:-$2}" == "$2" && "${primaries:-$2}" == "$2" ]]
 }
 
 # --- Privileged accounts ---
@@ -1666,8 +1797,8 @@ confirm_critical() {
 # --- Filesystem-walk Helpers (shared across modules) ---
 
 # Container and snap trees to prune from filesystem walks. They live on the
-# root filesystem, so -xdev does not skip them, and their image content would
-# be reported as host-level findings. Per-path notes: see the design notes.
+# root filesystem, so -xdev does not skip them, and their image content (SUID
+# binaries legitimate inside an image) would be reported as host findings.
 declare -ga _FS_PRUNE_PATHS=(
     /var/lib/docker
     /var/lib/containerd
@@ -1749,7 +1880,7 @@ _noninteractive() {
 
 # Language selection menu (called before i18n is loaded)
 select_language() {
-    # Skip if already specified via --lang or environment
+    # Skip if already specified via --lang or the VPSSEC_LANG environment variable
     if [[ -n "${VPSSEC_LANG_SET:-}" ]]; then
         return 0
     fi
@@ -2017,23 +2148,28 @@ vpssec_init() {
     # so there is no stale-lock cleanup. The stored PID is advisory.
     if [[ "${VPSSEC_MODE:-}" != "status" ]]; then
         local _run_lock="${VPSSEC_STATE}/.run.lock"
+        # Opened for append: truncating before the lock is won erases the
+        # holder's PID, and the conflict message below loses it.
         # shellcheck disable=SC2093
-        exec 200>"$_run_lock"
+        exec 200>>"$_run_lock"
         if ! flock -n 200; then
-            local _other_pid
+            local _other_pid _msg
             _other_pid=$(cat "$_run_lock" 2>/dev/null || true)
             if [[ -n "$_other_pid" ]]; then
-                print_error "$(i18n 'error.already_running_pid' "pid=$_other_pid")"
+                _msg=$(i18n 'error.already_running_pid' "pid=$_other_pid")
             else
-                print_error "$(i18n 'error.already_running')"
+                _msg=$(i18n 'error.already_running')
             fi
             # Never advise removing the lock file: reaching here means a LIVE
             # holder, and a fresh inode would let two mutating runs coexist.
-            print_msg "$(i18n 'error.already_running_hint' "pid=${_other_pid:-<pid>}")"
+            _msg+=$'\n'"  $(i18n 'error.already_running_hint' "pid=${_other_pid:-<pid>}")"
+            # One call, so the hint follows the error to stderr under --json-only.
+            print_error "$_msg"
             exit 1
         fi
-        # Record our PID for the next caller's diagnostics.
-        echo $$ >&200
+        # Our PID for the next caller's diagnostics. Same inode, so the lock
+        # held through fd 200 is unaffected by the truncation.
+        echo $$ > "$_run_lock"
     fi
 
     log_info "vpssec initialized (version: ${VPSSEC_VERSION}, lang: ${VPSSEC_LANG})"

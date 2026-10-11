@@ -19,6 +19,8 @@ APACHE_CONF="/etc/apache2/apache2.conf"
 APACHE_CONF_ALT="/etc/httpd/conf/httpd.conf"
 APACHE_MODS_ENABLED="/etc/apache2/mods-enabled"
 APACHE_SITES_ENABLED="/etc/apache2/sites-enabled"
+# Where Apache includes *.conf from after the main file, in that order.
+APACHE_CONF_DIRS="/etc/apache2/conf-enabled /etc/apache2/conf.d /etc/httpd/conf.d"
 
 # SERVER certificate paths only. /etc/ssl/certs is deliberately absent: it is
 # the package-managed CA trust store, where expired roots are normal and not
@@ -178,15 +180,15 @@ _webapp_read_ini_directive() {
         sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
 }
 
-# FPM pool overrides for a directive: php_admin_value forces, php_value
-# allows runtime override. The LAST observed value across all pools wins —
-# if any pool weakens the directive, the host is exposed.
+# FPM pool overrides for a directive: php_admin_value / php_admin_flag force,
+# php_value / php_flag allow runtime override (flag is the boolean form). The
+# LAST value across all pools wins: one weakened pool exposes the host.
 _webapp_read_pool_directive() {
     local key="$1"
     local fpm_ini="$2"
     local pool_d="${fpm_ini%/*}/pool.d"
     [[ -d "$pool_d" ]] || return 0
-    grep -hE "^[[:space:]]*php_(admin_)?value\[${key}\][[:space:]]*=" \
+    grep -hE "^[[:space:]]*php_(admin_)?(value|flag)\[${key}\][[:space:]]*=" \
         "$pool_d"/*.conf 2>/dev/null | \
         tail -1 | \
         sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
@@ -382,7 +384,7 @@ _webapp_apache_conf_files() {
     [[ -f "$APACHE_CONF" ]] && files+=("$APACHE_CONF")
     [[ -f "$APACHE_CONF_ALT" ]] && files+=("$APACHE_CONF_ALT")
     local d f
-    for d in /etc/apache2/conf-enabled /etc/apache2/conf.d /etc/httpd/conf.d; do
+    for d in $APACHE_CONF_DIRS; do
         [[ -d "$d" ]] || continue
         for f in "$d"/*.conf; do
             [[ -f "$f" ]] && files+=("$f")
@@ -391,40 +393,50 @@ _webapp_apache_conf_files() {
     printf '%s\n' "${files[@]}"
 }
 
-# Check ServerSignature (last uncommented value across all config files wins)
+# The file to tell the operator to edit for global directive $1: the last one
+# that sets it, since a later file overrides an earlier one, else the main file.
+_webapp_apache_setting_file() {
+    local f last=""
+    while IFS= read -r f; do
+        grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"
+    done < <(_webapp_apache_conf_files)
+    echo "${last:-$(_webapp_get_apache_conf)}"
+}
+
+# The last uncommented value of Apache global directive $1 across the config
+# files in the order Apache reads them (a later one overrides); empty if unset.
+# Every global directive is read through here, so none judges differently.
+_webapp_apache_directive() {
+    local last="" f v
+    while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        v=$(grep -ioP "^[^#]*$1\\s+\\K\\w+" "$f" 2>/dev/null | tail -1)
+        [[ -n "$v" ]] && last="$v"
+    done < <(_webapp_apache_conf_files)
+    echo "$last"
+}
+
+# ServerSignature, lowercased; "default" (On) when unset.
 _webapp_apache_server_signature() {
-    local result="default"  # Apache default is On
-    local f v
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        v=$(grep -ioP '^[^#]*ServerSignature\s+\K\w+' "$f" 2>/dev/null | tail -1)
-        [[ -n "$v" ]] && result="${v,,}"
-    done < <(_webapp_apache_conf_files)
-    echo "$result"
+    local v
+    v=$(_webapp_apache_directive ServerSignature)
+    v="${v,,}"
+    echo "${v:-default}"
 }
 
-# Check ServerTokens (last uncommented value across all config files wins)
+# ServerTokens as written; Full, Apache's default, when unset.
 _webapp_apache_server_tokens() {
-    local tokens="" f v
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        v=$(grep -ioP '^[^#]*ServerTokens\s+\K\w+' "$f" 2>/dev/null | tail -1)
-        [[ -n "$v" ]] && tokens="$v"
-    done < <(_webapp_apache_conf_files)
-    echo "${tokens:-Full}"  # Default is Full
+    local v
+    v=$(_webapp_apache_directive ServerTokens)
+    echo "${v:-Full}"
 }
 
-# Check TraceEnable — off if any config file disables it (uncommented)
+# TraceEnable, lowercased; on, Apache's default, when unset.
 _webapp_apache_trace() {
-    local f
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        if grep -qiE '^[^#]*TraceEnable\s+Off' "$f" 2>/dev/null; then
-            echo "off"
-            return
-        fi
-    done < <(_webapp_apache_conf_files)
-    echo "on"  # Default is On
+    local v
+    v=$(_webapp_apache_directive TraceEnable)
+    v="${v,,}"
+    echo "${v:-on}"
 }
 
 # Check directory indexing
@@ -576,35 +588,56 @@ _webapp_cert_is_ca() {
     [[ "$bc" == *"CA:TRUE"* ]]
 }
 
-# Check certificate expiry
+# Certificates nginx serves (ssl_certificate in NGINX_DUMP), one path per line.
+# A relative path resolves against the main config file's directory, as nginx's
+# own does; a path built from a variable cannot be known here and is skipped.
+_webapp_nginx_served_certs() {
+    [[ -n "$NGINX_DUMP" ]] || return 0
+    local conf_dir
+    conf_dir=$(sed -n '1s|^# configuration file \(.*\)/[^/]*:$|\1|p' <<<"$NGINX_DUMP")
+    nginx_statements <<<"$NGINX_DUMP" | CONF_DIR="$conf_dir" awk -F'\t' '
+        $3 == "ssl_certificate" && $4 !~ /[$]/ { print (($4 ~ /^\//) ? $4 : ENVIRON["CONF_DIR"] "/" $4) }
+    ' | sort -u
+}
+
+# Days until certificate $1 expires, negative once it has; fails if unreadable.
+_webapp_cert_days_left() {
+    local expiry epoch
+    expiry=$(openssl x509 -enddate -noout -in "$1" 2>/dev/null | cut -d= -f2)
+    [[ -n "$expiry" ]] || return 1
+    epoch=$(date -d "$expiry" +%s 2>/dev/null) || return 1
+    echo $(( (epoch - $(date +%s)) / 86400 ))
+}
+
+# Check certificate expiry: the server certificates under SSL_CERT_PATHS (CA
+# ones skipped there), then every certificate nginx serves, CA:TRUE or not and
+# wherever it lives: OpenSSL 3 makes `req -x509` self-signed ones CA:TRUE.
 _webapp_ssl_cert_expiry() {
-    local findings=()
+    local findings=() certs=() served=() cert dir days
+    local -A seen=()
+    mapfile -t served < <(_webapp_nginx_served_certs)
 
     for dir in "${SSL_CERT_PATHS[@]}"; do
         [[ -d "$dir" ]] || continue
-
-        # Find certificate files
         while IFS= read -r -d '' cert; do
             _webapp_cert_is_ca "$cert" && continue
-
-            local expiry=$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)
-            [[ -z "$expiry" ]] && continue
-
-            local expiry_epoch=$(date -d "$expiry" +%s 2>/dev/null)
-            [[ -z "$expiry_epoch" ]] && continue
-
-            local now_epoch=$(date +%s)
-            local days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
-
-            if [[ $days_left -lt 0 ]]; then
-                findings+=("$cert|expired|$(( -days_left ))")
-            elif [[ $days_left -lt $CERT_EXPIRY_WARNING_DAYS ]]; then
-                findings+=("$cert|expiring|$days_left")
-            fi
+            certs+=("$cert")
         # -L is required: Let's Encrypt exposes live/<domain>/*.pem as
         # SYMLINKS into archive/, so without it `-type f` rejects every
         # LE certificate, expired ones included.
         done < <(find -L "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" \) -type f -print0 2>/dev/null)
+    done
+    certs+=(${served[@]+"${served[@]}"})
+
+    for cert in ${certs[@]+"${certs[@]}"}; do
+        [[ -f "$cert" && -z "${seen[$cert]:-}" ]] || continue
+        seen[$cert]=1
+        days=$(_webapp_cert_days_left "$cert") || continue
+        if (( days < 0 )); then
+            findings+=("$cert|expired|$(( -days ))")
+        elif (( days < CERT_EXPIRY_WARNING_DAYS )); then
+            findings+=("$cert|expiring|$days")
+        fi
     done
 
     printf '%s\n' "${findings[@]}"
@@ -615,6 +648,17 @@ _webapp_ssl_cert_expiry() {
 # trust store. A real one must start from the cert the server actually serves.
 
 # --- Sensitive File Exposure Check Functions ---
+
+# The web roots that exist, one per line: WEB_ROOTS with its globs expanded.
+_webapp_web_roots() {
+    local pattern root
+    for pattern in "${WEB_ROOTS[@]}"; do
+        # shellcheck disable=SC2086 # WEB_ROOTS holds glob patterns to expand
+        for root in $pattern; do
+            if [[ -d "$root" ]]; then printf '%s\n' "$root"; fi
+        done
+    done
+}
 
 # Check for sensitive files in web roots
 _webapp_sensitive_files() {
@@ -636,18 +680,16 @@ _webapp_sensitive_files() {
     local prune_args=()
     _fs_build_prune_args prune_args
 
-    for root_pattern in "${WEB_ROOTS[@]}"; do
-        local root
-        # shellcheck disable=SC2086 # WEB_ROOTS contains glob patterns we want expanded
-        for root in $root_pattern; do
-            [[ -d "$root" ]] || continue
-            while IFS= read -r -d '' found; do
-                [[ "$found" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
-                findings+=("$found")
-            done < <(_fs_run_find "webapp-sensitive" \
-                find "$root" -maxdepth 3 "${prune_args[@]}" \
-                \( "${name_expr[@]}" \) -print0 2>/dev/null)
-        done
+    local -a roots=()
+    local root
+    mapfile -t roots < <(_webapp_web_roots)
+    for root in ${roots[@]+"${roots[@]}"}; do
+        while IFS= read -r -d '' found; do
+            [[ "$found" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
+            findings+=("$found")
+        done < <(_fs_run_find "webapp-sensitive" \
+            find "$root" -maxdepth 3 "${prune_args[@]}" \
+            \( "${name_expr[@]}" \) -print0 2>/dev/null)
     done
 
     printf '%s\n' "${findings[@]}" | sort -u | head -50
@@ -661,30 +703,27 @@ _webapp_backup_files() {
     local prune_args=()
     _fs_build_prune_args prune_args
 
-    for root_pattern in "${WEB_ROOTS[@]}"; do
-        local root
-        # shellcheck disable=SC2086 # WEB_ROOTS contains glob patterns we want expanded
-        for root in $root_pattern; do
-            [[ -d "$root" ]] || continue
-
-            # Common backup patterns
-            while IFS= read -r -d '' file; do
-                [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
-                findings+=("$file")
-            done < <(_fs_run_find "webapp-backup" \
-                find "$root" -maxdepth 4 "${prune_args[@]}" \( \
-                -name "*.bak" -o \
-                -name "*.backup" -o \
-                -name "*.old" -o \
-                -name "*~" -o \
-                -name "*.save" -o \
-                -name "*.orig" -o \
-                -name "*.swp" -o \
-                -name "*.sql" -o \
-                -name "*.tar.gz" -o \
-                -name "*.zip" \
-            \) -type f -print0 2>/dev/null | head -30)
-        done
+    local -a roots=()
+    local root
+    mapfile -t roots < <(_webapp_web_roots)
+    for root in ${roots[@]+"${roots[@]}"}; do
+        # Common backup patterns
+        while IFS= read -r -d '' file; do
+            [[ "$file" == *"$_FS_WALK_CUT" ]] && { cut=1; continue; }
+            findings+=("$file")
+        done < <(_fs_run_find "webapp-backup" \
+            find "$root" -maxdepth 4 "${prune_args[@]}" \( \
+            -name "*.bak" -o \
+            -name "*.backup" -o \
+            -name "*.old" -o \
+            -name "*~" -o \
+            -name "*.save" -o \
+            -name "*.orig" -o \
+            -name "*.swp" -o \
+            -name "*.sql" -o \
+            -name "*.tar.gz" -o \
+            -name "*.zip" \
+        \) -type f -print0 2>/dev/null | head -30)
     done
 
     printf '%s\n' "${findings[@]}"
@@ -798,10 +837,20 @@ webapp_audit() {
         if nginx_dump_load; then
             _webapp_audit_nginx
         else
+            # As in the nginx module: one finding, and the audit is incomplete.
             check_emit "webapp.nginx_config_unreadable" info failed \
                 desc="$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")" \
                 suggestion="$(i18n 'nginx.config_unreadable_fix')"
+            _module_record_failure webapp query
         fi
+    # A running nginx whose binary is not on PATH (a source build in
+    # /usr/local/nginx/sbin) is not audited: say so, not "no web server".
+    elif pgrep -x nginx >/dev/null 2>&1; then
+        has_webserver=true
+        check_emit "webapp.nginx_not_on_path" info failed \
+            title="$(i18n 'webapp.nginx_not_on_path')" \
+            desc="$(i18n 'webapp.nginx_not_on_path_desc')" \
+            suggestion="$(i18n 'webapp.nginx_not_on_path_fix')"
     fi
 
     # === Apache Security ===
@@ -815,7 +864,7 @@ webapp_audit() {
             check_emit "webapp.apache_server_signature" low failed \
                 title="$(i18n 'webapp.apache_signature_on')" \
                 desc="$(i18n 'webapp.apache_server_signature_desc')" \
-                suggestion="$(i18n 'webapp.set_signature_off')"
+                suggestion="$(i18n 'webapp.set_signature_off' "conf=$(_webapp_apache_setting_file ServerSignature)")"
         fi
 
         # 8. ServerTokens
@@ -824,7 +873,7 @@ webapp_audit() {
             check_emit "webapp.apache_server_tokens" low failed \
                 title="$(i18n 'webapp.apache_tokens_verbose')" \
                 desc="$(i18n 'webapp.apache_server_tokens_desc' "tokens=$tokens")" \
-                suggestion="$(i18n 'webapp.set_tokens_prod')"
+                suggestion="$(i18n 'webapp.set_tokens_prod' "conf=$(_webapp_apache_setting_file ServerTokens)")"
         fi
 
         # 9. TraceEnable
@@ -833,7 +882,7 @@ webapp_audit() {
             check_emit "webapp.apache_trace_enabled" low failed \
                 title="$(i18n 'webapp.apache_trace_on')" \
                 desc="$(i18n 'webapp.apache_trace_enabled_desc')" \
-                suggestion="$(i18n 'webapp.disable_trace')"
+                suggestion="$(i18n 'webapp.disable_trace' "conf=$(_webapp_apache_setting_file TraceEnable)")"
         fi
 
         # 10. Directory indexing
@@ -963,7 +1012,8 @@ webapp_audit() {
             title="$(i18n 'webapp.sensitive_files_found'): $sensitive_count" \
             desc="$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
             suggestion="$(i18n 'webapp.remove_sensitive')"
-    elif (( walked )); then
+    # No web root at all scanned nothing, and a pass here would score.
+    elif (( walked )) && [[ -n "$(_webapp_web_roots)" ]]; then
         check_emit "webapp.sensitive_files_ok" info passed \
             title="$(i18n 'webapp.no_sensitive_files')" \
             desc="$(i18n 'webapp.sensitive_files_ok_desc')"

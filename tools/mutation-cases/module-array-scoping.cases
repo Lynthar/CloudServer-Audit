@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_module_array_scoping.bats against modules/networking.sh.
+# mutate-suite: modules/networking.sh tests/test_module_array_scoping.bats
+
+# A module none of the runtime tests source: only the static lint sees its array
+# turn local to module_load, where the audit would loop over nothing.
+run_case "scope/array-local-to-module-load" 1 \
+    'declare -ga NET_DANGEROUS_PUBLIC_PORTS=(' \
+    'declare -a NET_DANGEROUS_PUBLIC_PORTS=('

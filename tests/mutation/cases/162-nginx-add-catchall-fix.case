@@ -25,7 +25,7 @@ _SSL="/etc/nginx/ssl"
 precheck() {
     command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null \
         && [[ -e "$_DEFAULT" ]] && [[ ! -e "$_CATCHALL" && ! -L "$_CATCHALL" ]] \
-        && [[ ! -e "$_SSL/default.crt" ]]
+        && [[ ! -e "$_SSL/vpssec-catchall.crt" ]]
 }
 
 mutate() {
@@ -38,7 +38,7 @@ postrollback() {
 }
 
 restore() {
-    rm -f "$_CATCHALL" "$_SSL/default.crt" "$_SSL/default.key"
+    rm -f "$_CATCHALL" "$_SSL/vpssec-catchall.crt" "$_SSL/vpssec-catchall.key"
     rmdir "$_SSL" 2>/dev/null
     [[ -e "$_SAVED" || -L "$_SAVED" ]] && mv "$_SAVED" "$_DEFAULT"
     systemctl reload nginx >/dev/null 2>&1

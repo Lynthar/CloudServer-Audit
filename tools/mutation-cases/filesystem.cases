@@ -84,28 +84,51 @@ run_case "predicate/strictness-accepts-world-bits" 1 \
 # ---- filesystem.fix_sensitive_perms ---------------------------------
 
 run_case "perms/bitmask-back-to-numeric-compare" 1 \
-    '        if (( extra_bits != 0 )); then' \
-    '        if (( actual_num > expected_num )); then'
+    '        (( extra_bits != 0 || chown_owner || chown_group )) || return 0' \
+    '        (( actual_num > expected_num || chown_owner || chown_group )) || return 0'
 
 # The mutant is `if false`, not `:`: the backup call lives in an if/then whose
 # body counts the failure, so replacing the whole line with `:` leaves a
 # dangling `fi`. `if false` skips the backup and the failure branch alike.
 run_case "perms/backup-skipped" 1 \
-    '            if ! backup_file "$file" >/dev/null; then' \
-    '            if false; then'
+    '        if ! backup_file "$file" >/dev/null; then' \
+    '        if false; then'
 
 # A failed backup must be COUNTED, not just returned: the loops that call this
 # helper ignore its status, so an uncounted failure leaves the fix reporting
 # success for a file it never backed up.
 run_case "perms/backup-failure-uncounted" 1 \
-    '                ((failed++)) || true' \
-    '                :'
+    '            ((failed++)) || true' \
+    '            :'
 
-# Occurrence 2: the backup-failure counter above is now the first verbatim
-# match of this line.
+# Occurrence 2: a chmod, chown or chgrp that failed; the backup-failure counter
+# above is the first verbatim match of this line.
 run_case "perms/chmod-failure-uncounted" 2 \
-    '                ((failed++)) || true' \
-    '                :'
+    '            ((failed++)) || true' \
+    '            :'
+
+# chmod to the expected mode adds bits the file lacked: 0602 gains g+r and o+r.
+run_case "perms/fix-adds-bits" 1 \
+    '        local target=$(( actual_num & expected_num & 07777 ))' \
+    '        local target=$expected_num'
+
+# The audit reports owner and group; a fix that only chmods never clears them.
+run_case "perms/owner-not-repaired" 1 \
+    '        (( chown_owner )) && { chown root "$file" 2>/dev/null || ok=0; }' \
+    '        :'
+
+run_case "perms/group-not-repaired" 1 \
+    '        (( chown_group )) && { chgrp root "$file" 2>/dev/null || ok=0; }' \
+    '        :'
+
+run_case "perms/group-judged-before-chmod" 1 \
+    '            _fs_group_grants_access "$file" "$group" "$target" && chown_group=1' \
+    '            _fs_group_grants_access "$file" "$group" "$actual_num" && chown_group=1'
+
+# A group or world write bit is a privilege escalation on any of these files.
+run_case "severity/write-bit-left-low" 1 \
+    '        bucket=high' \
+    '        :'
 
 run_case "perms/failure-not-returned" 1 \
     '    if ((failed > 0)); then' \
@@ -150,9 +173,9 @@ run_case "sensitive/cron-allow-retightened" 1 \
 # Scoping, not existence: a whitelist that accepts these groups on ANY path
 # would let a daemon-group /etc/shadow pass. Killed by the outside-path tests.
 run_case "sensitive/daemon-group-accepted-everywhere" 1 \
-    '                daemon) [[ "$file" == /etc/at.* ]] || problems+=("$(i18n '"'"'filesystem.f_group_access'"'"' "group=$group")") ;;' \
-    '                daemon) : ;;'
+    '        daemon)  [[ "$1" != /etc/at.* ]] ;;' \
+    '        daemon)  return 1 ;;'
 
 run_case "sensitive/crontab-group-accepted-everywhere" 1 \
-    '                crontab) [[ "$file" == /etc/cron* ]] || problems+=("$(i18n '"'"'filesystem.f_group_access'"'"' "group=$group")") ;;' \
-    '                crontab) : ;;'
+    '        crontab) [[ "$1" != /etc/cron* ]] ;;' \
+    '        crontab) return 1 ;;'

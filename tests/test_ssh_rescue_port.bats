@@ -118,6 +118,27 @@ _rescue_fw_with() {
     grep -q 'Firewall is active' <<<"$output"
 }
 
+@test "rescue firewall: a rule ufw would not delete is named with the command that does" {
+    i18n_load en_US
+    SSH_RESCUE_FW_RULE="ufw:203.0.113.9:2222"
+    _vpssec_stub ufw 1
+
+    run _ssh_rescue_remove_firewall
+    [[ "$output" == *"remove it by hand: ufw delete allow from 203.0.113.9 to any port 2222 proto tcp"* ]]
+}
+
+@test "rescue firewall: a rule ufw deleted, or had already gone, is not reported" {
+    # ufw answers 0 for a rule that is already gone, as after the watchdog's
+    # teardown, so the parent's second delete stays quiet.
+    i18n_load en_US
+    SSH_RESCUE_FW_RULE="ufw::2222"
+    _vpssec_stub ufw 0
+
+    run _ssh_rescue_remove_firewall
+    [ -z "$output" ]
+    _vpssec_stub_called ufw 'delete allow 2222/tcp'
+}
+
 # ---- the rescue's lifetime bound --------------------------------------------
 
 # True while $1 runs; a never-reaped zombie (its parent may be a PID 1 that

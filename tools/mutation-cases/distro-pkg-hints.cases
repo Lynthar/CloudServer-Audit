@@ -104,3 +104,37 @@ run_case "integrity/aide-claimed-on-arch" 1 \
 run_case "integrity/nothing-is-ever-packaged" 1 \
     '        debian|rhel|suse) echo "aide" ;;' \
     '        debian|rhel|suse) echo "" ;;'
+
+# ---- which manager the hints are for ----------------------------------------
+
+# Presence alone again: Arch with apt from [extra] gets apt hints and dpkg lookups.
+run_case "pkgmgr/arch-native-not-first" 1 \
+    '        arch) order=(pacman apt dnf zypper) ;;' \
+    '        arch) order=(apt dnf pacman zypper) ;;'
+
+run_case "pkgmgr/rhel-native-not-first" 1 \
+    '        rhel) order=(dnf apt pacman zypper) ;;' \
+    '        rhel) order=(apt dnf pacman zypper) ;;'
+
+run_case "pkgmgr/suse-native-not-first" 1 \
+    '        suse) order=(zypper apt dnf pacman) ;;' \
+    '        suse) order=(apt dnf pacman zypper) ;;'
+
+# yum stops counting as dnf: an EL host with only yum has no manager at all.
+run_case "pkgmgr/yum-not-dnf" 1 \
+    '        dnf) command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 ;;' \
+    '        dnf) command -v dnf >/dev/null 2>&1 ;;'
+
+# The family is not passed: every host goes by presence.
+run_case "pkgmgr/family-dropped" 1 \
+    '    VPSSEC_PKG_MGR="$(_distro_pkg_mgr "$VPSSEC_DISTRO_FAMILY")"' \
+    '    VPSSEC_PKG_MGR="$(_distro_pkg_mgr)"'
+
+# pgrep passed through as a package name, which no family ships.
+run_case "packages/pgrep-unmapped" 1 \
+    '            ps|pgrep)' \
+    '            ps)'
+
+run_case "packages/procps-ng-rhel-only" 1 \
+    '                    rhel|arch) pkg=procps-ng ;;' \
+    '                    rhel) pkg=procps-ng ;;'

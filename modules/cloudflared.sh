@@ -5,7 +5,10 @@
 
 # --- Cloudflared Configuration ---
 
-CLOUDFLARED_CONFIG="/etc/cloudflared/config.yml"
+# Where cloudflared itself looks for config.yml / config.yaml (upstream
+# config/configuration.go): these system directories, and every user's
+# ~/.cloudflared, ~/.cloudflare-warp and ~/cloudflare-warp.
+CLOUDFLARED_CONFIG_DIRS=(/etc/cloudflared /usr/local/etc/cloudflared)
 CLOUDFLARED_SERVICE="cloudflared"
 CLOUDFLARED_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/cloudflared"
 
@@ -28,45 +31,62 @@ _cloudflared_service_active() {
     [[ -n "$(systemctl list-units --type=service --state=running --no-legend 'cloudflared@*' 2>/dev/null)" ]]
 }
 
+# The first config file in directory $1 under cloudflared's own names.
+_cloudflared_config_in() {
+    local f
+    for f in "$1/config.yml" "$1/config.yaml"; do
+        [[ -f "$f" ]] && { echo "$f"; return 0; }
+    done
+    return 1
+}
+
 # Pure-data variant of _cloudflared_find_user_config for testability.
-# $1: getent-passwd content (multi-line). Echoes the first
-# /home/<user>/.cloudflared/config.yml that exists, exits 1 if none.
+# $1: getent-passwd content (multi-line). Echoes the first user config
+# (UID >= 1000, cloudflared's user directories) that exists, exits 1 if none.
 _cloudflared_find_user_config_from_passwd() {
     local passwd_text="$1"
-    local user pwd uid gid gecos home shell
+    local user pwd uid gid gecos home shell d
     while IFS=: read -r user pwd uid gid gecos home shell; do
         [[ "$uid" =~ ^[0-9]+$ ]] || continue
         [[ "$uid" -lt 1000 ]] && continue
-        [[ -n "$home" && -f "$home/.cloudflared/config.yml" ]] || continue
-        echo "$home/.cloudflared/config.yml"
-        return 0
+        [[ -n "$home" ]] || continue
+        for d in .cloudflared .cloudflare-warp cloudflare-warp; do
+            _cloudflared_config_in "$home/$d" && return 0
+        done
     done <<<"$passwd_text"
     return 1
 }
 
-# Walk real users via getent (covers LDAP/SSSD/AD too) for ~/.cloudflared/config.yml.
-# Plain "$HOME/.cloudflared/config.yml" was always /root/.cloudflared/config.yml
-# under sudo, missing every user-mode tunnel install.
+# Walk real users via getent (covers LDAP/SSSD/AD too). Plain $HOME is /root
+# under sudo, which misses every user-mode tunnel install.
 _cloudflared_find_user_config() {
     _cloudflared_find_user_config_from_passwd "$(getent passwd 2>/dev/null)"
 }
 
-# First config path found: /etc/cloudflared/config.yml, then any
-# /home/*/.cloudflared/config.yml. Empty + exit 1 if none exists.
+# The config to audit: the system directories, then each user's, then any other
+# YAML in the system directories (a named tunnel run with --config). Exit 1 if none.
 _cloudflared_find_config() {
-    if [[ -f "$CLOUDFLARED_CONFIG" ]]; then
-        echo "$CLOUDFLARED_CONFIG"
-        return 0
-    fi
-    _cloudflared_find_user_config
+    local d f
+    for d in "${CLOUDFLARED_CONFIG_DIRS[@]}"; do
+        _cloudflared_config_in "$d" && return 0
+    done
+    _cloudflared_find_user_config && return 0
+    for d in "${CLOUDFLARED_CONFIG_DIRS[@]}"; do
+        for f in "$d"/*.yml "$d"/*.yaml; do
+            [[ -f "$f" ]] && { echo "$f"; return 0; }
+        done
+    done
+    return 1
 }
 
-_cloudflared_has_config() {
-    [[ -f "$CLOUDFLARED_CONFIG" ]] && return 0
-    if [[ -d "/etc/cloudflared" ]] && compgen -G "/etc/cloudflared/*.yml" >/dev/null 2>&1; then
-        return 0
-    fi
-    _cloudflared_find_user_config >/dev/null 2>&1
+# Is a tunnel run from a token (a dashboard-managed tunnel)? Its ingress lives
+# in Cloudflare, not in a local file. Asks the units and the running processes;
+# the token itself never leaves this function.
+_cloudflared_token_managed() {
+    local units procs
+    units=$(systemctl cat cloudflared.service 2>/dev/null; systemctl cat 'cloudflared@*' 2>/dev/null) || true
+    procs=$(pgrep -a cloudflared 2>/dev/null) || true
+    [[ "$units"$'\n'"$procs" =~ (--token|TUNNEL_TOKEN) ]]
 }
 
 # Echoes "<id> <name>" for each tunnel; non-zero exit signals enumeration
@@ -156,8 +176,7 @@ _cloudflared_audit_service() {
         check_emit "cloudflared.tunnel_running" low passed \
             title="$(i18n 'cloudflared.tunnel_running_manual')" \
             desc="$(i18n 'cloudflared.tunnel_not_systemd')" \
-            suggestion="$(i18n 'cloudflared.fix_setup_service')" \
-            fix="cloudflared.setup_service"
+            suggestion="$(i18n 'cloudflared.fix_setup_service')"
         print_ok "$(i18n 'cloudflared.tunnel_running_manual')"
     else
         check_emit "cloudflared.service_inactive" low failed \
@@ -169,7 +188,18 @@ _cloudflared_audit_service() {
 }
 
 _cloudflared_audit_config() {
-    if ! _cloudflared_has_config; then
+    # A token tunnel takes its ingress from the dashboard; a local file, if any,
+    # is not what it serves, so neither its absence nor its content is judged.
+    if _cloudflared_token_managed; then
+        check_emit "cloudflared.config_remote" info failed \
+            title="$(i18n 'cloudflared.config_remote')" \
+            desc="$(i18n 'cloudflared.config_remote_desc')"
+        print_msg "$(i18n 'cloudflared.config_remote')"
+        return
+    fi
+
+    local config
+    if ! config=$(_cloudflared_find_config); then
         check_emit "cloudflared.no_config" low failed \
             title="$(i18n 'cloudflared.config_not_found')" \
             desc="$(i18n 'cloudflared.config_not_found_desc')" \
@@ -179,29 +209,23 @@ _cloudflared_audit_config() {
         return
     fi
 
-    # Find the config file (system-wide first, then any user home via getent)
-    local config
-    config=$(_cloudflared_find_config 2>/dev/null) || config=""
+    local issues=$(_cloudflared_check_ingress_security "$config")
 
-    if [[ -n "$config" ]]; then
-        local issues=$(_cloudflared_check_ingress_security "$config")
-
-        if [[ -n "$issues" ]]; then
-            local tok issues_text=""
-            for tok in $issues; do
-                issues_text+="$(i18n "cloudflared.issue_$tok"); "
-            done
-            issues="${issues_text%; }"
-            check_emit "cloudflared.config_issues" low failed \
-                title="$(i18n 'cloudflared.config_has_issues')" \
-                desc="$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
-                suggestion="$(i18n 'cloudflared.fix_review_config')" \
-                fix="cloudflared.generate_config"
-            print_severity "low" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
-        else
-            check_emit "cloudflared.config_ok" low passed
-            print_ok "$(i18n 'cloudflared.config_ok')"
-        fi
+    if [[ -n "$issues" ]]; then
+        local tok issues_text=""
+        for tok in $issues; do
+            issues_text+="$(i18n "cloudflared.issue_$tok"); "
+        done
+        issues="${issues_text%; }"
+        check_emit "cloudflared.config_issues" low failed \
+            title="$(i18n 'cloudflared.config_has_issues')" \
+            desc="$(i18n 'cloudflared.config_issues_desc' "issues=$issues")" \
+            suggestion="$(i18n 'cloudflared.fix_review_config')" \
+            fix="cloudflared.generate_config"
+        print_severity "low" "$(i18n 'cloudflared.config_issues_desc' "issues=$issues")"
+    else
+        check_emit "cloudflared.config_ok" low passed
+        print_ok "$(i18n 'cloudflared.config_ok')"
     fi
 }
 
@@ -211,10 +235,9 @@ _cloudflared_audit_tunnels() {
     rc=$?
 
     if [[ $rc -ne 0 ]]; then
-        # Enumeration failed (typically: ~/.cloudflared/cert.pem missing →
-        # API auth unavailable). Local tunnels via systemd remain unaffected,
-        # so this is informational, not a security failure.
-        check_emit "cloudflared.tunnel_list_unavailable" info passed \
+        # Enumeration failed (typically: no ~/.cloudflared/cert.pem, so no API
+        # auth). A query that did not answer is not a pass: failed, unscored.
+        check_emit "cloudflared.tunnel_list_unavailable" info failed \
             desc="$(i18n 'cloudflared.tunnel_list_unavailable_desc')"
         print_msg "$(i18n 'cloudflared.tunnel_list_unavailable')"
     elif [[ -n "$tunnels" ]]; then
@@ -239,9 +262,6 @@ cloudflared_fix() {
         cloudflared.generate_config)
             _cloudflared_fix_generate_config
             ;;
-        cloudflared.setup_service)
-            _cloudflared_fix_setup_service
-            ;;
         *)
             log_warn "Cloudflared fix not implemented: $fix_id"
             print_warn "$(i18n 'cloudflared.fix_manual_required')"
@@ -252,13 +272,11 @@ cloudflared_fix() {
 
 _cloudflared_fix_generate_config() {
     local template_dir="${CLOUDFLARED_TEMPLATES_DIR}"
-    mkdir -p "$template_dir"
-
     local output_file="${template_dir}/config.yml.example"
 
     print_info "$(i18n 'cloudflared.generating_template')"
 
-    cat > "$output_file" <<'EOF'
+    write_template "$output_file" <<'EOF' || return 1
 # Cloudflared Tunnel Configuration Template
 # Generated by vpssec
 #
@@ -314,7 +332,7 @@ ingress:
 EOF
 
     # Also create a systemd service template
-    cat > "${template_dir}/cloudflared.service.example" <<'EOF'
+    write_template "${template_dir}/cloudflared.service.example" <<'EOF' || return 1
 # Cloudflared Systemd Service
 # Copy to /etc/systemd/system/cloudflared.service
 
@@ -356,30 +374,4 @@ EOF
     print_msg "  3. $(i18n 'cloudflared.step_install_service')"
 
     return 0
-}
-
-_cloudflared_fix_setup_service() {
-    print_info "$(i18n 'cloudflared.setting_up_service')"
-
-    # Check if config exists
-    if ! _cloudflared_has_config; then
-        print_error "$(i18n 'cloudflared.config_required')"
-        return 1
-    fi
-
-    # Install service using cloudflared
-    if cloudflared service install 2>/dev/null; then
-        print_ok "$(i18n 'cloudflared.service_installed')"
-
-        if systemctl enable cloudflared && systemctl start cloudflared; then
-            record_undo cloudflared.setup_service "cloudflared service uninstall"
-            return 0
-        fi
-        print_error "$(i18n 'cloudflared.service_start_failed')"
-        print_info "$(i18n 'cloudflared.check_logs')"
-        return 1
-    else
-        print_error "$(i18n 'cloudflared.service_install_failed')"
-        return 1
-    fi
 }

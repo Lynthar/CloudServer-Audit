@@ -1,0 +1,27 @@
+# Mutation cases: tests/test_cron_spool.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_cron_spool.bats
+#
+# file_package_verified, through the cron scan that exempts what it vouches for:
+# each mutant vouches for a file that is not owned, or no longer as shipped.
+
+run_case "verify/checksum-ignored" 1 \
+    '                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '                [[ -n "$want" ]] || return 1'
+
+# A cron.d file is a conffile: md5sums never lists it, so certbot's own entry
+# would be reported again.
+run_case "verify/conffile-sums-ignored" 1 \
+    '                if [[ -z "$want" ]]; then' \
+    '                if false; then'
+
+run_case "verify/unsummed-vouched" 1 \
+    '                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '                [[ -z "$want" || "${have%% *}" == "$want" ]] || return 1'
+
+run_case "verify/rpm-unowned-vouched" 1 \
+    "            out=\$(rpm -qf --qf '%{NAME}\\n' -- \"\$real\" 2>/dev/null) || return 1" \
+    "            out=\$(rpm -qf --qf '%{NAME}\\n' -- \"\$real\" 2>/dev/null) || true"
+
+run_case "verify/rpm-difference-ignored" 1 \
+    "            P=\"\$real\" awk '\$NF == ENVIRON[\"P\"] { bad = 1 } END { exit bad }' <<<\"\$sums\" || return 1" \
+    "            P=\"\$real\" awk '\$NF == ENVIRON[\"P\"] { bad = 1 } END { exit bad }' <<<\"\$sums\" || true"

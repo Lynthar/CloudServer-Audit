@@ -1,0 +1,18 @@
+# Mutation cases: tests/test_webapp_apache.bats against modules/webapp.sh.
+# mutate-suite: modules/webapp.sh tests/test_webapp_apache.bats
+#
+# One reader for Apache's global directives; the last uncommented value wins.
+
+# First value wins: a site file that turns TraceEnable back on goes unseen.
+run_case "directive/first-value-wins" 1 \
+    '        [[ -n "$v" ]] && last="$v"' \
+    '        [[ -n "$last" || -z "$v" ]] || last="$v"'
+
+run_case "trace/default-off" 1 \
+    '    echo "${v:-on}"' \
+    '    echo "${v:-off}"'
+
+# ServerSignature read from the wrong directive: always the default.
+run_case "signature/never-read" 1 \
+    '    v=$(_webapp_apache_directive ServerSignature)' \
+    '    v=$(_webapp_apache_directive ServerSignatureX)'

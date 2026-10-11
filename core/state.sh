@@ -290,6 +290,13 @@ backup_restore() {
         ((skipped++)) || true
     done < <(_backup_session_missing "$backup_dir")
 
+    # backup_file writes this manifest with the session: without it, files the
+    # plan's fixes created cannot be found, so they stay and the restore is partial.
+    if [[ ! -f "${backup_dir}/${VPSSEC_CREATED_MANIFEST}" ]]; then
+        log_error "Restore incomplete: ${backup_dir}/${VPSSEC_CREATED_MANIFEST} is missing; files created by this session's fixes are left in place"
+        ((skipped++)) || true
+    fi
+
     while IFS= read -r -d '' backup_file; do
         local relative_path="${backup_file#"$backup_dir"/}"
         local original_path="/${relative_path}"
@@ -311,8 +318,9 @@ backup_restore() {
         fi
 
         # Checked explicitly: errexit is off here, so a failing cp would
-        # otherwise fall through and be counted as restored.
-        if ! mkdir -p "$original_dir" || ! cp -p "$backup_file" "$original_path"; then
+        # otherwise fall through and be counted as restored. -T: a directory
+        # now at the path fails the copy instead of receiving the file.
+        if ! mkdir -p "$original_dir" || ! cp -pT "$backup_file" "$original_path"; then
             log_error "Restore FAILED (copy error): $backup_file -> $original_path"
             ((skipped++)) || true
             continue
@@ -395,8 +403,8 @@ backup_list_contents() {
 # --- Score Calculation ---
 
 # --- Check Metrics: one jq reduction over checks.json, cached on
-# (path, mtime, size). The scoring inclusion rules live in _VPSSEC_JQ_DEFS
-# and nowhere else — see the design notes. ---
+# (path, mtime, size). The scoring and bucketing rules live in _VPSSEC_JQ_DEFS
+# and nowhere else: two copies once disagreed on where info checks belong. ---
 
 declare -gA VPSSEC_METRICS=()
 _VPSSEC_METRICS_KEY=""
@@ -540,7 +548,7 @@ calculate_score() {
 
     # base = 100 x passed/scored_total; penalty = 5*high + 1.5*medium + 0.25*low;
     # score = clamp(0,100, base - penalty). Only comparable across runs with the
-    # same module set -- score_is_partial() flags the rest. See the design notes.
+    # same module set -- score_is_partial() flags the rest.
 
     if (( scored_total == 0 )); then
         echo 100

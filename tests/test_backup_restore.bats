@@ -64,6 +64,7 @@ _make_backup_session() {
     # Returning 0 here makes rollback_mode print a green "restored" over a no-op.
     _capture_logs
     mkdir -p "$VPSSEC_BACKUPS/20260501_120000"
+    : > "$VPSSEC_BACKUPS/20260501_120000/.vpssec_created"
     run backup_restore "20260501_120000"
     [ "$status" -eq 1 ]
     grep -q "contained no restorable files" "$_log_file"
@@ -171,6 +172,7 @@ _make_backup_session() {
     mkdir -p "$backup_dir/$(dirname "$rel")"
     echo "expected" > "$backup_dir/$rel"
     printf '644 /%s\n' "$rel" > "$backup_dir/.vpssec_modes"
+    : > "$backup_dir/.vpssec_created"
 
     # Make sure the destination tree exists but no symlinks
     # interfere — vanilla file restore.
@@ -369,4 +371,48 @@ SH
     write_file_atomic "$etc/dangling.conf" "new"
     [ ! -L "$etc/dangling.conf" ]
     [ "$(cat "$etc/dangling.conf")" = "new" ]
+}
+
+# ---- a path that is now a directory -----------------------------------------
+# GNU mv and cp treat a directory destination as "move/copy INTO it": the write
+# landed inside the directory and reported success.
+
+@test "write_file_atomic onto a directory fails and leaves nothing inside it" {
+    local target="$TEST_HOST_ROOT/etc/app.conf"
+    mkdir -p "$target"
+
+    run write_file_atomic "$target" "new"
+    [ "$status" -eq 1 ]
+    [ -z "$(ls -A "$target")" ]
+}
+
+@test "restoring onto a path that is now a directory is skipped, not copied into it" {
+    _capture_logs
+    local ts="20260501_120000"
+    local rel="${TEST_HOST_ROOT#/}/app.conf"
+    mkdir -p "$VPSSEC_BACKUPS/$ts/$(dirname "$rel")"
+    echo saved > "$VPSSEC_BACKUPS/$ts/$rel"
+    : > "$VPSSEC_BACKUPS/$ts/.vpssec_created"
+    mkdir -p "$TEST_HOST_ROOT/app.conf"
+
+    run backup_restore "$ts"
+    [ "$status" -eq 1 ]
+    [ -z "$(ls -A "$TEST_HOST_ROOT/app.conf")" ]
+    grep -qF "Restore FAILED (copy error)" "$_log_file"
+}
+
+@test "a backup taken outside a session rolls back whole too" {
+    _vpssec_require_gnu_realpath
+    VPSSEC_BACKUP_SESSION=""
+    local host="$BATS_TEST_TMPDIR/host" out ts
+    mkdir -p "$host/etc"
+    echo orig > "$host/etc/d.conf"
+    out=$(backup_file "$host/etc/d.conf")
+    ts=${out#"$VPSSEC_BACKUPS"/}
+    ts=${ts%%/*}
+    echo changed > "$host/etc/d.conf"
+
+    run backup_restore "$ts"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$host/etc/d.conf")" = "orig" ]
 }

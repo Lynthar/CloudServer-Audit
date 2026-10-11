@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Distribution abstraction for the READ-ONLY audit. Detected once at source
 # time into VPSSEC_DISTRO_ID / _FAMILY / _PKG_MGR; modules branch on _FAMILY.
-# Fix-path primitives are deliberately absent (see the design notes).
+# No fix-path primitives: fixes run on Debian/Ubuntu only and call apt directly.
 
 # --- Detection layer ---
 
@@ -35,17 +35,33 @@ _distro_family_from() {
     echo "unknown"
 }
 
-# Package manager by tool presence, not by mapping from family: presence is
-# also correct for downstreams nobody enumerated. So adding a distro means
-# adding a backend here, not another case arm elsewhere.
+# Is package manager $1's command installed? yum counts as dnf: same CLI.
+_distro_pkg_tool_present() {
+    case "$1" in
+        apt) command -v apt-get >/dev/null 2>&1 ;;
+        dnf) command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 ;;
+        *)   command -v "$1" >/dev/null 2>&1 ;;
+    esac
+}
+
+# Package manager for family $1: its own tool when present (Arch's repositories
+# carry apt and dnf too), else the first tool present, which also covers
+# downstreams nobody enumerated. A new distro needs a backend, not a case arm.
 _distro_pkg_mgr() {
-    if   command -v apt-get >/dev/null 2>&1; then echo "apt"
-    elif command -v dnf     >/dev/null 2>&1; then echo "dnf"
-    elif command -v yum     >/dev/null 2>&1; then echo "dnf"   # yum == dnf-compatible CLI
-    elif command -v pacman  >/dev/null 2>&1; then echo "pacman"
-    elif command -v zypper  >/dev/null 2>&1; then echo "zypper"
-    else echo "unknown"
-    fi
+    local -a order=(apt dnf pacman zypper)
+    case "$1" in
+        rhel) order=(dnf apt pacman zypper) ;;
+        arch) order=(pacman apt dnf zypper) ;;
+        suse) order=(zypper apt dnf pacman) ;;
+    esac
+    local mgr
+    for mgr in "${order[@]}"; do
+        if _distro_pkg_tool_present "$mgr"; then
+            echo "$mgr"
+            return 0
+        fi
+    done
+    echo "unknown"
 }
 
 # Populate the globals once. Idempotent and never returns non-zero, so
@@ -57,7 +73,7 @@ distro_detect() {
     like=$(_distro_osrelease_field ID_LIKE)
     VPSSEC_DISTRO_ID="$id"
     VPSSEC_DISTRO_FAMILY="$(_distro_family_from "$id" "$like")"
-    VPSSEC_PKG_MGR="$(_distro_pkg_mgr)"
+    VPSSEC_PKG_MGR="$(_distro_pkg_mgr "$VPSSEC_DISTRO_FAMILY")"
     export VPSSEC_DISTRO_ID VPSSEC_DISTRO_FAMILY VPSSEC_PKG_MGR
     return 0
 }
@@ -75,9 +91,9 @@ DISTRO_APT_LOCK_FILES=(
     /var/cache/apt/archives/lock
 )
 
-# Is a lock held on PATH? Echoes exactly one of: held / free / unknown.
-# The third answer is the point — "I could not tell" must never be spelled
-# the same as "no". Sources and blind spots: see the design notes.
+# Is a lock held on PATH? Echoes held / free / unknown: /proc/locks, else lsof,
+# and "unknown", never "free", when neither can answer. /proc/locks hides a lock
+# whose holder process has exited (an inherited fd): test with a live holder.
 _pkg_lock_held() {
     local path="$1"
 
@@ -547,6 +563,54 @@ file_owned_by_package() {
     esac
 }
 
+# Print the package owning the file PATH resolves to, if its content still
+# matches that package's recorded sum: 0 = verified, 1 = not owned, modified or
+# unsummed, 2 = cannot tell (no tool, or pacman). Call it in a tested context.
+file_package_verified() {
+    local real out pkg cand sums want have alt=""
+    real=$(readlink -f -- "$1" 2>/dev/null) && [[ -f "$real" ]] || return 1
+    case "$VPSSEC_PKG_MGR" in
+        apt)
+            command -v dpkg-query >/dev/null 2>&1 || return 2
+            # readlink resolved /lib -> /usr/lib, while dpkg may hold the
+            # pre-usrmerge spelling: ask for both.
+            case "$real" in
+                /usr/lib/*|/usr/lib64/*|/usr/bin/*|/usr/sbin/*) alt="${real#/usr}" ;;
+            esac
+            for cand in "$real" ${alt:+"$alt"}; do
+                out=$(dpkg-query -S -- "$cand" 2>/dev/null) || continue
+                pkg=$(P="$cand" awk -F': ' '$2 == ENVIRON["P"] && $1 !~ /^diversion by / {
+                    sub(/,.*/, "", $1); print $1; exit }' <<<"$out")
+                [[ -n "$pkg" ]] || continue
+                # dpkg --verify prints nothing for a file it has no sum for, so
+                # the sum is read and compared here: md5sums, or for a conffile
+                # (anything under /etc a package ships) its Conffiles entry.
+                sums=$(dpkg-query --control-show "$pkg" md5sums 2>/dev/null) || sums=""
+                want=$(P="${cand#/}" awk 'substr($0, 35) == ENVIRON["P"] { print $1; exit }' <<<"$sums")
+                if [[ -z "$want" ]]; then
+                    sums=$(dpkg-query -W -f="\${Conffiles}\n" "$pkg" 2>/dev/null) || sums=""
+                    want=$(P="$cand" awk '$1 == ENVIRON["P"] && length($2) == 32 { print $2; exit }' <<<"$sums")
+                fi
+                have=$(md5sum < "$real") || return 2
+                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1
+                echo "${pkg%%:*}"
+                return 0
+            done
+            return 1
+            ;;
+        dnf)
+            command -v rpm >/dev/null 2>&1 || return 2
+            out=$(rpm -qf --qf '%{NAME}\n' -- "$real" 2>/dev/null) || return 1
+            # rpm -V exits non-zero for any file of the package that differs,
+            # so its verdict on this one is read from the output.
+            sums=$(rpm -Vf -- "$real" 2>/dev/null) || true
+            P="$real" awk '$NF == ENVIRON["P"] { bad = 1 } END { exit bad }' <<<"$sums" || return 1
+            echo "${out%%$'\n'*}"
+            ;;
+        *) return 2 ;;
+    esac
+}
+
 # Per-family package names for baseline.sh's insecure-legacy-server scan.
 # The RHEL/Arch lists are best-effort and unconfirmed on real hosts.
 distro_insecure_packages() {
@@ -614,6 +678,12 @@ distro_packages_for_commands() {
                 [[ "$VPSSEC_DISTRO_FAMILY" == "rhel" ]] && pkg=iproute || pkg=iproute2
                 ;;
             systemctl) pkg=systemd ;;
+            ps|pgrep)
+                case "$VPSSEC_DISTRO_FAMILY" in
+                    rhel|arch) pkg=procps-ng ;;
+                    *)         pkg=procps ;;
+                esac
+                ;;
             # mawk provides awk on Debian and gawk is available there too;
             # gawk is the one name that resolves on all four families.
             awk)       pkg=gawk ;;
@@ -764,7 +834,7 @@ fw_ipv6_filtered() {
 distro_log_paths() {
     case "$VPSSEC_DISTRO_FAMILY" in
         debian) echo "syslog auth.log dpkg.log" ;;
-        rhel)   echo "messages secure dnf.rpm.log" ;;
+        rhel)   echo "messages secure" ;;
         arch)   echo "pacman.log" ;;
         *)      echo "" ;;
     esac
@@ -798,7 +868,6 @@ distro_suid_whitelist() {
             printf '%s\n' \
                 /usr/libexec/openssh/ssh-keysign \
                 /usr/libexec/dbus-1/dbus-daemon-launch-helper \
-                /usr/libexec/polkit-1/polkit-agent-helper-1 \
                 /usr/bin/fusermount /usr/bin/fusermount3 \
                 /usr/sbin/mount.nfs /usr/sbin/grub2-set-bootflag \
                 /usr/libexec/cockpit-session
@@ -820,10 +889,9 @@ distro_sgid_whitelist() {
     case "$VPSSEC_DISTRO_FAMILY" in
         rhel)
             printf '%s\n' \
-                /usr/bin/unix_chkpwd \
                 /usr/libexec/utempter/utempter \
                 /usr/libexec/openssh/ssh-keysign \
-                /usr/bin/write /usr/bin/wall /usr/bin/screen
+                /usr/bin/write /usr/bin/wall
             ;;
         arch)
             printf '%s\n' \
@@ -840,7 +908,7 @@ distro_caps_whitelist() {
     case "$VPSSEC_DISTRO_FAMILY" in
         rhel)
             printf '%s\n' \
-                /usr/bin/ping:cap_net_raw \
+                /usr/sbin/mtr-packet:cap_net_raw \
                 /usr/sbin/suexec:cap_setuid,cap_setgid \
                 /usr/bin/newgidmap:cap_setgid \
                 /usr/bin/newuidmap:cap_setuid \

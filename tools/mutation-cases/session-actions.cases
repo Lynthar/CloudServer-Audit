@@ -16,3 +16,9 @@ run_case "partial/listed-as-copy" 1 \
 run_case "preview/deletes-unlisted" 1 \
     "    _backup_session_created \"\$backup_dir\" | sed 's/^/delete /'" \
     '    :'
+
+# A session whose created-files manifest was deleted rolls back as complete,
+# leaving the files the plan created in place.
+run_case "created-manifest/missing-ignored" 1 \
+    '    if [[ ! -f "${backup_dir}/${VPSSEC_CREATED_MANIFEST}" ]]; then' \
+    '    if false; then'

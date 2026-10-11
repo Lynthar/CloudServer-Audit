@@ -16,6 +16,11 @@ setup() {
     TZ_ZONEINFO="$etc/zoneinfo"
     mkdir -p "$TZ_ZONEINFO/Asia"
     : > "$TZ_ZONEINFO/Asia/Shanghai"
+    # The locale getter falls back to these files, and the fix writes them.
+    TZ_LOCALE_GEN="$etc/locale.gen"
+    TZ_DEFAULT_LOCALE="$etc/default/locale"
+    TZ_LOCALE_CONF="$etc/locale.conf"
+    mkdir -p "$etc/default"
 
     unset TZ
 }
@@ -92,6 +97,7 @@ setup() {
     export VPSSEC_YES=1
 
     run _timezone_fix_set_timezone
+    [ "$status" -eq 0 ]
     _vpssec_refute grep -q 'Asia/Tokyo' <<<"$output"
     _vpssec_refute grep -qE '^\s+[0-9]\) ' <<<"$output"
 }
@@ -121,10 +127,69 @@ setup() {
     LANG=C
     _vpssec_stub localectl 0 ''
     _vpssec_stub locale-gen
+    _vpssec_stub locale 0 'en_US.utf8'
 
     run _timezone_fix_set_locale
     [ "$status" -eq 0 ]
     _vpssec_refute _vpssec_stub_called locale-gen
+}
+
+# ---- the locale the audit reads and the fix writes ------------------
+
+@test "locale getter: localectl's (unset) is no locale, not 'System' or the caller's" {
+    # Current systemd right-aligns the labels, and this is the widest one.
+    _vpssec_stub localectl 0 $'System Locale: (unset)\n    VC Keymap: (unset)'
+    LANG=en_US.UTF-8
+    run _timezone_current_locale
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _timezone_locale_set
+    [ "$status" -ne 0 ]
+
+    # Older systemd indents it.
+    _vpssec_stub localectl 0 $'   System Locale: LANG=de_DE.UTF-8\n                  LANGUAGE=de_DE:de'
+    run _timezone_current_locale
+    [ "$output" = "de_DE.UTF-8" ]
+}
+
+@test "locale getter: without localectl the locale file decides, never the caller's LANG" {
+    # sudo and ssh pass the operator's LANG through to this process.
+    _vpssec_absent_command localectl
+    LANG=en_US.UTF-8
+    run _timezone_current_locale
+    [ -z "$output" ]
+
+    printf '# set by the installer\nLANG="de_DE.UTF-8"\n' > "$TZ_DEFAULT_LOCALE"
+    run _timezone_current_locale
+    [ "$output" = "de_DE.UTF-8" ]
+    # locale.conf is read first, as localed reads it.
+    printf 'LANG=fr_FR.UTF-8\n' > "$TZ_LOCALE_CONF"
+    run _timezone_current_locale
+    [ "$output" = "fr_FR.UTF-8" ]
+}
+
+@test "locale: a locale the host has not compiled is not written" {
+    # Written anyway, every login warns it cannot set it, and the audit,
+    # which only reads the setting, passes.
+    i18n_load en_US
+    _vpssec_absent_command localectl
+    printf 'LANG=C\n' > "$TZ_DEFAULT_LOCALE"
+    _vpssec_stub locale 0 $'C\nC.utf8\nPOSIX'
+
+    run _timezone_fix_set_locale
+    [ "$status" -eq 1 ]
+    [ "$(cat "$TZ_DEFAULT_LOCALE")" = "LANG=C" ]
+    [[ "$output" == *"$(i18n 'timezone.locale_not_installed' 'locale=en_US.UTF-8')"* ]]
+}
+
+@test "locale: a compiled locale is found whichever way its codeset is spelled" {
+    _vpssec_absent_command localectl
+    printf 'LANG=C\n' > "$TZ_DEFAULT_LOCALE"
+    _vpssec_stub locale 0 $'C.utf8\nen_US.utf8'
+
+    run _timezone_fix_set_locale
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TZ_DEFAULT_LOCALE")" = "LANG=en_US.UTF-8" ]
 }
 
 # ---- enable_ntp's chrony fallback -------------------------------------

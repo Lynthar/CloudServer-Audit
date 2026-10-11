@@ -1,6 +1,10 @@
 # Mutation cases: tests/test_fix_cloudflared.bats against modules/cloudflared.sh.
 # mutate-suite: modules/cloudflared.sh tests/test_fix_cloudflared.bats
 
-run_case "service/undo-not-recorded" 1 \
-    '            record_undo cloudflared.setup_service "cloudflared service uninstall"' \
-    '            :'
+run_case "generate/config-write-unchecked" 1 \
+    "    write_template \"\$output_file\" <<'EOF' || return 1" \
+    "    write_template \"\$output_file\" <<'EOF' || true"
+
+run_case "generate/service-write-unchecked" 1 \
+    "    write_template \"\${template_dir}/cloudflared.service.example\" <<'EOF' || return 1" \
+    "    write_template \"\${template_dir}/cloudflared.service.example\" <<'EOF' || true"

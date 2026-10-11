@@ -10,9 +10,9 @@ CLOUD_AZURE_ASSET_TAG="7783-7084-3265-9085-8269-3286-77"
 
 # --- Known Cloud Vendor Agents Database ---
 
-# Format: process_name|service_name|vendor_key|desc_key|can_disable
-# Columns 3 and 4 are i18n KEY SUFFIXES, never display text: they render at
-# the point of display. The vendor column shares the provider id space.
+# Format: process_name|service_name|vendor_key|desc_key|can_disable; column 2
+# may list several units, space-separated. Columns 3 and 4 are i18n KEY SUFFIXES,
+# rendered only at display. The vendor column shares the provider id space.
 declare -ga KNOWN_CLOUD_AGENTS=(
     # Alibaba Cloud
     "AliYunDun|aegis|alibaba|aliyundun|yes"
@@ -33,13 +33,13 @@ declare -ga KNOWN_CLOUD_AGENTS=(
     "hostguard|hostguard|huawei|hostguard|yes"
     "uniagent|uniagent|huawei|uniagent|yes"
 
-    # AWS
-    "amazon-ssm-agent|amazon-ssm-agent|aws|ssm|optional"
+    # AWS; Ubuntu's EC2 images ship the SSM agent as a snap, under its own unit.
+    "amazon-ssm-agent|amazon-ssm-agent snap.amazon-ssm-agent.amazon-ssm-agent|aws|ssm|optional"
     "amazon-cloudwatch-agent|amazon-cloudwatch-agent|aws|cloudwatch|optional"
 
-    # Azure
-    "waagent|walinuxagent|azure|walinuxagent|no"
-    "WaLinuxAgent|walinuxagent|azure|walinuxagent|no"
+    # Azure: the agent runs under python3, so only its unit finds it, and the
+    # unit is walinuxagent on Debian/Ubuntu, waagent on RHEL.
+    "waagent|walinuxagent waagent|azure|walinuxagent|no"
     "OMSAgentForLinux|omsagent|azure|omsagent|yes"
 
     # Google Cloud
@@ -450,14 +450,17 @@ _find_known_agents() {
     # The vendor/desc keys travel unresolved: resolving here bakes the active
     # language into the data, and anything matching on vendor downstream would
     # then be matching a translated string.
+    local -a units
     for entry in "${KNOWN_CLOUD_AGENTS[@]}"; do
         IFS='|' read -r proc_name service_name vendor_key desc_key can_disable <<< "$entry"
+        read -ra units <<< "$service_name"
 
-        # Check if process is running
-        if pgrep -x "$proc_name" &>/dev/null; then
+        # pgrep -x matches the kernel's comm, which is cut to 15 bytes: the
+        # full name of a longer agent never matches.
+        if pgrep -x "${proc_name:0:15}" &>/dev/null; then
             found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|running")
-        # Check if service exists
-        elif systemctl is-active "$service_name" &>/dev/null 2>&1; then
+        # is-active succeeds when any of the units is active.
+        elif systemctl is-active "${units[@]}" &>/dev/null; then
             found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|service")
         fi
     done
@@ -482,7 +485,8 @@ _find_suspicious_agents() {
         local is_known=false
         for entry in "${KNOWN_CLOUD_AGENTS[@]}"; do
             local known_proc="${entry%%|*}"
-            [[ "$proc" == "$known_proc" ]] && is_known=true && break
+            # ps prints the same 15-byte comm.
+            [[ "$proc" == "${known_proc:0:15}" ]] && is_known=true && break
         done
         [[ "$is_known" == "true" ]] && continue
 
@@ -518,115 +522,97 @@ _cloud_imds_curl_status() {
         "$@" "$url" 2>/dev/null
 }
 
-# Fetch user-data via the detected provider's endpoint. Returns body
-# on stdout; empty when unavailable. Decodes base64 only where the
-# provider's API contract requires it (Azure customData).
+# GET metadata URL $1, further curl options after it. -f: an error page is not
+# a body, so a 4xx/5xx answer gives no output and a non-zero status.
+_cloud_imds_fetch() {
+    local url="$1"; shift
+    curl -fsS --max-time 2 --connect-timeout 1 "$@" "$url" 2>/dev/null
+}
+
+# The raw user-data bytes from the detected provider's endpoint, written to
+# stdout and never held in a variable, which would drop NUL bytes. Decodes
+# base64 only where the provider's API contract requires it (Azure, OCI).
 _cloud_imds_get_user_data() {
     local provider; provider=$(vpssec_cloud_provider)
-    local body=""
     case "$provider" in
-        aws)
+        aws|aws-or-compatible)
             # Prefer IMDSv2; fall back to v1 only if v2 unavailable.
             local token
-            token=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+            token=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" \
                 -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
                 --max-time 1 --connect-timeout 1 2>/dev/null)
-            if [[ -n "$token" ]]; then
-                body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                    -H "X-aws-ec2-metadata-token: $token" \
-                    "http://169.254.169.254/latest/user-data" 2>/dev/null)
-            fi
-            [[ -z "$body" ]] && body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/latest/user-data" 2>/dev/null)
+            { [[ -n "$token" ]] && _cloud_imds_fetch "http://169.254.169.254/latest/user-data" \
+                -H "X-aws-ec2-metadata-token: $token"; } \
+                || _cloud_imds_fetch "http://169.254.169.254/latest/user-data"
             ;;
         alibaba)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://100.100.100.200/latest/user-data" 2>/dev/null)
-            [[ -z "$body" ]] && body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/latest/user-data" 2>/dev/null)
+            _cloud_imds_fetch "http://100.100.100.200/latest/user-data" \
+                || _cloud_imds_fetch "http://169.254.169.254/latest/user-data"
             ;;
         azure)
             # customData is base64-encoded per Azure API contract.
-            local enc
-            enc=$(curl -sS --max-time 2 --connect-timeout 1 -H "Metadata: true" \
-                "http://169.254.169.254/metadata/instance/compute/customData?api-version=2021-01-01&format=text" \
-                2>/dev/null)
-            [[ -n "$enc" ]] && body=$(printf '%s' "$enc" | base64 -d 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/metadata/instance/compute/customData?api-version=2021-01-01&format=text" \
+                -H "Metadata: true" | base64 -d 2>/dev/null
             ;;
         gcp)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                -H "Metadata-Flavor: Google" \
-                "http://169.254.169.254/computeMetadata/v1/instance/attributes/user-data" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/computeMetadata/v1/instance/attributes/user-data" \
+                -H "Metadata-Flavor: Google"
             ;;
         digitalocean)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/metadata/v1/user-data" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/metadata/v1/user-data"
             ;;
         hetzner)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/hetzner/v1/userdata" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/hetzner/v1/userdata"
             ;;
         vultr|linode)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/v1/user-data" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/v1/user-data"
             ;;
         tencent)
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://metadata.tencentyun.com/latest/user-data" 2>/dev/null)
+            _cloud_imds_fetch "http://metadata.tencentyun.com/latest/user-data"
             ;;
         huawei|ovh)
             # Both are OpenStack-based; user-data lives at the standard
             # OpenStack metadata path (plaintext).
-            body=$(curl -sS --max-time 2 --connect-timeout 1 \
-                "http://169.254.169.254/openstack/latest/user_data" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/openstack/latest/user_data"
             ;;
         oracle)
             # OCI: base64-encoded user_data behind the mandatory v2 auth header.
-            local enc
-            enc=$(curl -sS --max-time 2 --connect-timeout 1 \
-                -H "Authorization: Bearer Oracle" \
-                "http://169.254.169.254/opc/v2/instance/metadata/user_data" 2>/dev/null)
-            [[ -n "$enc" ]] && body=$(printf '%s' "$enc" | base64 -d 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.169.254/opc/v2/instance/metadata/user_data" \
+                -H "Authorization: Bearer Oracle" | base64 -d 2>/dev/null
             ;;
         scaleway)
             # Scaleway serves user_data only to a privileged source port, so
             # one is bound. --local-port fails closed on a curl without it.
-            body=$(curl -sS --max-time 2 --connect-timeout 1 --local-port 1-1023 \
-                "http://169.254.42.42/user_data" 2>/dev/null)
+            _cloud_imds_fetch "http://169.254.42.42/user_data" --local-port 1-1023
             ;;
     esac
-    printf '%s' "$body"
 }
 
-# Backwards-compat thin wrapper. The actual scanner lives in
-# core/common.sh (_vpssec_scan_secrets_in_content) so docker.sh and
-# any future module can reuse the same pattern set.
-_cloud_imds_scan_secrets() {
-    _vpssec_scan_secrets_in_content "$1"
+# User-data as text to scan, on stdout; empty when there is none. gzip -f
+# decompresses a compressed body and passes any other through. Fails when a
+# body came back but not as text, so the caller must not call it clean.
+_cloud_imds_user_data_text() {
+    local raw text fetched=1
+    # base64 carries the raw bytes through $(...), which would drop NULs.
+    raw=$(_cloud_imds_get_user_data | base64 -w0) || fetched=0
+    [[ -n "$raw" ]] || return 0
+    (( fetched )) || return 1
+    text=$(base64 -d <<<"$raw" | gzip -cdf 2>/dev/null | tr '\0' '\1') || return 1
+    [[ "$text" != *$'\1'* ]] || return 1
+    printf '%s' "$text"
 }
 
 # True if any host-firewall rule MENTIONS an IMDS IP — a weak signal, since
 # telling a blocking rule from a logging one needs full ruleset parsing.
 # The finding must be worded as "mentions", never "restricted".
 _cloud_imds_firewall_restricted() {
-    local imds_ips=("169.254.169.254" "100.100.100.200")
-    local ip re
-    for ip in "${imds_ips[@]}"; do
-        re="${ip//./\\.}"
-        if command -v iptables-save >/dev/null 2>&1 \
-           && iptables-save 2>/dev/null | grep -q "$re"; then
-            return 0
-        fi
-        if command -v ip6tables-save >/dev/null 2>&1 \
-           && ip6tables-save 2>/dev/null | grep -q "$re"; then
-            return 0
-        fi
-        if command -v nft >/dev/null 2>&1 \
-           && nft list ruleset 2>/dev/null | grep -q "$re"; then
-            return 0
-        fi
-    done
-    return 1
+    # Each dump is captured whole: under pipefail, a grep -q stopping at the
+    # first match sends SIGPIPE to a large dump still writing, and reads false.
+    local rules=""
+    if check_command iptables-save; then rules+=$(iptables-save 2>/dev/null || true)$'\n'; fi
+    if check_command ip6tables-save; then rules+=$(ip6tables-save 2>/dev/null || true)$'\n'; fi
+    if check_command nft; then rules+=$(nft list ruleset 2>/dev/null || true); fi
+    grep -qE '169\.254\.169\.254|100\.100\.100\.200' <<<"$rules"
 }
 
 # Lightweight container check (cloud.sh shouldn't depend on kernel.sh
@@ -646,7 +632,15 @@ _cloud_imds_in_container() {
 _cloud_audit_imds() {
     local tier; tier=$(vpssec_cloud_tier)
     [[ "$tier" == "unknown" ]] && return 0
-    command -v curl >/dev/null 2>&1 || return 0
+    if ! check_command curl; then
+        local hint
+        hint=$(pkg_install_hint curl) || hint=$(i18n 'preflight.install_deps' "deps=curl")
+        check_emit "cloud.imds_not_checked" low failed \
+            desc="$(i18n 'cloud.imds_not_checked_desc')" \
+            suggestion="$hint"
+        print_severity "low" "$(i18n 'cloud.imds_not_checked')"
+        return 0
+    fi
 
     local provider; provider=$(vpssec_cloud_provider)
 
@@ -654,7 +648,7 @@ _cloud_audit_imds() {
     if [[ "$provider" == "aws" ]]; then
         local v1_status v2_token
         v1_status=$(_cloud_imds_curl_status "http://169.254.169.254/latest/meta-data/")
-        v2_token=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+        v2_token=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" \
             -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
             --max-time 1 --connect-timeout 1 2>/dev/null)
 
@@ -687,9 +681,14 @@ _cloud_audit_imds() {
     fi
 
     # 3. user-data secret scan (universal across tier1 + tier2).
-    local user_data; user_data=$(_cloud_imds_get_user_data)
-    if [[ -n "$user_data" ]]; then
-        local hits; hits=$(_cloud_imds_scan_secrets "$user_data")
+    local user_data
+    if ! user_data=$(_cloud_imds_user_data_text); then
+        check_emit "cloud.user_data_not_scanned" low failed \
+            desc="$(i18n 'cloud.user_data_not_scanned_desc')" \
+            suggestion="$(i18n 'cloud.fix_user_data_not_scanned')"
+        print_severity "low" "$(i18n 'cloud.user_data_not_scanned')"
+    elif [[ -n "$user_data" ]]; then
+        local hits; hits=$(_vpssec_scan_secrets_in_content "$user_data")
         hits="${hits% }"
         if [[ -n "$hits" ]]; then
             # NEVER log user_data body — only kinds + counts.

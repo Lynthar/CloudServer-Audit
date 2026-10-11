@@ -104,3 +104,21 @@ run_case "auditd/enable-undo-not-recorded" 1 \
 run_case "rules/compiled-not-backed-up" 1 \
     '    backup_file "$AUDIT_RULES_COMPILED" >/dev/null || return 1' \
     '    :'
+
+# ---- "No rules" is not rules; what rollback cannot undo is logged --------------
+
+run_case "rules/no-rules-read-as-loaded" 1 \
+    "    if grep -qF -- '-w /etc/passwd -p wa -k identity' <<<\"\$loaded\"; then" \
+    '    if grep -q . <<<"$loaded"; then'
+
+run_case "rules/kernel-undo-not-recorded" 1 \
+    '        record_undo logging.setup_audit_rules "vpssec rollback && augenrules --load"' \
+    '        :'
+
+run_case "journal/dir-undo-always" 1 \
+    '    [[ -d "$JOURNAL_DIR" ]] || made_dir=1' \
+    '    made_dir=1'
+
+run_case "journal/dir-undo-never" 1 \
+    '    [[ -d "$JOURNAL_DIR" ]] || made_dir=1' \
+    '    :'

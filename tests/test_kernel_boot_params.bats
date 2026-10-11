@@ -174,6 +174,7 @@ _audit() { _kernel_audit_boot_params >/dev/null; }
     [ "$(_status kernel.boot_params_revert)" = "failed" ]
     _desc kernel.boot_params_revert | grep -qF "kernel.unprivileged_bpf_disabled is set to 0"
     run _desc kernel.boot_params_revert
+    [ "$status" -eq 0 ]
     [[ "$output" != *ptrace_scope* ]]
 }
 
@@ -218,6 +219,7 @@ _audit() { _kernel_audit_boot_params >/dev/null; }
     _audit
     [ "$(_status kernel.boot_params_ok)" = "passed" ]
     run _desc kernel.boot_params_ok
+    [ "$status" -eq 0 ]
     [[ "$output" != *dmesg_restrict* ]]
 }
 
@@ -251,6 +253,7 @@ _audit() { _kernel_audit_boot_params >/dev/null; }
 
     [ "$(_status kernel.boot_params_ok)" = "passed" ]
     run _desc kernel.boot_params_ok
+    [ "$status" -eq 0 ]
     [[ "$output" != *dmesg_restrict* ]]
 }
 
@@ -310,4 +313,21 @@ _audit() { _kernel_audit_boot_params >/dev/null; }
         _ "$(_vpssec_repo_root)"
     [ "$output" = "$(printf '%s\n' /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d \
         /usr/lib/sysctl.d /lib/sysctl.d)" ]
+}
+
+@test "a forwarding host's loose rp_filter is neither judged nor reported at boot" {
+    # The scan skips rp_filter=2 there, so nothing may compare it with the
+    # table's 1 either: systemd's 50-default.conf sets 2 at boot.
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$1" == --version ]] && { echo "systemd 257 (test)"; exit 0; }
+[[ "$*" == *"is-active"*docker* ]] && exit 0
+exit 1
+SH
+    _runtime net.ipv4.conf.all.rp_filter 2
+    _conf "$lib_d/50-default.conf" "net.ipv4.conf.*.rp_filter = 2" "kernel.dmesg_restrict = 1"
+
+    _audit
+
+    [ "$(_status kernel.boot_params_ok)" = "passed" ]
+    [ -z "$(_status kernel.boot_params_revert)" ]
 }

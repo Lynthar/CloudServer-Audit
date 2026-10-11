@@ -2,7 +2,9 @@
 # Expect: kernel.core_dump_enabled → kernel.disable_core_dump → kernel.core_dump_ok.
 # Rollback restores limits.conf without the "* hard core 0" line the fix appended,
 # and that alone re-fails the audit even though the runtime sysctl stays 0.
-TEST_DESC="suid_dumpable=2: kernel.disable_core_dump converges, rollback restores limits.conf"
+# In a container suid_dumpable is the host's and not judged: the limits.conf plant
+# alone fails the audit there, and the fix leaves the sysctl alone.
+TEST_DESC="no core limit: kernel.disable_core_dump converges, rollback restores limits.conf"
 EXPECT_ID="kernel.core_dump_enabled"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"

@@ -11,3 +11,13 @@ run_case "spool/scan-hardcodes-debian-path" 1 \
 run_case "spool/count-hardcodes-debian-path" 2 \
     '    spool=$(cron_spool_dir)' \
     '    spool=/var/spool/cron/crontabs'
+
+# A comment line is not an entry cron runs.
+run_case "cron/comments-read" 1 \
+    "    lines=\$(grep -vE '^[[:space:]]*(#|\$)' \"\$file\" 2>/dev/null) || return 0" \
+    "    lines=\$(cat \"\$file\" 2>/dev/null) || return 0"
+
+# Debian's own certbot entry runs perl -e; its package vouches for it unchanged.
+run_case "cron/package-exemption-dropped" 1 \
+    '    file_package_verified "$file" >/dev/null && return 0' \
+    '    :'

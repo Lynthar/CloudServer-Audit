@@ -2,7 +2,7 @@
 # mutate-suite: core/common.sh tests/test_backup_session_integrity.bats
 #
 # backup_file leaves a copy at its final name only when it is complete and its
-# mode is on record.
+# mode is on record, in a directory that carries its created-files manifest.
 
 # The copy is written straight to its final name: a killed cp leaves a fragment
 # there, which the next backup keeps and a rollback writes back.
@@ -17,3 +17,9 @@ run_case "mode/unrecorded-accepted" 1 \
 run_case "mode/append-failure-swallowed" 1 \
     "    printf '%s %s\\n' \"\$mode\" \"\$path\" 2>/dev/null >> \"\$manifest\" || return 1" \
     "    printf '%s %s\\n' \"\$mode\" \"\$path\" 2>/dev/null >> \"\$manifest\" || return 0"
+
+# The session gets no created-files manifest until a fix creates a file, so a
+# session that only backed files up rolls back as damaged.
+run_case "created-manifest/not-written" 1 \
+    '    : > "$manifest" && chmod 600 "$manifest"' \
+    '    return 0'

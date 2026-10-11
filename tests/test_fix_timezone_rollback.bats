@@ -43,6 +43,8 @@ case "$1" in
 esac
 exit 0
 SH
+    # The fix sets only a locale the host has compiled.
+    _vpssec_stub locale 0 'en_US.utf8'
 }
 
 _snapshot_of() {

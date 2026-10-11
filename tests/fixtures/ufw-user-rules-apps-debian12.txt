@@ -1,0 +1,10 @@
+### tuple ### allow tcp 2222 0.0.0.0/0 any 0.0.0.0/0 in comment=535348202876707373656329
+### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 OpenSSH - in
+### tuple ### allow udp 137,138 0.0.0.0/0 any 0.0.0.0/0 Samba - in
+### tuple ### allow tcp 139,445 0.0.0.0/0 any 0.0.0.0/0 Samba - in
+### tuple ### allow tcp 80,443 0.0.0.0/0 any 0.0.0.0/0 Nginx%20Full - in
+### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0
+### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in
+### tuple ### allow tcp 8443 203.0.113.10 any 0.0.0.0/0 in
+### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_eth0.100
+### tuple ### allow udp 60000:61000 0.0.0.0/0 any 0.0.0.0/0 in

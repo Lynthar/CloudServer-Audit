@@ -70,7 +70,7 @@ jobs:
                       apt-get install -y -qq --no-install-recommends \
                           ca-certificates git jq python3 cron at sudo ;;
               rocky) dnf -q -y install git jq ;;
-              arch)  pacman -Sy --noconfirm --needed git jq python ;;
+              arch)  pacman -Syu --noconfirm --needed git jq python ;;  # -Sy alone: a partial upgrade
               *)     echo "unknown distro: $DISTRO" >&2; exit 1 ;;
           esac
 
@@ -121,9 +121,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Verify each registered module exports _audit and _fix
-        # Pins the contract documented in CLAUDE.md so a half-done
-        # module addition (forgot _fix, forgot to register, etc.) is
-        # caught at PR time instead of at audit time.
+        # Every module in VPSSEC_MODULE_ORDER must define <name>_audit and
+        # <name>_fix: a half-done addition (forgot _fix, forgot to register)
+        # fails here at PR time instead of at audit time.
         run: |
           set -euo pipefail
           # Source engine.sh just to read VPSSEC_MODULE_ORDER. We
@@ -164,6 +164,9 @@ jobs:
     # through `rollback`, asserting the audit's verdict after each step.
     name: real /etc — mutate, audit, fix, rollback
     runs-on: ubuntu-latest
+    # Runs take 5-12 minutes here and about 21 on a loaded laptop; the default
+    # of 360 would let one hung case hold the job for six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

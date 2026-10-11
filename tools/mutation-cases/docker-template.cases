@@ -1,0 +1,26 @@
+# Mutation cases: tests/test_fix_docker_template.bats against modules/docker.sh.
+# mutate-suite: modules/docker.sh tests/test_fix_docker_template.bats
+#
+# docker.cases pairs the daemon.json suite; the proxy template has its own.
+
+run_case "template/compose-write-unchecked" 1 \
+    "    write_template \"\$output_file\" <<'EOF' || return 1" \
+    "    write_template \"\$output_file\" <<'EOF' || true"
+
+run_case "template/traefik-write-unchecked" 1 \
+    "    write_template \"\${template_dir}/traefik/traefik.yml\" <<'EOF' || return 1" \
+    "    write_template \"\${template_dir}/traefik/traefik.yml\" <<'EOF' || true"
+
+run_case "template/acme-status-discarded" 1 \
+    '    if ! touch "$acme" || ! chmod 600 "$acme"; then' \
+    '    if false; then'
+
+# A write in place of the touch empties the certificates Traefik already issued.
+run_case "template/acme-truncated" 1 \
+    '    if ! touch "$acme" || ! chmod 600 "$acme"; then' \
+    '    if ! : > "$acme" || ! chmod 600 "$acme"; then'
+
+# The unused query back: a `docker ps` per run, its answer thrown away.
+run_case "template/docker-queried" 1 \
+    '    local template_dir="${DOCKER_TEMPLATES_DIR}"' \
+    '    local template_dir="${DOCKER_TEMPLATES_DIR}"; _docker_get_exposed_ports >/dev/null'

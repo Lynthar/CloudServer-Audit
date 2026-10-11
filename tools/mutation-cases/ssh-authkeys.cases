@@ -1,0 +1,28 @@
+# Mutation cases: tests/test_ssh_authkeys.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_authkeys.bats
+#
+# Which key files the audit judges, and which keys the password-off gate counts.
+
+run_case "audit/first-admin-only" 1 \
+    '        perm_issues=$(_ssh_check_authkeys_permissions "${admins[@]}")' \
+    '        perm_issues=$(_ssh_check_authkeys_permissions "$first_admin")'
+
+run_case "audit/default-path-only" 1 \
+    '        done < <(sshd_authorized_keys_files "$user")' \
+    '        done < <(echo "$(getent passwd "$user" | cut -d: -f6)/.ssh/authorized_keys")'
+
+run_case "gate/refused-file-counted" 1 \
+    '        if [[ "${strict,,}" != no ]] && strictmodes_refused_path "$user" "$path" >/dev/null; then' \
+    '        if false; then'
+
+run_case "gate/strictmodes-no-ignored" 1 \
+    '        if [[ "${strict,,}" != no ]] && strictmodes_refused_path "$user" "$path" >/dev/null; then' \
+    '        if strictmodes_refused_path "$user" "$path" >/dev/null; then'
+
+run_case "admin-key/first-admin-only" 1 \
+    '        for admin in "${admins[@]}"; do' \
+    '        for admin in "${admins[@]:0:1}"; do'
+
+run_case "keylogin/pubkey-global-only" 1 \
+    '    _ssh_pubkey_enabled "$user" || return 1' \
+    '    _ssh_pubkey_enabled || return 1'

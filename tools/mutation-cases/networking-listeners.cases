@@ -1,0 +1,28 @@
+# Mutation cases: tests/test_networking_listeners.bats against modules/networking.sh.
+# mutate-suite: modules/networking.sh tests/test_networking_listeners.bats
+#
+# Which public listeners count as SSH: the ports sshd listens on, never a name.
+
+# Back to trusting the name: a renamed process is exempt anywhere, and
+# socket-activated sshd (owned by systemd) is flagged.
+run_case "ssh/exempt-by-name-wildcard" 1 \
+    '        [[ "$proto" == tcp* && "$ssh_ports" == *" $port "* ]] && continue' \
+    '        [[ "$proc" == sshd ]] && continue'
+
+run_case "ssh/exempt-by-name-specific" 2 \
+    '        [[ "$proto" == tcp* && "$ssh_ports" == *" $port "* ]] && continue' \
+    '        [[ "$proc" == sshd ]] && continue'
+
+run_case "ssh/udp-counts" 1 \
+    '        [[ "$proto" == tcp* && "$ssh_ports" == *" $port "* ]] && continue' \
+    '        [[ "$ssh_ports" == *" $port "* ]] && continue'
+
+# Only port 22: the port ssh.sh approved moving SSH to is flagged here.
+run_case "ssh/ports-not-read" 1 \
+    "    local ssh_ports=\" \$(get_ssh_ports | tr '\\n' ' ')\"" \
+    '    local ssh_ports=" 22 "'
+
+# The name cut at its first quote, as the old regex did: sshd"x reads as sshd.
+run_case "proc/name-cut-at-quote" 1 \
+    '        if _net_have_ss && [[ "$line" =~ users:\(\(\"(([^\"]|\"[^,])+)\",pid= ]]; then' \
+    '        if _net_have_ss && [[ "$line" =~ users:\(\(\"([^\"]+)\" ]]; then'

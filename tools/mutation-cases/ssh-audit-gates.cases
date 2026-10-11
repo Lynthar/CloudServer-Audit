@@ -1,0 +1,25 @@
+# Mutation cases: tests/test_ssh_audit_gates.bats against modules/ssh.sh.
+# mutate-suite: modules/ssh.sh tests/test_ssh_audit_gates.bats
+#
+# No sshd, or an sshd that cannot print its config: nothing may be graded.
+
+run_case "gate/no-sshd-graded-anyway" 1 \
+    '    if ! check_command sshd; then' \
+    '    if false; then'
+
+run_case "gate/unreadable-graded-anyway" 1 \
+    '    if ! _ssh_get_config "Port" "22" >/dev/null; then' \
+    '    if false; then'
+
+run_case "gate/unreadable-reads-complete" 1 \
+    '        _module_record_failure ssh query' \
+    '        :'
+
+# The getter answering 0 with the default is the old silent pass in one line.
+run_case "config/failure-reads-as-answer" 1 \
+    "        printf '%s\\n' \"\$default\"" \
+    "        printf '%s\\n' \"\$default\"; return 0"
+
+run_case "algorithms/unknown-reads-clean" 1 \
+    '    weak=$(_ssh_weak_algorithms) || return 1' \
+    '    weak=$(_ssh_weak_algorithms) || weak=""'

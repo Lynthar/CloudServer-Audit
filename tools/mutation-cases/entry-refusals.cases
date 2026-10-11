@@ -1,0 +1,7 @@
+# Mutation cases: tests/test_entry_refusals.bats against vpssec.
+# mutate-suite: vpssec tests/test_entry_refusals.bats
+
+# No jq check before the first i18n_load: the run ends with nothing on any stream.
+run_case "jq/missing-unchecked" 1 \
+    '    if ! check_command jq; then' \
+    '    if false; then'

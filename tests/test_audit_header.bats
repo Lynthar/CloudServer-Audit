@@ -53,3 +53,12 @@ _header_modules() { printf ',%s,' "$(sed -n 's/^Modules: //p' <<<"$output")"; }
     [[ "$output" == *"VPS Security Audit"* ]]
     [[ "$output" != *"Modules:"* ]]
 }
+
+@test "audit header: printed in the language asked for" {
+    run _errexit main audit --include=ssh --lang=zh_CN --yes
+    [ "$status" -eq 0 ]
+    i18n_load zh_CN
+    [[ "$output" == *"$(i18n 'cli.header_title')"* ]]
+    [[ "$output" == *"$(i18n 'report.host_modules'): "* ]]
+    [[ "$output" != *"Date:"* && "$output" != *"Modules:"* ]]
+}

@@ -110,31 +110,25 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           ARCHIVE="${{ steps.build.outputs.archive }}"
 
-          # Immutability guard: refuse to overwrite a release that ALREADY
-          # carries the signed tarball. Re-running this workflow on an
-          # existing tag with different code would re-sign it under the same
-          # workflow identity, so it would still pass run.sh's cosign
-          # verify-blob — silently swapping code a user already audited under
-          # that version. A first run (or a re-run before the tarball landed)
-          # still works. To ship new code, push a NEW version tag.
-          if gh release view "$TAG" --json assets \
-                --jq '.assets[].name' 2>/dev/null | grep -qx "$ARCHIVE"; then
+          # Never replace a signed tarball already published under this tag: a re-signed
+          # swap still verifies. Only gh's "release not found" means no release yet; any
+          # other failure to list the assets stops here, since it cannot rule one out.
+          if ! assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>&1); then
+              if [[ "$assets" != "release not found" ]]; then
+                  echo "::error::Could not list the assets of release $TAG: $assets"
+                  exit 1
+              fi
+              gh release create "$TAG" \
+                  --title "$TAG" \
+                  --generate-notes
+          elif grep -qxF -- "$ARCHIVE" <<<"$assets"; then
               echo "::error::Release $TAG already has $ARCHIVE; refusing to overwrite a published, signed asset. Cut a new version tag instead."
               exit 1
           fi
 
-          # Idempotent: if a release for this tag already exists
-          # (maintainer pre-created via `gh release create`), reuse it;
-          # otherwise create one with auto-generated notes.
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-              gh release create "$TAG" \
-                  --title "$TAG" \
-                  --generate-notes
-          fi
-
-          # --clobber now only applies to a re-run BEFORE the tarball was
-          # published (the guard above blocks the post-publish case), so it
-          # just keeps partial-upload re-runs idempotent for .sha256/.sig.json.
+          # --clobber only reaches a re-run that stopped before the tarball was
+          # published (the guard above refuses the rest): it keeps re-uploading
+          # .sha256/.sig.json after a partial upload idempotent.
           gh release upload "$TAG" \
               "$ARCHIVE" \
               "${ARCHIVE}.sha256" \

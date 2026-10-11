@@ -53,6 +53,7 @@ _lstchg_days_ago() {
     _passwd_is "bob:x:1002:1002::$homes/bob:/bin/bash"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 
@@ -61,6 +62,7 @@ _lstchg_days_ago() {
     _passwd_is "svc:x:999:999::$homes/svc:/bin/bash"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 
@@ -82,6 +84,7 @@ _lstchg_days_ago() {
     _shadow_line "old:\$6\$abc\$def:$(_lstchg_days_ago 400):0:99999:7:::"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 
@@ -93,6 +96,7 @@ _lstchg_days_ago() {
     _shadow_line "nobody:*:$(_lstchg_days_ago 1):0:99999:7:::"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 
@@ -103,6 +107,7 @@ _lstchg_days_ago() {
     _shadow_line "nfsnobody:*:$(_lstchg_days_ago 1):0:99999:7:::"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 
@@ -112,6 +117,7 @@ _lstchg_days_ago() {
     _shadow_line "forced:\$6\$abc\$def:0:0:99999:7:::"
 
     run _find_recent_users
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 

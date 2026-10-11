@@ -124,6 +124,30 @@ _refute_canary_on_disk() {
     _refute_canary_on_disk
 }
 
+@test "canary: a password on an LD_PRELOAD line reaches no report, log or terminal" {
+    _malware_arm _malware_check_ld_preload
+    MALWARE_ENV_FILES=("$BATS_TEST_TMPDIR/environment")
+    printf '%s\n' "export DB_PASSWORD=$CANARY LD_PRELOAD=/tmp/evil.so API_TOKEN=$CANARY" \
+        > "${MALWARE_ENV_FILES[0]}"
+
+    run _run_audits
+    [ "$status" -eq 0 ]
+    # The finding fired; otherwise "no canary" below is vacuous.
+    [[ "$(_desc_of malware.ld_preload)" == *"LD_PRELOAD=/tmp/evil.so"* ]]
+    [[ "$output" != *"$CANARY"* ]]
+    _refute_canary_on_disk
+
+    VPSSEC_JSON_ONLY=1
+    run report_generate_all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$CANARY"* ]]
+    VPSSEC_JSON_ONLY=0
+    _report_write_files
+    _refute_canary_on_disk
+    # Where to look, and what was preloaded.
+    [ "$(_desc_of malware.ld_preload)" = "${MALWARE_ENV_FILES[0]}:1: LD_PRELOAD=/tmp/evil.so" ]
+}
+
 @test "canary: a hidden process is reported by its binary, not its argv" {
     [[ -r /proc/self/cmdline ]] || skip "needs /proc"
     _malware_arm _malware_check_hidden_processes

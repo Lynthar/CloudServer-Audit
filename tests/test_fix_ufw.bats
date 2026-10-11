@@ -238,6 +238,14 @@ _call_at() {
     _vpssec_refute _vpssec_stub_called ufw 'allow from'
 }
 
+@test "enable: an unknown operator IP is said before the confirmation" {
+    i18n_load en_US
+    confirm_critical() { echo "CONFIRM-PROMPT" >&2; return 1; }
+
+    run _ufw_fix_enable
+    [[ "$output" == *"no rescue rule"*"CONFIRM-PROMPT"* ]]
+}
+
 @test "enable: a refused enable is reported as failure" {
     _ufw_refuses enable
     confirm_critical() { return 0; }
@@ -456,6 +464,25 @@ SH
 @test "ufw_fix: an unknown fix id fails instead of silently doing nothing" {
     run ufw_fix "ufw.not_a_real_fix"
     [ "$status" -eq 1 ]
+}
+
+@test "enable: a rescue rule that cannot be added is said before the confirmation, --json-only too" {
+    _operator_at 203.0.113.9
+    _vpssec_stub_script ufw <<SH
+case "\$1" in
+    allow)
+        [[ "\$2" == from ]] && exit 1
+        echo "### tuple ### allow tcp \${2%/*} 0.0.0.0/0 any 0.0.0.0/0 in" >> "$UFW_USER_RULES"
+        ;;
+esac
+exit 0
+SH
+    i18n_load en_US
+    VPSSEC_JSON_ONLY=1
+    confirm_critical() { echo "CONFIRM-PROMPT" >&2; return 1; }
+
+    run _ufw_fix_enable
+    [[ "$output" == *"Could not add the rescue rule"*"CONFIRM-PROMPT"* ]]
 }
 
 @test "enable: a rescue rule that cannot be added is reported, not announced as done" {

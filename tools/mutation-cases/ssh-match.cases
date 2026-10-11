@@ -13,8 +13,8 @@ run_case "ssh-match/relative-include-unresolved" 1 \
 
 # Included files are listed but never read, so drop-ins go unseen.
 run_case "ssh-match/include-not-followed" 1 \
-    '                [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))' \
-    '                :'
+    '            [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))' \
+    '            :'
 
 # The twelve table directives are left out of the judged set.
 run_case "ssh-match/table-directives-ignored" 1 \

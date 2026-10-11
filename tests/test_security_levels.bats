@@ -97,9 +97,38 @@ setup() {
     [ "${CHECK_SCORE_CATEGORY[ssh.x11_forwarding_enabled]}" = "info" ]
 }
 
+@test "score category: a clean cron scan is info, like the heuristic it answers" {
+    # A scored pass let a pattern match that finds nothing raise the score.
+    [ "${CHECK_SCORE_CATEGORY[scheduling.cron_fetches_internet]}" = "info" ]
+    [ "${CHECK_SCORE_CATEGORY[scheduling.cron_clean]}" = "info" ]
+}
+
+@test "get_fix_safety: MaxAuthTries asks first, and its warning names IdentitiesOnly" {
+    # Every key a client offers is an attempt; lowering the limit cuts off
+    # clients with a full agent, so it may not apply unasked.
+    [ "$(get_fix_safety ssh.set_max_auth_tries)" = confirm ]
+    i18n_load zh_CN
+    [[ "$(get_fix_warning ssh.set_max_auth_tries)" == *IdentitiesOnly* ]]
+    i18n_load en_US
+    [[ "$(get_fix_warning ssh.set_max_auth_tries)" == *IdentitiesOnly* ]]
+}
+
 @test "score category: sudo logging is info, both of its states passing" {
     [ "${CHECK_SCORE_CATEGORY[logging.sudo_logging_ok]}" = "info" ]
     [ "${CHECK_SCORE_CATEGORY[logging.sudo_no_events]}" = "info" ]
+}
+
+@test "score category: a check vpssec could not answer scores nothing" {
+    # Unknown, unreadable or unavailable is vpssec not seeing, not the host
+    # failing: scored, it moves the score of a host nobody looked at.
+    local id scored="" seen=0
+    for id in "${!CHECK_SCORE_CATEGORY[@]}"; do
+        [[ "$id" =~ (unknown|unreadable|unavailable|unreachable|incomplete|_failed)$ ]] || continue
+        seen=$((seen + 1))
+        [[ "${CHECK_SCORE_CATEGORY[$id]}" == "info" ]] || scored+="$id "
+    done
+    [ "$seen" -gt 10 ]
+    [ -z "$scored" ] || { echo "scored though unanswered: $scored" >&2; return 1; }
 }
 
 # Coverage invariant: the malware module is alert-only for everything it detects,

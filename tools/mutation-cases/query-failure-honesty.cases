@@ -38,3 +38,9 @@ run_case "update/refresh-hint-not-asked" 1 \
 run_case "update/unknown-manager-gets-apt" 1 \
     "        i18n 'update.check_failed_fix_generic'" \
     "        i18n 'update.check_failed_fix' \"cmd=apt-get update\""
+
+# An undeterminable lock tells a dnf host to install lsof, which its probe
+# never uses.
+run_case "update/lock-hint-dnf-gets-apt-text" 1 \
+    '            dnf)' \
+    '            dnf-unmatched)'

@@ -503,6 +503,15 @@ _f2b_fix_enable_ssh_jail() {
     _f2b_fix_configure_ssh_jail
 }
 
+# The sshd jail's ignoreip as fail2ban itself merges it from every file, one
+# address per line: `-d` parses the configuration without the server. Nothing
+# when none is set, or when the configuration cannot be read.
+_f2b_sshd_ignoreip() {
+    local dump
+    dump=$(fail2ban-client -d 2>/dev/null) || return 0
+    awk -F"'" '$2 == "set" && $4 == "sshd" && $6 == "addignoreip" { for (i = 8; i < NF; i += 2) print $i }' <<<"$dump"
+}
+
 # Undo a drop-in write that failed to validate. Two cases, and collapsing
 # them costs a file: restore from the backup, or remove a file we created.
 # A pre-existing file with no backup is LEFT ALONE.
@@ -553,18 +562,17 @@ _f2b_fix_configure_ssh_jail() {
     # NEVER ban the operator's own address: loopback always, plus the current
     # SSH source when it can be determined. Without it, three fat-fingered
     # passwords lock the admin out for an hour via this tool's own jail.
-    local f2b_ignoreip="127.0.0.1/8 ::1"
     local f2b_current_ip
     f2b_current_ip=$(get_current_ssh_ip)
-    [[ -n "$f2b_current_ip" ]] && f2b_ignoreip+=" $f2b_current_ip"
+    [[ -n "$f2b_current_ip" ]] || print_warn "$(i18n 'fail2ban.operator_ip_unknown')"
 
     print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
     print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
 
     # Built first, then written atomically: a truncated drop-in breaks
-    # fail2ban on the next reload.
-    local jail_content
+    # fail2ban on the next reload. The ignoreip line goes in by a second write.
+    local jail_content jail_extra
     jail_content=$(cat <<EOF
 # vpssec fail2ban configuration
 # Generated: $(date -Iseconds)
@@ -572,22 +580,8 @@ _f2b_fix_configure_ssh_jail() {
 # Detected backend: $f2b_backend
 
 [DEFAULT]
-# Never ban these addresses (operator loopback + current SSH source).
-ignoreip = $f2b_ignoreip
-
-# Ban duration (default: 10 minutes, increase for production)
-bantime = 1h
-
-# Time window for counting failures
-findtime = 10m
-
-# Max failures before ban
-maxretry = 3
-
-# Backend for log monitoring
-backend = $f2b_backend
-
-# Action: ban IP using the host's active firewall (selected at runtime)
+# Every jail's ban action: the firewall tool this host can run (selected at
+# runtime). Everything else this tool sets is in [sshd] below.
 banaction = $f2b_banaction
 banaction_allports = $f2b_banaction_allports
 
@@ -605,6 +599,9 @@ backend = $f2b_backend
 maxretry = 3
 bantime = 1h
 findtime = 10m
+EOF
+)
+    jail_extra=$(cat <<EOF
 
 # Aggressive mode for repeated offenders (optional)
 # [sshd-aggressive]
@@ -620,8 +617,20 @@ EOF
     # No restore call here, deliberately: write_file_atomic stages into a temp
     # file, so all of its failure paths leave the target untouched. A cleanup
     # here would make this branch look like it handles a case it never sees.
-    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"; then
+    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'\n'"$jail_extra"; then
         print_error "$(i18n 'fail2ban.dropin_write_failed')"
+        return 1
+    fi
+
+    # Added to the list the sshd jail has now, never in its place: an [sshd]
+    # ignoreip replaces the inherited one. Read once the file above enables the
+    # jail, as `fail2ban-client -d` lists enabled jails only.
+    local f2b_ignoreip
+    f2b_ignoreip=$( { _f2b_sshd_ignoreip; printf '%s\n' 127.0.0.1/8 ::1 ${f2b_current_ip:+"$f2b_current_ip"}; } \
+        | awk 'NF && !seen[$0]++' | paste -sd' ' -)
+    if ! write_file_atomic "$F2B_DROPIN" "$jail_content"$'\n'"# Never ban these: the jail's own list, loopback and the current SSH source."$'\n'"ignoreip = $f2b_ignoreip"$'\n'"$jail_extra"; then
+        print_error "$(i18n 'fail2ban.dropin_write_failed')"
+        _f2b_restore_dropin "$f2b_bak" "$f2b_had_dropin"
         return 1
     fi
 

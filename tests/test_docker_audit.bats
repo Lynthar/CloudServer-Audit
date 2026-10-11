@@ -134,3 +134,130 @@ SH
     _emitted | grep -qx 'docker.default_bridge_icc_disabled passed'
     _vpssec_refute grep -q 'docker.podman_daemon_not_checked' <<<"$(_emitted)"
 }
+
+# ---- what the containers run with ---------------------------------------
+
+# Container $1 named $2, as `docker inspect $1` prints it, edited by the jq
+# expression $3. Read by _docker_with_containers.
+_ctr() {
+    mkdir -p "$BATS_TEST_TMPDIR/ctr"
+    jq -n --arg n "/$2" "[{Name: \$n, Config: {User: \"\"},
+        HostConfig: {Privileged: false, CapAdd: null, SecurityOpt: null,
+                     NetworkMode: \"bridge\", Memory: 268435456}} | $3]" \
+        > "$BATS_TEST_TMPDIR/ctr/$1.json"
+}
+
+# A Docker 29 CLI running the containers _ctr wrote; inspect's --format
+# queries are answered from the same JSON.
+_docker_with_containers() {
+    _vpssec_stub_script docker <<SH
+dir="$BATS_TEST_TMPDIR/ctr"
+case "\$1 \${2:-}" in
+    "--version ") echo "Docker version 29.1.3, build f52814d" ;;
+    "ps -q"|"ps -aq") ls "\$dir" | sed 's/\.json\$//' ;;
+    "inspect "*)
+        f="\$dir/\$2.json"
+        [[ "\${3:-}" == --format ]] || { cat "\$f"; exit 0; }
+        case "\$4" in
+            "{{.Name}}") jq -r '.[0].Name' "\$f" ;;
+            "{{.Config.User}}") jq -r '.[0].Config.User' "\$f" ;;
+            "{{.HostConfig.NetworkMode}}") jq -r '.[0].HostConfig.NetworkMode' "\$f" ;;
+            "{{.HostConfig.Memory}}") jq -r '.[0].HostConfig.Memory' "\$f" ;;
+            "{{range .Config.Env}}{{println .}}{{end}}") jq -r '.[0].Config.Env // [] | .[]' "\$f" ;;
+        esac ;;
+    "info --format")
+        case "\$3" in
+            *ServerVersion*) echo "29.1.3" ;;
+            *LiveRestoreEnabled*) echo true ;;
+            *SecurityOptions*) echo '["name=no-new-privileges"]' ;;
+        esac ;;
+    "network inspect") echo false ;;
+esac
+exit 0
+SH
+}
+
+@test "seccomp: the colon spelling seccomp:unconfined is unconfined too" {
+    # dockerd still accepts the colon and stores it as typed.
+    _ctr c1 web '.HostConfig.SecurityOpt = ["seccomp:unconfined"]'
+    _ctr c2 db '.HostConfig.SecurityOpt = ["seccomp=unconfined"]'
+    _ctr c3 app '.HostConfig.SecurityOpt = ["apparmor:unconfined", "seccomp=/etc/p.json"]'
+    _docker_with_containers
+
+    docker_audit >/dev/null
+    _emitted | grep -qx 'docker.seccomp_unconfined failed'
+    [ "$(_field docker.seccomp_unconfined title)" = "$(i18n docker.seccomp_unconfined count=2)" ]
+    [[ "$(_field docker.seccomp_unconfined desc)" != *app* ]]
+}
+
+@test "root containers: a user:group whose user is 0 or root runs as root" {
+    _ctr c1 web '.Config.User = "0:0"'
+    _ctr c2 db '.Config.User = "root:root"'
+    _ctr c3 app '.Config.User = "1000:0"'
+    _docker_with_containers
+
+    docker_audit >/dev/null
+    _emitted | grep -qx 'docker.some_root_containers failed'
+    [ "$(_field docker.some_root_containers title)" = "$(i18n docker.some_root_containers count=2 total=3)" ]
+}
+
+@test "capabilities: the finding names each container and what it was granted" {
+    _ctr c1 web '.HostConfig.CapAdd = ["NET_ADMIN", "SYS_TIME"]'
+    _ctr c2 db '.HostConfig.CapAdd = null'
+    _ctr c3 proxy '.HostConfig.CapAdd = ["NET_BIND_SERVICE"]'
+    _docker_with_containers
+
+    docker_audit >/dev/null
+    _emitted | grep -qx 'docker.containers_with_caps failed'
+    [ "$(_field docker.containers_with_caps title)" = "$(i18n docker.added_capabilities count=2)" ]
+    [ "$(_field docker.containers_with_caps desc)" = \
+      "$(i18n docker.added_capabilities_desc 'list=web: NET_ADMIN,SYS_TIME; proxy: NET_BIND_SERVICE')" ]
+    [ "$(_field docker.containers_with_caps suggestion)" = "$(i18n docker.added_capabilities_suggestion)" ]
+}
+
+@test "env secrets: the sample names each container, joined by '; '" {
+    local gh; gh="ghp_$(printf 'a%.0s' {1..36})"
+    _ctr c1 web ".Config.Env = [\"GITHUB_TOKEN=$gh\"]"
+    _ctr c2 db '.Config.Env = ["AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP"]'
+    _ctr c3 app '.Config.Env = ["PATH=/usr/bin"]'
+    _docker_with_containers
+
+    docker_audit >/dev/null
+    _emitted | grep -qx 'docker.secrets_in_env failed'
+    [ "$(_field docker.secrets_in_env desc)" = \
+      "$(i18n docker.secrets_in_env_desc 'sample=web: github_token(x1); db: aws_access_key(x1)')" ]
+}
+
+@test "env secrets: the sample stops at five containers; the title counts all" {
+    local i
+    for i in 1 2 3 4 5 6; do
+        _ctr "c$i" "app$i" '.Config.Env = ["AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP"]'
+    done
+    _docker_with_containers
+
+    docker_audit >/dev/null
+    [ "$(_field docker.secrets_in_env title)" = "$(i18n docker.secrets_in_env count=6)" ]
+    [[ "$(_field docker.secrets_in_env desc)" == *"app5: aws_access_key(x1)."* ]]
+}
+
+@test "a daemon that does not answer docker info in time is unreachable, not a hung audit" {
+    _vpssec_stub_script docker <<'SH'
+[[ "$1" == info ]] && exec sleep 5
+exit 0
+SH
+    DOCKER_PROBE_TIMEOUT=1
+    local t0=$SECONDS
+
+    docker_audit >/dev/null
+    [ $((SECONDS - t0)) -lt 4 ]
+    _emitted | grep -qx 'docker.daemon_unreachable failed'
+}
+
+@test "a host without timeout(1) still asks the daemon, unbounded" {
+    _vpssec_stub docker
+    _vpssec_absent_command timeout
+    timeout() { return 127; }
+
+    run _docker_installed
+    [ "$status" -eq 0 ]
+}

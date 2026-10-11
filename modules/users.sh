@@ -23,7 +23,7 @@ declare -ga SYSTEM_ACCOUNTS=(
     "systemd-network" "systemd-resolve" "systemd-timesync"
     "messagebus" "syslog" "sshd" "mysql" "postgres" "redis"
     "mongodb" "nginx" "apache" "httpd" "ftp" "postfix" "dovecot"
-    "_apt" "uuidd" "tcpdump" "landscape" "pollinate" "ubuntu"
+    "_apt" "uuidd" "tcpdump" "landscape" "pollinate"
     "lxd" "usbmux" "dnsmasq" "libvirt-qemu" "libvirt-dnsmasq"
     "colord" "geoclue" "pulse" "rtkit" "saned" "avahi" "cups"
 )
@@ -93,39 +93,46 @@ _is_suspicious_username() {
 # UID-0 entry from an LDAP/AD backend never appears in that file, which is
 # exactly the backdoor this check exists for.
 _find_uid0_users() {
-    getent passwd 2>/dev/null | awk -F: '$3 == 0 && $1 != "root" { print $1 }'
+    local pw
+    pw=$(getent passwd 2>/dev/null) || return 1
+    awk -F: '$3 == 0 && $1 != "root" { print $1 }' <<<"$pw"
 }
 
-# Get users with empty passwords that can login
+# Login-capable users with an empty password. Returns 1 when shadow or the
+# account database could not be read: what was found is still printed, but an
+# empty list is then no proof of "none".
 _find_empty_password_users() {
-    local users=()
+    local users=() pw="" rc=0 entry
+    pw=$(getent passwd 2>/dev/null) || rc=1
 
-    # Check /etc/shadow for empty password field
     if [[ -r "$USERS_SHADOW_FILE" ]]; then
         while IFS=: read -r user pass rest; do
             # Only truly empty hashes. `!` / `!!` / `*` mean a locked
             # account, which cannot log in and is safe.
-            if [[ -z "$pass" ]]; then
-                local shell=$(getent passwd "$user" 2>/dev/null | cut -d: -f7)
-                if _has_login_shell "$shell"; then
-                    users+=("$user")
-                fi
+            [[ -z "$pass" ]] || continue
+            # No passwd entry (a NIS "+" line, an orphan): no such login.
+            entry=$(getent passwd "$user" 2>/dev/null) || continue
+            if _has_login_shell "$(cut -d: -f7 <<<"$entry")"; then
+                users+=("$user")
             fi
         done < "$USERS_SHADOW_FILE"
+    else
+        rc=1
     fi
 
     # Inline empty passwords too: an empty second passwd field means the
     # account needs no password, and such an entry NEVER appears in
     # /etc/shadow, so the scan above misses this backdoor form entirely.
     while IFS=: read -r user pass _ _ _ _ shell; do
-        [[ -z "$pass" ]] || continue
+        [[ -n "$user" && -z "$pass" ]] || continue
         if _has_login_shell "$shell"; then
             users+=("$user")
         fi
-    done < <(getent passwd 2>/dev/null)
+    done <<<"$pw"
 
     # Dedup: an account could surface from both scans.
-    printf '%s\n' "${users[@]}" | grep -v '^$' | sort -u
+    { printf '%s\n' "${users[@]}" | grep -v '^$' | sort -u; } || true
+    return "$rc"
 }
 
 # Get system users with interactive shells
@@ -135,8 +142,9 @@ _find_system_users_with_shells() {
     while IFS=: read -r user pass uid gid gecos home shell; do
         # Skip malformed lines (non-numeric UID would abort under set -u).
         [[ "$uid" =~ ^[0-9]+$ ]] || continue
-        # Skip non-system users (UID >= 1000) and root
-        [[ "$uid" -ge 1000 || "$user" == "root" ]] && continue
+        # Skip non-system users (UID >= 1000) and every UID 0 account: a
+        # non-root one is users.uid0_found's, not a second finding here.
+        [[ "$uid" -ge 1000 || "$uid" -eq 0 ]] && continue
 
         # Skip allowed shell users
         local allowed=false
@@ -193,6 +201,14 @@ _cloudinit_default_users_for_provider() {
     esac
 }
 
+# The recognised provider's cloud-init default user, which the name and recency
+# heuristics skip: every fresh image has one. An unrecognised provider has none,
+# so an `admin` on a plain VPS is still reported.
+_is_provider_default_user() {
+    [[ "$(vpssec_cloud_tier)" != unknown ]] || return 1
+    [[ "$1" =~ $(_cloudinit_default_users_for_provider) ]]
+}
+
 # True only when every NOPASSWD line has exactly one principal, that
 # principal is a cloud-init default user, and it is the SAME one throughout.
 # Anything else — groups, aliases, wildcards, two default users — is high.
@@ -244,8 +260,8 @@ _nopasswd_is_cloudinit_only() {
 }
 
 # Emits "user|uid|date|home|evidence" for recently created accounts. POSIX
-# records no creation time, so every signal is a proxy and the one that fired
-# is reported. password-set is for homeless accounts only (design notes).
+# records no creation time, so every signal is a proxy and the one that fired is
+# reported. password-set only for homeless accounts: a rotated password moves it.
 _find_recent_users() {
     local recent=()
     local cutoff_date
@@ -272,6 +288,7 @@ _find_recent_users() {
         # at image build, so it reads as a new account on every cloud image.
         (( uid >= 65534 )) && continue
         _is_system_account "$user" && continue
+        _is_provider_default_user "$user" && continue
 
         local epoch="" evidence=""
         if [[ -d "$home" ]]; then
@@ -304,7 +321,9 @@ _find_recent_users() {
     printf '%s\n' "${recent[@]}"
 }
 
-# Analyze SSH authorized_keys
+# One line per user with keys, "user|keys||perms_ok|suspicious|", over every key
+# file sshd reads for that user; "user|unread|||0|path" for a file too large to
+# read. perms_ok is no when StrictModes would refuse any of the files.
 _analyze_ssh_keys() {
     local findings=()
 
@@ -314,35 +333,34 @@ _analyze_ssh_keys() {
         [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
         ! _has_login_shell "$shell" && continue
 
-        local authkeys="$home/.ssh/authorized_keys"
-        [[ -f "$authkeys" ]] || continue
-
-        # Counted via the shared helper, which recognises ECDSA and FIDO keys
-        # and options-prefixed lines that a `^ssh-` match would miss.
-        local key_count
-        key_count=$(count_authorized_keys "$authkeys")
-        [[ "$key_count" -eq 0 ]] && continue
-
-        # Check permissions
-        local key_perms=$(stat -L -c %a "$authkeys" 2>/dev/null || stat -L -f %Lp "$authkeys" 2>/dev/null)
-        local perms_ok="yes"
-        if [[ "$key_perms" != "600" && "$key_perms" != "400" ]]; then
-            perms_ok="no"
-        fi
-
-        # Check for suspicious key comments
-        local suspicious_keys=0
-        while read -r line; do
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ "$line" =~ (^|[[:space:]])(ssh-|ecdsa-|sk-) ]] || continue
-            local comment=$(echo "$line" | awk '{print $NF}')
-            # Check for suspicious patterns in comments
-            if [[ "$comment" =~ (test|temp|backup|admin@|root@unknown) ]]; then
-                ((suspicious_keys++)) || true
+        local authkeys key_count=0 n perms_ok="yes" suspicious_keys=0 line comment
+        while IFS= read -r authkeys; do
+            [[ -f "$authkeys" ]] || continue
+            # Counted via the shared helper, which recognises ECDSA and FIDO keys
+            # and options-prefixed lines that a `^ssh-` match would miss.
+            if ! n=$(count_authorized_keys "$authkeys"); then
+                findings+=("$user|unread|||0|$authkeys")
+                continue
             fi
-        done < "$authkeys"
+            (( n > 0 )) || continue
+            key_count=$(( key_count + n ))
 
-        findings+=("$user|$key_count|$key_perms|$perms_ok|$suspicious_keys|$authkeys")
+            # As sshd's StrictModes judges it: 400 or 644 is fine; a path others
+            # can write, up to the home, or a foreign owner is not.
+            strictmodes_refused_path "$user" "$authkeys" >/dev/null && perms_ok="no"
+
+            # Check for suspicious key comments
+            while read -r line; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ "$line" =~ (^|[[:space:]])(ssh-|ecdsa-|sk-) ]] || continue
+                comment=$(echo "$line" | awk '{print $NF}')
+                if [[ "$comment" =~ (test|temp|backup|admin@|root@unknown) ]]; then
+                    ((suspicious_keys++)) || true
+                fi
+            done < "$authkeys"
+        done < <(sshd_authorized_keys_files "$user")
+
+        (( key_count > 0 )) && findings+=("$user|$key_count||$perms_ok|$suspicious_keys|")
     done < <(getent passwd 2>/dev/null)
 
     printf '%s\n' "${findings[@]}"
@@ -357,7 +375,7 @@ _find_suspicious_users() {
         # Only check regular users
         [[ "$uid" -lt 1000 ]] && continue
 
-        if _is_suspicious_username "$user"; then
+        if _is_suspicious_username "$user" && ! _is_provider_default_user "$user"; then
             local has_shell="no"
             _has_login_shell "$shell" && has_shell="yes"
             suspicious+=("$user|$uid|$shell|$has_shell")
@@ -560,13 +578,13 @@ _check_history_security() {
     printf '%s\n' "${issues[@]}"
 }
 
-# Non-root accounts sharing a UID: either accidental aliasing or a
-# deliberate backdoor. Output: "UID:user1,user2".
+# Accounts sharing a non-zero UID: either accidental aliasing or a deliberate
+# backdoor. Output: "UID:user1,user2". A shared UID 0 is users.uid0_found's.
 _find_duplicate_uids() {
     # Read via getent, not /etc/passwd directly, so a duplicate UID injected
     # through an NSS backend (LDAP/SSSD) — the same backdoor vector
     # _find_uid0_users deliberately uses getent for — is visible too.
-    getent passwd 2>/dev/null | awk -F: '$3 != "" {
+    getent passwd 2>/dev/null | awk -F: '$3 != "" && $3 != "0" {
         if (uids[$3]) uids[$3] = uids[$3] "," $1
         else          uids[$3] = $1
         count[$3]++
@@ -688,22 +706,30 @@ _check_faillog_logging() {
 }
 
 # sudoers integrity via visudo -c. A syntax error either locks operators out
-# entirely or, in parser corner cases, widens privileges.
+# entirely or, in parser corner cases, widens privileges. Checking the main file
+# follows its includes, so it is named only when visudo names it.
 _check_sudoers_syntax() {
     command -v visudo >/dev/null 2>&1 || return 0
-    local issues=() drop
+    local issues=() drop out line named=0
 
-    if ! visudo -c -f /etc/sudoers >/dev/null 2>&1; then
-        issues+=("$(i18n 'users.sudoers_file_invalid' "file=/etc/sudoers")")
-    fi
-    for drop in /etc/sudoers.d/*; do
+    for drop in "$SUDOERS_FILE.d"/*; do
         [[ -f "$drop" ]] || continue
         _sudoers_dropin_ignored "$drop" && continue
         if ! visudo -c -f "$drop" >/dev/null 2>&1; then
             issues+=("$(i18n 'users.sudoers_file_invalid' "file=$drop")")
         fi
     done
-    printf '%s\n' "${issues[@]}"
+    if ! out=$(visudo -c -f "$SUDOERS_FILE" 2>&1); then
+        while IFS= read -r line; do
+            [[ "$line" == *"parsed OK"* ]] && continue
+            [[ "$line" == *"$SUDOERS_FILE" || "$line" == *"$SUDOERS_FILE"[!./A-Za-z0-9_~-]* ]] && named=1
+        done <<<"$out"
+        # An output naming no file at all still blames the file that was asked about.
+        if (( named || ${#issues[@]} == 0 )); then
+            issues=("$(i18n 'users.sudoers_file_invalid' "file=$SUDOERS_FILE")" ${issues[@]+"${issues[@]}"})
+        fi
+    fi
+    printf '%s\n' ${issues[@]+"${issues[@]}"}
 }
 
 # --- Audit Functions ---
@@ -711,11 +737,17 @@ _check_sudoers_syntax() {
 users_audit() {
     log_info "Running user security audit"
 
-    # 1. Check for UID 0 users (besides root) - CRITICAL
-    local uid0_users=$(_find_uid0_users)
-    local uid0_count=$(count_lines "$uid0_users")
+    # 1. Check for UID 0 users (besides root) - CRITICAL. An unreadable account
+    # database is reported as such, never as a scored pass.
+    local uid0_users uid0_count uid0_read=1
+    uid0_users=$(_find_uid0_users) || uid0_read=0
+    uid0_count=$(count_lines "$uid0_users")
 
-    if [[ -n "$uid0_users" && "$uid0_count" -gt 0 ]]; then
+    if (( !uid0_read )); then
+        check_emit "users.uid0_unknown" low failed \
+            desc="$(i18n 'users.accounts_unreadable_desc' "what=getent passwd")" \
+            suggestion="$(i18n 'users.accounts_unreadable_fix')"
+    elif [[ -n "$uid0_users" && "$uid0_count" -gt 0 ]]; then
         check_emit "users.uid0_found" high failed \
             title="$(i18n 'users.uid0_found'): $uid0_count" \
             desc="$(echo "$uid0_users" | tr '\n' ', ' | sed 's/,$//')" \
@@ -726,14 +758,19 @@ users_audit() {
     fi
 
     # 2. Check for empty password users - CRITICAL
-    local empty_pass=$(_find_empty_password_users)
-    local empty_count=$(count_lines "$empty_pass")
+    local empty_pass empty_count empty_read=1
+    empty_pass=$(_find_empty_password_users) || empty_read=0
+    empty_count=$(count_lines "$empty_pass")
 
     if [[ -n "$empty_pass" && "$empty_count" -gt 0 ]]; then
         check_emit "users.empty_password" high failed \
             title="$(i18n 'users.empty_password'): $empty_count" \
             desc="$(echo "$empty_pass" | tr '\n' ', ' | sed 's/,$//')" \
             suggestion="$(i18n 'users.set_password')"
+    elif (( !empty_read )); then
+        check_emit "users.empty_password_unknown" low failed \
+            desc="$(i18n 'users.accounts_unreadable_desc' "what=$USERS_SHADOW_FILE, getent passwd")" \
+            suggestion="$(i18n 'users.accounts_unreadable_fix')"
     else
         check_emit "users.no_empty_password" info passed \
             desc="$(i18n 'users.no_empty_password_desc')"
@@ -834,9 +871,11 @@ users_audit() {
     local bad_perms=0
     local suspicious_keys=0
     local users_with_keys=0
+    local unread=()
 
     while IFS='|' read -r user key_count perms perms_ok sus_count path; do
         [[ -z "$user" ]] && continue
+        [[ "$key_count" == unread ]] && { unread+=("$path"); continue; }
         ((users_with_keys++)) || true
         [[ "$perms_ok" == "no" ]] && { ((bad_perms++)) || true; }
         ((suspicious_keys += sus_count)) || true
@@ -847,6 +886,17 @@ users_audit() {
             title="$(i18n 'users.ssh_keys_perms'): $bad_perms" \
             desc="$(i18n 'users.ssh_keys_perms_desc')" \
             suggestion="$(i18n 'users.fix_key_perms')"
+    fi
+
+    # Not read, so a local user cannot stall the audit with one; the size alone
+    # is worth a look.
+    if (( ${#unread[@]} )); then
+        local unread_list
+        unread_list=$(printf '%s, ' "${unread[@]}")
+        check_emit "users.ssh_keys_unread" low failed \
+            title="$(i18n 'users.ssh_keys_unread'): ${#unread[@]}" \
+            desc="$(i18n 'users.ssh_keys_unread_desc' "list=${unread_list%, }" "max=$AUTHKEYS_MAX_BYTES")" \
+            suggestion="$(i18n 'users.review_ssh_keys_unread')"
     fi
 
     if [[ "$users_with_keys" -gt 0 ]]; then

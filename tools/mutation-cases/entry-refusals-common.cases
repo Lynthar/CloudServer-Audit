@@ -1,0 +1,19 @@
+# Mutation cases: tests/test_entry_refusals.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_entry_refusals.bats
+#
+# The run lock's conflict message: the holder's PID, and where the hint goes.
+
+# Opened with truncation before flock: the holder's PID is erased first.
+run_case "lock/truncated-before-flock" 1 \
+    '        exec 200>>"$_run_lock"' \
+    '        exec 200>"$_run_lock"'
+
+# The winner never writes its PID, so the next conflict cannot name it.
+run_case "lock/pid-unrecorded" 1 \
+    '        echo $$ > "$_run_lock"' \
+    '        :'
+
+# The hint is dropped from the message, and with it the kill command.
+run_case "lock/hint-dropped" 1 \
+    "            _msg+=\$'\\n'\"  \$(i18n 'error.already_running_hint' \"pid=\${_other_pid:-<pid>}\")\"" \
+    '            :'

@@ -11,8 +11,10 @@ NGINX_SITES_ENABLED="${NGINX_CONF_DIR}/sites-enabled"
 # a fix created but not links, and a link left pointing at nothing fails nginx -t.
 NGINX_CATCHALL_CONF="${NGINX_SITES_ENABLED}/99-catchall.conf"
 NGINX_SSL_DIR="${NGINX_CONF_DIR}/ssl"
-NGINX_CATCHALL_CERT="${NGINX_SSL_DIR}/default.crt"
-NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/default.key"
+# Names no operator picks, because an existing file is reused as is: an
+# operator's own default.crt would show unknown SNI clients the real hostname.
+NGINX_CATCHALL_CERT="${NGINX_SSL_DIR}/vpssec-catchall.crt"
+NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/vpssec-catchall.key"
 
 # --- Nginx Helper Functions ---
 
@@ -127,13 +129,15 @@ nginx_audit() {
     fi
 
     # Re-read: a fix since the last audit may have rewritten the config. A config
-    # nginx itself rejects gets one finding, not a grade read from its files.
+    # nginx itself rejects gets one finding, not a grade read from its files, and
+    # the audit is marked incomplete: none of the nginx checks ran.
     nginx_dump_reset
     if ! nginx_dump_load; then
         check_emit "nginx.config_unreadable" info failed \
             desc="$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")" \
             suggestion="$(i18n 'nginx.config_unreadable_fix')"
         print_warn "$(i18n 'nginx.config_unreadable')"
+        _module_record_failure nginx query
         return
     fi
 

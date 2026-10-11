@@ -41,6 +41,7 @@ EOF
     printf '  #     noTLSVerify: true  # Only for internal services\n' >> "$config"
 
     run _cloudflared_check_ingress_security "$config"
+    [ "$status" -eq 0 ]
     [[ "$output" != *notls_verify* ]]
 }
 
@@ -96,6 +97,7 @@ EOF
     _write_clean_config
 
     run _cloudflared_check_ingress_security "$config"
+    [ "$status" -eq 0 ]
     [ -z "${output//[[:space:]]/}" ]
 }
 

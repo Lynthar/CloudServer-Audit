@@ -69,3 +69,9 @@ run_case "conf/unread-file-silent" 1 \
 run_case "conf/link-not-followed" 1 \
     '            [[ "$(readlink -f "$f")" == "$real" ]] && { linked=1; break; }' \
     '            :'
+
+# A forwarding host's rp_filter=2 is skipped by the scan; judged, the table's 1
+# reports systemd's own 50-default.conf as reverting it.
+run_case "scan/forwarding-loose-rp_filter-judged" 1 \
+    '            [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]] && continue' \
+    '            :'

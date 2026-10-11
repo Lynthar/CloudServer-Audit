@@ -1,0 +1,23 @@
+Status: active
+
+To                         Action      From
+--                         ------      ----
+2222/tcp                   ALLOW       Anywhere                   # SSH (vpssec)
+OpenSSH                    ALLOW       Anywhere                  
+Samba                      ALLOW       Anywhere                  
+Nginx Full                 ALLOW       Anywhere                  
+Anywhere on tailscale0     ALLOW       Anywhere                  
+Anywhere                   ALLOW       Anywhere                  
+203.0.113.10 8443/tcp      ALLOW       Anywhere                  
+Anywhere on eth0.100       ALLOW       Anywhere                  
+60000:61000/udp            ALLOW       Anywhere                  
+2222/tcp (v6)              ALLOW       Anywhere (v6)              # SSH (vpssec)
+OpenSSH (v6)               ALLOW       Anywhere (v6)             
+Samba (v6)                 ALLOW       Anywhere (v6)             
+Nginx Full (v6)            ALLOW       Anywhere (v6)             
+Anywhere (v6) on tailscale0 ALLOW       Anywhere (v6)             
+Anywhere (v6)              ALLOW       Anywhere (v6)             
+2001:db8::10 9443/tcp      ALLOW       Anywhere (v6)             
+Anywhere (v6) on eth0.100  ALLOW       Anywhere (v6)             
+60000:61000/udp (v6)       ALLOW       Anywhere (v6)             
+

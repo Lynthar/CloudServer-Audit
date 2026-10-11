@@ -27,50 +27,17 @@ SSH_RESCUE_GRACE=120
 
 # --- SSH Helper Functions ---
 
-# Get effective SSH config value using sshd -T (most accurate method)
-# Falls back to file parsing if sshd -T is not available
+# The effective value of $1 for user $3 (default: an ordinary user), or $2 when
+# sshd prints none (it omits unset list keywords such as AllowUsers). When sshd
+# cannot report its configuration, prints $2 and returns 1: no file is read instead.
 _ssh_get_config() {
-    local key="$1"
-    local default="$2"
-    local value=""
-
-    # -C applies the Match blocks an ordinary user gets (User *, Host *);
-    # without it sshd -T applies none. addr=none never matches Match Address,
-    # and a block naming one specific user is not applied either.
-    if command -v sshd &>/dev/null; then
-        local key_lower="${key,,}"
-        value=$(sshd -T -C user=doesnotexist,host=none,addr=none 2>/dev/null \
-            | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
-        # Some hardened or chrooted sshd builds reject -C. Retry without it
-        # before falling through to file parsing.
-        if [[ -z "$value" ]]; then
-            value=$(sshd -T 2>/dev/null | grep -i "^${key_lower} " | head -1 | awk '{sub(/^[^ ]+ /, ""); print}')
-        fi
-        if [[ -n "$value" ]]; then
-            echo "$value"
-            return
-        fi
+    local key="${1,,}" default="$2" dump value
+    if ! dump=$(sshd_effective_config "${3:-}"); then
+        printf '%s\n' "$default"
+        return 1
     fi
-
-    # Method 2: Fallback to file parsing (less accurate but works without root)
-    # Check drop-ins first (higher priority, sorted by name)
-    if [[ -d "$SSH_DROPIN_DIR" ]]; then
-        value=$(grep -h "^${key}[[:space:]]" "$SSH_DROPIN_DIR"/*.conf 2>/dev/null | tail -1 | awk '{sub(/^[^[:space:]]+[[:space:]]+/, ""); print}')
-        if [[ -n "$value" ]]; then
-            echo "$value"
-            return
-        fi
-    fi
-
-    # Check main config
-    value=$(grep "^${key}[[:space:]]" "$SSH_CONFIG" 2>/dev/null | tail -1 | awk '{sub(/^[^[:space:]]+[[:space:]]+/, ""); print}')
-    if [[ -n "$value" ]]; then
-        echo "$value"
-        return
-    fi
-
-    # Return default
-    echo "$default"
+    value=$(awk -v k="$key" '$1 == k { sub(/^[^ ]+ /, ""); print; exit }' <<<"$dump")
+    printf '%s\n' "${value:-$default}"
 }
 
 # Check if password auth is enabled: PasswordAuthentication, or a password
@@ -109,9 +76,9 @@ _ssh_root_login_enabled() {
     [[ "${value,,}" == "yes" ]]
 }
 
-# Check if pubkey auth is enabled
+# Is pubkey auth on, for user $1 (default: an ordinary user)?
 _ssh_pubkey_enabled() {
-    local value=$(_ssh_get_config "PubkeyAuthentication" "yes")
+    local value=$(_ssh_get_config "PubkeyAuthentication" "yes" "${1:-}")
     [[ "${value,,}" == "yes" ]]
 }
 
@@ -160,47 +127,20 @@ _ssh_get_admin_users() {
     return 0
 }
 
-# The EFFECTIVE AuthorizedKeysFile paths for a user, with sshd's token
-# expansion and relative paths resolved under home. One absolute path per
-# line; empty means no static key file applies.
-_ssh_effective_authorizedkeysfiles() {
-    local user="$1"
-    local home_dir
-    home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
-    [[ -z "$home_dir" ]] && return 0
-
-    # Captured first, THEN awk over a herestring: piping into an awk that
-    # exits early gives sshd SIGPIPE, and under pipefail that aborts this
-    # function before it prints anything.
-    local akf sshd_dump
-    sshd_dump=$(sshd -T 2>/dev/null || true)
-    akf=$(awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^[[:space:]]+/,""); print; exit}' <<<"$sshd_dump")
-    # sshd's built-in default when unset.
-    [[ -z "$akf" ]] && akf=".ssh/authorized_keys .ssh/authorized_keys2"
-    [[ "${akf,,}" == "none" ]] && return 0
-
-    local tok path
-    for tok in $akf; do
-        path="${tok//%%/$'\x01'}"   # protect literal %% before %h/%u
-        path="${path//%h/"$home_dir"}"
-        path="${path//%u/"$user"}"
-        path="${path//$'\x01'/%}"
-        [[ "$path" != /* ]] && path="$home_dir/$path"
-        echo "$path"
-    done
-}
-
-# Does this user have a usable key in the file(s) sshd will actually read?
-# Delegates to count_authorized_keys, which never counts a commented-out key —
-# reading a rotated-out key as "has key" is a lockout.
+# Does this user have a usable key in the file(s) sshd will actually read? A
+# commented-out key, or one in a file StrictModes refuses, reads as no key:
+# counting either toward the password-off gate is a lockout.
 _ssh_user_has_key() {
-    local user="$1"
-    local total=0 path n
+    local user="$1" strict total=0 path n
+    strict=$(_ssh_get_config "StrictModes" "yes")
     while IFS= read -r path; do
         [[ -n "$path" ]] || continue
-        n=$(count_authorized_keys "$path")
+        if [[ "${strict,,}" != no ]] && strictmodes_refused_path "$user" "$path" >/dev/null; then
+            continue
+        fi
+        n=$(count_authorized_keys "$path") || continue
         total=$(( total + n ))
-    done < <(_ssh_effective_authorizedkeysfiles "$user")
+    done < <(sshd_authorized_keys_files "$user")
     [[ "$total" -gt 0 ]]
 }
 
@@ -225,15 +165,15 @@ _ssh_account_can_login() {
     return 0
 }
 
-# Can $user log in by key under the CURRENT effective config? Needs
-# PubkeyAuthentication on; for root also a PermitRootLogin that permits keys —
+# Can $user log in by key under the CURRENT config, its Match User blocks applied?
+# Needs PubkeyAuthentication on; for root also a PermitRootLogin that permits keys —
 # under "no" root's key is useless and must NOT count toward the gate.
 _ssh_can_login_with_key() {
     local user="$1"
-    _ssh_pubkey_enabled || return 1
+    _ssh_pubkey_enabled "$user" || return 1
     if [[ "$user" == "root" ]]; then
         local prl
-        prl=$(_ssh_get_config "PermitRootLogin" "prohibit-password")
+        prl=$(_ssh_get_config "PermitRootLogin" "prohibit-password" "$user")
         [[ "${prl,,}" == "no" ]] && return 1
     fi
     _ssh_user_has_key "$user"
@@ -324,53 +264,46 @@ _ssh_get_access_control_info() {
     printf '%s; ' "${info[@]}"
 }
 
-# Check authorized_keys file permissions (security check)
+# One line per key file of the admins $@ whose path StrictModes would refuse,
+# over every effective AuthorizedKeysFile. Judged whatever StrictModes says: a
+# path others can write lets them add a key.
 _ssh_check_authkeys_permissions() {
-    local user="$1"
-    local home_dir
-    home_dir=$(getent passwd "$user" | cut -d: -f6)
-    local ssh_dir="${home_dir}/.ssh"
-    local auth_keys="${ssh_dir}/authorized_keys"
-    local issues=()
-
-    if [[ ! -d "$ssh_dir" ]]; then
-        return 0  # No .ssh dir, nothing to check
-    fi
-
-    # Check .ssh directory permissions (should be 700 or 755)
-    local ssh_perms
-    ssh_perms=$(stat -L -c "%a" "$ssh_dir" 2>/dev/null)
-    if [[ -n "$ssh_perms" ]] && [[ "$ssh_perms" != "700" ]] && [[ "$ssh_perms" != "755" ]]; then
-        issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$ssh_dir" "mode=$ssh_perms" "want=700")")
-    fi
-
-    # Check authorized_keys permissions (should be 600 or 644)
-    if [[ -f "$auth_keys" ]]; then
-        local ak_perms
-        ak_perms=$(stat -L -c "%a" "$auth_keys" 2>/dev/null)
-        if [[ -n "$ak_perms" ]] && [[ "$ak_perms" != "600" ]] && [[ "$ak_perms" != "644" ]]; then
-            issues+=("$(i18n 'ssh.authkeys_bad_mode' "path=$auth_keys" "mode=$ak_perms" "want=600")")
-        fi
-
-        # Check ownership
-        local ak_owner
-        ak_owner=$(stat -L -c "%U" "$auth_keys" 2>/dev/null)
-        if [[ -n "$ak_owner" ]] && [[ "$ak_owner" != "$user" ]] && [[ "$ak_owner" != "root" ]]; then
-            issues+=("$(i18n 'ssh.authkeys_bad_owner' "path=$auth_keys" "owner=$ak_owner" "want=$user")")
-        fi
-    fi
-
-    if [[ ${#issues[@]} -gt 0 ]]; then
-        printf '%s\n' "${issues[@]}"
-        return 1
-    fi
-    return 0
+    local user path bad mode owner
+    for user in "$@"; do
+        while IFS= read -r path; do
+            [[ -f "$path" ]] || continue
+            bad=$(strictmodes_refused_path "$user" "$path") || continue
+            IFS=$'\t' read -r bad mode owner <<<"$bad"
+            i18n 'ssh.authkeys_refused' "path=$bad" "mode=$mode" "owner=$owner" "file=$path"
+        done < <(sshd_authorized_keys_files "$user")
+    done | awk '!seen[$0]++'
 }
 
 # --- SSH Audit ---
 
 ssh_audit() {
     local module="ssh"
+
+    # Without sshd every verdict below would grade a daemon that does not exist.
+    if ! check_command sshd; then
+        check_emit "ssh.not_installed" low passed \
+            desc="$(i18n 'ssh.not_installed_desc')"
+        print_ok "$(i18n 'ssh.not_installed') - $(i18n 'common.skipping')"
+        return 0
+    fi
+    # sshd that cannot print its effective config leaves every verdict unjudged:
+    # one finding, and the audit is marked incomplete rather than graded on defaults.
+    if ! _ssh_get_config "Port" "22" >/dev/null; then
+        local why
+        why=$(sshd -T 2>&1 >/dev/null) || true
+        why="${why%%$'\n'*}"   # sshd ends its stderr lines with \r\n
+        check_emit "ssh.config_unreadable" info failed \
+            desc="$(i18n 'ssh.config_unreadable_desc' "error=${why%$'\r'}")" \
+            suggestion="$(i18n 'ssh.config_unreadable_fix')"
+        print_warn "$(i18n 'ssh.config_unreadable')"
+        _module_record_failure ssh query
+        return 0
+    fi
 
     # Check password authentication
     print_item "$(i18n 'ssh.check_password_auth')"
@@ -486,23 +419,32 @@ _ssh_audit_admin_user() {
             desc="$(i18n 'ssh.admin_user_exists_desc' "admin_users=$admin_users")"
         print_ok "$(i18n 'ssh.admin_user_exists' "user=$first_admin")"
 
-        # Check if admin has SSH key
-        if ! _ssh_user_has_key "$first_admin"; then
+        # Every admin, so the verdict does not hang on which one sudoers names first.
+        local admins=() keyless=() admin
+        mapfile -t admins <<<"$admin_users"
+        for admin in "${admins[@]}"; do
+            _ssh_user_has_key "$admin" || keyless+=("$admin")
+        done
+        if (( ${#keyless[@]} )); then
+            local who
+            who=$(printf '%s, ' "${keyless[@]}")
+            who="${who%, }"
             check_emit "ssh.admin_no_key" low failed \
-                title="$(i18n 'ssh.admin_no_key' "user=$first_admin")" \
+                title="$(i18n 'ssh.admin_no_key' "user=$who")" \
                 desc="$(i18n 'ssh.admin_no_key_desc')" \
-                suggestion="$(i18n 'ssh.admin_no_key_suggestion' "user=$first_admin")"
-            print_severity "low" "$(i18n 'ssh.admin_no_key' "user=$first_admin")"
-        else
-            # Check authorized_keys permissions if key exists
-            local perm_issues
-            perm_issues=$(_ssh_check_authkeys_permissions "$first_admin")
-            if [[ -n "$perm_issues" ]]; then
-                check_emit "ssh.authkeys_permissions" medium failed \
-                    desc="$perm_issues" \
-                    suggestion="$(i18n 'ssh.authkeys_permissions_suggestion')"
-                print_severity "medium" "$(i18n 'ssh.authkeys_permissions')"
-            fi
+                suggestion="$(i18n 'ssh.admin_no_key_suggestion' "user=$who")"
+            print_severity "low" "$(i18n 'ssh.admin_no_key' "user=$who")"
+        fi
+
+        # Every admin, whatever the verdict above: a refused key file is also
+        # why an admin reads as keyless.
+        local perm_issues
+        perm_issues=$(_ssh_check_authkeys_permissions "${admins[@]}")
+        if [[ -n "$perm_issues" ]]; then
+            check_emit "ssh.authkeys_permissions" medium failed \
+                desc="${perm_issues//$'\n'/; }" \
+                suggestion="$(i18n 'ssh.authkeys_permissions_suggestion')"
+            print_severity "medium" "$(i18n 'ssh.authkeys_permissions')"
         fi
     else
         check_emit "ssh.no_admin_user" low failed \
@@ -632,13 +574,10 @@ _ssh_audit_directives() {
     done
 }
 
-# Every file sshd reads for its config: $1 (default SSH_CONFIG) and, recursively,
-# what its Include lines name. Relative patterns resolve under the config's
-# directory, as sshd resolves them.
-_ssh_config_files() {
-    local file="${1:-$SSH_CONFIG}" depth="${2:-0}" base line pat f
-    [[ -r "$file" ]] && (( depth <= 8 )) || return 0
-    echo "$file"
+# The patterns the Include lines of file $1 name, one per line, unexpanded.
+# Relative patterns resolve under the main config's directory, as sshd's do.
+_ssh_include_patterns() {
+    local base line pat
     base=$(dirname "$SSH_CONFIG")
     while IFS= read -r line; do
         [[ "$line" =~ ^[[:space:]]*[Ii][Nn][Cc][Ll][Uu][Dd][Ee]([[:space:]]+|[[:space:]]*=[[:space:]]*)(.+)$ ]] || continue
@@ -647,11 +586,35 @@ _ssh_config_files() {
         read -ra pats <<< "${BASH_REMATCH[2]%%#*}"
         for pat in "${pats[@]}"; do
             [[ "$pat" == /* ]] || pat="$base/$pat"
-            for f in $pat; do
-                [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))
-            done
+            printf '%s\n' "$pat"
         done
-    done < "$file"
+    done < "$1"
+}
+
+# Every file sshd reads for its config: $1 (default SSH_CONFIG) and, recursively,
+# what its Include lines name.
+_ssh_config_files() {
+    local file="${1:-$SSH_CONFIG}" depth="${2:-0}" pat f
+    [[ -r "$file" ]] && (( depth <= 8 )) || return 0
+    echo "$file"
+    while IFS= read -r pat; do
+        for f in $pat; do
+            [[ -f "$f" ]] && _ssh_config_files "$f" $((depth + 1))
+        done
+    done < <(_ssh_include_patterns "$file")
+}
+
+# True when an Include somewhere in sshd's config names a pattern that matches
+# SSH_HARDENING_DROPIN, i.e. sshd reads what the fixes write.
+_ssh_dropin_included() {
+    local f pat
+    while IFS= read -r f; do
+        while IFS= read -r pat; do
+            # shellcheck disable=SC2053  # the pattern is a glob on purpose
+            [[ "$SSH_HARDENING_DROPIN" == $pat ]] && return 0
+        done < <(_ssh_include_patterns "$f")
+    done < <(_ssh_config_files)
+    return 1
 }
 
 # "Directive<TAB>criteria" for each directive this audit judges that a Match
@@ -696,55 +659,34 @@ _ssh_audit_match_overrides() {
 }
 
 # Space-separated "cipher:x" / "mac:x" / "kex:x" for each weak algorithm sshd
-# offers; empty is the pass condition of the algorithms check.
+# offers; empty is the pass condition of the algorithms check. Returns 1 when
+# sshd cannot report what it offers.
 _ssh_weak_algorithms() {
-    local issues=()
+    local issues=() list weak
 
-    # Check for weak ciphers using sshd -T
-    if command -v sshd &>/dev/null; then
-        local ciphers
-        ciphers=$(sshd -T 2>/dev/null | grep "^ciphers " | cut -d' ' -f2-)
-
-        # Check for known weak ciphers
-        local weak_ciphers=("3des-cbc" "arcfour" "arcfour128" "arcfour256" "blowfish-cbc" "cast128-cbc")
-        for weak in "${weak_ciphers[@]}"; do
-            if [[ "$ciphers" == *"$weak"* ]]; then
-                issues+=("cipher:$weak")
-            fi
-        done
-
-        # Check for weak MACs
-        local macs
-        macs=$(sshd -T 2>/dev/null | grep "^macs " | cut -d' ' -f2-)
-        # Substring match, so "hmac-md5" also catches hmac-md5-96 and
-        # "hmac-sha1" catches hmac-sha1-96 / hmac-sha1-etm@openssh.com — every
-        # SHA-1/MD5 MAC is deprecated. (Previously hmac-sha1 itself was missed.)
-        local weak_macs=("hmac-md5" "hmac-sha1")
-        for weak in "${weak_macs[@]}"; do
-            if [[ "$macs" == *"$weak"* ]]; then
-                issues+=("mac:$weak")
-            fi
-        done
-
-        # Check for weak KEX algorithms
-        local kex
-        kex=$(sshd -T 2>/dev/null | grep "^kexalgorithms " | cut -d' ' -f2-)
-        # group14-sha1 was missing: SHA-1 KEX is deprecated (RFC 8732 / OpenSSH
-        # 8.8 disabled it by default). group14-sha256 is NOT a substring match
-        # of "...-sha1", so the strong variant is not falsely flagged.
-        local weak_kex=("diffie-hellman-group1-sha1" "diffie-hellman-group-exchange-sha1" "diffie-hellman-group14-sha1")
-        for weak in "${weak_kex[@]}"; do
-            if [[ "$kex" == *"$weak"* ]]; then
-                issues+=("kex:$weak")
-            fi
-        done
-    fi
+    # Substrings: "hmac-md5" also catches hmac-md5-96, "hmac-sha1" catches
+    # hmac-sha1-96 and -etm; "...-sha1" never matches group14-sha256.
+    list=$(_ssh_get_config "Ciphers" "") || return 1
+    for weak in 3des-cbc arcfour arcfour128 arcfour256 blowfish-cbc cast128-cbc; do
+        [[ "$list" == *"$weak"* ]] && issues+=("cipher:$weak")
+    done
+    list=$(_ssh_get_config "MACs" "") || return 1
+    for weak in hmac-md5 hmac-sha1; do
+        [[ "$list" == *"$weak"* ]] && issues+=("mac:$weak")
+    done
+    list=$(_ssh_get_config "KexAlgorithms" "") || return 1
+    for weak in diffie-hellman-group1-sha1 diffie-hellman-group-exchange-sha1 diffie-hellman-group14-sha1; do
+        [[ "$list" == *"$weak"* ]] && issues+=("kex:$weak")
+    done
 
     echo "${issues[*]}"
 }
 
+# FIX_VERIFY's predicate: fails closed when sshd cannot answer.
 _ssh_algorithms_ok() {
-    [[ -z "$(_ssh_weak_algorithms)" ]]
+    local weak
+    weak=$(_ssh_weak_algorithms) || return 1
+    [[ -z "$weak" ]]
 }
 
 _ssh_audit_algorithms() {
@@ -803,6 +745,13 @@ _ssh_audit_port() {
 ssh_fix() {
     local fix_id="$1"
 
+    # Every fix writes the drop-in; when sshd never reads it, each one could
+    # only fail its post-reload check, so stop before anything is touched.
+    if ! _ssh_dropin_included; then
+        print_error "$(i18n 'ssh.dropin_not_included' "config=$SSH_CONFIG" "dir=$SSH_DROPIN_DIR")"
+        return 1
+    fi
+
     # Migrate any legacy `99-` drop-in to the new `00-` name before a fix reads
     # or writes it, so prior settings are preserved and the losing file is gone.
     _ssh_migrate_legacy_dropin || return 1
@@ -839,9 +788,9 @@ ssh_fix() {
     esac
 }
 
-# Rescue SSH daemon: a second sshd on a temporary port, started BEFORE any
-# change that can cut SSH access. Four invariants bound it, each of which has
-# already prevented a lockout — do not loosen any (see the design notes).
+# Rescue sshd: a second daemon on a temporary port, up BEFORE any change that
+# can cut SSH access. Each rule stopped a lockout: a free port, never the live
+# one; up once OUR pid listens; let through ufw; teardown undoes only its own.
 
 # Pick a free TCP port for the rescue daemon: never the live SSH port, never an
 # already-listening port. Prefer 2222, then scan small high-port ranges.
@@ -961,12 +910,14 @@ _ssh_rescue_remove_firewall() {
     port="${rest##*:}"
     ip="${rest%:*}"
     [[ "$ip" == "$port" ]] && ip=""   # "ufw::2222" leaves rest=":2222"
+    # ufw answers 0 for a rule already gone, so a failure here is a rule left
+    # open: name the command that removes it.
+    local -a rule=(allow "$port/tcp")
+    [[ -n "$ip" ]] && rule=(allow from "$ip" to any port "$port" proto tcp)
     case "$kind" in
         ufw)
-            if [[ -n "$ip" ]]; then
-                ufw delete allow from "$ip" to any port "$port" proto tcp >/dev/null 2>&1 || true
-            else
-                ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
+            if ! ufw delete "${rule[@]}" >/dev/null 2>&1; then
+                tty_warn "$(i18n 'ssh.rescue_rule_remove_failed' "cmd=ufw delete ${rule[*]}")"
             fi
             ;;
     esac
@@ -1100,9 +1051,9 @@ _ssh_close_rescue_port() {
     trap - EXIT INT TERM HUP
 }
 
-# What the most recent write replaced, for _ssh_reload_safe's rollback: a
-# backup path; "NEW" (no prior drop-in, so delete); "PREV" (the old content is
-# in SSH_LAST_DROPIN_PREV); empty = no call has run yet.
+# What the most recent write replaced, for _ssh_reload_safe's rollback: "NEW"
+# (no prior drop-in, so delete); "PREV" (the old content is in
+# SSH_LAST_DROPIN_PREV); empty = no call has run yet.
 SSH_LAST_DROPIN_BACKUP=""
 SSH_LAST_DROPIN_PREV=""
 
@@ -1124,7 +1075,7 @@ _ssh_migrate_legacy_dropin() {
 # would otherwise read as success. Compared case-insensitively.
 _ssh_verify_effective() {
     local effective
-    effective=$(_ssh_get_config "$1" "")
+    effective=$(_ssh_get_config "$1" "") || return 1
     [[ "${effective,,}" == "${2,,}" ]]
 }
 
@@ -1143,21 +1094,13 @@ _ssh_write_hardening_config() {
 
     mkdir -p "$SSH_DROPIN_DIR"
 
-    # Backed up so the full-context sshd -t failure path can restore it: a
-    # broken drop-in left on disk blocks sshd at the next restart.
+    # backup_file serves the plan-level rollback; this write's own undo keeps the
+    # content it replaces, since the session copy predates the plan.
+    backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1
     if [[ -f "$SSH_HARDENING_DROPIN" ]]; then
-        SSH_LAST_DROPIN_BACKUP=$(backup_file "$SSH_HARDENING_DROPIN") || return 1
-        # Nothing printed: this session created the file (an earlier fix, or the
-        # legacy migration), so no session copy holds what this write replaces.
-        if [[ -z "$SSH_LAST_DROPIN_BACKUP" ]]; then
-            SSH_LAST_DROPIN_PREV=$(cat "$SSH_HARDENING_DROPIN") || return 1
-            SSH_LAST_DROPIN_BACKUP="PREV"
-        fi
+        SSH_LAST_DROPIN_PREV=$(cat "$SSH_HARDENING_DROPIN") || return 1
+        SSH_LAST_DROPIN_BACKUP="PREV"
     else
-        # "NEW" drives this module's own reload-failure rollback. backup_file
-        # is called as well so the plan-level rollback also deletes it —
-        # without both, the drop-in survives "rollback".
-        backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1
         SSH_LAST_DROPIN_BACKUP="NEW"
     fi
 
@@ -1192,8 +1135,8 @@ _ssh_write_hardening_config() {
     fi
 }
 
-# Restore the drop-in to its state before the most recent write. Used when
-# full-context validation fails on a file that parses fine in isolation.
+# Restore the drop-in to its state before the most recent write: the write
+# failed the full-context sshd -t, the reload, or the post-reload check.
 _ssh_rollback_dropin() {
     local backup="${SSH_LAST_DROPIN_BACKUP:-}"
 
@@ -1208,23 +1151,17 @@ _ssh_rollback_dropin() {
         else
             print_error "$(i18n 'ssh.dropin_rollback_failed')"
         fi
-    elif [[ -n "$backup" && -f "$backup" ]]; then
-        # Restore prior content. Use cp -p to preserve mode/ownership
-        # (backup_file already chmodded the backup 600, but the live
-        # drop-in is 644; let chmod --reference restore that).
-        if cp -p "$backup" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
-            chmod 644 "$SSH_HARDENING_DROPIN" 2>/dev/null || true
-            print_warn "$(i18n 'ssh.dropin_rolled_back_restored')"
-        else
-            print_error "$(i18n 'ssh.dropin_rollback_failed')"
-        fi
     else
-        # Backup path unset or backup file missing (very unusual).
+        # No write recorded since the last rollback.
         print_error "$(i18n 'ssh.dropin_rollback_missing')"
     fi
 
     # Reset so a later reload cannot "rollback" stale state.
     SSH_LAST_DROPIN_BACKUP=""
+}
+
+_ssh_reload_service() {
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
 }
 
 # Reload sshd safely. The full-context `sshd -t` can fail on a drop-in that
@@ -1235,7 +1172,7 @@ _ssh_reload_safe() {
     if sshd -t 2>/dev/null; then
         print_ok "$(i18n 'ssh.sshd_test_ok')"
 
-        if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null; then
+        if _ssh_reload_service; then
             print_ok "$(i18n 'ssh.sshd_reloaded')"
 
             # Verify effective values actually changed. Skipped only when sshd
@@ -1253,6 +1190,8 @@ _ssh_reload_safe() {
                         print_error "$(i18n 'ssh.effective_mismatch' "key=$_k" "value=$_v")"
                     fi
                     _ssh_rollback_dropin
+                    # sshd is already running the rejected change.
+                    _ssh_reload_service || print_error "$(i18n 'ssh.reload_after_rollback_failed')"
                     return 1
                 fi
             done

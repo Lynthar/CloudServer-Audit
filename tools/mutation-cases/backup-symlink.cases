@@ -1,7 +1,8 @@
 # Mutation cases: tests/test_backup_restore.bats against core/common.sh.
 # mutate-suite: core/common.sh tests/test_backup_restore.bats
 #
-# The backup and atomic-write primitives meeting a symlink.
+# The backup and atomic-write primitives meeting a symlink, or a directory
+# where a file is expected.
 
 # The link is snapshotted under its own name with its own mode, 777.
 run_case "backup/link-not-resolved" 1 \
@@ -16,3 +17,9 @@ run_case "write/link-replaced" 1 \
 run_case "write/dangling-link-written-through" 1 \
     '    if [[ -L "$target" && -e "$target" ]]; then' \
     '    if [[ -L "$target" ]]; then'
+
+# A directory at the target: the temp file is moved into it and the write
+# reports success.
+run_case "write/moved-into-directory" 1 \
+    '    if mv -fT "$temp_file" "$target"; then' \
+    '    if mv -f "$temp_file" "$target"; then'

@@ -25,10 +25,7 @@ mutate() {
 client_header_timeout 60s;
 EOF
     chmod 644 "$_CONF"
-    if ! nginx -t >/dev/null 2>&1; then
-        rm -f "$_CONF"
-        return 1
-    fi
+    nginx -t >/dev/null 2>&1 || return 1
     if systemctl is-active --quiet nginx 2>/dev/null; then
         systemctl reload nginx >/dev/null 2>&1 || true
     fi

@@ -98,3 +98,47 @@ run_case "resume/menu-without-anyone" 1 \
 run_case "resume/plan-modules-not-loaded" 1 \
     '        if ! module_load "$fix_module"; then' \
     '        if false; then'
+
+# ---- guide's exit status -----------------------------------------------------
+
+# Failed findings no fix covers read "Hardening complete" again.
+run_case "guide/no-auto-fix-reads-complete" 1 \
+    "            print_warn \"\$(i18n 'guide.no_auto_fix' \"count=\$failed_count\")\"" \
+    "            print_ok \"\$(i18n 'common.safe') - \$(i18n 'guide.complete')\""
+
+# Nothing to fix and an unfinished audit: exit 0, as if the scan were complete.
+run_case "guide/no-fix-incomplete-exits-0" 1 \
+    '        (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || return 3' \
+    '        :'
+
+# A plan with no failure after an unfinished re-audit: exit 0.
+run_case "guide/plan-incomplete-exits-0" 1 \
+    '    (( ${#VPSSEC_MODULES_FAILED[@]} == 0 )) || return 3' \
+    '    :'
+
+# The plan's failure no longer decides the exit status.
+run_case "guide/plan-failure-dropped" 1 \
+    '    (( plan_rc != 0 )) && return "$plan_rc"' \
+    '    :'
+
+# A resumed plan whose fix failed exits 0.
+run_case "resume/plan-failure-dropped" 1 \
+    '    return "$plan_rc"' \
+    '    return 0'
+
+# ---- each audit pass reports its own completeness ------------------------------
+
+# guide's audit after the fixes inherits a crash from the one before: exit 3.
+run_case "pass/failures-inherited" 1 \
+    '    VPSSEC_MODULES_FAILED=()' \
+    '    :'
+
+# A lost check of the first audit is reported again by the second.
+run_case "pass/emit-failures-inherited" 1 \
+    '    VPSSEC_MODULE_EMIT_FAILED=()' \
+    '    :'
+
+# A module that never loaded drops out of the second audit's record.
+run_case "pass/load-failure-forgotten" 1 \
+    '        VPSSEC_MODULES_FAILED+=("$module")' \
+    '        :'

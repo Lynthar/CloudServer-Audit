@@ -7,6 +7,8 @@ load helpers.bash
 
 setup() {
     _vpssec_load
+    # Not in a container unless a test says so: bats itself may run in one.
+    detect_container() { return 1; }
     etc=$(_vpssec_fake_etc)
     _kernel_source
     mkdir -p "$etc/security" "$etc/systemd"
@@ -31,6 +33,7 @@ _kernel_source() {
     SYSCTL_D="$etc/sysctl.d"
     VPSSEC_SYSCTL_CONF="$SYSCTL_D/99-vpssec-hardening.conf"
     KERNEL_LIMITS_CONF="$etc/security/limits.conf"
+    KERNEL_LIMITS_D="$etc/security/limits.d"
     KERNEL_COREDUMP_CONF="$etc/systemd/coredump.conf"
     KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
     KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
@@ -78,6 +81,9 @@ _sysctl_seed() { printf '%s\n' "$2" > "$sysctl_store/$1"; }
 
 # True if the persisted drop-in carries "<param> = <value>".
 _dropin_has() { grep -qxF "$1 = $2" "$VPSSEC_SYSCTL_CONF"; }
+
+# Runtime value of one param in the stub, after whatever the fix wrote.
+_runtime() { cat "$sysctl_store/$1"; }
 
 # The host's IPv6 default route comes from Router Advertisements.
 _host_uses_ra() {
@@ -183,6 +189,7 @@ SH
     _kernel_write_sysctl "kernel.dmesg_restrict" "1"
 
     run bash -c "ls $SYSCTL_D/.vpssec.* 2>/dev/null"
+    [ "$status" -ne 0 ]
     [ -z "$output" ]
 }
 
@@ -228,10 +235,17 @@ SH
     _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
 }
 
-@test "harden_network: accept_ra is left alone on a SLAAC host" {
+# accept_ra belongs to the IPv6 check, not the network table. Listed there again,
+# the scan's SLAAC guard must still keep harden_network off it.
+_table_lists_accept_ra() {
+    KERNEL_SECURITY_PARAMS+=("net.ipv6.conf.all.accept_ra:0:medium:IPv6 Router Advertisements")
+}
+
+@test "harden_network: an accept_ra the table lists is left alone on a SLAAC host" {
     # The regression: the guard used to live only in _kernel_fix_ipv6, so
     # the same parameter reached the wire unguarded through this fix id.
     _host_uses_ra
+    _table_lists_accept_ra
     _sysctl_seed "net.ipv6.conf.all.accept_ra" "1"
 
     run _kernel_fix_network_params
@@ -239,8 +253,9 @@ SH
     _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
 }
 
-@test "harden_network: accept_ra is applied on a statically configured host" {
+@test "harden_network: an accept_ra the table lists is applied on a static host" {
     _host_static_ipv6
+    _table_lists_accept_ra
     _sysctl_seed "net.ipv6.conf.all.accept_ra" "1"
 
     run _kernel_fix_network_params
@@ -290,7 +305,7 @@ _emitted_field() {
         "$VPSSEC_STATE/checks.json"
 }
 
-@test "the IPv6 and network results say existing interfaces such as eth0 are unchanged" {
+@test "the IPv6 results say existing interfaces such as eth0 are unchanged" {
     # all/default reach only interfaces created later, so neither a pass nor
     # the fix it suggests may read as covering eth0.
     _host_static_ipv6
@@ -298,20 +313,50 @@ _emitted_field() {
     for lang in en_US zh_CN; do
         i18n_load "$lang"
         _ipv6_in_use_at 0
-        _sysctl_seed "net.ipv4.tcp_syncookies" 1
         _kernel_audit_ipv6
-        _kernel_audit_network_params
         [[ "$(_emitted_field kernel.ipv6_secure desc)" == *eth0* ]]
-        [[ "$(_emitted_field kernel.network_params_ok desc)" == *eth0* ]]
 
         _ipv6_in_use_at 1
-        _sysctl_seed "net.ipv4.tcp_syncookies" 0
         _kernel_audit_ipv6
-        _kernel_audit_network_params
         [[ "$(_emitted_field kernel.ipv6_insecure suggestion)" == *eth0* ]]
-        [[ "$(_emitted_field kernel.network_params_high suggestion)" == *eth0* ]]
-        [[ "$(_emitted_field kernel.network_params_medium suggestion)" == *eth0* ]]
     done
+}
+
+@test "an IPv6 redirect, RA or privacy setting is judged by the IPv6 check alone" {
+    # Listed in the network table as well, one weak value failed two scored checks.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 1
+    _sysctl_seed "net.ipv6.conf.default.accept_redirects" 1
+    _sysctl_seed "net.ipv6.conf.default.accept_ra" 1
+    _sysctl_seed "net.ipv6.conf.default.use_tempaddr" 0
+    _sysctl_seed "net.ipv4.tcp_syncookies" 0
+
+    _kernel_audit_ipv6
+    _kernel_audit_network_params
+    [ -n "$(_emitted_field kernel.ipv6_insecure desc)" ]
+    [ -n "$(_emitted_field kernel.network_params_high desc)" ]
+    run jq -r '.[] | select(.id | startswith("kernel.network_params")) | .desc' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"net.ipv4.tcp_syncookies=0"* ]]
+    [[ "$output" != *accept_redirects* ]]
+    [[ "$output" != *accept_ra* ]]
+    [[ "$output" != *use_tempaddr* ]]
+}
+
+@test "an unused IPv6 with weak settings says which settings are weak" {
+    # Its desc used to repeat the title word for word.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 1
+    _kernel_ipv6_in_use() { return 1; }
+    _sysctl_seed "net.ipv6.conf.all.use_tempaddr" 0
+    _kernel_audit_ipv6
+    local desc
+    desc=$(_emitted_field kernel.ipv6_unused_insecure desc)
+    [[ "$desc" == *"$(i18n 'kernel.ipv6_issue_accept_redirects_enabled')"* ]]
+    [[ "$desc" == *"$(i18n 'kernel.ipv6_issue_privacy_extensions_weak')"* ]]
 }
 
 # ==============================================================================
@@ -372,14 +417,27 @@ SH
     _vpssec_refute grep -q "conf\.all\.rp_filter" "$VPSSEC_SYSCTL_CONF"
 }
 
-@test "harden_network: disabled rp_filter is hardened even on a forwarding host" {
+@test "harden_network: disabled rp_filter is raised to loose, not strict, on a forwarding host" {
+    # 0 permits spoofed sources; 1 would drop the asymmetric-return traffic
+    # the forwarding is for, the very reason 2 is accepted there.
     _host_static_ipv6
     _forwarding_daemon_active
     _sysctl_seed "net.ipv4.conf.all.rp_filter" "0"
 
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
-    _dropin_has "net.ipv4.conf.all.rp_filter" "1"
+    _dropin_has "net.ipv4.conf.all.rp_filter" "2"
+    [ "$(_runtime net.ipv4.conf.all.rp_filter)" = 2 ]
+}
+
+@test "harden_network: strict rp_filter already chosen on a forwarding host is kept" {
+    _host_static_ipv6
+    _forwarding_daemon_active
+    _sysctl_seed "net.ipv4.conf.all.rp_filter" "1"
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q "conf\.all\.rp_filter" "$VPSSEC_SYSCTL_CONF"
 }
 
 # ==============================================================================
@@ -476,8 +534,6 @@ SH
 # Thresholds: a stricter value than required is a pass, and is never lowered
 # ==============================================================================
 
-# Runtime value of one param in the stub, after whatever the fix wrote.
-_runtime() { cat "$sysctl_store/$1"; }
 
 @test "kernel params: stricter-than-required values pass and the fix leaves them" {
     _kernel_on ubuntu debian
@@ -581,4 +637,353 @@ _runtime() { cat "$sysctl_store/$1"; }
     run _kernel_write_sysctl "kernel.randomize_va_space" "2"
     [ "$status" -ne 0 ]
     [ "$(cat "$VPSSEC_SYSCTL_CONF")" = "# existing" ]
+}
+
+# ==============================================================================
+# One check per key
+# ==============================================================================
+
+@test "fs.suid_dumpable is judged by the core-dump check alone" {
+    # In the kernel-param table as well, Ubuntu's apport value (2) failed two
+    # scored checks for one setting.
+    _sysctl_seed fs.suid_dumpable 2
+
+    run _kernel_param_scan "$KERNEL_SYS_SCOPE"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"kernel.dmesg_restrict"* ]]
+    [[ "$output" != *"suid_dumpable"* ]]
+    run _kernel_check_core_dump
+    [[ "$output" == *"suid_dumpable=2"* ]]
+}
+
+# ==============================================================================
+# Who needs forwarding
+# ==============================================================================
+
+# `ip` answering only for links of type $1, with one such interface.
+_host_has_link_type() {
+    _vpssec_stub_script ip <<SH
+[[ "\$*" == *"link show type $1"* ]] && echo "if0  UP  02:00:00:00:00:01"
+exit 0
+SH
+}
+
+@test "forwarding: an interface that forwarding serves counts, with no unit running" {
+    # snap LXD and Docker, podman without a unit, CNI plugins and tun/tap VPNs
+    # have no unit the list names; ip_forward=0 written there cuts them off.
+    local type
+    for type in bridge vxlan wireguard tun; do
+        _host_has_link_type "$type"
+        _kernel_ip_forward_needed || { echo "not needed with a $type link" >&2; return 1; }
+    done
+}
+
+@test "forwarding: no such interface and no such unit means no forwarding role" {
+    # A veth alone is no role either: inside a container eth0 is one.
+    local type
+    for type in dummy veth; do
+        _host_has_link_type "$type"
+        _vpssec_refute _kernel_ip_forward_needed
+    done
+}
+
+@test "forwarding: a strongSwan gateway counts" {
+    _host_has_link_type dummy
+    _vpssec_stub_script systemctl <<'SH'
+[[ "$*" == *"is-active"*strongswan-starter* ]] && exit 0
+exit 1
+SH
+    _kernel_ip_forward_needed
+}
+
+@test "harden_network: ip_forward is left enabled on a host with a bridge and no unit" {
+    _host_has_link_type bridge
+    _sysctl_seed "net.ipv4.ip_forward" "1"
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    [ "$(_runtime net.ipv4.ip_forward)" = 1 ]
+    _vpssec_refute grep -q "ip_forward" "$VPSSEC_SYSCTL_CONF"
+}
+
+# ==============================================================================
+# Core-dump limits as pam_limits reads them
+# ==============================================================================
+
+# fs.suid_dumpable restricted and no systemd-coredump, so only the limits decide.
+_limits_only() { _sysctl_seed fs.suid_dumpable 0; mkdir -p "$KERNEL_LIMITS_D"; }
+
+@test "core dump: a hard core 0 in limits.d is honoured" {
+    # ansible-lockdown's CIS role writes limits.d/99_zero_core.conf.
+    _limits_only
+    printf '# limits\n' > "$KERNEL_LIMITS_CONF"
+    printf '*  hard  core  0\n' > "$KERNEL_LIMITS_D/99_zero_core.conf"
+
+    run _kernel_check_core_dump
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "core dump: a soft core 0 alone caps nothing" {
+    # Any process may raise its soft limit up to the hard one.
+    _limits_only
+    printf '* soft core 0\n' > "$KERNEL_LIMITS_CONF"
+
+    run _kernel_check_core_dump
+    [ "$output" = "no_core_limit" ]
+}
+
+@test "core dump: a limits.d file read later lifts the limit again" {
+    _limits_only
+    printf '* hard core 0\n' > "$KERNEL_LIMITS_CONF"
+    printf '* hard core unlimited\n' > "$KERNEL_LIMITS_D/50-dev.conf"
+
+    run _kernel_check_core_dump
+    [ "$output" = "no_core_limit" ]
+
+    printf '* - core 0\n' > "$KERNEL_LIMITS_D/90-cis.conf"
+    run _kernel_check_core_dump
+    [ -z "$output" ]
+}
+
+@test "core dump: the fix leaves limits.conf alone when limits.d already caps it" {
+    _limits_only
+    printf '# limits\n' > "$KERNEL_LIMITS_CONF"
+    printf '* hard core 0\n' > "$KERNEL_LIMITS_D/99_zero_core.conf"
+
+    run _kernel_fix_core_dump
+    [ "$status" -eq 0 ]
+    [ "$(cat "$KERNEL_LIMITS_CONF")" = "# limits" ]
+}
+
+# ==============================================================================
+# Runtime and persistence fail apart, and say which
+# ==============================================================================
+
+_messages_on() { i18n_load en_US; export VPSSEC_QUIET_SCAN=0; }
+
+@test "harden_kernel: a refused runtime write is reported as refused, not unpersisted" {
+    # A read-only /proc/sys changed nothing and wrote nothing; "failed to
+    # persist ... would not survive a reboot" says the opposite.
+    _messages_on
+    _sysctl_seed kernel.dmesg_restrict 0
+    _sysctl_readonly
+
+    run _kernel_fix_kernel_params
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel refused 1 runtime sysctl write"* ]]
+    [[ "$output" != *"Failed to persist"* ]]
+}
+
+@test "harden_ipv6: a refused write fails the fix instead of shrinking its count" {
+    _messages_on
+    _host_static_ipv6
+    _vpssec_stub_script sysctl <<SH
+store="$sysctl_store"
+case "\$1" in
+    -n) cat "\$store/\$2" 2>/dev/null ;;
+    -w) [[ "\$2" == *accept_redirects* ]] && exit 1
+        printf '%s\n' "\${2#*=}" > "\$store/\${2%%=*}" ;;
+esac
+exit 0
+SH
+
+    run _kernel_fix_ipv6
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel refused 2 runtime sysctl write"* ]]
+    [[ "$output" != *"IPv6 parameters hardened"* ]]
+}
+
+@test "harden_network: a drop-in that cannot be written is reported as unpersisted" {
+    _messages_on
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.tcp_syncookies 0
+    _kernel_write_sysctl() { return 1; }
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Failed to persist 1 sysctl value"* ]]
+    [[ "$output" != *"refused"* ]]
+    [ "$(_runtime net.ipv4.tcp_syncookies)" = 1 ]
+}
+
+# ==============================================================================
+# The drop-in is never replayed
+# ==============================================================================
+
+# A sysctl whose -p applies every key = value of the file it is given.
+_sysctl_replaying() {
+    _vpssec_stub_script sysctl <<SH
+store="$sysctl_store"
+case "\$1" in
+    -n) cat "\$store/\$2" 2>/dev/null ;;
+    -w) printf '%s\n' "\${2#*=}" > "\$store/\${2%%=*}" ;;
+    -p) sed -nE 's/^([^#= ]+) *= *(.*)$/\1 \2/p' "\$2" | while read -r k v; do
+            printf '%s\n' "\$v" > "\$store/\$k"
+        done ;;
+esac
+exit 0
+SH
+}
+
+@test "a kernel fix re-applies no key an earlier session left in the drop-in" {
+    # Written before Docker was installed, ip_forward = 0 now cuts container
+    # networking off the moment it is replayed — by even the SAFE enable_aslr.
+    _sysctl_replaying
+    mkdir -p "$SYSCTL_D"
+    printf 'net.ipv4.ip_forward = 0\n' > "$VPSSEC_SYSCTL_CONF"
+    _sysctl_seed net.ipv4.ip_forward 1
+    _sysctl_seed kernel.randomize_va_space 0
+    _sysctl_seed fs.suid_dumpable 2
+    _sysctl_seed kernel.dmesg_restrict 0
+
+    local fix
+    for fix in enable_aslr disable_core_dump harden_kernel harden_ipv6; do
+        _host_static_ipv6
+        run kernel_fix "kernel.$fix"
+        [ "$(_runtime net.ipv4.ip_forward)" = 1 ] || { echo "$fix replayed it" >&2; return 1; }
+    done
+    [ "$(_runtime kernel.randomize_va_space)" = 2 ]
+}
+
+# ==============================================================================
+# The undo command: rollback restores the drop-in, not the runtime values
+# ==============================================================================
+
+# The undo command fix $1 logged, run against the stub.
+_run_logged_undo() {
+    local cmd
+    cmd=$(sed -n "s/^.*Undo for $1: //p" "$VPSSEC_LOGS/vpssec.log" | tail -1)
+    [ -n "$cmd" ] || { echo "no undo logged for $1" >&2; return 1; }
+    bash -c "$cmd"
+}
+
+@test "undo: harden_network puts back the values from before it, ip_forward first" {
+    # The second pass rewrites accept_redirects after the ip_forward write
+    # reset it, so the value to restore is the one read before either pass.
+    _host_static_ipv6
+    _vpssec_stub_script sysctl <<SH
+store="$sysctl_store"
+case "\$1" in
+    -n) cat "\$store/\$2" 2>/dev/null ;;
+    -w) for kv in "\${@:2}"; do
+            printf '%s\n' "\${kv#*=}" > "\$store/\${kv%%=*}"
+            [[ "\$kv" == net.ipv4.ip_forward=* ]] && echo 1 > "\$store/net.ipv4.conf.all.accept_redirects"
+        done ;;
+esac
+exit 0
+SH
+    _sysctl_seed net.ipv4.ip_forward 1
+    _sysctl_seed net.ipv4.conf.all.accept_redirects 0
+    _sysctl_seed net.ipv4.tcp_syncookies 0
+
+    _kernel_fix_network_params
+    [ "$(_runtime net.ipv4.ip_forward)" = 0 ]
+    grep -q 'Undo for kernel.harden_network: sysctl -w net.ipv4.ip_forward=1 ' "$VPSSEC_LOGS/vpssec.log"
+
+    _run_logged_undo kernel.harden_network
+    [ "$(_runtime net.ipv4.ip_forward)" = 1 ]
+    [ "$(_runtime net.ipv4.conf.all.accept_redirects)" = 0 ]
+    [ "$(_runtime net.ipv4.tcp_syncookies)" = 0 ]
+}
+
+@test "undo: every other kernel fix logs the command that restores its values" {
+    _host_static_ipv6
+    local fix param before
+    for fix in "enable_aslr kernel.randomize_va_space 1" \
+               "harden_kernel kernel.kptr_restrict 0" \
+               "harden_ipv6 net.ipv6.conf.all.accept_redirects 1" \
+               "disable_core_dump fs.suid_dumpable 2"; do
+        read -r fix param before <<<"$fix"
+        _sysctl_seed "$param" "$before"
+        kernel_fix "kernel.$fix" || true
+        [ "$(_runtime "$param")" != "$before" ]
+        _run_logged_undo "kernel.$fix"
+        [ "$(_runtime "$param")" = "$before" ] || { echo "$fix: $param not restored" >&2; return 1; }
+    done
+}
+
+@test "undo: a fix that changed no runtime value logs no command" {
+    _sysctl_seed kernel.randomize_va_space 2
+    _kernel_fix_aslr
+    _vpssec_refute grep -q 'Undo for kernel.enable_aslr' "$VPSSEC_LOGS/vpssec.log"
+}
+
+# ==============================================================================
+# Inside a container the kernel is the host's
+# ==============================================================================
+
+_in_container() { detect_container() { echo lxc; }; }
+
+@test "container: weak kernel parameters are listed as the host's, scored nowhere, fixed by nothing" {
+    i18n_load en_US
+    source "$(_vpssec_repo_root)/core/state.sh"
+    state_init
+    _in_container
+    _sysctl_seed kernel.kptr_restrict 1
+    _sysctl_seed kernel.dmesg_restrict 1
+
+    _kernel_audit_kernel_params
+    [ -z "$(_emitted_field kernel.kernel_params_weak desc)" ]
+    [ -z "$(_emitted_field kernel.kernel_params_ok desc)" ]
+    [[ "$(_emitted_field kernel.kernel_params_host_managed desc)" == *"kernel.kptr_restrict=1"* ]]
+    [ "$(_emitted_field kernel.kernel_params_host_managed fix_id)" = "" ]
+    source "$(_vpssec_repo_root)/core/security_levels.sh"
+    [ "${CHECK_SCORE_CATEGORY[kernel.kernel_params_host_managed]}" = "info" ]
+}
+
+# The checks a container audit emitted, as "id status fix_id".
+_container_checks() {
+    jq -r '.[] | "\(.id) \(.status) \(.fix_id)"' "$VPSSEC_STATE/checks.json"
+}
+
+@test "container: kernel parameters that all meet the mark are the host's too, scored neither way" {
+    i18n_load en_US
+    source "$(_vpssec_repo_root)/core/state.sh"
+    state_init
+    _in_container
+    _sysctl_seed kernel.kptr_restrict 2
+
+    _kernel_audit_kernel_params
+    run _container_checks
+    [ "$output" = "kernel.kernel_params_host_managed passed " ]
+    [[ "$(_emitted_field kernel.kernel_params_host_managed desc)" == "1 parameters checked."* ]]
+}
+
+@test "container: ASLR is the host's, reported either way, scored neither way, fixed by nothing" {
+    # sysctl -w randomize_va_space fails in an unprivileged container and
+    # reaches the host from a privileged one; enable_aslr can only fail or overreach.
+    i18n_load en_US
+    source "$(_vpssec_repo_root)/core/state.sh"
+    source "$(_vpssec_repo_root)/core/security_levels.sh"
+    state_init
+    _in_container
+
+    _sysctl_seed kernel.randomize_va_space 2
+    _kernel_audit_aslr
+    _sysctl_seed kernel.randomize_va_space 0
+    _kernel_audit_aslr
+    rm "$sysctl_store/kernel.randomize_va_space"
+    _kernel_audit_aslr
+
+    run _container_checks
+    [ "$output" = "kernel.aslr_host_managed passed 
+kernel.aslr_host_managed failed 
+kernel.aslr_unknown failed " ]
+    [[ "$(_emitted_field kernel.aslr_host_managed desc)" == *"randomize_va_space=0"* ]]
+    [ "${CHECK_SCORE_CATEGORY[kernel.aslr_host_managed]}" = "info" ]
+}
+
+@test "container: core dumps are judged and fixed without the host's suid_dumpable" {
+    _in_container
+    _sysctl_seed fs.suid_dumpable 2
+    printf '# limits\n' > "$KERNEL_LIMITS_CONF"
+
+    run _kernel_check_core_dump
+    [ "$output" = "no_core_limit" ]
+
+    run _kernel_fix_core_dump
+    [ "$status" -eq 0 ]
+    [ "$(_runtime fs.suid_dumpable)" = 2 ]
+    _vpssec_refute grep -q "suid_dumpable" "$VPSSEC_SYSCTL_CONF"
 }

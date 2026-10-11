@@ -37,3 +37,51 @@ run_case "podman/userns-read" 1 \
 run_case "podman/icc-read" 2 \
     '    if (( ! podman )); then' \
     '    if true; then'
+
+# dockerd stores the old seccomp:unconfined spelling as typed.
+run_case "seccomp/colon-spelling-missed" 1 \
+    '            | jq -e '"'"'.[0].HostConfig.SecurityOpt // [] | any(test("^seccomp[=:]unconfined$"))'"'"' &>/dev/null; then' \
+    '            | jq -e '"'"'.[0].HostConfig.SecurityOpt // [] | any(. == "seccomp=unconfined")'"'"' &>/dev/null; then'
+
+# --user 0:0 compared whole is not "0", so the container reads as non-root.
+run_case "root/user-group-compared-whole" 1 \
+    '        user="${user%%:*}"' \
+    '        :'
+
+# Every container counted, granted capabilities or not.
+run_case "caps/empty-capadd-counted" 1 \
+    '        if [[ -n "$caps" ]]; then' \
+    '        if true; then'
+
+# The finding stops saying what each container was granted.
+run_case "caps/names-only" 1 \
+    '            cap_containers+=("${name}: ${caps}")' \
+    '            cap_containers+=("$name")'
+
+run_case "caps/desc-dropped" 1 \
+    '            desc="$(i18n '"'"'docker.added_capabilities_desc'"'"' "list=$container_list")" \' \
+    '            desc="" \'
+
+# The description sentence back in the suggestion slot.
+run_case "caps/suggestion-is-description" 1 \
+    '            suggestion="$(i18n '"'"'docker.added_capabilities_suggestion'"'"')"' \
+    '            suggestion="$(i18n '"'"'docker.added_capabilities_desc'"'"')"'
+
+# Unbounded, a daemon that never answers holds the whole audit.
+run_case "probe/no-timeout" 1 \
+    '        timeout "$DOCKER_PROBE_TIMEOUT" docker info &>/dev/null' \
+    '        docker info &>/dev/null'
+
+# Without timeout(1) a host with a running daemon reads as unreachable.
+run_case "probe/no-timeout-tool-unreachable" 1 \
+    '        docker info &>/dev/null' \
+    '        return 1'
+
+# The env-secret sample joined without its separator, or not cut at five.
+run_case "env/sample-separator-lost" 1 \
+    '        sample="${sample//$'"'"'\n'"'"'/; }"' \
+    '        sample="${sample//$'"'"'\n'"'"'/;}"'
+
+run_case "env/sample-not-capped" 1 \
+    '        local sample; sample=$(head -5 <<<"$hits")' \
+    '        local sample; sample=$hits'

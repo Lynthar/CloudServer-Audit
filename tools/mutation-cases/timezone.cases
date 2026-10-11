@@ -24,6 +24,33 @@ run_case "locale/gen-guard-inverted" 1 \
     '        if ! grep -q "^${target_locale}" "$TZ_LOCALE_GEN"; then' \
     '        if true; then'
 
+# ---- the locale the audit reads --------------------------------------------
+
+# The old parse: "(unset)" came out as "System", or as nothing that then fell
+# back to the caller's LANG.
+run_case "locale/unset-parsed-as-a-locale" 1 \
+    "        sed -n '/System Locale:/s/.*LANG=\\([^ ,]*\\).*/\\1/p' <<<\"\$out\"" \
+    "        grep 'System Locale' <<<\"\$out\" | sed 's/.*LANG=//' | cut -d' ' -f1"
+
+run_case "locale/caller-lang-trusted" 1 \
+    '    for f in "$TZ_LOCALE_CONF" "$TZ_DEFAULT_LOCALE"; do' \
+    '    echo "${LANG:-}"; return 0; for f in "$TZ_LOCALE_CONF" "$TZ_DEFAULT_LOCALE"; do'
+
+run_case "locale/files-read-in-the-wrong-order" 1 \
+    '    for f in "$TZ_LOCALE_CONF" "$TZ_DEFAULT_LOCALE"; do' \
+    '    for f in "$TZ_DEFAULT_LOCALE" "$TZ_LOCALE_CONF"; do'
+
+# ---- only a compiled locale is written --------------------------------------
+
+run_case "locale/uncompiled-locale-written" 1 \
+    '    if ! _timezone_locale_installed "$target_locale"; then' \
+    '    if false; then'
+
+# "UTF-8" and "utf8" no longer compare equal, so a compiled locale is refused.
+run_case "locale/codeset-not-normalised" 1 \
+    '            gsub(/[^a-z0-9@]/, "", c)' \
+    '            gsub(/[^a-z0-9@-]/, "", c)'
+
 # The chrony fallback installs without refreshing the index: an empty apt cache
 # cannot locate the package.
 run_case "ntp/no-refresh" 1 \

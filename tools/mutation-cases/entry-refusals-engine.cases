@@ -1,0 +1,12 @@
+# Mutation cases: tests/test_entry_refusals.bats against core/engine.sh.
+# mutate-suite: core/engine.sh tests/test_entry_refusals.bats
+
+# A misspelt --include module exits 2, the code run.sh uses for its refusal.
+run_case "include/exit-2" 1 \
+    '        exit 1' \
+    '        exit 2'
+
+# The error and the valid module names go to stdout, which may be the JSON.
+run_case "include/error-on-stdout" 1 \
+    '        print_error "$msg" >&2' \
+    '        print_error "$msg"'

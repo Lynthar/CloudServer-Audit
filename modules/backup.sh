@@ -8,24 +8,17 @@
 BACKUP_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/backup"
 BACKUP_CRON_ROOT="${BACKUP_CRON_ROOT:-/etc}"
 
+# The backup tools recognised, by command name: installed, named in a cron
+# line or in a timer's name.
+declare -ga BACKUP_TOOLS=(restic borg borgmatic rclone rsnapshot)
+_BACKUP_TOOL_ALT=$(IFS='|'; echo "${BACKUP_TOOLS[*]}")
+
 # A backup tool run from a schedule line, as a whole word. A bare "backup"
 # matched dpkg's own database backup (cron.daily/dpkg, dpkg-db-backup.timer),
 # present on every Debian and Ubuntu host.
-BACKUP_TOOL_RE='(^|[^[:alnum:]_-])(restic|borg|borgmatic|rclone|rsnapshot)([^[:alnum:]_-]|$)'
+BACKUP_TOOL_RE="(^|[^[:alnum:]_-])(${_BACKUP_TOOL_ALT})([^[:alnum:]_-]|\$)"
 
 # --- Backup Helper Functions ---
-
-_backup_restic_installed() {
-    check_command restic
-}
-
-_backup_borg_installed() {
-    check_command borg
-}
-
-_backup_rclone_installed() {
-    check_command rclone
-}
 
 # root's crontab and the system cron locations, comment lines dropped (Debian's
 # crontab template talks about backups). Captured first: grep -q closing the
@@ -40,39 +33,53 @@ _backup_check_cron_job() {
 }
 
 # Active timers named after a backup tool, or "backup" as vpssec's own
-# template names it; dpkg-db-backup.timer backs up dpkg's database only.
-_backup_check_systemd_timer() {
+# template names it, one per line; dpkg-db-backup.timer backs up dpkg's
+# database only.
+_backup_timers() {
     local timers
     timers=$(systemctl list-timers --no-legend 2>/dev/null \
         | grep -oE '[^[:space:]]+[.]timer' | grep -vx 'dpkg-db-backup[.]timer') || true
-    grep -qiE '(restic|borg|rclone|rsnapshot|backup)' <<<"$timers"
+    grep -iE "(${_BACKUP_TOOL_ALT}|backup)" <<<"$timers" || true
 }
 
-# Single source of truth for "is a backup tool installed?". Both the tools
-# audit and the flow gate consult it, so the three backup checks cannot
-# contradict each other.
-_backup_count_tools() {
-    local count=0
-    _backup_restic_installed && ((count++)) || true
-    _backup_borg_installed && ((count++)) || true
-    _backup_rclone_installed && ((count++)) || true
-    echo "$count"
+# The unit timer $1 starts, when its last run failed. Nothing when it
+# succeeded, has not run yet (systemd reports "success" then) or systemd
+# cannot say: only a failure systemd reports counts as one.
+_backup_timer_failed_unit() {
+    local unit result
+    unit=$(systemctl show -p Unit --value -- "$1" 2>/dev/null) || return 0
+    [[ -n "$unit" ]] || return 0
+    result=$(systemctl show -p Result --value -- "$unit" 2>/dev/null) || return 0
+    if [[ -n "$result" && "$result" != success ]]; then
+        echo "$unit"
+    fi
+}
+
+# The BACKUP_TOOLS installed here, one per line. The tools check and the flow
+# gate both read it, so the backup checks cannot contradict each other.
+_backup_installed_tools() {
+    local tool
+    for tool in "${BACKUP_TOOLS[@]}"; do
+        if check_command "$tool"; then
+            echo "$tool"
+        fi
+    done
 }
 
 # --- Backup Audit ---
 
 backup_audit() {
     local module="backup"
-    local tools_found
-    tools_found=$(_backup_count_tools)
+    local tools
+    tools=$(_backup_installed_tools)
 
     # Check for backup tools
     print_item "$(i18n 'backup.check_tools')"
-    _backup_audit_tools
+    _backup_audit_tools "$tools"
 
     # Only meaningful once a tool is installed: otherwise a stray cron line
     # containing "backup" emits a pass next to "no backup tools".
-    if (( tools_found > 0 )); then
+    if [[ -n "$tools" ]]; then
         print_item "$(i18n 'backup.check_scheduled')"
         _backup_audit_scheduled
 
@@ -81,59 +88,66 @@ backup_audit() {
     fi
 }
 
+# $1: what _backup_installed_tools printed.
 _backup_audit_tools() {
-    local tools_found=0
+    local tools="$1" tool
 
-    if _backup_restic_installed; then
-        ((tools_found++)) || true
-        print_ok "$(i18n 'backup.restic_installed')"
-    fi
-
-    if _backup_borg_installed; then
-        ((tools_found++)) || true
-        print_ok "$(i18n 'backup.borg_installed')"
-    fi
-
-    if _backup_rclone_installed; then
-        ((tools_found++)) || true
-        print_ok "$(i18n 'backup.rclone_installed')"
-    fi
-
-    if ((tools_found == 0)); then
+    if [[ -z "$tools" ]]; then
         check_emit "backup.no_tools" low failed \
-            desc="$(i18n 'backup.no_tools_desc')" \
+            desc="$(i18n 'backup.no_tools_desc' "tools=${BACKUP_TOOLS[*]}")" \
             suggestion="$(i18n 'backup.fix_install_tool')" \
             fix="backup.generate_templates"
         print_severity "low" "$(i18n 'backup.no_tools')"
-    else
-        check_emit "backup.tools_installed" low passed \
-            title="$(i18n 'backup.tools_count' "count=$tools_found")"
+        return 0
     fi
+
+    while IFS= read -r tool; do
+        print_ok "$(i18n 'backup.tool_installed' "tool=$tool")"
+    done <<<"$tools"
+    check_emit "backup.tools_installed" low passed \
+        title="$(i18n 'backup.tools_count' "count=$(count_lines "$tools")")"
 }
 
 _backup_audit_scheduled() {
-    local scheduled=0
+    local scheduled=0 timer unit failing=()
 
     if _backup_check_cron_job; then
         ((scheduled++)) || true
         print_ok "$(i18n 'backup.cron_found')"
     fi
 
-    if _backup_check_systemd_timer; then
-        ((scheduled++)) || true
-        print_ok "$(i18n 'backup.timer_found')"
+    # A timer whose backup failed last time is no working schedule, and
+    # "configured" beside it would be a false green.
+    while IFS= read -r timer; do
+        [[ -n "$timer" ]] || continue
+        unit=$(_backup_timer_failed_unit "$timer")
+        if [[ -n "$unit" ]]; then
+            failing+=("$unit")
+        else
+            ((scheduled++)) || true
+            print_ok "$(i18n 'backup.timer_found')"
+        fi
+    done <<<"$(_backup_timers)"
+
+    if ((${#failing[@]} > 0)); then
+        local journal="journalctl -n 50"
+        for unit in "${failing[@]}"; do journal+=" -u $unit"; done
+        check_emit "backup.schedule_failing" low failed \
+            desc="$(i18n 'backup.schedule_failing_desc' "units=${failing[*]}")" \
+            suggestion="$(i18n 'backup.fix_schedule_failing' "cmd=$journal")"
+        print_severity "low" "$(i18n 'backup.schedule_failing')"
     fi
 
-    if ((scheduled == 0)); then
+    if ((scheduled > 0)); then
+        check_emit "backup.scheduled" low passed \
+            title="$(i18n 'backup.schedule_configured')"
+    elif ((${#failing[@]} == 0)); then
         check_emit "backup.no_schedule" low failed \
             title="$(i18n 'backup.no_scheduled')" \
             desc="$(i18n 'backup.no_scheduled_desc')" \
             suggestion="$(i18n 'backup.fix_setup_schedule')" \
             fix="backup.generate_templates"
         print_severity "low" "$(i18n 'backup.no_scheduled')"
-    else
-        check_emit "backup.scheduled" low passed \
-            title="$(i18n 'backup.schedule_configured')"
     fi
 }
 
@@ -177,11 +191,6 @@ backup_fix() {
 }
 
 _backup_fix_generate_templates() {
-    if ! mkdir -p "$BACKUP_TEMPLATES_DIR"; then
-        print_error "$(i18n 'backup.templates_dir_failed' "path=$BACKUP_TEMPLATES_DIR")"
-        return 1
-    fi
-
     print_info "$(i18n 'backup.generating_templates')"
 
     # Each generator's status used to be discarded, so a templates tree that
@@ -195,31 +204,11 @@ _backup_fix_generate_templates() {
     return 0
 }
 
-# Write one generated template from stdin, reporting when it could not be
-# written. MODE goes to chmod verbatim: the backup scripts use an absolute
-# 700 rather than `+x`, which would leave group/other read bits intact.
-_backup_write_template() {
-    local name="$1" mode="${2:-}"
-    local path="${BACKUP_TEMPLATES_DIR}/${name}"
-
-    if ! cat > "$path"; then
-        print_error "$(i18n 'backup.template_write_failed' "name=$name")"
-        return 1
-    fi
-
-    if [[ -n "$mode" ]] && ! chmod "$mode" "$path"; then
-        print_error "$(i18n 'backup.template_write_failed' "name=$name")"
-        return 1
-    fi
-
-    print_item "$(i18n 'backup.template_created' "name=$name")"
-}
-
 _backup_generate_restic_template() {
     # 700 rather than +x (which yields 755): the backup script holds
     # credentials (repo URL, possibly S3 keys inline if the user adds
     # them) and is not something other users need to read or execute.
-    _backup_write_template restic-backup.sh 700 <<'EOF' || return 1
+    write_template "$BACKUP_TEMPLATES_DIR/restic-backup.sh" 700 <<'EOF' || return 1
 #!/bin/bash
 # Restic Backup Script - Generated by vpssec
 # Configure and adapt for your needs
@@ -317,7 +306,7 @@ EOF
 
 _backup_generate_borg_template() {
     # See restic template above for rationale on 700 vs +x.
-    _backup_write_template borg-backup.sh 700 <<'EOF' || return 1
+    write_template "$BACKUP_TEMPLATES_DIR/borg-backup.sh" 700 <<'EOF' || return 1
 #!/bin/bash
 # Borg Backup Script - Generated by vpssec
 # Configure and adapt for your needs
@@ -406,7 +395,7 @@ EOF
 
 _backup_generate_systemd_template() {
     # Service file
-    _backup_write_template backup.service <<'EOF' || return 1
+    write_template "$BACKUP_TEMPLATES_DIR/backup.service" <<'EOF' || return 1
 # Backup Service - Generated by vpssec
 # Copy to /etc/systemd/system/backup.service
 
@@ -425,7 +414,7 @@ ExecStart=/usr/local/bin/backup.sh
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/log /mnt/backup
+ReadWritePaths=/var/log -/mnt/backup
 PrivateTmp=yes
 
 [Install]
@@ -433,7 +422,7 @@ WantedBy=multi-user.target
 EOF
 
     # Timer file
-    _backup_write_template backup.timer <<'EOF' || return 1
+    write_template "$BACKUP_TEMPLATES_DIR/backup.timer" <<'EOF' || return 1
 # Backup Timer - Generated by vpssec
 # Copy to /etc/systemd/system/backup.timer
 
@@ -453,7 +442,7 @@ WantedBy=timers.target
 EOF
 
     # Installation instructions
-    _backup_write_template README.md <<'EOF' || return 1
+    write_template "$BACKUP_TEMPLATES_DIR/README.md" <<'EOF' || return 1
 # Backup Configuration - vpssec
 
 ## Quick Start

@@ -95,8 +95,7 @@ _preflight_check_deps() {
     print_ok "$(i18n 'common.required_deps')"
 
     # One check for what is missing, not a print: prints are silenced during
-    # the scan. Any member of a group provides it; lsof is optional because
-    # pkg_manager_locked answers from /proc/locks first.
+    # the scan. Any member of a group provides it.
     local -a lacking=() lacking_cmds=()
     if ! check_command whiptail && ! check_command dialog; then
         # dialog: one package name on every family (whiptail is newt on RHEL).
@@ -105,16 +104,25 @@ _preflight_check_deps() {
     if ! check_command curl && ! check_command wget; then
         lacking+=("$(i18n 'preflight.cap_network')"); lacking_cmds+=(curl)
     fi
-    if ! check_command lsof; then
-        lacking+=("$(i18n 'preflight.cap_lsof')"); lacking_cmds+=(lsof)
+    # The package-lock check's own tool, as pkg_manager_locked uses it: lsof
+    # backs up /proc/locks for apt, dnf's check is pgrep, pacman's is a file test.
+    local lock_tool="" lock_cap=""
+    case "${VPSSEC_PKG_MGR:-}" in
+        apt) lock_tool=lsof  lock_cap=preflight.cap_lsof ;;
+        dnf) lock_tool=pgrep lock_cap=preflight.cap_pgrep ;;
+    esac
+    if [[ -n "$lock_tool" ]] && ! check_command "$lock_tool"; then
+        lacking+=("$(i18n "$lock_cap")"); lacking_cmds+=("$lock_tool")
     fi
 
     if (( ${#lacking[@]} > 0 )); then
-        local caps opt_hint
+        local caps opt_hint opt_pkgs
         caps=$(printf '%s; ' "${lacking[@]}")
         caps="${caps%; }"
-        if ! opt_hint=$(pkg_install_hint "${lacking_cmds[@]}"); then
-            opt_hint=$(i18n 'preflight.install_deps' "deps=${lacking_cmds[*]}")
+        opt_pkgs=$(distro_packages_for_commands "${lacking_cmds[@]}")
+        # shellcheck disable=SC2086  # deliberate split: one package per word
+        if ! opt_hint=$(pkg_install_hint $opt_pkgs); then
+            opt_hint=$(i18n 'preflight.install_deps' "deps=$opt_pkgs")
         fi
         log_info "Optional capabilities missing: $caps"
         check_emit "preflight.optional_missing" low failed \

@@ -1,0 +1,32 @@
+# Mutation cases: tests/test_release_workflow.bats against release.yml's publishing step.
+# mutate-suite: .github/workflows/release.yml tests/test_release_workflow.bats
+
+# Any failed query read as "no release yet": the release is created and uploaded to.
+run_case "release-workflow/any-failure-is-not-found" 1 \
+    '              if [[ "$assets" != "release not found" ]]; then' \
+    '              if false; then'
+
+# gh's message no longer captured, so a release that does not exist yet is refused.
+run_case "release-workflow/not-found-unseen" 1 \
+    '          if ! assets=$(gh release view "$TAG" --json assets --jq '"'"'.assets[].name'"'"' 2>&1); then' \
+    '          if ! assets=$(gh release view "$TAG" --json assets --jq '"'"'.assets[].name'"'"' 2>/dev/null); then'
+
+# A failed query refused with success: the job goes green having published nothing.
+run_case "release-workflow/refusal-exits-0" 1 \
+    '                  exit 1' \
+    '                  exit 0'
+
+# A first run no longer creates the release it then uploads to.
+run_case "release-workflow/no-create" 1 \
+    '              gh release create "$TAG" \' \
+    '              : \'
+
+# The guard stops matching the tarball: a published, signed asset is clobbered.
+run_case "release-workflow/guard-open" 1 \
+    '          elif grep -qxF -- "$ARCHIVE" <<<"$assets"; then' \
+    '          elif false; then'
+
+# A substring match: the .sha256 left by a partial upload blocks finishing it.
+run_case "release-workflow/guard-substring" 1 \
+    '          elif grep -qxF -- "$ARCHIVE" <<<"$assets"; then' \
+    '          elif grep -qF -- "$ARCHIVE" <<<"$assets"; then'

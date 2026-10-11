@@ -95,6 +95,12 @@ _as_distro() {
     [ "$(distro_packages_for_commands jq sed tar grep)" = "jq sed tar grep" ]
 }
 
+@test "packages: ps and pgrep are procps on Debian, procps-ng on RHEL and Arch" {
+    _as_distro debian apt    && [ "$(distro_packages_for_commands ps pgrep)" = "procps procps" ]
+    _as_distro rhel   dnf    && [ "$(distro_packages_for_commands ps pgrep)" = "procps-ng procps-ng" ]
+    _as_distro arch   pacman && [ "$(distro_packages_for_commands pgrep)" = "procps-ng" ]
+}
+
 @test "packages: the mapping composes into one install command" {
     # End to end, on the exact dependency list the entry point checks.
     _as_distro rhel dnf
@@ -125,9 +131,13 @@ _integrity_suggestion() {
     # shellcheck source=/dev/null
     source "$(_vpssec_repo_root)/modules/baseline.sh"
     _vpssec_stub systemctl 1
-    _vpssec_absent_command aide
-    _vpssec_absent_command tripwire
-    _vpssec_absent_command samhain
+    # On PATH, yet absent to check_command: the answer must come from the seam
+    # a test controls, not from what this host happens to lack.
+    local t
+    for t in aide aide.wrapper tripwire samhain afick integrit; do
+        _vpssec_stub "$t"
+        _vpssec_absent_command "$t"
+    done
     run _baseline_audit_integrity
     jq -r '.[] | select(.id == "baseline.integrity_missing") | .suggestion' \
         "$VPSSEC_STATE/checks.json"
@@ -146,4 +156,64 @@ _integrity_suggestion() {
     [ "$suggestion" = "Install a file integrity tool (AIDE, Tripwire or Samhain)" ]
     # Stated as the operator would check it: no package manager is named.
     _vpssec_refute grep -qE 'apt|dnf|pacman|zypper' <<< "$suggestion"
+}
+
+# ==============================================================================
+# Which package manager the hints are for
+# ==============================================================================
+
+# A directory of stand-ins for exactly the named tools: only their presence
+# is ever asked about.
+_tools_dir() {
+    local d t
+    d=$(mktemp -d "$BATS_TEST_TMPDIR/pm.XXXXXX")
+    for t in "$@"; do
+        : > "$d/$t"
+        chmod +x "$d/$t"
+    done
+    echo "$d"
+}
+
+# _distro_pkg_mgr for family $1 on a PATH of just the tools named after it.
+_pm_on() {
+    local family="$1" d
+    shift
+    d=$(_tools_dir "$@")
+    PATH="$d" _distro_pkg_mgr "$family"
+}
+
+@test "package manager: Arch with apt and dnf from its own repositories is still pacman" {
+    # Arch's [extra] ships both; presence alone audited such a host as Debian.
+    [ "$(_pm_on arch apt-get dnf pacman)" = pacman ]
+}
+
+@test "package manager: each known family takes its own tool when it is there" {
+    [ "$(_pm_on rhel apt-get dnf)" = dnf ]
+    [ "$(_pm_on rhel apt-get yum)" = dnf ]
+    [ "$(_pm_on suse apt-get zypper)" = zypper ]
+    [ "$(_pm_on debian dnf pacman apt-get)" = apt ]
+}
+
+@test "package manager: an unknown family, or a family missing its tool, goes by presence" {
+    [ "$(_pm_on unknown pacman)" = pacman ]
+    [ "$(_pm_on unknown zypper dnf)" = dnf ]
+    [ "$(_pm_on arch apt-get)" = apt ]
+    [ "$(_pm_on unknown)" = unknown ]
+}
+
+@test "package manager: detection hands the host's family to the choice" {
+    _distro_osrelease_field() { [[ "$1" == ID ]] && echo arch || true; }
+    VPSSEC_DISTRO_FAMILY=""
+    local d
+    d=$(_tools_dir apt-get pacman)
+    PATH="$d" distro_detect
+    [ "$VPSSEC_DISTRO_FAMILY" = arch ]
+    [ "$VPSSEC_PKG_MGR" = pacman ]
+}
+
+@test "log paths: RHEL names no log whose own tool rotates it" {
+    # dnf rotates dnf.rpm.log itself (log_size, log_rotate) and logrotate.d/dnf
+    # names only hawkey.log, so listing it reports a stock RHEL host as unrotated.
+    _as_distro rhel dnf
+    [ "$(distro_log_paths)" = "messages secure" ]
 }

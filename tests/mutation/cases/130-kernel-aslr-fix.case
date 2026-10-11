@@ -2,18 +2,29 @@
 # Expect: kernel.aslr_disabled → kernel.enable_aslr → kernel.aslr_full.
 # Rollback removes the sysctl drop-in the fix created, but the audit reads the
 # RUNTIME value and rollback never touches /proc/sys: ASLR stays on until a
-# reboot, so the honest rollback expectation is "still passed" (rc 0).
-TEST_DESC="ASLR off at runtime: kernel.enable_aslr converges; rollback undoes the file, not the sysctl"
-EXPECT_ID="kernel.aslr_disabled"
-EXPECT_STATUS="failed"
-EXPECT_SEVERITY="medium"
+# reboot, so the honest rollback expectation is "still passed" (rc 0). The
+# drop-in is what tells a done rollback from one that changed nothing.
+# In a container ASLR is the host kernel's: reported unscored with no fix, so
+# there the case checks the detection alone; asked through the module's own
+# detector. On a VM it runs the fix and the rollback.
 MODULE="kernel"
-FIX_ID="kernel.enable_aslr"
-EXPECT_FIXED_ID="kernel.aslr_full"
-EXPECT_FIXED_STATUS="passed"
-EXPECT_ROLLBACK_ID="kernel.aslr_full"
-EXPECT_ROLLBACK_STATUS="passed"
-EXPECT_ROLLBACK_RC=0
+if ( source "$VPSSEC_ROOT/core/common.sh" && detect_container ) >/dev/null 2>&1; then
+    TEST_DESC="ASLR off at runtime in a container: reported as the host's, with no fix"
+    EXPECT_ID="kernel.aslr_host_managed"
+    EXPECT_STATUS="failed"
+    EXPECT_SEVERITY="low"
+else
+    TEST_DESC="ASLR off at runtime: kernel.enable_aslr converges; rollback undoes the file, not the sysctl"
+    EXPECT_ID="kernel.aslr_disabled"
+    EXPECT_STATUS="failed"
+    EXPECT_SEVERITY="medium"
+    FIX_ID="kernel.enable_aslr"
+    EXPECT_FIXED_ID="kernel.aslr_full"
+    EXPECT_FIXED_STATUS="passed"
+    EXPECT_ROLLBACK_ID="kernel.aslr_full"
+    EXPECT_ROLLBACK_STATUS="passed"
+    EXPECT_ROLLBACK_RC=0
+fi
 
 _PARAM="kernel.randomize_va_space"
 _DROPIN="/etc/sysctl.d/99-vpssec-hardening.conf"
@@ -27,6 +38,14 @@ mutate() {
     _ORIG=$(sysctl -n "$_PARAM" 2>/dev/null || echo "")
     sysctl -w "${_PARAM}=0" >/dev/null 2>&1
     return 0
+}
+
+postfix() {
+    [[ -e "$_DROPIN" ]] || { echo "         the fix wrote no $_DROPIN"; return 1; }
+}
+
+postrollback() {
+    [[ ! -e "$_DROPIN" ]] || { echo "         rollback left $_DROPIN"; return 1; }
 }
 
 restore() {

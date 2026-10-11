@@ -116,13 +116,45 @@ _on_rocky() {
     grep -qE '^\| Hardening \| not available' "$BATS_TEST_TMPDIR/rocky.md"
 }
 
+@test "markdown: the host table labels come from i18n too" {
+    i18n_load zh_CN
+    _on_debian
+    run report_generate_markdown "$BATS_TEST_TMPDIR/zh.md"
+    [ "$status" -eq 0 ]
+    grep -qF "| $(i18n 'report.host_family') | debian |" "$BATS_TEST_TMPDIR/zh.md"
+    _vpssec_refute grep -q 'Distro Family' "$BATS_TEST_TMPDIR/zh.md"
+}
+
 @test "markdown: the hardening wording comes from i18n, not the source" {
     _on_rocky
     i18n_load zh_CN
     run report_generate_markdown "$BATS_TEST_TMPDIR/zh.md"
     [ "$status" -eq 0 ]
     # Whatever zh_CN says, it must not be the English string or the raw key.
-    _vpssec_refute grep -qE '^\| Hardening \| (not available|report\.)' \
+    local label
+    label=$(i18n 'report.host_hardening')
+    _vpssec_refute grep -qE "^\| $label \| (not available|report\.)" \
         "$BATS_TEST_TMPDIR/zh.md"
-    grep -qE '^\| Hardening \| .+' "$BATS_TEST_TMPDIR/zh.md"
+    grep -qE "^\| $label \| .+" "$BATS_TEST_TMPDIR/zh.md"
+}
+
+# ---- what the host runs on --------------------------------------------------
+# systemd-detect-virt prints "none" AND exits 1 on bare metal; a fallback that
+# ran on the exit status appended a second line to the report's field.
+
+@test "json: a bare-metal host's virtualization is the one word none" {
+    _vpssec_stub systemd-detect-virt 1 none
+    run report_generate_json "$VPSSEC_REPORTS/summary.json"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.meta.virtualization' "$VPSSEC_REPORTS/summary.json")" = "none" ]
+}
+
+@test "virtualization: a VM is named as the detector names it" {
+    _vpssec_stub systemd-detect-virt 0 kvm
+    [ "$(detect_virtualization)" = "kvm" ]
+}
+
+@test "virtualization: a detector that fails without an answer is unknown, not none" {
+    _vpssec_stub systemd-detect-virt 1
+    [ "$(detect_virtualization)" = "unknown" ]
 }

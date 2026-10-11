@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_authorized_keys.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_authorized_keys.bats
+#
+# The size cap that keeps a user's own file from stalling a root audit. No case
+# drops the regular-file test: the mutated suite would block reading the FIFO.
+
+run_case "count/no-size-cap" 1 \
+    '    if [[ ! -f "$file" || ! "$size" =~ ^[0-9]+$ ]] || (( size > AUTHKEYS_MAX_BYTES )); then' \
+    '    if [[ ! -f "$file" || ! "$size" =~ ^[0-9]+$ ]]; then'
+
+run_case "count/cap-off-by-one" 1 \
+    '    if [[ ! -f "$file" || ! "$size" =~ ^[0-9]+$ ]] || (( size > AUTHKEYS_MAX_BYTES )); then' \
+    '    if [[ ! -f "$file" || ! "$size" =~ ^[0-9]+$ ]] || (( size >= AUTHKEYS_MAX_BYTES )); then'
+
+run_case "count/unread-reads-as-read" 1 \
+    '        return 2' \
+    '        return 0'

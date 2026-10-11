@@ -35,5 +35,23 @@ run_case "run-modes/marker-not-exported" 1 \
 # vpssec's status no longer held until after the copy: an incomplete audit (3)
 # ends run.sh under errexit, and the trap deletes the reports it saved.
 run_case "run/status-not-held" 1 \
-    '            ./vpssec "$mode" || rc=$?' \
-    '            ./vpssec "$mode"'
+    '            bash ./vpssec "$mode" || rc=$?' \
+    '            bash ./vpssec "$mode"'
+
+# vpssec executed directly: a /tmp mounted noexec refuses the tree with 126.
+# One case per call site, since each argument shape takes its own branch.
+run_case "run-modes/exec-mode-and-args" 1 \
+    '            bash ./vpssec "$mode" "${args[@]}" || rc=$?' \
+    '            ./vpssec "$mode" "${args[@]}" || rc=$?'
+
+run_case "run-modes/exec-mode-only" 1 \
+    '            bash ./vpssec "$mode" || rc=$?' \
+    '            ./vpssec "$mode" || rc=$?'
+
+run_case "run-modes/exec-args-only" 1 \
+    '            bash ./vpssec "${args[@]}" || rc=$?' \
+    '            ./vpssec "${args[@]}" || rc=$?'
+
+run_case "run-modes/exec-bare" 1 \
+    '            bash ./vpssec || rc=$?' \
+    '            ./vpssec || rc=$?'

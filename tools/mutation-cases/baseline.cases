@@ -84,10 +84,25 @@ run_case "apparmor/start-skipped-after-failed-enable" 1 \
     '    systemctl start apparmor || log_warn "systemctl start apparmor failed"' \
     '    systemctl enable apparmor && systemctl start apparmor || log_warn "failed"'
 
-# The predicate FIX_VERIFY asks (and the audit's status helper): aa-status says.
+# The predicate FIX_VERIFY asks (and the audit's status helper): loaded
+# profiles, not just the kernel LSM.
 run_case "apparmor/predicate-always-enabled" 1 \
-    '        aa-status --enabled 2>/dev/null' \
-    '        true'
+    '    (( ${counts%%:*} + ${counts##*:} > 0 ))' \
+    '    true'
+
+# A container's MAC is the host's: enable_apparmor can never verify there.
+run_case "container/mac-fix-offered" 1 \
+    '    if detect_container >/dev/null; then' \
+    '    if false; then'
+
+# Enforced or not, a container's MAC policy is the host's: neither side scores.
+run_case "container/apparmor-pass-dropped" 1 \
+    '            state=$(i18n '"'"'baseline.apparmor_enabled_desc'"'"' "enforced=${counts%%:*}" "complain=${counts##*:}")' \
+    '            :'
+
+run_case "container/selinux-pass-dropped" 1 \
+    '            [[ "$(_baseline_selinux_get_status)" == enforcing ]] && state=$(i18n '"'"'baseline.selinux_enforcing'"'"')' \
+    '            :'
 
 run_case "unused/predicate-always-clean" 1 \
     '    [[ -z "$(_baseline_get_unused_services)" ]]' \

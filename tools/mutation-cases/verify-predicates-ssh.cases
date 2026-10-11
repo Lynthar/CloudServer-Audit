@@ -19,5 +19,5 @@ run_case "grace/minutes-read-as-seconds" 1 \
     '        seconds="${v%m}"'
 
 run_case "algorithms/predicate-always-clean" 1 \
-    '    [[ -z "$(_ssh_weak_algorithms)" ]]' \
+    '    [[ -z "$weak" ]]' \
     '    true'

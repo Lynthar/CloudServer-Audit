@@ -82,3 +82,24 @@ setup() {
     [ "$status" -eq 0 ]
     [ "$output" = "0" ]
 }
+
+@test "count_authorized_keys: a file over the size cap is not read" {
+    # Any local user can grow their own; reading 20 GB stalls a root audit.
+    printf 'ssh-ed25519 AAAAC3NzaC1lZDI1 user@host\n' > "$AK"
+    truncate -s $(( AUTHKEYS_MAX_BYTES + 1 )) "$AK"
+    run count_authorized_keys "$AK"
+    [ "$status" -eq 2 ]
+    [ "$output" = "0" ]
+
+    truncate -s "$AUTHKEYS_MAX_BYTES" "$AK"
+    run count_authorized_keys "$AK"
+    [ "$status" -eq 0 ]
+    [ "$output" = "1" ]
+}
+
+@test "count_authorized_keys: something that is not a regular file is not read" {
+    mkfifo "$AK"
+    run count_authorized_keys "$AK"
+    [ "$status" -eq 2 ]
+    [ "$output" = "0" ]
+}

@@ -1,0 +1,82 @@
+# Mutation cases: tests/test_cloud_audit.bats against modules/cloud.sh.
+# mutate-suite: modules/cloud.sh tests/test_cloud_audit.bats
+#
+# pgrep, ps, systemctl, curl and the firewall dumps are stubs; the pgrep stub
+# answers as procps-ng 4 does, matching the 15-byte comm and nothing longer.
+
+# ---- agents ------------------------------------------------------------
+
+run_case "agents/pgrep-full-name" 1 \
+    '        if pgrep -x "${proc_name:0:15}" &>/dev/null; then' \
+    '        if pgrep -x "$proc_name" &>/dev/null; then'
+
+# The cut comm of a known agent lands in the suspicious list.
+run_case "agents/known-compared-full-name" 1 \
+    '            [[ "$proc" == "${known_proc:0:15}" ]] && is_known=true && break' \
+    '            [[ "$proc" == "$known_proc" ]] && is_known=true && break'
+
+run_case "agents/snap-unit-dropped" 1 \
+    '    "amazon-ssm-agent|amazon-ssm-agent snap.amazon-ssm-agent.amazon-ssm-agent|aws|ssm|optional"' \
+    '    "amazon-ssm-agent|amazon-ssm-agent|aws|ssm|optional"'
+
+# Both unit names as one argument: systemctl knows no unit by that name.
+run_case "agents/units-as-one-argument" 1 \
+    '        elif systemctl is-active "${units[@]}" &>/dev/null; then' \
+    '        elif systemctl is-active "$service_name" &>/dev/null; then'
+
+# The Azure agent's RHEL unit dropped, or its old second row back: one agent
+# found by the same unit twice.
+run_case "agents/azure-rhel-unit-dropped" 1 \
+    '    "waagent|walinuxagent waagent|azure|walinuxagent|no"' \
+    '    "waagent|walinuxagent|azure|walinuxagent|no"'
+
+run_case "agents/azure-listed-twice" 1 \
+    '    "waagent|walinuxagent waagent|azure|walinuxagent|no"' \
+    '    "waagent|walinuxagent waagent|azure|walinuxagent|no" "WaLinuxAgent|walinuxagent|azure|walinuxagent|no"'
+
+# ---- metadata service --------------------------------------------------
+
+run_case "imds/no-curl-silent" 1 \
+    '    if ! check_command curl; then' \
+    '    if false; then'
+
+# Without -f a 404 page is a body, and it scans clean.
+run_case "user-data/error-page-is-body" 1 \
+    '    curl -fsS --max-time 2 --connect-timeout 1 "$@" "$url" 2>/dev/null' \
+    '    curl -sS --max-time 2 --connect-timeout 1 "$@" "$url" 2>/dev/null'
+
+# The NUL bytes lost before decoding, as a $(...) capture loses them.
+run_case "user-data/nul-dropped-before-decode" 1 \
+    '    raw=$(_cloud_imds_get_user_data | base64 -w0) || fetched=0' \
+    '    raw=$(_cloud_imds_get_user_data | tr -d '"'"'\0'"'"' | base64 -w0) || fetched=0'
+
+run_case "user-data/no-gunzip" 1 \
+    '    text=$(base64 -d <<<"$raw" | gzip -cdf 2>/dev/null | tr '"'"'\0'"'"' '"'"'\1'"'"') || return 1' \
+    '    text=$(base64 -d <<<"$raw" | tr '"'"'\0'"'"' '"'"'\1'"'"') || return 1'
+
+run_case "user-data/decode-failure-ignored" 1 \
+    '    text=$(base64 -d <<<"$raw" | gzip -cdf 2>/dev/null | tr '"'"'\0'"'"' '"'"'\1'"'"') || return 1' \
+    '    text=$(base64 -d <<<"$raw" | gzip -cdf 2>/dev/null | tr '"'"'\0'"'"' '"'"'\1'"'"') || true'
+
+run_case "user-data/binary-scanned" 1 \
+    '    [[ "$text" != *$'"'"'\1'"'"'* ]] || return 1' \
+    '    :'
+
+run_case "user-data/not-scanned-unreported" 1 \
+    '    if ! user_data=$(_cloud_imds_user_data_text); then' \
+    '    if ! user_data=$(_cloud_imds_user_data_text || true); then'
+
+# ---- host firewall -----------------------------------------------------
+
+# The original defect: grep -q on the live pipe, so SIGPIPE reads as no match.
+run_case "firewall/grep-on-pipe" 1 \
+    '    if check_command iptables-save; then rules+=$(iptables-save 2>/dev/null || true)$'"'"'\n'"'"'; fi' \
+    '    if check_command iptables-save && iptables-save 2>/dev/null | grep -q '"'"'169\.254\.169\.254'"'"'; then return 0; fi'
+
+run_case "firewall/nft-not-read" 1 \
+    '    if check_command nft; then rules+=$(nft list ruleset 2>/dev/null || true); fi' \
+    '    :'
+
+run_case "firewall/alibaba-address-dropped" 1 \
+    '    grep -qE '"'"'169\.254\.169\.254|100\.100\.100\.200'"'"' <<<"$rules"' \
+    '    grep -qE '"'"'169\.254\.169\.254'"'"' <<<"$rules"'

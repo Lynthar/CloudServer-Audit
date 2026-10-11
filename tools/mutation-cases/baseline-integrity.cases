@@ -1,0 +1,8 @@
+# Mutation cases: tests/test_distro_pkg_hints.bats against modules/baseline.sh.
+# mutate-suite: modules/baseline.sh tests/test_distro_pkg_hints.bats
+
+# The tool probe back on a bare command -v: a test can no longer make a tool
+# absent, and the "no tool" suggestion is tested only where the host lacks one.
+run_case "integrity/probe-bypasses-check-command" 1 \
+    '        if check_command "$t"; then' \
+    '        if command -v "$t" &>/dev/null; then'

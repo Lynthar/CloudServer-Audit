@@ -11,6 +11,22 @@ setup() {
     state_init
 }
 
+# ---- cloudflared -------------------------------------------------------
+
+@test "cloudflared: a tunnel list that cannot be read is failed and unscored, not a pass" {
+    source "$(_vpssec_repo_root)/modules/cloudflared.sh"
+    _vpssec_stub cloudflared 1
+
+    # `run`: production calls audits in a condition, where a failed query does
+    # not abort; bats' own errexit would.
+    run _cloudflared_audit_tunnels
+
+    run jq -r '.[] | select(.id == "cloudflared.tunnel_list_unavailable") | .status' \
+        "$VPSSEC_STATE/checks.json"
+    [ "$output" = "failed" ]
+    [ "${CHECK_SCORE_CATEGORY[cloudflared.tunnel_list_unavailable]}" = "info" ]
+}
+
 # ---- update ------------------------------------------------------------
 
 @test "update: query failure emits update.check_failed, not no_updates" {
@@ -44,6 +60,25 @@ setup() {
     _update_audit_available
     run jq -r '[.[] | select(.id == "update.check_failed")] | last | .suggestion' "$VPSSEC_STATE/checks.json"
     [ "$output" = "Refresh the package index with the system package manager and re-run the audit" ]
+}
+
+@test "update: an unknown lock state names the tool this host's probe lacks" {
+    # The dnf branch needs pgrep, not lsof, and no host is "APT" but Debian's.
+    source "$(_vpssec_repo_root)/modules/update.sh"
+    pkg_manager_locked() { return 2; }
+
+    VPSSEC_DISTRO_FAMILY=rhel VPSSEC_PKG_MGR=dnf
+    _update_audit_apt_lock
+    run jq -r '.[] | select(.id == "update.lock_state_unknown") | .desc + "|" + .suggestion' \
+        "$VPSSEC_STATE/checks.json"
+    [[ "$output" == *pgrep*"dnf install procps-ng"* ]]
+    [[ "$output" != *lsof* ]]
+
+    pkg_manager_locked() { return 1; }
+    _update_audit_apt_lock
+    run jq -r '.[] | select(.id == "update.apt_available") | .title' "$VPSSEC_STATE/checks.json"
+    [ -n "$output" ]
+    [[ "$output" != *APT* ]]
 }
 
 @test "update: a real zero still passes as no_updates" {
@@ -166,6 +201,63 @@ SH
     [ "$output" = "$(i18n 'logging.sudo_logs_active' 'count=1')" ]
 }
 
+# ---- users -------------------------------------------------------------
+
+# users_audit over one fixture account database; $1 = 1 makes getent passwd fail.
+_users_with() {
+    source "$(_vpssec_repo_root)/modules/users.sh"
+    VPSSEC_CLOUD_PROVIDER=unknown
+    USERS_SHADOW_FILE="$BATS_TEST_TMPDIR/shadow"
+    USERS_LOGIN_DEFS="$BATS_TEST_TMPDIR/login.defs"; : > "$USERS_LOGIN_DEFS"
+    USERS_PWQUALITY_CONF="$BATS_TEST_TMPDIR/pwquality.conf"
+    SUDOERS_FILE="$BATS_TEST_TMPDIR/sudoers"; : > "$SUDOERS_FILE"
+    export FAKE_PASSWD="$BATS_TEST_TMPDIR/passwd" GETENT_FAILS="$1"
+    printf '%s\n' 'root:x:0:0::/root:/bin/bash' 'eve::1001:1001::/home/eve:/bin/bash' > "$FAKE_PASSWD"
+    _vpssec_stub_script getent <<'SH'
+[[ "$1" == passwd && "$GETENT_FAILS" != 1 ]] || exit 2
+[[ -z "${2:-}" ]] && { cat "$FAKE_PASSWD"; exit 0; }
+awk -F: -v k="$2" '$1 == k { print; f = 1 } END { exit !f }' "$FAKE_PASSWD"
+SH
+    _users_audit
+}
+
+# As audit_module runs it: in a condition, so errexit is off as in production.
+_users_audit() { if users_audit; then :; fi; }
+
+_status_of() { jq -r --arg id "$1" '.[] | select(.id == $id) | .status' "$VPSSEC_STATE/checks.json"; }
+
+@test "users: a failing getent passwd is unknown, not uid0_ok or no_empty_password" {
+    : > "$BATS_TEST_TMPDIR/shadow"
+    _users_with 1
+    [ "$(_status_of users.uid0_unknown)" = failed ]
+    [ "$(_status_of users.empty_password_unknown)" = failed ]
+    [ -z "$(_status_of users.uid0_ok)" ]
+    [ -z "$(_status_of users.no_empty_password)" ]
+}
+
+@test "users: an unreadable shadow is unknown, but an inline empty password is still found" {
+    _users_with 0
+    [ "$(_status_of users.uid0_ok)" = passed ]
+    [ -z "$(_status_of users.no_empty_password)" ]
+    [ "$(jq -r '.[] | select(.id == "users.empty_password") | .desc' "$VPSSEC_STATE/checks.json")" = eve ]
+
+    sed -i 's/^eve::/eve:x:/' "$FAKE_PASSWD"
+    state_init
+    _users_audit
+    [ "$(_status_of users.empty_password_unknown)" = failed ]
+    [ -z "$(_status_of users.no_empty_password)" ]
+}
+
+@test "users: readable sources with no finding still pass" {
+    : > "$BATS_TEST_TMPDIR/shadow"
+    _users_with 0
+    sed -i 's/^eve::/eve:x:/' "$FAKE_PASSWD"
+    state_init
+    _users_audit
+    [ "$(_status_of users.uid0_ok)" = passed ]
+    [ "$(_status_of users.no_empty_password)" = passed ]
+}
+
 # ---- kernel ------------------------------------------------------------
 
 @test "kernel: zero readable sysctls emits network_params_unreadable, not OK" {
@@ -215,6 +307,7 @@ SH
 
     run jq -r '.[] | select(.id == "networking.exposed_dangerous_ports") | .id' \
         "$VPSSEC_STATE/checks.json"
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 

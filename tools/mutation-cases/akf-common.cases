@@ -1,0 +1,14 @@
+# Mutation cases: tests/test_ssh_lockout_predicates.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_ssh_lockout_predicates.bats
+#
+# The AuthorizedKeysFile paths the lockout gate counts keys in, as sshd expands them.
+
+# %h left literal: the key file sshd reads is never the one counted.
+run_case "keys/home-token-unexpanded" 1 \
+    '        path="${path//%h/"$home"}"' \
+    '        :'
+
+# Relative AuthorizedKeysFile resolved against the cwd instead of the home.
+run_case "keys/relative-path-not-under-home" 1 \
+    '        [[ "$path" != /* ]] && path="$home/$path"' \
+    '        :'

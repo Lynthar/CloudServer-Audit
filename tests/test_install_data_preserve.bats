@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# A reinstall over an existing directory must not destroy state/ and backups/:
-# the uninstaller defaults to KEEP and the upgrade path honours the same
-# contract. safe_remove_install_dir's allowlist refuses every bats-writable path.
+# A reinstall over an existing directory must not destroy state/, backups/ or
+# templates/: the uninstaller defaults to KEEP and the upgrade path honours the
+# same contract. safe_remove_install_dir's allowlist refuses every bats path.
 
 load helpers.bash
 
@@ -30,6 +30,18 @@ setup() {
     [ "$(cat "$INSTALL_DIR/state/ok.json")" = "precious-state" ]
     [ "$(cat "$INSTALL_DIR/backups/20260101_000000/etc-file")" = "precious-backup" ]
     [ ! -d "$stash" ]
+}
+
+@test "templates/ survives a reinstall: installed alert hooks source it from there" {
+    mkdir -p "$INSTALL_DIR/templates/alerts"
+    printf 'vpssec_alert() { :; }\n' > "$INSTALL_DIR/templates/alerts/alert-lib.sh"
+
+    stash_data_dirs
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"/{state,reports,backups,logs,templates}
+    restore_data_dirs
+
+    [ "$(cat "$INSTALL_DIR/templates/alerts/alert-lib.sh")" = 'vpssec_alert() { :; }' ]
 }
 
 @test "a fresh install with no data dirs stashes nothing and does not fail" {

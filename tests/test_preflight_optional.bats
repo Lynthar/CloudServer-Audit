@@ -56,3 +56,31 @@ _optional_check() {
     preflight_audit
     _optional_check | jq -r '.desc' | grep -q 'network reachability check (curl or wget)'
 }
+
+# ---- the package-lock check's tool follows the package manager ----------------
+# pkg_manager_locked asks /proc/locks then lsof on apt, pgrep on dnf, and only a
+# file test on pacman: telling a dnf host to install lsof fixes nothing.
+
+@test "optional: a dnf host missing pgrep is told pgrep, in the package that ships it" {
+    VPSSEC_DISTRO_FAMILY=rhel VPSSEC_PKG_MGR=dnf
+    _vpssec_stub whiptail 0
+    _vpssec_stub curl 0
+    _vpssec_absent_command pgrep
+    _vpssec_absent_command lsof
+    _preflight_check_deps
+    local c
+    c=$(_optional_check)
+    jq -r '.desc' <<<"$c" | grep -qF 'package-lock check (pgrep)'
+    _vpssec_refute grep -q lsof <<<"$(jq -r '.desc' <<<"$c")"
+    [ "$(jq -r '.suggestion' <<<"$c")" = "dnf install procps-ng" ]
+}
+
+@test "optional: a pacman host needs neither lsof nor pgrep" {
+    VPSSEC_DISTRO_FAMILY=arch VPSSEC_PKG_MGR=pacman
+    _vpssec_stub whiptail 0
+    _vpssec_stub curl 0
+    _vpssec_absent_command pgrep
+    _vpssec_absent_command lsof
+    _preflight_check_deps
+    [ -z "$(_optional_check)" ]
+}
