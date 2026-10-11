@@ -161,16 +161,20 @@ _keeping_bats_traps() {
     return "$rc"
 }
 
-# A stand-in vpssec in its own process: it arms the watchdog over a fake rescue
-# daemon ($1) and then blocks, as it would at the confirmation prompt. $2 and
-# $3 override the confirmation window and the grace period.
+# A stand-in vpssec that arms the watchdog over a fake rescue ($1), then blocks as
+# at the confirmation prompt ($2 / $3: window and grace). Its parent never reaps
+# it, so once killed it stays a zombie, as under a CI container's PID 1.
 _vpssec_holding_rescue() {
-    bash -c 'source "$1/core/common.sh"; source "$1/modules/ssh.sh"
+    local pidfile="$BATS_TEST_TMPDIR/holder.pid" i
+    bash -c 'bash -c "$1" _ "$2" "$3" "$4" "$5" & echo $! > "$6"; exec sleep 300' _ \
+        'source "$1/core/common.sh"; source "$1/modules/ssh.sh"
         _log_file=/dev/null; VPSSEC_CONFIRM_TIMEOUT=$3; SSH_RESCUE_GRACE=$4
         SSH_RESCUE_PID=$2; SSH_RESCUE_PORT=2222; SSH_RESCUE_FW_RULE="ufw::2222"
         _ssh_rescue_start_watchdog; sleep 300' \
-        _ "$(_vpssec_repo_root)" "$1" "${2:-300}" "${3:-120}" >/dev/null 2>&1 &
-    echo $!
+        "$(_vpssec_repo_root)" "$1" "${2:-300}" "${3:-120}" "$pidfile" \
+        >/dev/null 2>&1 3>&- &
+    for i in $(seq 1 50); do [[ -s "$pidfile" ]] && break; sleep 0.1; done
+    cat "$pidfile"
 }
 
 @test "rescue watchdog: vpssec killed by SIGKILL does not leave the rescue running" {

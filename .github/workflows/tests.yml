@@ -45,6 +45,9 @@ jobs:
     name: bats on ${{ matrix.distro }}
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash  # a container's default is sh, dash on debian:12: no pipefail
     strategy:
       fail-fast: false
       matrix:

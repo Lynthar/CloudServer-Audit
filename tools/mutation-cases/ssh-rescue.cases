@@ -18,12 +18,18 @@ run_case "watchdog/never-started" 1 \
 # A watchdog that waits on the clock alone lets a SIGKILLed vpssec leave the
 # rescue up for the whole window.
 run_case "watchdog/parent-death-ignored" 1 \
-    '        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do' \
+    '        while _ssh_rescue_pid_running "$parent" && (( waited < limit )); do' \
     '        while (( waited < limit )); do'
 
 run_case "watchdog/no-time-bound" 1 \
-    '        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do' \
-    '        while kill -0 "$parent" 2>/dev/null; do'
+    '        while _ssh_rescue_pid_running "$parent" && (( waited < limit )); do' \
+    '        while _ssh_rescue_pid_running "$parent"; do'
+
+# A killed vpssec that nobody has reaped is a zombie; counted as running, the
+# watchdog waits out the whole window (a CI container's PID 1 never reaps).
+run_case "watchdog/zombie-parent-running" 1 \
+    '    [[ "${stat%% *}" != [ZX] ]]' \
+    '    :'
 
 run_case "watchdog/rescue-not-killed" 1 \
     '        kill "$SSH_RESCUE_PID" 2>/dev/null || true' \

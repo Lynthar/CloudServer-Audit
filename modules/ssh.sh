@@ -999,6 +999,15 @@ EOF
     return 1
 }
 
+# True while pid $1 runs. Not kill -0: it also answers for a zombie, and a killed
+# vpssec stays one until its parent reaps it (never, under a PID 1 that does not).
+_ssh_rescue_pid_running() {
+    local stat
+    read -r stat 2>/dev/null < "/proc/$1/stat" || return 1
+    stat=${stat##*') '}
+    [[ "${stat%% *}" != [ZX] ]]
+}
+
 # Tears the rescue down when vpssec dies without its traps (SIGKILL, OOM) or
 # outstays the confirmation window plus SSH_RESCUE_GRACE. Ignores INT/HUP, left
 # to the parent's trap, and must not hold the run lock (fd 200).
@@ -1009,7 +1018,7 @@ _ssh_rescue_start_watchdog() {
         exec 200>&- </dev/null >/dev/null 2>&1
         trap '' INT HUP
         local waited=0
-        while kill -0 "$parent" 2>/dev/null && (( waited < limit )); do
+        while _ssh_rescue_pid_running "$parent" && (( waited < limit )); do
             sleep 1
             waited=$(( waited + 1 ))
         done
