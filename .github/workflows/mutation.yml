@@ -1,7 +1,7 @@
 name: mutation sweep
 
 # Nightly rather than per-push: a full sweep re-runs each paired suite once
-# per planted defect (~500 of them; 144 min measured on ubuntu-latest) — too slow to gate every
+# per planted defect (~1,370 of them) — too slow to gate every
 # commit, but exactly what catches a suite that has quietly stopped testing
 # the thing it is named after. Every case file, every anchor, one total.
 #
@@ -28,47 +28,85 @@ permissions:
   contents: read
 
 jobs:
-  mutate-all:
-    name: full source-mutation sweep
+  mutate:
+    name: sweep shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # 144 min measured. 150 left six minutes of headroom, so a slower runner
-    # or a handful of new cases would have turned this red for the one reason
-    # that says nothing about the code.
+    # As root on Debian, as tools/mutate-suite.sh requires: on the bare runner the
+    # root-only and dpkg-layout tests skip, and the defects they guard survive.
+    container: debian:12
+    defaults:
+      run:
+        shell: bash  # a container's default is sh, dash on debian:12: no pipefail
+    env:
+      LANG: en_US.UTF-8
+    # The whole sweep outruns GitHub's 6 h job cap, so each shard takes a sixth of
+    # the files; the limit leaves room for the two slowest files landing together.
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
     steps:
+      - name: Install what the suites call
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          # The tools the suites run for real (sudo's cvtsudoers, at, cron's crontab
+          # group, openssl, perl, python3 via fail2ban), and the locales they set.
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+              systemd systemd-sysv dbus jq curl ca-certificates tar gawk sed grep \
+              procps iproute2 openssh-server sudo whiptail ufw fail2ban cron rsyslog \
+              file less locales openssl git at nginx-light
+          sed -i 's/^# *\(en_US.UTF-8\)/\1/; s/^# *\(zh_CN.UTF-8\)/\1/' /etc/locale.gen
+          locale-gen
+          mkdir -p /run/sshd
+
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install bats-core
         run: |
           set -euo pipefail
           # Same pin as tests.yml, for the same reason: the sweep's verdict
-          # must not drift with Ubuntu's package archive.
+          # must not drift with the distribution's package archive.
           BATS_VERSION=v1.11.0
           tmp=$(mktemp -d)
           git clone --depth 1 --branch "$BATS_VERSION" \
               https://github.com/bats-core/bats-core.git "$tmp/bats"
-          sudo "$tmp/bats/install.sh" /usr/local
+          "$tmp/bats/install.sh" /usr/local
           bats --version
 
-      - name: Run the sweep
+      - name: Run this shard of the sweep
         env:
           STEMS: ${{ inputs.stems }}
+          SHARD: ${{ strategy.job-index }}
+          SHARDS: ${{ strategy.job-total }}
         run: |
           set -euo pipefail
-          # Word-splitting of STEMS is intended: each word is one file stem.
           if [ -n "${STEMS:-}" ]; then
-            # shellcheck disable=SC2086
-            bash tools/mutate-all.sh $STEMS
+            # shellcheck disable=SC2086  # deliberate split: one stem per word
+            mapfile -t all < <(printf '%s\n' $STEMS | LC_ALL=C sort)
           else
-            bash tools/mutate-all.sh
+            mapfile -t all < <(find tools/mutation-cases -maxdepth 1 -name '*.cases' \
+                -printf '%f\n' | sed 's/\.cases$//' | LC_ALL=C sort)
           fi
+          mine=()
+          for i in "${!all[@]}"; do
+            if (( i % SHARDS == SHARD )); then mine+=("${all[$i]}"); fi
+          done
+          echo "shard $SHARD of $SHARDS: ${#mine[@]} of ${#all[@]} cases files"
+          # mutate-all.sh with no stems runs every file, so an empty share stops here.
+          [ "${#mine[@]}" -gt 0 ] || exit 0
+          bash tools/mutate-all.sh "${mine[@]}"
 
       - name: What a red run means
         if: failure()
         run: |
           echo "A planted defect was NOT caught, an anchor/pairing broke, or a suite"
           echo "died without failing a test (NOT-RUN) -- rerun before reading it as a gap."
-          echo "Read the per-file lines above, then reproduce one file locally with:"
+          echo "Read the per-file lines above, then reproduce one file as root in a"
+          echo "Debian 12 container (not on a bare runner) with:"
           echo "    bash tools/mutate-all.sh <stem>"
           echo "Interpret a survivor with the three meanings in tools/mutate-suite.sh's"
           echo "header before touching the cases file."
