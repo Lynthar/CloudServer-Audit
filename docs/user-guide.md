@@ -545,8 +545,8 @@ systemctl restart systemd-sysctl
 echo "fs.suid_dumpable = 0" >> /etc/sysctl.d/99-security.conf
 systemctl restart systemd-sysctl
 
-# 2. limits.conf
-echo "* hard core 0" >> /etc/security/limits.conf
+# 2. limits.d（排在最后读，压过 Debian 13 自带的 10-coredump-debian.conf）
+echo "* hard core 0" > /etc/security/limits.d/99-core.conf
 
 # 3. systemd (如果使用)
 mkdir -p /etc/systemd/coredump.conf.d

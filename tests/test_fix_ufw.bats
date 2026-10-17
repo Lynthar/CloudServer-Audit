@@ -50,6 +50,21 @@ _sshd_listening_on() {
     { printf 'port 22\n'; printf 'listenaddress %s\n' "$@"; } > "$BATS_TEST_TMPDIR/sshd-ports"
 }
 
+# ssh.socket as systemd reports it: `is-active` exits $1, `show -p Listen
+# --value` prints the rest as Listen lines. No sshd.socket is installed.
+_ssh_socket() {
+    local rc="$1"; shift
+    printf '%s (Stream)\n' "$@" > "$BATS_TEST_TMPDIR/socket-listen"
+    _vpssec_stub_script systemctl <<SH
+case "\$*" in
+    "is-active --quiet ssh.socket") exit $rc ;;
+    "is-active --quiet "*) exit 4 ;;
+    "show -p Listen --value ssh.socket") cat "$BATS_TEST_TMPDIR/socket-listen" ;;
+esac
+exit 0
+SH
+}
+
 # Seed ufw's rule store with one tuple, in the format ufw writes.
 _tuple() {
     printf '### tuple ### %s\n' "$*" >> "$UFW_USER_RULES"
@@ -410,6 +425,48 @@ _call_at() {
     run _ufw_fix_allow_ssh
     [ "$status" -eq 0 ]
     _vpssec_stub_called ufw 'allow 2222/tcp'
+    _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
+    _ufw_ssh_allowed
+}
+
+@test "ssh ports: an active ssh.socket's ports, not sshd -T's" {
+    # Ubuntu after `systemctl edit ssh.socket`: sshd is handed the socket's
+    # listeners and binds none itself, while sshd -T still says 22.
+    _ssh_socket 0 '[::]:2200'
+
+    run get_ssh_ports
+    [ "$status" -eq 0 ]
+    [ "$output" = "2200" ]
+}
+
+@test "ssh ports: every TCP listener of the socket, none of its unix paths" {
+    _ssh_socket 0 0.0.0.0:2201 '[::1]:2203' /run/sshd.sock '[::]:2204'
+
+    run get_ssh_ports
+    [ "$output" = $'2201\n2203\n2204' ]
+}
+
+@test "ssh ports: an inactive ssh.socket's Listen lines are not ports" {
+    # systemctl show prints them whether or not the socket is up.
+    _ssh_socket 3 '[::]:2200'
+
+    run get_ssh_ports
+    [ "$output" = "22" ]
+}
+
+@test "enable: the port ssh.socket listens on is opened, not sshd -T's" {
+    # Opening 22 here and confirming it was the lockout found on a real host.
+    _ssh_socket 0 '[::]:2200'
+    confirm_critical() { return 0; }
+
+    run _ufw_fix_enable
+    [ "$status" -eq 0 ]
+    local port_at enable_at
+    port_at=$(_call_at '^ufw allow 2200/tcp')
+    enable_at=$(_call_at '^ufw enable')
+    [ -n "$port_at" ]
+    [ -n "$enable_at" ]
+    [ "$port_at" -lt "$enable_at" ]
     _vpssec_refute _vpssec_stub_called ufw 'allow 22/tcp'
     _ufw_ssh_allowed
 }

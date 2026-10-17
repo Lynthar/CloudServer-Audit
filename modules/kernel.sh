@@ -18,6 +18,7 @@ declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/
 # locations, and so the fix is reachable from a test.
 KERNEL_LIMITS_CONF="/etc/security/limits.conf"
 KERNEL_LIMITS_D="/etc/security/limits.d"
+KERNEL_LIMITS_DROPIN="${KERNEL_LIMITS_D}/99-vpssec-core.conf"
 KERNEL_COREDUMP_CONF="/etc/systemd/coredump.conf"
 KERNEL_COREDUMP_D="/etc/systemd/coredump.conf.d"
 KERNEL_COREDUMP_DROPIN="${KERNEL_COREDUMP_D}/99-vpssec.conf"
@@ -353,6 +354,13 @@ _kernel_core_hard_limit() {
          END { print v }' "${files[@]}" 2>/dev/null
 }
 
+# pam_limits is configured and leaves the hard core limit above 0. The audit
+# and the fix both ask this, so the fix writes wherever the audit flags.
+_kernel_core_unlimited() {
+    [[ -f "$KERNEL_LIMITS_CONF" || -d "$KERNEL_LIMITS_D" ]] \
+        && [[ "$(_kernel_core_hard_limit)" != "0" ]]
+}
+
 # Check core dump settings
 _kernel_check_core_dump() {
     local issues=()
@@ -367,10 +375,7 @@ _kernel_check_core_dump() {
         fi
     fi
 
-    if [[ -f "$KERNEL_LIMITS_CONF" || -d "$KERNEL_LIMITS_D" ]] \
-       && [[ "$(_kernel_core_hard_limit)" != "0" ]]; then
-        issues+=("no_core_limit")
-    fi
+    _kernel_core_unlimited && issues+=("no_core_limit")
 
     # Storage=none may live in the main coredump.conf OR a drop-in, which is
     # where the fix writes it and how systemd merges. Read BOTH, or the audit
@@ -1308,16 +1313,12 @@ _kernel_fix_core_dump() {
         _kernel_write_sysctl "fs.suid_dumpable" "0" || return 1
     fi
 
-    # PAM reads limits.conf on every login, so append through the atomic
-    # writer: a partial line is a config error on every later login.
-    if [[ -f "$KERNEL_LIMITS_CONF" ]]; then
-        if [[ "$(_kernel_core_hard_limit)" != "0" ]]; then
-            backup_file "$KERNEL_LIMITS_CONF" >/dev/null || return 1
-            local limits_content
-            limits_content=$(cat "$KERNEL_LIMITS_CONF")
-            write_file_atomic "$KERNEL_LIMITS_CONF" \
-                "${limits_content}"$'\n'"* hard core 0"$'\n'
-        fi
+    # Not limits.conf: pam_limits reads limits.d after it and the last entry
+    # wins, so a vendor file there (Debian 13 ships `hard core infinity`) would
+    # beat a line appended to it. 99- is read last; rollback deletes the file.
+    if _kernel_core_unlimited; then
+        backup_file "$KERNEL_LIMITS_DROPIN" >/dev/null || return 1
+        write_file_atomic "$KERNEL_LIMITS_DROPIN" "* hard core 0"$'\n'
     fi
 
     # The condition MUST mirror the audit's exactly: requiring the drop-in

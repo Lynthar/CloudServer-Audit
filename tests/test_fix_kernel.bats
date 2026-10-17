@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Coverage for the kernel fixes that write sysctl drop-ins, limits.conf and the
-# systemd-coredump drop-in. The RA/SLAAC guard on accept_ra=0 must hold on BOTH
+# Coverage for the kernel fixes that write sysctl drop-ins, the limits.d and
+# systemd-coredump drop-ins. The RA/SLAAC guard on accept_ra=0 must hold on BOTH
 # paths — harden_ipv6 and harden_network — or an IPv6-only VPS loses its route.
 
 load helpers.bash
@@ -34,6 +34,7 @@ _kernel_source() {
     VPSSEC_SYSCTL_CONF="$SYSCTL_D/99-vpssec-hardening.conf"
     KERNEL_LIMITS_CONF="$etc/security/limits.conf"
     KERNEL_LIMITS_D="$etc/security/limits.d"
+    KERNEL_LIMITS_DROPIN="$KERNEL_LIMITS_D/${KERNEL_LIMITS_DROPIN##*/}"
     KERNEL_COREDUMP_CONF="$etc/systemd/coredump.conf"
     KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
     KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
@@ -444,35 +445,61 @@ SH
 # The core-dump fix
 # ==============================================================================
 
-@test "core dump: the limits.conf entry is appended without losing the file" {
+@test "core dump: the hard limit goes into limits.d, limits.conf is not touched" {
     printf '# /etc/security/limits.conf\n*  soft  nofile  1024\n# End of file\n' \
         > "$KERNEL_LIMITS_CONF"
+    local before
+    before=$(cat "$KERNEL_LIMITS_CONF")
     _sysctl_seed "fs.suid_dumpable" "1"
 
     run _kernel_fix_core_dump
     [ "$status" -eq 0 ]
-    grep -qxF "*  soft  nofile  1024" "$KERNEL_LIMITS_CONF"
-    grep -qxF "* hard core 0" "$KERNEL_LIMITS_CONF"
+    [ "$(cat "$KERNEL_LIMITS_CONF")" = "$before" ]
+    grep -qxF "* hard core 0" "$KERNEL_LIMITS_DROPIN"
 }
 
-@test "core dump: the entry is not appended twice" {
+@test "core dump: a vendor limits.d file lifting the limit is overridden" {
+    # Debian 13 ships this file (systemd package): any limit set in
+    # limits.conf loses to it.
+    mkdir -p "$KERNEL_LIMITS_D"
+    printf '# limits\n' > "$KERNEL_LIMITS_CONF"
+    printf '*\tsoft\tcore\t0\n*\thard\tcore\tinfinity\n' \
+        > "$KERNEL_LIMITS_D/10-coredump-debian.conf"
+    _sysctl_seed "fs.suid_dumpable" "1"
+
+    run _kernel_fix_core_dump
+    [ "$status" -eq 0 ]
+    run _kernel_check_core_dump
+    [ -z "$output" ]
+}
+
+@test "core dump: a host with limits.d and no limits.conf gets the limit too" {
+    # The audit flags either path, so the fix must write on either.
+    mkdir -p "$KERNEL_LIMITS_D"
+    _sysctl_seed "fs.suid_dumpable" "1"
+
+    run _kernel_fix_core_dump
+    [ "$status" -eq 0 ]
+    grep -qxF "* hard core 0" "$KERNEL_LIMITS_DROPIN"
+}
+
+@test "core dump: no limits drop-in when the hard limit is already 0" {
     printf '# limits\n* hard core 0\n' > "$KERNEL_LIMITS_CONF"
     _sysctl_seed "fs.suid_dumpable" "1"
 
     run _kernel_fix_core_dump
     [ "$status" -eq 0 ]
-    [ "$(grep -cxF "* hard core 0" "$KERNEL_LIMITS_CONF")" -eq 1 ]
+    [ ! -e "$KERNEL_LIMITS_DROPIN" ]
 }
 
-@test "core dump: limits.conf is backed up before it is edited" {
+@test "core dump: the limits drop-in is created as a rollback-removable file" {
     printf '# limits\n' > "$KERNEL_LIMITS_CONF"
     _sysctl_seed "fs.suid_dumpable" "1"
     _vpssec_begin_backup_session
 
     run _kernel_fix_core_dump
     [ "$status" -eq 0 ]
-    [ -f "${VPSSEC_BACKUP_SESSION}${KERNEL_LIMITS_CONF}" ]
-    _vpssec_refute grep -q "hard core 0" "${VPSSEC_BACKUP_SESSION}${KERNEL_LIMITS_CONF}"
+    grep -qxF "$KERNEL_LIMITS_DROPIN" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
 }
 
 @test "core dump: the systemd drop-in is written when only coredump.conf exists" {

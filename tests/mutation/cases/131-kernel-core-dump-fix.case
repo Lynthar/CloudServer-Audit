@@ -1,10 +1,10 @@
 # Plant: fs.suid_dumpable=2 at runtime, no core limit in limits.conf.
 # Expect: kernel.core_dump_enabled → kernel.disable_core_dump → kernel.core_dump_ok.
-# Rollback restores limits.conf without the "* hard core 0" line the fix appended,
-# and that alone re-fails the audit even though the runtime sysctl stays 0.
+# Rollback deletes the limits.d/99-vpssec-core.conf the fix created, and that
+# alone re-fails the audit even though the runtime sysctl stays 0.
 # In a container suid_dumpable is the host's and not judged: the limits.conf plant
 # alone fails the audit there, and the fix leaves the sysctl alone.
-TEST_DESC="no core limit: kernel.disable_core_dump converges, rollback restores limits.conf"
+TEST_DESC="no core limit: kernel.disable_core_dump converges, rollback deletes its limits.d file"
 EXPECT_ID="kernel.core_dump_enabled"
 EXPECT_STATUS="failed"
 EXPECT_SEVERITY="low"
@@ -36,6 +36,7 @@ mutate() {
 restore() {
     sysctl -w "${_PARAM}=${_ORIG:-0}" >/dev/null 2>&1
     cp -p "$_SAVED" "$_LIMITS" && rm -f "$_SAVED"
-    rm -f /etc/sysctl.d/99-vpssec-hardening.conf /etc/systemd/coredump.conf.d/99-vpssec.conf
+    rm -f /etc/sysctl.d/99-vpssec-hardening.conf /etc/systemd/coredump.conf.d/99-vpssec.conf \
+        /etc/security/limits.d/99-vpssec-core.conf
     return 0
 }

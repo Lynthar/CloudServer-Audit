@@ -1090,12 +1090,19 @@ get_current_ssh_ip() {
     echo ""
 }
 
-# ALL ports sshd listens on, deduped and ascending; firewall fixes MUST open
-# every one. sshd -T prints one listenaddress line per bound address and
-# `ListenAddress host:port` overrides Port, so those lines are the truth.
+# ALL ports sshd accepts connections on, deduped and ascending; firewall fixes
+# MUST open every one. An active ssh.socket hands sshd its listeners and sshd
+# binds none of its own, so the socket's ports beat what sshd -T says.
 get_ssh_ports() {
-    local ports="" dump=""
-    if command -v sshd &>/dev/null; then
+    local ports dump="" unit
+    # An inactive unit still prints its Listen lines: only an active one counts.
+    ports=$(for unit in ssh.socket sshd.socket; do
+                systemctl is-active --quiet "$unit" 2>/dev/null || continue
+                systemctl show -p Listen --value "$unit" 2>/dev/null || true
+            done | awk '$2 == "(Stream)" && $1 ~ /:[0-9]+$/ { n = split($1, a, ":"); print a[n] }')
+    if [[ -z "$ports" ]] && command -v sshd &>/dev/null; then
+        # One listenaddress line per bound address; `ListenAddress host:port`
+        # overrides Port, so these lines, not the port lines, are the truth.
         dump=$(sshd -T 2>/dev/null) || dump=""
         ports=$(awk '$1 == "listenaddress" { n = split($2, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' <<<"$dump")
     fi
