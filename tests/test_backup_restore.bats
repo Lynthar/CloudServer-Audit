@@ -316,6 +316,42 @@ SH
     _vpssec_refute _vpssec_stub_called systemctl 'reload fail2ban'
 }
 
+# fail2ban-client whose reload fails, and whose config test (-t) exits $1.
+_f2b_reload_fails() {
+    _vpssec_stub_script fail2ban-client <<SH
+[[ "\$1" == -t ]] && exit $1
+exit 1
+SH
+}
+
+@test "rollback reload: a restored fail2ban config that fails -t is not left to a restart" {
+    # Debian 12's stock sshd jail reads /var/log/auth.log; on a journald-only
+    # host, removing the fix's systemd-backend drop-in leaves fail2ban unstartable.
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    source "$(_vpssec_repo_root)/core/distro.sh"
+    VPSSEC_PKG_MGR=apt
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    _vpssec_stub systemctl 0
+    _f2b_reload_fails 1
+
+    run _rollback_reload_services
+    [[ "$output" == *"fails 'fail2ban-client -t'"*"apt purge fail2ban"* ]]
+    [[ "$output" != *"not live until it restarts"* ]]
+}
+
+@test "rollback reload: a fail2ban config that passes -t is said to need a restart" {
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    _vpssec_stub systemctl 0
+    _f2b_reload_fails 0
+
+    run _rollback_reload_services
+    [[ "$output" == *"fail2ban is running but did not reload"* ]]
+    [[ "$output" != *"fail2ban-client -t"* ]]
+}
+
 @test "a declined rollback exits 0 and restores nothing (deprecated: 1 at the next major)" {
     # docs/compatibility.md promises 0 here until the next MAJOR release; this
     # pins it so the change to 1 happens there, on purpose, not by accident.

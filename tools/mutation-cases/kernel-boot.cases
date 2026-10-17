@@ -75,3 +75,21 @@ run_case "conf/link-not-followed" 1 \
 run_case "scan/forwarding-loose-rp_filter-judged" 1 \
     '            [[ "$(_kernel_get_sysctl "$param" 2>/dev/null)" == "2" ]] && continue' \
     '            :'
+
+# ---- ufw's sysctl file, applied after systemd-sysctl -------------------------
+
+run_case "ufw/file-ignored" 1 \
+    '    if [[ -s "$ufw_file" ]] && [[ "$(fw_backend 2>/dev/null)" == ufw ]]; then' \
+    '    if false; then'
+
+run_case "ufw/inactive-applied" 1 \
+    '    if [[ -s "$ufw_file" ]] && [[ "$(fw_backend 2>/dev/null)" == ufw ]]; then' \
+    '    if [[ -s "$ufw_file" ]]; then'
+
+run_case "ufw/sysctl-d-wins" 1 \
+    '            boot_value[$param]="$value"' \
+    '            :'
+
+run_case "ufw/named-as-sysctl-d" 1 \
+    '            [[ -n "${from_ufw[$param]:-}" ]] && item=kernel.boot_params_ufw_item' \
+    '            :'

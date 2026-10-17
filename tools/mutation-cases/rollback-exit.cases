@@ -35,3 +35,13 @@ run_case "rollback-exit/fail2ban-plain-reload" 1 \
 run_case "rollback-exit/declined-code-changed-early" 5 \
     '        return 0' \
     '        return 1'
+
+# A fail2ban config that fails -t is left to a restart it cannot survive, or one
+# that passes is called unstartable.
+run_case "rollback-exit/fail2ban-config-untested" 1 \
+    '            if ! fail2ban-client -t >/dev/null 2>&1; then' \
+    '            if false; then'
+
+run_case "rollback-exit/fail2ban-config-always-invalid" 1 \
+    '            if ! fail2ban-client -t >/dev/null 2>&1; then' \
+    '            if true; then'

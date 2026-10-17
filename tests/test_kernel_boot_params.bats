@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh
+    _vpssec_load core/state.sh core/security_levels.sh core/distro.sh
     i18n_load en_US
     etc=$(_vpssec_fake_etc)
     # shellcheck source=/dev/null
@@ -18,6 +18,8 @@ setup() {
     local_d="$BATS_TEST_TMPDIR/usr/local/lib/sysctl.d"
     lib_d="$BATS_TEST_TMPDIR/usr/lib/sysctl.d"
     KERNEL_SYSCTL_BOOT_DIRS=("$run_d" "$local_d" "$lib_d")
+    KERNEL_IPV4_CONF_DIR="$BATS_TEST_TMPDIR/ipv4-conf"
+    DISTRO_UFW_DEFAULTS="$etc/default/ufw"
     mkdir -p "$SYSCTL_D" "$run_d" "$local_d" "$lib_d"
 
     # Data, not logic: the real scan and comparison run over this table.
@@ -330,4 +332,47 @@ SH
 
     [ "$(_status kernel.boot_params_ok)" = "passed" ]
     [ -z "$(_status kernel.boot_params_revert)" ]
+}
+
+# ufw is $1 ("active" or "inactive") and its defaults name file $2, holding the
+# remaining lines, as the one it applies with `sysctl -p`.
+_ufw_with() {
+    local state="$1" f="$2"
+    shift 2
+    _conf "$f" "$@"
+    _conf "$DISTRO_UFW_DEFAULTS" "IPV6=yes" "IPT_SYSCTL=$f"
+    _vpssec_stub_script ufw <<SH
+[[ "\$1" == status ]] && echo "Status: $state"
+exit 0
+SH
+}
+
+@test "an active ufw's sysctl file is applied after sysctl.d: a weaker value there is reported" {
+    # ufw applies it on every start and reload; at boot nothing orders it
+    # against systemd-sysctl, and on real hosts it lands later.
+    _conf "$VPSSEC_SYSCTL_CONF" "net.ipv4.conf.all.rp_filter = 1"
+    _ufw_with active "$etc/ufw/sysctl.conf" "# ufw" "net/ipv4/conf/all/rp_filter=0"
+
+    _audit
+
+    _desc kernel.boot_params_revert | grep -qF \
+        "net.ipv4.conf.all.rp_filter is set to 0 by $etc/ufw/sysctl.conf:2, which ufw applies"
+}
+
+@test "an active ufw's sysctl file wins over a weaker sysctl.d value" {
+    _conf "$lib_d/10-distro.conf" "net.ipv4.conf.all.rp_filter = 0"
+    _ufw_with active "$etc/ufw/sysctl.conf" "net.ipv4.conf.all.rp_filter = 1"
+
+    _audit
+
+    [ "$(_status kernel.boot_params_ok)" = "passed" ]
+}
+
+@test "an inactive ufw's sysctl file is not applied" {
+    _conf "$VPSSEC_SYSCTL_CONF" "net.ipv4.conf.all.rp_filter = 1"
+    _ufw_with inactive "$etc/ufw/sysctl.conf" "net/ipv4/conf/all/rp_filter=0"
+
+    _audit
+
+    [ "$(_status kernel.boot_params_ok)" = "passed" ]
 }

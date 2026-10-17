@@ -6,6 +6,9 @@
 # Rollback deletes the drop-in it created (rc 0) but cannot uninstall or stop
 # anything, so the service stays active: the drop-in is what tells a done
 # rollback from one that changed nothing.
+# This image has no rsyslog, so no /var/log/auth.log for the stock sshd jail:
+# without the drop-in the config fails `fail2ban-client -t`, and the rollback
+# transcript ($STAGE_LOG) must say fail2ban will not start, not "restart it".
 TEST_DESC="fail2ban absent: fail2ban.install converges to a running service; rollback only removes its drop-in"
 EXPECT_ID="fail2ban.not_installed"
 EXPECT_STATUS="failed"
@@ -33,6 +36,10 @@ postfix() {
 
 postrollback() {
     [[ ! -e "$_DROPIN" ]] || { echo "         rollback left $_DROPIN"; return 1; }
+    ! fail2ban-client -t >/dev/null 2>&1 \
+        || { echo "         the restored config passes -t: is rsyslog in the image now?"; return 1; }
+    grep -qF "fails 'fail2ban-client -t'" "$STAGE_LOG" \
+        || { echo "         rollback did not say fail2ban cannot start again"; return 1; }
 }
 
 restore() {

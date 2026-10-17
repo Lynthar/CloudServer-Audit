@@ -14,6 +14,9 @@ VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 # SYSCTL_CONF is read at boot only through a link from one of them.
 declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d)
 
+# One directory per IPv4 interface, plus all and default.
+KERNEL_IPV4_CONF_DIR="/proc/sys/net/ipv4/conf"
+
 # Variables, not literals, so the audit predicate and the fix read the SAME
 # locations, and so the fix is reachable from a test.
 KERNEL_LIMITS_CONF="/etc/security/limits.conf"
@@ -679,8 +682,43 @@ _kernel_param_scan() {
             1) echo "bad $severity $param $expected $actual" ;;
             *) echo "na - $param" ;;
         esac
+        [[ "$param" == net.ipv4.conf.all.* ]] && _kernel_iface_scan "${param##*.}" "$severity" "$expected"
     done
     return 0
+}
+
+# The kernel ORs these with each interface's own value (accept_redirects only
+# where that interface does not forward) and takes the larger rp_filter. Every
+# other conf.all key is ANDed, so conf.all alone decides it.
+KERNEL_IFACE_KEYS='^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter)$'
+
+# A "bad" scan line for each interface whose own value of conf.all key $1 is the
+# one in force there and misses $3; $2 is the severity. Interfaces made before
+# a default was set keep their old value, so all/default can read hardened.
+_kernel_iface_scan() {
+    local key="$1" severity="$2" expected="$3" dir name param value all=0
+    [[ "$key" =~ $KERNEL_IFACE_KEYS ]] || return 0
+    if [[ "$key" == rp_filter ]]; then
+        all=$(_kernel_get_sysctl net.ipv4.conf.all.rp_filter) || true
+        [[ "$all" =~ ^[0-9]+$ ]] || all=0
+    fi
+    for dir in "$KERNEL_IPV4_CONF_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        name="${dir%/}"
+        name="${name##*/}"
+        case "$name" in all|default|lo) continue ;; esac
+        # sysctl takes a dot inside an interface name (eth0.100) as a slash.
+        param="net.ipv4.conf.${name//./\/}.$key"
+        value=$(_kernel_get_sysctl "$param") || true
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        _kernel_value_meets "$value" "$expected" && continue
+        case "$key" in
+            rp_filter) (( value >= all )) || continue ;;
+            accept_redirects)
+                [[ "$(_kernel_get_sysctl "net.ipv4.conf.${name//./\/}.forwarding")" == 1 ]] && continue ;;
+        esac
+        echo "bad $severity $param $expected $value"
+    done
 }
 
 # Pass conditions of the two param checks. The network one also needs one
@@ -1013,6 +1051,19 @@ _kernel_audit_boot_params() {
         boot_at[$param]="$where"
     done < <(_kernel_boot_values "$globs" "${files[@]}" <<<"$targets")
 
+    # An active ufw applies its file after systemd-sysctl (nothing orders the
+    # two) and again on every reload, so a key set there ends up with its value.
+    local ufw_file
+    local -A from_ufw=()
+    ufw_file=$(fw_ufw_sysctl_file)
+    if [[ -s "$ufw_file" ]] && [[ "$(fw_backend 2>/dev/null)" == ufw ]]; then
+        while IFS=$'\t' read -r param value where; do
+            boot_value[$param]="$value"
+            boot_at[$param]="$where"
+            from_ufw[$param]=1
+        done < <(_kernel_boot_values 0 "$ufw_file" <<<"$targets")
+    fi
+
     # Where nothing in sysctl.d links SYSCTL_CONF (stock Debian 13, Ubuntu
     # 26.04), `sysctl -p` applies a setting written there and boot does not.
     if [[ -f "$SYSCTL_CONF" && -r "$SYSCTL_CONF" ]]; then
@@ -1029,12 +1080,14 @@ _kernel_audit_boot_params() {
     fi
 
     local -a findings=() unpersisted=()
-    local i
+    local i item
     for i in "${!params[@]}"; do
         param="${params[$i]}"
         if [[ -n "${boot_value[$param]+x}" ]]; then
+            item=kernel.boot_params_weaker_item
+            [[ -n "${from_ufw[$param]:-}" ]] && item=kernel.boot_params_ufw_item
             _kernel_value_meets "${boot_value[$param]}" "${expects[$i]}" ||
-                findings+=("$(i18n 'kernel.boot_params_weaker_item' "param=$param" \
+                findings+=("$(i18n "$item" "param=$param" \
                     "value=${boot_value[$param]}" "where=${boot_at[$param]}")")
         elif [[ -n "${conf_at[$param]+x}" ]]; then
             findings+=("$(i18n 'kernel.boot_params_ignored_item' "param=$param" \
@@ -1208,9 +1261,11 @@ _kernel_fix_network_params() {
     local applied=0 runtime_failed=0 persist_failed=0
 
     # Values before the first write: an undo restores these, and a value read
-    # after the ip_forward write may already be the reset one.
-    local -A before=() recorded=()
-    local -a undo=()
+    # after the ip_forward write may already be the reset one. That write leaves
+    # an interface's own keys alone, so theirs come from the scan that flags them.
+    local -A before=() recorded=() want=()
+    local -a undo=() written=()
+    local actual
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
         param="${entry%%:*}"
         [[ "$param" =~ $KERNEL_NET_SCOPE ]] || continue
@@ -1219,9 +1274,13 @@ _kernel_fix_network_params() {
 
     for pass in 1 2; do
         params_to_set=()
-        while read -r kind _ param expected _; do
+        while read -r kind _ param expected actual; do
             case "$kind" in
-                bad) params_to_set+=("$param=$(_kernel_param_target "$expected")") ;;
+                bad)
+                    params_to_set+=("$param=$(_kernel_param_target "$expected")")
+                    want[$param]="$expected"
+                    [[ -n "${before[$param]+x}" ]] || before[$param]="$actual"
+                    ;;
                 ra)  ra_skipped=true ;;
             esac
         done <<<"$(_kernel_param_scan "$KERNEL_NET_SCOPE")"
@@ -1239,6 +1298,7 @@ _kernel_fix_network_params() {
                 1) ((runtime_failed++)) || true ;;
                 *) ((persist_failed++)) || true ;;
             esac
+            (( rc != 1 )) && written+=("$param $value ${want[$param]}")
             if (( rc != 1 )) && [[ -n "${before[$param]:-}" && -z "${recorded[$param]:-}" ]]; then
                 undo+=("$param=${before[$param]}")
                 recorded[$param]=1
@@ -1246,6 +1306,9 @@ _kernel_fix_network_params() {
         done
         (( runtime_failed + persist_failed == 0 )) || break
     done
+    if (( ${#written[@]} > 0 )); then
+        _kernel_ufw_align "${written[@]}" || ((persist_failed++)) || true
+    fi
 
     [[ "$ra_skipped" == "true" ]] && print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
     record_undo kernel.harden_network "$(_kernel_undo_cmd "${undo[@]}")"
@@ -1257,6 +1320,31 @@ _kernel_fix_network_params() {
     _kernel_fix_failed "$runtime_failed" "$persist_failed" && return 1
     print_ok "$(i18n 'kernel.network_hardened' "count=$applied")"
     return 0
+}
+
+# ufw applies the file IPT_SYSCTL names after sysctl.d, each time it starts or
+# reloads, so a key it sets weaker undoes the fix at the next reload. Args are
+# "<param> <value> <expected>"; overriding lines go last, where they win.
+_kernel_ufw_align() {
+    local file content entry param value expected lines=""
+    local -A wrote=() spec=()
+    file=$(fw_ufw_sysctl_file)
+    [[ -n "$file" && -f "$file" ]] || return 0
+    for entry in "$@"; do
+        read -r param value expected <<<"$entry"
+        wrote[$param]="$value"
+        spec[$param]="$expected"
+    done
+    while IFS=$'\t' read -r param value _; do
+        _kernel_value_meets "$value" "${spec[$param]}" && continue
+        lines+="$param = ${wrote[$param]}"$'\n'
+    done < <(printf '%s\n' "${!wrote[@]}" | LC_ALL=C sort | _kernel_boot_values 0 "$file")
+    [[ -n "$lines" ]] || return 0
+
+    content=$(cat "$file") || return 1
+    backup_file "$file" >/dev/null || return 1
+    print_info "$(i18n 'kernel.ufw_sysctl_aligned' "file=$file")"
+    write_file_atomic "$file" "$content"$'\n\n'"# vpssec: overrides the values above"$'\n'"$lines"
 }
 
 _kernel_fix_kernel_params() {
@@ -1361,6 +1449,7 @@ _kernel_write_sysctl() {
     local existing=""
     if [[ -f "$VPSSEC_SYSCTL_CONF" ]]; then
         local param_re="${param//./\\.}"
+        param_re="${param_re//\*/\\*}"
         existing=$(grep -vE '^[[:space:]]*(#|$)' "$VPSSEC_SYSCTL_CONF" 2>/dev/null \
                    | grep -vE "^${param_re}[[:space:]]*=" || true)
     fi
@@ -1388,7 +1477,19 @@ _kernel_write_sysctl() {
 # persist failed. Callers count 1 and 2 apart, since they mean different things.
 _kernel_set_sysctl() {
     sysctl -w "$1=$2" 2>/dev/null || return 1
-    _kernel_write_sysctl "$1" "$2" || return 2
+    _kernel_write_sysctl "$(_kernel_persist_key "$1")" "$2" || return 2
+}
+
+# The drop-in key that keeps $1 over a reboot. An interface's own key is kept as
+# the glob over all interfaces, which udev applies to each as it appears: a
+# name can change, and one made before systemd-sysctl runs misses the default.
+_kernel_persist_key() {
+    if [[ "$1" =~ ^net\.ipv4\.conf\.([^.]+)\.([a-z_]+)$ ]] \
+       && [[ "${BASH_REMATCH[1]}" != all && "${BASH_REMATCH[1]}" != default ]]; then
+        echo "net.ipv4.conf.*.${BASH_REMATCH[2]}"
+    else
+        echo "$1"
+    fi
 }
 
 # The command that puts back the runtime values a fix changed, which rollback

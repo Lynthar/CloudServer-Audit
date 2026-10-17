@@ -6,12 +6,13 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/distro.sh
     # Not in a container unless a test says so: bats itself may run in one.
     detect_container() { return 1; }
     etc=$(_vpssec_fake_etc)
     _kernel_source
     mkdir -p "$etc/security" "$etc/systemd"
+    DISTRO_UFW_DEFAULTS="$etc/default/ufw"
 
     export TMPDIR="$BATS_TEST_TMPDIR"
     sysctl_store="$BATS_TEST_TMPDIR/sysctl"
@@ -38,6 +39,7 @@ _kernel_source() {
     KERNEL_COREDUMP_CONF="$etc/systemd/coredump.conf"
     KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
     KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
+    KERNEL_IPV4_CONF_DIR="$BATS_TEST_TMPDIR/ipv4-conf"
 }
 
 # Rebuild the param table as the module builds it on distro $1 (family $2).
@@ -439,6 +441,181 @@ SH
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q "conf\.all\.rp_filter" "$VPSSEC_SYSCTL_CONF"
+}
+
+# ==============================================================================
+# Interfaces: keys the kernel combines with conf.all by OR, or by the larger
+# ==============================================================================
+
+# Interface $1 exists, with its own keys as given: key=value ...
+_iface() {
+    local name="$1" kv
+    shift
+    mkdir -p "$KERNEL_IPV4_CONF_DIR/$name"
+    for kv in "$@"; do
+        _sysctl_seed "net.ipv4.conf.$name.${kv%%=*}" "${kv#*=}"
+    done
+}
+
+# The network-parameter audit, its checks recorded for _emitted_field.
+_audit_network() {
+    source "$(_vpssec_repo_root)/core/state.sh"
+    state_init
+    _kernel_audit_network_params >/dev/null
+}
+
+@test "interfaces: an own accept_redirects=1 is flagged by name though all and default read 0" {
+    # The kernel ORs it with conf.all where the interface does not forward, and
+    # an interface made before the default was set keeps its old value.
+    i18n_load en_US
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.accept_redirects 0
+    _sysctl_seed net.ipv4.conf.default.accept_redirects 0
+    _iface ens18 accept_redirects=1 forwarding=0
+
+    _audit_network
+    [[ "$(_emitted_field kernel.network_params_medium desc)" == *"net.ipv4.conf.ens18.accept_redirects=1"* ]]
+}
+
+@test "interfaces: accept_redirects on an interface that forwards is left to conf.all" {
+    # There the kernel ANDs the two, so conf.all=0 already turns it off.
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.accept_redirects 0
+    _iface docker0 accept_redirects=1 forwarding=1
+
+    _kernel_network_params_ok
+}
+
+@test "interfaces: rp_filter is flagged where the interface's own value is the one in force" {
+    # The kernel takes the larger of the two: systemd's 50-default.conf leaves
+    # every interface at 2 (loose) whatever conf.all says; a 0 there changes nothing.
+    i18n_load en_US
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.rp_filter 1
+    _iface ens18 rp_filter=2
+    _iface ens19 rp_filter=0
+
+    _audit_network
+    local desc
+    desc=$(_emitted_field kernel.network_params_medium desc)
+    [[ "$desc" == *"net.ipv4.conf.ens18.rp_filter=2"* ]]
+    [[ "$desc" != *ens19* ]]
+
+    # Stock Ubuntu: 2 on both. The interface's own 2 is in force there too.
+    _sysctl_seed net.ipv4.conf.all.rp_filter 2
+    _audit_network
+    [[ "$(_emitted_field kernel.network_params_medium desc)" == *"net.ipv4.conf.ens18.rp_filter=2"* ]]
+}
+
+@test "interfaces: log_martians, the ANDed keys and lo are judged on conf.all alone" {
+    # log_martians is ORed but wanted on, so all=1 covers every interface;
+    # accept_source_route, bootp_relay and mc_forwarding are ANDed.
+    i18n_load en_US
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.log_martians 1
+    _sysctl_seed net.ipv4.conf.all.accept_source_route 0
+    _sysctl_seed net.ipv4.conf.all.send_redirects 0
+    _iface ens18 log_martians=0 accept_source_route=1 bootp_relay=1 mc_forwarding=1
+    _iface lo send_redirects=1
+
+    _audit_network
+    [ "$(_emitted_field kernel.network_params_ok status)" = passed ]
+}
+
+@test "harden_network: an interface is set at runtime and kept by one glob, not by its name" {
+    # udev applies a glob to each interface as it appears, whenever that is;
+    # a name can change, and two interfaces need the same single line.
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.send_redirects 0
+    _sysctl_seed net.ipv4.conf.all.rp_filter 1
+    _iface ens18 send_redirects=1 rp_filter=2
+    _iface ens19 send_redirects=1
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    [ "$(_runtime net.ipv4.conf.ens18.send_redirects)" = 0 ]
+    [ "$(_runtime net.ipv4.conf.ens19.send_redirects)" = 0 ]
+    [ "$(_runtime net.ipv4.conf.ens18.rp_filter)" = 1 ]
+    [ "$(grep -cxF 'net.ipv4.conf.*.send_redirects = 0' "$VPSSEC_SYSCTL_CONF")" = 1 ]
+    _dropin_has 'net.ipv4.conf.*.rp_filter' 1
+    _vpssec_refute grep -q ens1 "$VPSSEC_SYSCTL_CONF"
+    _kernel_network_params_ok
+}
+
+@test "undo: harden_network puts an interface's own value back" {
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.secure_redirects 0
+    _iface ens18 secure_redirects=1
+
+    _kernel_fix_network_params
+    [ "$(_runtime net.ipv4.conf.ens18.secure_redirects)" = 0 ]
+
+    _run_logged_undo kernel.harden_network
+    [ "$(_runtime net.ipv4.conf.ens18.secure_redirects)" = 1 ]
+}
+
+# ==============================================================================
+# ufw's sysctl file, which ufw applies after sysctl.d on every start and reload
+# ==============================================================================
+
+# ufw's defaults name file $1 as its IPT_SYSCTL, quoted as a shell file may
+# quote it; the rest are that file's lines.
+_ufw_sysctl() {
+    local f="$1"
+    shift
+    mkdir -p "${DISTRO_UFW_DEFAULTS%/*}" "${f%/*}"
+    printf 'IPV6=yes\nIPT_SYSCTL="%s"\n' "$f" > "$DISTRO_UFW_DEFAULTS"
+    printf '%s\n' "$@" > "$f"
+}
+
+# The value `sysctl -p` on file $1 leaves key $2 at: the last line setting it,
+# in either of the two forms sysctl reads.
+_sysctl_p_value() {
+    local line out=""
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*([^#=[:space:]]+)[[:space:]]*=[[:space:]]*(.*)$ ]] || continue
+        [[ "${BASH_REMATCH[1]//\//.}" == "$2" ]] && out="${BASH_REMATCH[2]}"
+    done < "$1"
+    printf '%s\n' "$out"
+}
+
+@test "harden_network: a weaker key in ufw's sysctl file is overridden there too" {
+    # Otherwise the next `ufw reload`, or `ufw enable` later in the same plan,
+    # puts the old value back. A key the file already agrees with is left alone.
+    _host_static_ipv6
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" \
+        'net/ipv4/conf/all/accept_redirects=0' \
+        'net/ipv4/conf/all/log_martians=0' \
+        'net/ipv4/conf/default/log_martians=0'
+    _sysctl_seed net.ipv4.conf.all.accept_redirects 1
+    _sysctl_seed net.ipv4.conf.all.log_martians 0
+    _sysctl_seed net.ipv4.conf.default.log_martians 0
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.default.log_martians)" = 1 ]
+    [ "$(grep -c accept_redirects "$ufw_conf")" = 1 ]
+    [ "$(head -1 "$ufw_conf")" = 'net/ipv4/conf/all/accept_redirects=0' ]
+    _dropin_has net.ipv4.conf.all.log_martians 1
+}
+
+@test "harden_network: ufw's sysctl file is backed up before it changes, untouched when it agrees" {
+    _host_static_ipv6
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=1'
+    _sysctl_seed net.ipv4.conf.all.log_martians 0
+    _vpssec_begin_backup_session
+
+    _kernel_fix_network_params
+    [ "$(cat "$ufw_conf")" = 'net/ipv4/conf/all/log_martians=1' ]
+    [ ! -e "${VPSSEC_BACKUP_SESSION}${ufw_conf}" ]
+
+    printf 'net/ipv4/conf/all/log_martians=0\n' > "$ufw_conf"
+    _sysctl_seed net.ipv4.conf.all.log_martians 0
+    _kernel_fix_network_params
+    [ "$(cat "${VPSSEC_BACKUP_SESSION}${ufw_conf}")" = 'net/ipv4/conf/all/log_martians=0' ]
 }
 
 # ==============================================================================

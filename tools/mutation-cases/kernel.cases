@@ -191,8 +191,8 @@ run_case "runtime/refusal-called-persist" 2 \
     '            1) ((persist_failed++)) || true ;;'
 
 run_case "replay/drop-in-reloaded" 1 \
-    '    _kernel_write_sysctl "$1" "$2" || return 2' \
-    '    _kernel_write_sysctl "$1" "$2" && sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || return 2'
+    '    _kernel_write_sysctl "$(_kernel_persist_key "$1")" "$2" || return 2' \
+    '    _kernel_write_sysctl "$(_kernel_persist_key "$1")" "$2" && sysctl -p "$VPSSEC_SYSCTL_CONF" >/dev/null 2>&1 || return 2'
 
 # A value read after the ip_forward write is the reset one, not the original.
 run_case "undo/network-reads-after-write" 1 \
@@ -207,3 +207,66 @@ run_case "undo/aslr-not-recorded" 1 \
 run_case "ipv6-desc/unused-names-no-setting" 1 \
     '                desc="$(i18n '"'"'kernel.ipv6_unused_insecure_desc'"'"' "ipv6_issues=${ipv6_text%; }")" \' \
     '                desc="$(i18n '"'"'kernel.ipv6_unused_insecure_desc'"'"')" \'
+
+# ---- interfaces: keys the kernel ORs with conf.all, or takes the larger of ----
+
+run_case "iface/not-scanned" 1 \
+    '        [[ "$param" == net.ipv4.conf.all.* ]] && _kernel_iface_scan "${param##*.}" "$severity" "$expected"' \
+    '        :'
+
+# log_martians is ORed but wanted on; accept_source_route is ANDed.
+run_case "iface/conf-all-keys-judged" 1 \
+    'KERNEL_IFACE_KEYS='"'"'^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter)$'"'"'' \
+    'KERNEL_IFACE_KEYS='"'"'^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter|log_martians|accept_source_route)$'"'"''
+
+run_case "iface/lo-judged" 1 \
+    '        case "$name" in all|default|lo) continue ;; esac' \
+    '        case "$name" in all|default) continue ;; esac'
+
+run_case "iface/forwarding-interface-judged" 1 \
+    '                [[ "$(_kernel_get_sysctl "net.ipv4.conf.${name//./\/}.forwarding")" == 1 ]] && continue ;;' \
+    '                : ;;'
+
+run_case "iface/rp-filter-below-all-judged" 1 \
+    '            rp_filter) (( value >= all )) || continue ;;' \
+    '            rp_filter) ;;'
+
+run_case "iface/rp-filter-equal-to-all-missed" 1 \
+    '            rp_filter) (( value >= all )) || continue ;;' \
+    '            rp_filter) (( value > all )) || continue ;;'
+
+run_case "iface/persisted-by-name" 1 \
+    '    _kernel_write_sysctl "$(_kernel_persist_key "$1")" "$2" || return 2' \
+    '    _kernel_write_sysctl "$1" "$2" || return 2'
+
+# The glob's * stays a regex metacharacter, so its line is never replaced.
+run_case "iface/glob-line-duplicated" 1 \
+    '        param_re="${param_re//\*/\\*}"' \
+    '        :'
+
+run_case "iface/all-persisted-as-glob" 1 \
+    '       && [[ "${BASH_REMATCH[1]}" != all && "${BASH_REMATCH[1]}" != default ]]; then' \
+    '       && true; then'
+
+run_case "undo/interface-value-lost" 1 \
+    '                    [[ -n "${before[$param]+x}" ]] || before[$param]="$actual"' \
+    '                    :'
+
+# ---- ufw's sysctl file ---------------------------------------------------------
+
+run_case "ufw-sysctl/not-aligned" 1 \
+    '        _kernel_ufw_align "${written[@]}" || ((persist_failed++)) || true' \
+    '        :'
+
+run_case "ufw-sysctl/agreeing-key-appended" 1 \
+    '        _kernel_value_meets "$value" "${spec[$param]}" && continue' \
+    '        :'
+
+run_case "ufw-sysctl/not-backed-up" 1 \
+    '    backup_file "$file" >/dev/null || return 1' \
+    '    :'
+
+# Lines put first are applied first, and the file's own lines win again.
+run_case "ufw-sysctl/override-first" 1 \
+    '    write_file_atomic "$file" "$content"$'"'"'\n\n'"'"'"# vpssec: overrides the values above"$'"'"'\n'"'"'"$lines"' \
+    '    write_file_atomic "$file" "$lines$content"'

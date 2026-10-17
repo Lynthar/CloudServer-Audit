@@ -708,6 +708,14 @@ distro_integrity_package() {
 
 DISTRO_UFW_DEFAULTS="${DISTRO_UFW_DEFAULTS:-/etc/default/ufw}"
 
+# The file ufw hands to `sysctl -p` each time it starts or reloads: IPT_SYSCTL
+# in its defaults, read as data rather than sourced. Empty when none is named.
+fw_ufw_sysctl_file() {
+    [[ -r "$DISTRO_UFW_DEFAULTS" ]] || return 0
+    awk '/^[ \t]*IPT_SYSCTL=/ { v = substr($0, index($0, "=") + 1) }
+         END { gsub(/^[ \t"\047]+|[ \t"\047]+$/, "", v); print v }' "$DISTRO_UFW_DEFAULTS"
+}
+
 # True when an nft input hook (ruleset on stdin) can drop: a drop/reject policy
 # or verdict, a queue, or a jump into a chain; fail2ban, ufw (emptied while off)
 # and tailscale chains are no firewall. $1 = ip6: only ip6/inet tables count.

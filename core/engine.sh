@@ -1247,10 +1247,17 @@ _rollback_reload_services() {
     for svc in ssh nginx fail2ban; do
         systemctl is-active --quiet "$svc" 2>/dev/null || continue
         if [[ "$svc" == "fail2ban" ]]; then
-            fail2ban_reload_jails
-        else
-            systemctl reload "$svc" 2>/dev/null
-        fi || print_warn "$(i18n 'backup.reload_failed' "service=$svc")"
+            fail2ban_reload_jails && continue
+            # A restart does not help a config that fails -t: Debian 12's stock
+            # sshd jail wants /var/log/auth.log, which a journald-only host lacks.
+            if ! fail2ban-client -t >/dev/null 2>&1; then
+                print_warn "$(i18n 'backup.fail2ban_config_invalid' "cmd=$(pkg_remove_hint fail2ban)")"
+                continue
+            fi
+        elif systemctl reload "$svc" 2>/dev/null; then
+            continue
+        fi
+        print_warn "$(i18n 'backup.reload_failed' "service=$svc")"
     done
 }
 

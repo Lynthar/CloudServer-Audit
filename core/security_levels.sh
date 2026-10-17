@@ -75,7 +75,7 @@ declare -gA FIX_CONFIRM=(
     # Network params may conflict with Docker/containers. On SLAAC hosts the
     # IPv6 RA params (accept_ra/autoconf/...) are skipped automatically to
     # preserve connectivity, but warn anyway.
-    ["kernel.harden_network"]="May affect container networking (Docker/LXC); IPv6 RA settings are skipped on SLAAC hosts to preserve connectivity"
+    ["kernel.harden_network"]="May affect container networking (Docker/LXC); IPv6 RA settings are skipped on SLAAC hosts to preserve connectivity; a weaker value in ufw's sysctl file, which every ufw reload re-applies, is overridden there too"
 
     # Disables unprivileged user namespaces (breaks Docker rootless / podman /
     # snap / Chrome sandbox) and restricts SysRq — review before applying.

@@ -451,6 +451,17 @@ sysctl kernel.randomize_va_space
 | `net.ipv4.conf.all.send_redirects` | 0 | 不发送 ICMP 重定向 |
 | `net.ipv4.conf.all.rp_filter` | 1 | 反向路径过滤；上面那类转发主机上 2（宽松）也算通过，修复写 2 而不是 1 |
 
+`all` / `default` 达标不等于每块网卡都达标。`send_redirects`、`secure_redirects`、`proxy_arp`，
+以及不转发的网卡上的 `accept_redirects`，内核取 `all` 与网卡自己那份的「或」；`rp_filter` 取两者中
+较大的。`default` 只管之后新建的网卡；Debian 13、Ubuntu 22.04 / 26.04 的 systemd 还自带
+`net.ipv4.conf.*.rp_filter = 2`，把每块网卡都设成宽松模式。网卡自己的值才是生效的那份时，审计
+按网卡点名报出（例如 `net.ipv4.conf.eth0.rp_filter=2`）；修复改网卡的运行值，持久化写成通配行
+`net.ipv4.conf.*.<参数>`，每块网卡出现时 udev 都会套用，与网卡名、创建先后无关。
+
+启用了 ufw 时还有一层：ufw 每次启动和重载都会在 sysctl.d 之后套用 `/etc/default/ufw` 里
+`IPT_SYSCTL` 指向的文件（默认 `/etc/ufw/sysctl.conf`），它出厂写着 `log_martians=0`。修复会在
+这个文件末尾追加加固值（回滚时还原），否则下一次 `ufw reload` 就把它改回去。
+
 **自动修复**: `kernel.harden_network`（需确认；可能影响容器网络）。IPv6 的
 `accept_ra`、`accept_redirects`、`use_tempaddr` 归下一节的 IPv6 检测与 `kernel.harden_ipv6`
 
@@ -467,11 +478,18 @@ net.ipv4.conf.default.send_redirects = 0
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
 net.ipv4.icmp_echo_ignore_broadcasts = 1
+# 已有的网卡：通配行逐块网卡套用（压过 systemd 自带的同名通配行）
+net.ipv4.conf.*.accept_redirects = 0
+net.ipv4.conf.*.send_redirects = 0
+net.ipv4.conf.*.rp_filter = 1
 EOF
 
-# 按开机时的方式整体重新套用，再抽查实际值
+# 启用了 ufw：它在 sysctl.d 之后套用自己的文件，那里的 log_martians 也改成 1
+sed -i 's|/log_martians=0$|/log_martians=1|' /etc/ufw/sysctl.conf
+
+# 按开机时的方式整体重新套用，再抽查实际值（每块网卡一行）
 systemctl restart systemd-sysctl
-sysctl net.ipv4.tcp_syncookies net.ipv4.conf.all.rp_filter
+sysctl -a 2>/dev/null | grep -E 'rp_filter|redirects'
 ```
 
 ---
@@ -571,6 +589,9 @@ EOF
   给出文件、行号和那个值；或者参数只写在 `/etc/sysctl.conf` 里，而本机 sysctl.d 里没有链接
   指向这个文件——Debian 13 与 Ubuntu 26.04 原装就没有这条 `99-sysctl.conf` 链接，开机时
   systemd-sysctl 根本不读 `/etc/sysctl.conf`。
+  启用了 ufw 时，`/etc/default/ufw` 里 `IPT_SYSCTL` 指向的文件（默认 `/etc/ufw/sysctl.conf`）
+  排在所有 sysctl.d 文件之后：开机时 ufw 与 systemd-sysctl 之间没有先后约束、实测晚到，此后
+  每次 `ufw reload` 又套一遍。那里设的值算作开机后的值，描述里写明是 ufw 套的。
 - `kernel.boot_params_ok`（通过）：没有 sysctl.d 文件在开机时改回已加固的参数。
 - `kernel.boot_params_unreadable`（失败）：有 sysctl.d 文件读不到，不下任何结论。
 
@@ -955,7 +976,10 @@ jail 要读这个文件：服务会起不来，`fail2ban-client -t` 报
 `jail.d/99-vpssec-sshd.local`：覆盖 sshd 的全部端口；只有能用 journald 时才设
 `backend = systemd`；封禁动作按本机防火墙选（写在 `[DEFAULT]`，所有 jail 都用它）；
 `ignoreip` 在 sshd jail 原有的列表上加回环地址和你当前的 SSH 来源 IP。
-写完先 `fail2ban-client -t` 检查，加载后确认 jail 能封禁，不能就撤回这个文件
+写完先 `fail2ban-client -t` 检查，加载后确认 jail 能封禁，不能就撤回这个文件。
+回滚只删这个文件、不卸载 fail2ban。Debian 12 自带的 sshd jail 读 `/var/log/auth.log`，只用
+journald 的主机（多数云镜像）上没有它，恢复出的配置过不了 `-t`：回滚会照实说 fail2ban 一旦
+停下就起不来；fail2ban 是 vpssec 装的，就 `apt purge fail2ban` 卸掉
 
 **修复方法**:
 ```bash
