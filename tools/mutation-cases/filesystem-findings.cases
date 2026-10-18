@@ -26,6 +26,24 @@ run_case "caps/all-caps-subset" 1 \
     '        [[ -n "$names" && "$names" != "$clause" ]] || return 1' \
     '        [[ -n "$names" ]] || continue'
 
+# snap-confine back to the one capability snapd held before 2.70.
+run_case "caps/snap-confine-set-narrowed" 1 \
+    '    "/usr/lib/snapd/snap-confine:cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_setgid,cap_setuid,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin,cap_sys_resource:snapd"' \
+    '    "/usr/lib/snapd/snap-confine:cap_sys_admin"'
+
+run_case "caps/package-check-dropped" 1 \
+    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
+    '               && true; then'
+
+run_case "caps/any-package-vouches" 1 \
+    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
+    '               && { [[ -z "$wl_pkg" ]] || [[ -n "$(file_package_verified "$file")" ]]; }; then'
+
+# Every entry made to need a package, so ping's plain whitelist stops passing.
+run_case "caps/package-demanded-of-all" 1 \
+    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
+    '               && [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; then'
+
 run_case "names/newline-raw" 1 \
     "    if [[ \"\$1\" == *[[:cntrl:]]* ]]; then printf '%q\\n' \"\$1\"; else printf '%s\\n' \"\$1\"; fi" \
     "    printf '%s\\n' \"\$1\""

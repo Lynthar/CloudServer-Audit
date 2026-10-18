@@ -125,6 +125,63 @@ SH
     [[ "$(_desc filesystem.non_standard_caps)" == *"/usr/local/sbin/arping"* ]]
 }
 
+# ---- snap-confine: snapd's file capabilities, on snapd's own copy only ------------
+
+# What snapd 2.76's snap-confine carries on Ubuntu 22.04 / 24.04.
+_SNAP_CONFINE='/usr/lib/snapd/snap-confine cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_setgid,cap_setuid,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin,cap_sys_resource=p'
+
+# file_package_verified's own tests need a dpkg host; this answers for one.
+_snapd_owns_it() { file_package_verified() { [[ "$1" == /usr/lib/snapd/snap-confine ]] && echo snapd; }; }
+
+@test "an entry naming no package passes whichever package owns the file" {
+    file_package_verified() { echo iputils-ping; }
+    _getcap '/usr/bin/ping cap_net_raw=ep'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+@test "snap-confine: snapd's capability set passes on snapd's unmodified copy" {
+    _snapd_owns_it
+    _getcap "$_SNAP_CONFINE"
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+@test "snap-confine: the smaller set of an older snapd passes too" {
+    _snapd_owns_it
+    _getcap '/usr/lib/snapd/snap-confine cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin=p'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+@test "snap-confine: one capability beyond snapd's set is reported" {
+    _snapd_owns_it
+    _getcap "${_SNAP_CONFINE%=p},cap_sys_module=p"
+    _fs_audit_caps
+    [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/lib/snapd/snap-confine:"* ]]
+}
+
+@test "snap-confine: a copy that is not snapd's unmodified one is reported" {
+    file_package_verified() { return 1; }
+    _getcap "$_SNAP_CONFINE"
+    _fs_audit_caps
+    [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/lib/snapd/snap-confine:"* ]]
+}
+
+@test "snap-confine: a copy whose package cannot be told is reported" {
+    file_package_verified() { return 2; }
+    _getcap "$_SNAP_CONFINE"
+    _fs_audit_caps
+    [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/lib/snapd/snap-confine:"* ]]
+}
+
+@test "snap-confine: a copy another package vouches for is reported" {
+    file_package_verified() { echo snapd-lookalike; }
+    _getcap "$_SNAP_CONFINE"
+    _fs_audit_caps
+    [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/lib/snapd/snap-confine:"* ]]
+}
+
 # ---- RHEL whitelists hold what Rocky 8 / 9 ship ------------------------------------
 
 @test "rhel: mtr-packet's capability at its RHEL path is not reported" {

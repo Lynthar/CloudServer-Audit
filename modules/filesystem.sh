@@ -562,9 +562,9 @@ _fs_check_pam_umask_enabled() {
     return 1
 }
 
-# Legitimate cap-bearing binaries. The cap field is the COMPLETE allowed set
-# and matching is subset-based, never substring: a contains-match exempts any
-# capability stacked onto a whitelisted binary.
+# Legitimate cap-bearing binaries, "path:caps[:package]". The cap field is the
+# COMPLETE allowed set, matched as a subset, never a substring. A package field
+# also requires the file to be that package's unmodified copy.
 declare -ga FS_CAPS_WHITELIST=(
     "/usr/bin/ping:cap_net_raw"
     "/usr/bin/traceroute:cap_net_raw"
@@ -574,8 +574,9 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/*bin/clockdiff:cap_net_raw,cap_sys_nice"
     "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
     "/usr/bin/systemd-resolve:cap_net_bind_service"
-    # snapd sandbox helper legitimately holds cap_sys_admin
-    "/usr/lib/snapd/snap-confine:cap_sys_admin"
+    # snapd's sandbox launcher: file capabilities instead of setuid root since
+    # snapd 2.70. The broadest set here, so a swapped binary must not inherit it.
+    "/usr/lib/snapd/snap-confine:cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_setgid,cap_setuid,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin,cap_sys_resource:snapd"
     # GStreamer PTP helper — Debian ships net_bind_service+net_admin, some
     # builds add sys_nice (multiarch path)
     "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice"
@@ -649,11 +650,11 @@ _fs_find_caps_files() {
 
         # Check if in whitelist. Subset semantics (see FS_CAPS_WHITELIST):
         # the file's WHOLE capability set must be covered by its entry.
-        local whitelisted=false
+        local whitelisted=false wl_file wl_cap wl_pkg
         for entry in "${FS_CAPS_WHITELIST[@]}"; do
-            local wl_file="${entry%%:*}"
-            local wl_cap="${entry#*:}"
-            if _fs_path_glob "$file" "$wl_file" && _fs_caps_subset_of "$caps" "$wl_cap"; then
+            IFS=: read -r wl_file wl_cap wl_pkg <<<"$entry"
+            if _fs_path_glob "$file" "$wl_file" && _fs_caps_subset_of "$caps" "$wl_cap" \
+               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then
                 whitelisted=true
                 break
             fi
