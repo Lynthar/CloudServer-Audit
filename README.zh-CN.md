@@ -74,13 +74,13 @@ vpssec help ssh      # 某个模块里的检查项与 fix id
 
 ## 检查什么
 
-`vpssec audit` 跑 21 个模块共 355 项检查：
+`vpssec audit` 跑 21 个模块共 356 项检查：
 
 | 领域 | 项数 | 主要检查内容 |
 |---|---|---|
 | 系统与内核 | 83 | `sysctl` 的网络与内存参数及其开机后能否保持、挂载选项、全局可写与 SUID 文件、自动更新、时间同步、cron 与 `at` 的访问控制 |
 | SSH 与账号 | 73 | sshd 配置从头到尾、密钥与口令登录、root 登录、空口令、sudo 规则、僵尸账号、口令时效 |
-| 容器与 Web 应用 | 56 | Docker 守护进程暴露面、特权容器与 `--net=host`、socket 权限、nginx 的 TLS 与响应头、暴露的管理路径 |
+| 容器与 Web 应用 | 57 | Docker 守护进程暴露面、特权容器与 `--net=host`、socket 权限、nginx 的 TLS 与响应头、暴露的管理路径 |
 | 检测与日志 | 53 | fail2ban 的 jail、rootkit 与可疑二进制扫描、journald 保留策略、日志权限、出事时到底有没有人会被通知到 |
 | 网络与防火墙 | 46 | UFW 规则与默认策略、监听端口与你以为暴露的是否一致、nginx 反代暴露面、cloudflared 隧道 |
 | 基线与运维 | 44 | 与上次运行的偏差、cloud-init 与云厂商 metadata 暴露、备份是否存在、依赖预检 |

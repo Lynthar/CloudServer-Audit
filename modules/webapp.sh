@@ -66,13 +66,19 @@ SENSITIVE_PATHS=(
     ".env.production"
 )
 
-# Nginx security headers
+# Nginx security headers the audit asks every site for, and the value the fix
+# sends where one is missing. X-XSS-Protection 0 turns the legacy XSS auditor
+# off, as OWASP advises: where it survives, "1; mode=block" can open XSS.
 declare -gA NGINX_SECURITY_HEADERS=(
     ["X-Frame-Options"]="SAMEORIGIN"
     ["X-Content-Type-Options"]="nosniff"
-    ["X-XSS-Protection"]="1; mode=block"
+    ["X-XSS-Protection"]="0"
     ["Referrer-Policy"]="strict-origin-when-cross-origin"
 )
+
+# Seconds the headers check may spend on requests in one audit; sites left
+# when it runs out are reported as not checked instead of holding the audit up.
+WEBAPP_PROBE_BUDGET=60
 
 # Weak SSL protocols
 WEAK_SSL_PROTOCOLS=(
@@ -249,17 +255,170 @@ _webapp_nginx_server_tokens() {
     ' | sort -n | cut -f2
 }
 
-# Security headers with no uncommented add_header anywhere.
-_webapp_nginx_security_headers() {
-    local stmts header missing=()
-    stmts=$(nginx_statements <<<"$NGINX_DUMP")
-    for header in "${!NGINX_SECURITY_HEADERS[@]}"; do
-        awk -F'\t' -v h="${header,,}" '
-            $3 == "add_header" { split($4, w, " "); if (tolower(w[1]) == h) { found = 1; exit } }
-            END { exit !found }
-        ' <<<"$stmts" || missing+=("$header")
+# The http servers the headers check requests, one per line: "url\t<url>\t<curl
+# --resolve entry, or ->", or "unchecked\t<name>\t<listen|name>" for one this
+# host cannot address. One with ssl_reject_handshake on serves no page.
+_webapp_nginx_header_targets() {
+    nginx_statements <<<"$NGINX_DUMP" | LC_ALL=C awk -F'\t' '
+        # A listen spec into A (address to connect to), P (port) and K (the
+        # socket it names); 0 when it is not a TCP address of this host.
+        function parse(spec,   i, a) {
+            if (spec ~ /^unix:/) return 0
+            if (spec ~ /^\[/) {
+                i = index(spec, "]"); a = substr(spec, 2, i - 2); P = substr(spec, i + 1)
+                P = (P ~ /^:/) ? substr(P, 2) : "80"
+                K = "[" a "]:" P
+                A = (a == "::") ? "::1" : a
+            } else {
+                if (spec ~ /^[0-9]+$/) { a = "*"; P = spec }
+                else if (i = index(spec, ":")) { a = substr(spec, 1, i - 1); P = substr(spec, i + 1) }
+                else { a = spec; P = "80" }
+                if (a == "0.0.0.0") a = "*"
+                K = a ":" P
+                A = (a == "*" || a == "localhost") ? "127.0.0.1" : a
+            }
+            return P ~ /^[0-9]+$/ && (A ~ /^[0-9.]+$/ || A ~ /:/)
+        }
+        $2 ~ /^http\/server(\/|$)/ { seen[$1] = 1; if ($1 > last) last = $1 }
+        $2 != "http/server" { next }
+        $3 == "listen" { L[$1, ++nl[$1]] = $4 }
+        $3 == "server_name" { names[$1] = names[$1] " " $4 }
+        $3 == "ssl" && $4 == "on" { sslon[$1] = 1 }
+        $3 == "ssl_reject_handshake" && $4 == "on" { reject[$1] = 1 }
+        END {
+            # A request with no matching name goes to the default_server of its
+            # socket, else to the first server that listens there.
+            for (s = 1; s <= last; s++) {
+                if (!(s in seen)) continue
+                if (!nl[s]) L[s, ++nl[s]] = "80"
+                for (i = 1; i <= nl[s]; i++) {
+                    n = split(L[s, i], w, " ")
+                    if (!parse(w[1])) continue
+                    if (!(K in first)) first[K] = s
+                    for (j = 2; j <= n; j++) if (w[j] == "default_server" || w[j] == "default") dflt[K] = s
+                }
+            }
+            for (s = 1; s <= last; s++) {
+                if (!(s in seen) || (s in reject)) continue
+                best = 0
+                for (i = 1; i <= nl[s]; i++) {
+                    n = split(L[s, i], w, " ")
+                    tls = (s in sslon); bad = 0
+                    for (j = 2; j <= n; j++) {
+                        if (w[j] == "ssl") tls = 1
+                        else if (w[j] == "quic" || w[j] == "proxy_protocol") bad = 1
+                    }
+                    if (bad || !parse(w[1])) continue
+                    score = (tls ? 2 : 0) + (A ~ /:/ ? 1 : 2)
+                    if (score > best) { best = score; bA = A; bP = P; bK = K; bT = tls }
+                }
+                name = ""; label = ""
+                m = split(names[s], w, " ")
+                for (j = 1; j <= m; j++) {
+                    if (label == "") label = w[j]
+                    if (name == "" && w[j] != "_" && w[j] !~ /^~/ && w[j] !~ /\*/) { name = w[j]; sub(/^\./, "", name) }
+                }
+                if (label == "") { split(L[s, 1], w, " "); label = w[1] }
+                if (!best) { print "unchecked\t" label "\tlisten"; continue }
+                addr = (bA ~ /:/) ? "[" bA "]" : bA
+                if (name == "") {
+                    if (((bK in dflt) ? dflt[bK] : first[bK]) != s) { print "unchecked\t" label "\tname"; continue }
+                    host = addr; resolve = "-"
+                } else {
+                    host = name; resolve = name ":" bP ":" addr
+                }
+                print "url\t" (bT ? "https" : "http") "://" host (bP == (bT ? "443" : "80") ? "" : ":" bP) "/\t" resolve
+            }
+        }
+    '
+}
+
+# Print the lowercased names of the headers $1 answers with (curl --resolve $2,
+# or -), comma-joined, following same-origin redirects up to three. 0 = a page;
+# 1 = no page (empty reply, redirect elsewhere); 2 = curl failed, its code printed.
+_webapp_probe_headers() {
+    local url="$1" origin="" out rc hops=0 code location names
+    local -a opts=(-gsk -o /dev/null -D - -A vpssec --connect-timeout 2 --max-time 5)
+    [[ "$2" == - ]] || opts+=(--resolve "$2")
+    [[ "$url" =~ ^[a-z]+://[^/]+ ]] && origin="${BASH_REMATCH[0]}"
+    while :; do
+        rc=0
+        out=$(curl "${opts[@]}" "$url" 2>/dev/null) || rc=$?
+        (( rc != 52 )) || return 1
+        (( rc == 0 )) || { echo "$rc"; return 2; }
+        { read -r code; read -r location; read -r names; } < <(LC_ALL=C awk '
+            { sub(/\r$/, "") }
+            /^HTTP\// { split($0, f, " "); code = f[2]; loc = ""; names = ""; next }
+            (i = index($0, ":")) > 1 {
+                n = tolower(substr($0, 1, i - 1))
+                if (n == "location") { loc = substr($0, i + 1); sub(/^[ \t]+/, "", loc) }
+                names = names (names == "" ? "" : ",") n
+            }
+            END { print code; print loc; print names }
+        ' <<<"$out")
+        if [[ "$code" != 3[0-9][0-9] || -z "$location" ]]; then
+            echo "$names"
+            return 0
+        fi
+        (( ++hops <= 3 )) || return 1
+        [[ "$location" == //* ]] && location="${origin%%//*}$location"
+        if [[ "$location" == /* ]]; then
+            url="$origin$location"
+        elif [[ "${location,,}" == "${origin,,}" || "${location,,}" == "${origin,,}"/* ]]; then
+            url="$location"
+        else
+            return 1
+        fi
     done
-    printf '%s\n' "${missing[@]}"
+}
+
+# One line per http server: "missing\t<url>\t<headers>", "ok\t<url>", or
+# "unchecked\t<url or name>\t<reason>" (listen, name, curl, budget, or curl's
+# exit code). A server that answers with no page is left out.
+_webapp_nginx_header_results() {
+    local kind where how out rc header joined deadline=$((SECONDS + WEBAPP_PROBE_BUDGET))
+    local -a keys=() missing=()
+    mapfile -t keys < <(printf '%s\n' "${!NGINX_SECURITY_HEADERS[@]}" | LC_ALL=C sort)
+    while IFS=$'\t' read -r kind where how; do
+        if [[ "$kind" == unchecked ]]; then
+            printf 'unchecked\t%s\t%s\n' "$where" "$how"
+            continue
+        elif ! check_command curl; then
+            printf 'unchecked\t%s\tcurl\n' "$where"
+            continue
+        elif (( SECONDS >= deadline )); then
+            printf 'unchecked\t%s\tbudget\n' "$where"
+            continue
+        fi
+        rc=0
+        out=$(_webapp_probe_headers "$where" "$how") || rc=$?
+        case "$rc" in
+            0) ;;
+            1) continue ;;
+            *) printf 'unchecked\t%s\t%s\n' "$where" "$out"; continue ;;
+        esac
+        missing=()
+        for header in "${keys[@]}"; do
+            [[ ",$out," == *",${header,,},"* ]] || missing+=("$header")
+        done
+        if (( ${#missing[@]} == 0 )); then
+            printf 'ok\t%s\n' "$where"
+        else
+            printf -v joined '%s, ' "${missing[@]}"
+            printf 'missing\t%s\t%s\n' "$where" "${joined%, }"
+        fi
+    done < <(_webapp_nginx_header_targets)
+}
+
+# Header names (lowercased) the operator's own add_header sets in http{}, leaving
+# out the drop-in at $1, which the headers fix rewrites.
+_webapp_nginx_http_headers() {
+    OWN="$1" LC_ALL=C awk '
+        /^# configuration file .*:$/ { skip = (substr($0, 22, length($0) - 22) == ENVIRON["OWN"]) }
+        !skip
+    ' <<<"$NGINX_DUMP" | nginx_statements | LC_ALL=C awk -F'\t' '
+        $1 == 0 && $2 == "http" && $3 == "add_header" { split($4, w, " "); print tolower(w[1]) }
+    '
 }
 
 # Pass conditions of the two checks above, re-read: a re-check after a fix must
@@ -270,10 +429,17 @@ _webapp_nginx_server_tokens_ok() {
     [[ -z "$(_webapp_nginx_server_tokens)" ]]
 }
 
+# nginx's reload returns before its new workers take over, so a request right
+# after a fix can still meet the old configuration: ask again before failing.
 _webapp_nginx_security_headers_ok() {
-    nginx_dump_reset
-    nginx_dump_load || return 1
-    [[ -z "$(_webapp_nginx_security_headers)" ]]
+    local try
+    for try in 1 2 3; do
+        nginx_dump_reset
+        nginx_dump_load || return 1
+        grep -q $'^missing\t' <<<"$(_webapp_nginx_header_results)" || return 0
+        (( try == 3 )) || sleep 1
+    done
+    return 1
 }
 
 # HSTS: missing / weak (no `always`, so error responses go without it) /
@@ -750,20 +916,49 @@ _webapp_audit_nginx() {
             desc="$(i18n 'webapp.nginx_server_tokens_ok_desc')"
     fi
 
-    # 2. Security headers
-    local missing_headers=$(_webapp_nginx_security_headers)
-    local missing_count=$(count_lines "$missing_headers")
+    # 2. Security headers, as each site's response carries them: an application
+    # behind proxy_pass may send them itself, which no nginx directive shows.
+    local kind where what joined hint headers_ok=0 no_curl=0
+    local -a headers_missing=() headers_unchecked=()
+    while IFS=$'\t' read -r kind where what; do
+        case "$kind" in
+            missing) headers_missing+=("$where: $what") ;;
+            ok) headers_ok=1 ;;
+            unchecked)
+                case "$what" in
+                    curl) no_curl=1; continue ;;
+                    listen) what=$(i18n 'webapp.headers_unchecked_listen') ;;
+                    name) what=$(i18n 'webapp.headers_unchecked_name') ;;
+                    budget) what=$(i18n 'webapp.headers_unchecked_budget') ;;
+                    *) what=$(i18n 'webapp.headers_unchecked_failed' "rc=$what") ;;
+                esac
+                headers_unchecked+=("$where: $what") ;;
+        esac
+    done < <(_webapp_nginx_header_results)
 
-    if [[ -n "$missing_headers" && "$missing_count" -gt 0 ]]; then
+    if (( ${#headers_missing[@]} > 0 )); then
+        printf -v joined '%s; ' "${headers_missing[@]}"
         check_emit "webapp.nginx_security_headers" low failed \
-            title="$(i18n 'webapp.missing_security_headers'): $missing_count" \
-            desc="$(echo "$missing_headers" | tr '\n' ', ' | sed 's/,$//')" \
+            title="$(i18n 'webapp.missing_security_headers' "count=${#headers_missing[@]}")" \
+            desc="${joined%; }" \
             suggestion="$(i18n 'webapp.add_security_headers')" \
             fix="webapp.nginx_security_headers"
-    else
+    elif (( headers_ok )); then
         check_emit "webapp.nginx_security_headers_ok" info passed \
             title="$(i18n 'webapp.security_headers_ok')" \
             desc="$(i18n 'webapp.nginx_security_headers_ok_desc')"
+    fi
+    if (( no_curl )); then
+        hint=$(pkg_install_hint curl) || hint=$(i18n 'preflight.install_deps' "deps=curl")
+        check_emit "webapp.nginx_security_headers_not_checked" low failed \
+            title="$(i18n 'webapp.security_headers_not_checked')" \
+            desc="$(i18n 'webapp.headers_unchecked_curl')" \
+            suggestion="$hint"
+    elif (( ${#headers_unchecked[@]} > 0 )); then
+        printf -v joined '%s; ' "${headers_unchecked[@]}"
+        check_emit "webapp.nginx_security_headers_not_checked" low failed \
+            title="$(i18n 'webapp.security_headers_not_checked')" \
+            desc="${joined%; }"
     fi
 
     # 3. Directory listing
@@ -1151,46 +1346,45 @@ _webapp_fix_nginx_server_tokens() {
     return 0
 }
 
-# Fix: Nginx security headers
+# Fix: Nginx security headers. Each goes out only where the response lacks it:
+# a map on the upstream's copy leaves an application's own value alone, and one
+# the operator sets in http{} is not written a second time beside theirs.
 _webapp_fix_nginx_security_headers() {
     print_info "$(i18n 'webapp.adding_headers')"
 
-    # Create a drop-in configuration
     local headers_conf="$NGINX_CONFD/security-headers.conf"
+    local pre_existed="false" bak="" header name declared block content=""
+    [[ -f "$headers_conf" ]] && pre_existed="true"
+
+    nginx_dump_reset
+    if ! nginx_dump_load; then
+        print_error "$(i18n 'webapp.nginx_test_failed')"
+        [[ -n "$NGINX_DUMP_ERROR" ]] && print_info "$(i18n 'webapp.nginx_test_output' "msg=$NGINX_DUMP_ERROR")"
+        return 1
+    fi
+    declared=$(_webapp_nginx_http_headers "$headers_conf")
+    while IFS= read -r header; do
+        name="${header,,}"
+        grep -qxF "$name" <<<"$declared" && continue
+        name="${name//-/_}"
+        printf -v block 'map $upstream_http_%s $vpssec_%s {\n    ""      "%s";\n    default "";\n}\nadd_header %s $vpssec_%s always;\n' \
+            "$name" "$name" "${NGINX_SECURITY_HEADERS[$header]}" "$header" "$name"
+        content+=$'\n'"$block"
+    done < <(printf '%s\n' "${!NGINX_SECURITY_HEADERS[@]}" | LC_ALL=C sort)
+    # Every header is already set in http{}: a site still without one has its own
+    # add_header, which stops http{}'s from reaching it, and no drop-in can help.
+    if [[ -z "$content" ]]; then
+        print_error "$(i18n 'webapp.headers_all_declared')"
+        return 1
+    fi
+    printf -v content '%s\n%s\n%s\n%s' '# Security headers - added by vpssec' \
+        '# Each header is sent only when the response does not already carry it,' \
+        '# so one the application behind proxy_pass sets is left as it is.' "$content"
 
     # backup_file is UNCONDITIONAL: for an absent path it records the file as
     # fix-created, the only thing that lets a rollback delete this drop-in.
     # pre_existed is separate: the failure path chooses restore or remove.
-    local pre_existed="false" bak=""
-    [[ -f "$headers_conf" ]] && pre_existed="true"
     bak=$(backup_file "$headers_conf") || return 1
-
-    local content
-    content=$(cat << 'EOF'
-# Security headers - added by vpssec
-# Add to server blocks or include in http block
-
-# Prevent clickjacking
-add_header X-Frame-Options "SAMEORIGIN" always;
-
-# Prevent MIME type sniffing
-add_header X-Content-Type-Options "nosniff" always;
-
-# XSS protection: explicitly DISABLED, which is the current OWASP advice.
-# The XSS Auditor this header enables is removed from every current browser,
-# and in the ones that still honour it "1; mode=block" has been shown to
-# introduce XSS vulnerabilities into otherwise safe pages. Sending 0 turns
-# the filter off rather than leaving it to the browser default. Real
-# protection comes from Content-Security-Policy below.
-add_header X-XSS-Protection "0" always;
-
-# Referrer policy
-add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-# Note: Add Content-Security-Policy based on your application needs
-# add_header Content-Security-Policy "default-src 'self';" always;
-EOF
-)
 
     if ! write_file_atomic "$headers_conf" "$content"; then
         print_error "$(i18n 'common.failed')"

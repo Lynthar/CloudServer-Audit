@@ -45,8 +45,34 @@ run_case "headers/backup-guarded-again" 1 \
     '    [[ -f "$headers_conf" ]] && { bak=$(backup_file "$headers_conf") || return 1; }'
 
 run_case "headers/xss-auditor-re-enabled" 1 \
-    'add_header X-XSS-Protection "0" always;' \
-    'add_header X-XSS-Protection "1; mode=block" always;'
+    '    ["X-XSS-Protection"]="0"' \
+    '    ["X-XSS-Protection"]="1; mode=block"'
+
+# A plain add_header goes out beside the application's own copy: two values.
+run_case "headers/upstream-copy-ignored" 1 \
+    "        content+=\$'\\n'\"\$block\"" \
+    "        content+=\$'\\n'\"add_header \$header \${NGINX_SECURITY_HEADERS[\$header]} always;\""
+
+run_case "headers/operator-header-written-again" 1 \
+    '        grep -qxF "$name" <<<"$declared" && continue' \
+    '        :'
+
+run_case "headers/own-dropin-taken-for-operator" 1 \
+    '        !skip' \
+    '        1'
+
+# A server's own add_header does not reach the other servers; only http{}'s does.
+run_case "headers/server-header-taken-for-http" 1 \
+    '        $1 == 0 && $2 == "http" && $3 == "add_header" { split($4, w, " "); print tolower(w[1]) }' \
+    '        $3 == "add_header" { split($4, w, " "); print tolower(w[1]) }'
+
+run_case "headers/nothing-to-add-written" 1 \
+    '    if [[ -z "$content" ]]; then' \
+    '    if false; then'
+
+run_case "headers/unreadable-config-written" 1 \
+    '    if ! nginx_dump_load; then' \
+    '    if false; then'
 
 run_case "headers/rejected-dropin-left-behind" 1 \
     '            rm -f "$headers_conf"' \

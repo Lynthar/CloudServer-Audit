@@ -65,3 +65,101 @@ run_case "certs/relative-path-unresolved" 1 \
 run_case "unreadable/audit-complete" 1 \
     '            _module_record_failure webapp query' \
     '            :'
+
+# ---- security headers: requests to each site --------------------------------------
+
+run_case "headers/v6-wildcard-asked-as-is" 1 \
+    '                A = (a == "::") ? "::1" : a' \
+    '                A = a'
+
+run_case "headers/v4-wildcard-asked-as-is" 1 \
+    '                A = (a == "*" || a == "localhost") ? "127.0.0.1" : a' \
+    '                A = a'
+
+run_case "headers/tls-not-preferred" 1 \
+    '                    score = (tls ? 2 : 0) + (A ~ /:/ ? 1 : 2)' \
+    '                    score = (A ~ /:/ ? 1 : 2)'
+
+run_case "headers/v6-preferred" 1 \
+    '                    score = (tls ? 2 : 0) + (A ~ /:/ ? 1 : 2)' \
+    '                    score = (tls ? 2 : 0) + (A ~ /:/ ? 2 : 1)'
+
+run_case "headers/implicit-default-ignored" 1 \
+    '                    if (((bK in dflt) ? dflt[bK] : first[bK]) != s) { print "unchecked\t" label "\tname"; continue }' \
+    '                    if (!(bK in dflt) || dflt[bK] != s) { print "unchecked\t" label "\tname"; continue }'
+
+run_case "headers/explicit-default-ignored" 1 \
+    '                    for (j = 2; j <= n; j++) if (w[j] == "default_server" || w[j] == "default") dflt[K] = s' \
+    '                    j = n'
+
+run_case "headers/reject-handshake-asked" 1 \
+    '                if (!(s in seen) || (s in reject)) continue' \
+    '                if (!(s in seen)) continue'
+
+run_case "headers/stream-server-asked" 1 \
+    '        $2 ~ /^http\/server(\/|$)/ { seen[$1] = 1; if ($1 > last) last = $1 }' \
+    '        $2 ~ /server(\/|$)/ { seen[$1] = 1; if ($1 > last) last = $1 }'
+
+# "_" is the conventional name that matches nothing; asked by it, nginx answers
+# from the default server, so the finding would name the wrong site.
+run_case "headers/catchall-name-asked" 1 \
+    '                    if (name == "" && w[j] != "_" && w[j] !~ /^~/ && w[j] !~ /\*/) { name = w[j]; sub(/^\./, "", name) }' \
+    '                    if (name == "") { name = w[j]; sub(/^\./, "", name) }'
+
+run_case "headers/resolve-dropped" 1 \
+    '    [[ "$2" == - ]] || opts+=(--resolve "$2")' \
+    '    :'
+
+run_case "headers/empty-reply-unchecked" 1 \
+    '        (( rc != 52 )) || return 1' \
+    '        :'
+
+run_case "headers/redirect-judged" 1 \
+    '        if [[ "$code" != 3[0-9][0-9] || -z "$location" ]]; then' \
+    '        if true; then'
+
+run_case "headers/same-origin-not-followed" 1 \
+    '            url="$origin$location"' \
+    '            return 1'
+
+run_case "headers/redirect-elsewhere-followed" 1 \
+    '        elif [[ "${location,,}" == "${origin,,}" || "${location,,}" == "${origin,,}"/* ]]; then' \
+    '        elif true; then'
+
+run_case "headers/one-hop-only" 1 \
+    '        (( ++hops <= 3 )) || return 1' \
+    '        (( ++hops <= 1 )) || return 1'
+
+# HTTP/1.1 lines end in CRLF: a Location still carrying the CR names another URL.
+run_case "headers/cr-kept" 1 \
+    '            { sub(/\r$/, "") }' \
+    '            { x = 1 }'
+
+run_case "headers/name-case-sensitive" 1 \
+    '            [[ ",$out," == *",${header,,},"* ]] || missing+=("$header")' \
+    '            [[ ",$out," == *",${header},"* ]] || missing+=("$header")'
+
+run_case "headers/budget-ignored" 1 \
+    '        elif (( SECONDS >= deadline )); then' \
+    '        elif false; then'
+
+run_case "headers/asked-without-curl" 1 \
+    '        elif ! check_command curl; then' \
+    '        elif false; then'
+
+run_case "headers/ok-not-reported" 1 \
+    '            ok) headers_ok=1 ;;' \
+    '            ok) ;;'
+
+run_case "headers/unchecked-not-reported" 1 \
+    '    elif (( ${#headers_unchecked[@]} > 0 )); then' \
+    '    elif false; then'
+
+# nginx's reload returns before the new workers serve: one look can see the old.
+run_case "headers/verify-not-retried" 1 \
+    '        (( try == 3 )) || sleep 1' \
+    '        break'
+
+run_case "headers/verify-once" 1 \
+    '    for try in 1 2 3; do' \
+    '    for try in 1; do'

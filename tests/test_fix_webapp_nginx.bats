@@ -28,8 +28,23 @@ setup() {
 
 # ---- stubs ----------------------------------------------------------
 
-_nginx_validates() { _vpssec_stub nginx 0; }
-_nginx_rejects()   { _vpssec_stub nginx 1; }
+# nginx -T prints nginx.conf and each conf.d file, as nginx would after reading
+# them; -t exits $1. The headers fix reads -T before it writes anything.
+_nginx_stub() {
+    export NGINX_TEST_CONF="$NGINX_CONF" NGINX_TEST_CONFD="$NGINX_CONFD" NGINX_TEST_RC="$1"
+    _vpssec_stub_script nginx <<'SH'
+if [[ "$*" == *-T* ]]; then
+    for f in "$NGINX_TEST_CONF" "$NGINX_TEST_CONFD"/*.conf; do
+        [[ -f "$f" ]] && printf '# configuration file %s:\n%s\n' "$f" "$(cat "$f")"
+    done
+    exit 0
+fi
+exit "$NGINX_TEST_RC"
+SH
+}
+
+_nginx_validates() { _nginx_stub 0; }
+_nginx_rejects()   { _nginx_stub 1; }
 
 # nginx -t writes its diagnostic to stderr, which is the whole reason the fixes
 # capture 2>&1 rather than discarding it.
@@ -60,6 +75,16 @@ http {
     include /etc/nginx/conf.d/*.conf;
 }
 EOF
+}
+
+# nginx.conf whose http{} holds the given lines and includes conf.d, as Debian's does.
+_headers_nginx_conf() {
+    { printf 'http {\n'; printf '%s\n' "$@"; printf '    include %s/*.conf;\n}\n' "$NGINX_CONFD"; } > "$NGINX_CONF"
+}
+
+# The value the map named $1 gives a response that lacks the header.
+_map_value() {
+    grep -A1 -F "\$vpssec_$1 {" "$NGINX_CONFD/security-headers.conf" | tail -1
 }
 
 # Count the ACTIVE (uncommented) server_tokens directives.
@@ -188,32 +213,85 @@ _active_server_tokens() {
 # webapp.nginx_security_headers  (FIX_SAFE — writes an auto-included drop-in)
 # ==============================================================================
 
-@test "headers: the drop-in carries the recommended headers" {
+@test "headers: each header is a map on the upstream's copy and an add_header of it" {
+    # The map leaves the header empty, so unsent, when the application already
+    # sends one: a second copy beside it is the conflict this fix used to cause.
+    _headers_nginx_conf
     run _webapp_fix_nginx_security_headers
     [ "$status" -eq 0 ]
-    grep -q 'add_header X-Frame-Options' "$NGINX_CONFD/security-headers.conf"
-    grep -q 'add_header X-Content-Type-Options "nosniff"' "$NGINX_CONFD/security-headers.conf"
-    grep -q 'add_header Referrer-Policy' "$NGINX_CONFD/security-headers.conf"
+    local f="$NGINX_CONFD/security-headers.conf"
+    grep -qxF 'map $upstream_http_x_frame_options $vpssec_x_frame_options {' "$f"
+    [ "$(_map_value x_frame_options)" = '    ""      "SAMEORIGIN";' ]
+    grep -qxF '    default "";' "$f"
+    grep -qxF 'add_header X-Frame-Options $vpssec_x_frame_options always;' "$f"
+    grep -qxF 'add_header X-Content-Type-Options $vpssec_x_content_type_options always;' "$f"
+    grep -qxF 'add_header Referrer-Policy $vpssec_referrer_policy always;' "$f"
+    grep -qxF 'add_header X-XSS-Protection $vpssec_x_xss_protection always;' "$f"
 }
 
 @test "headers: the legacy XSS auditor is disabled, not enabled" {
     # OWASP recommends X-XSS-Protection: 0. Sending "1; mode=block" turns on
     # a filter that is absent from current browsers and, where present, can
     # introduce XSS into a safe page — the opposite of this tool's purpose.
+    _headers_nginx_conf
     run _webapp_fix_nginx_security_headers
     [ "$status" -eq 0 ]
-    # Both patterns require an ACTIVE directive: the explanatory comment
-    # above it quotes the old value, so an unanchored search for
-    # "mode=block" matches the commentary rather than the configuration.
-    grep -qE '^[^#]*add_header[[:space:]]+X-XSS-Protection[[:space:]]+"0"' \
-        "$NGINX_CONFD/security-headers.conf"
-    _vpssec_refute grep -qE '^[^#]*add_header[[:space:]]+X-XSS-Protection[[:space:]]+"1' \
-        "$NGINX_CONFD/security-headers.conf"
+    [ "$(_map_value x_xss_protection)" = '    ""      "0";' ]
+}
+
+@test "headers: one the operator sets in http{} is not written a second time" {
+    _headers_nginx_conf '    add_header X-Frame-Options "DENY" always;'
+    printf 'add_header Referrer-Policy "no-referrer";\n' > "$NGINX_CONFD/ops.conf"
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 0 ]
+    local f="$NGINX_CONFD/security-headers.conf"
+    _vpssec_refute grep -qE 'X-Frame-Options|Referrer-Policy' "$f"
+    grep -qxF 'add_header X-Content-Type-Options $vpssec_x_content_type_options always;' "$f"
+}
+
+@test "headers: one a single server sets for itself is still written for the rest" {
+    _headers_nginx_conf '    server { listen 80; server_name a.example; add_header X-Frame-Options DENY; }'
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 0 ]
+    grep -qxF 'add_header X-Frame-Options $vpssec_x_frame_options always;' "$NGINX_CONFD/security-headers.conf"
+}
+
+@test "headers: the drop-in's own earlier lines are not taken for the operator's" {
+    _headers_nginx_conf
+    printf '# Security headers - added by vpssec\nadd_header X-Frame-Options "SAMEORIGIN" always;\n' \
+        > "$NGINX_CONFD/security-headers.conf"
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 0 ]
+    grep -qxF 'add_header X-Frame-Options $vpssec_x_frame_options always;' "$NGINX_CONFD/security-headers.conf"
+}
+
+@test "headers: with all four set in http{}, nothing is written and the fix fails" {
+    # A site still missing one has its own add_header, which stops http{}'s
+    # from reaching it; another http{}-level copy would change nothing there.
+    VPSSEC_QUIET_SCAN=0
+    _headers_nginx_conf '    add_header X-Frame-Options DENY;' '    add_header X-Content-Type-Options nosniff;' \
+        '    add_header X-XSS-Protection 0;' '    add_header Referrer-Policy no-referrer;'
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 1 ]
+    [ ! -f "$NGINX_CONFD/security-headers.conf" ]
+    grep -qF 'has its own add_header' <<<"$output"
+    _vpssec_refute _vpssec_stub_called systemctl 'reload nginx'
+}
+
+@test "headers: a config nginx -T cannot read fails the fix before it writes" {
+    _headers_nginx_conf
+    _vpssec_stub nginx 1
+    _vpssec_begin_backup_session
+    run _webapp_fix_nginx_security_headers
+    [ "$status" -eq 1 ]
+    [ ! -f "$NGINX_CONFD/security-headers.conf" ]
+    [ ! -s "${VPSSEC_BACKUP_SESSION}/.vpssec_created" ]
 }
 
 @test "headers: a newly created drop-in is recorded so rollback deletes it" {
     # The regression: backup_file was called only for an existing file, so a
     # first run left an active drop-in that no rollback could remove.
+    _headers_nginx_conf
     _vpssec_begin_backup_session
 
     run _webapp_fix_nginx_security_headers
@@ -222,6 +300,7 @@ _active_server_tokens() {
 }
 
 @test "headers: an existing drop-in is backed up before replacement" {
+    _headers_nginx_conf
     printf '# operator headers\nadd_header X-Custom "1";\n' > "$NGINX_CONFD/security-headers.conf"
     _vpssec_begin_backup_session
 
@@ -234,6 +313,7 @@ _active_server_tokens() {
     # This fix is FIX_SAFE, so it runs unprompted. Reporting "created" over a
     # file the operator wrote is the difference between a recoverable change
     # and one nobody knows happened.
+    _headers_nginx_conf
     VPSSEC_QUIET_SCAN=0
     printf '# operator headers\nadd_header X-Custom "1";\n' > "$NGINX_CONFD/security-headers.conf"
     _vpssec_begin_backup_session
@@ -246,6 +326,7 @@ _active_server_tokens() {
 }
 
 @test "headers: a reload that fails is a failed fix, not a success" {
+    _headers_nginx_conf
     _reload_fails
 
     run _webapp_fix_nginx_security_headers
@@ -255,14 +336,17 @@ _active_server_tokens() {
 @test "headers: a drop-in nginx rejects is removed again" {
     # conf.d is auto-included, so leaving a rejected file behind breaks the
     # next reload of a server this fix was supposed to harden.
+    _headers_nginx_conf
     _nginx_rejects
 
     run _webapp_fix_nginx_security_headers
     [ "$status" -eq 1 ]
+    _vpssec_stub_called nginx '-t$'
     [ ! -f "$NGINX_CONFD/security-headers.conf" ]
 }
 
 @test "headers: a rejected change restores the operator's previous drop-in" {
+    _headers_nginx_conf
     printf '# operator headers\nadd_header X-Custom "1";\n' > "$NGINX_CONFD/security-headers.conf"
     _nginx_rejects
 

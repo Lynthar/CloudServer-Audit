@@ -18,6 +18,35 @@ case "\$*" in
 esac
 exit 0
 SH
+    # The headers check requests every site: no test may reach a real one.
+    _curl_answers
+}
+
+# curl answers a URL from $BATS_TEST_TMPDIR/curl, an exit code on the first line
+# and the header block after it; a URL with no answer there is refused (exit 7).
+_curl_answers() {
+    export CURL_ANSWERS="$BATS_TEST_TMPDIR/curl"
+    mkdir -p "$CURL_ANSWERS"
+    _vpssec_stub_script curl <<'SH'
+f="$CURL_ANSWERS/$(printf '%s' "${@: -1}" | tr -c 'A-Za-z0-9' _)"
+[[ -f "$f" ]] || exit 7
+tail -n +2 "$f"
+exit "$(head -1 "$f")"
+SH
+}
+
+# _answer URL RC [HEADER-LINE...]: what curl gets back from URL, lines CRLF-ended.
+_answer() {
+    local url="$1" rc="$2"
+    shift 2
+    { printf '%s\n' "$rc"; printf '%s\r\n' "$@"; } > "$CURL_ANSWERS/$(printf '%s' "$url" | tr -c 'A-Za-z0-9' _)"
+}
+
+_ALL_FOUR=('X-Frame-Options: DENY' 'X-Content-Type-Options: nosniff' 'X-XSS-Protection: 0' 'Referrer-Policy: no-referrer')
+
+# An nginx -T dump of one nginx.conf whose http{} holds $1.
+_dump_http() {
+    printf '# configuration file /etc/nginx/nginx.conf:\nhttp {\n%s\n}\n' "$1" > "$BATS_TEST_TMPDIR/dump"
 }
 
 # The `nginx -T` text the stub answers with: the stock Debian 12 dump with
@@ -111,15 +140,165 @@ b.example" ]
     [ -z "$output" ]
 }
 
-@test "headers: an add_header that is only a comment is missing" {
-    _dump_with_site 'server { listen 80;
-    # add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always; }'
-    nginx_dump_reset
-    nginx_dump_load
-    run _webapp_nginx_security_headers
-    grep -qxF X-Frame-Options <<<"$output"
-    _vpssec_refute grep -qxF X-Content-Type-Options <<<"$output"
+# ---- security headers: what each site's response carries --------------------------
+
+@test "headers: a proxied site whose application sends all four passes" {
+    # No add_header anywhere: the application behind proxy_pass sends them.
+    _dump_http 'server { listen 80; server_name app.example; location / { proxy_pass http://127.0.0.1:3000; } }'
+    _answer 'http://app.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+    _vpssec_refute grep -qxF webapp.nginx_security_headers <<<"$(_ids)"
+}
+
+@test "headers: a site is named with the headers its response lacks" {
+    _dump_http 'server { listen 80; server_name app.example; add_header X-Frame-Options DENY; }'
+    _answer 'http://app.example/' 0 'HTTP/2 200' 'x-frame-options: DENY' 'x-content-type-options: nosniff'
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers)" = "http://app.example/: Referrer-Policy, X-XSS-Protection" ]
+}
+
+@test "headers: the request names the server and goes to its listen address" {
+    _dump_http 'server { listen [::]:8443 ssl; listen 8443 ssl; server_name app.example www.app.example; }'
+    _answer 'https://app.example:8443/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    _vpssec_stub_called curl '--resolve app\.example:8443:127\.0\.0\.1 https://app\.example:8443/$'
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+}
+
+@test "headers: a server on both 80 and 443 is asked over TLS" {
+    _dump_http 'server { listen 80; listen 443 ssl; server_name app.example; }'
+    _answer 'https://app.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+}
+
+@test "headers: an IPv6-only listen is asked at ::1" {
+    _dump_http 'server { listen [::]:80; server_name v6.example; }'
+    _answer 'http://v6.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    _vpssec_stub_called curl '--resolve v6\.example:80:\[::1\] '
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+}
+
+@test "headers: a nameless server is asked by address only when it is the default" {
+    _dump_http 'server { listen 80; server_name a.example; }
+server { listen 80 default_server; server_name _; }
+server { listen 80; server_name _; }'
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _answer 'http://127.0.0.1/' 0 'HTTP/1.1 200 OK'
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers)" = "http://127.0.0.1/: Referrer-Policy, X-Content-Type-Options, X-Frame-Options, X-XSS-Protection" ]
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "_: no server_name to request it by, and not the default server of its port" ]
+}
+
+@test "headers: with no default_server, the first server on a port is its default" {
+    _dump_http 'server { listen 8080; server_name _; }
+server { listen 8080; server_name ""; }'
+    _answer 'http://127.0.0.1:8080/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "8080: no server_name to request it by, and not the default server of its port" ]
+}
+
+@test "headers: a redirect within the site is followed, one off it serves no page" {
+    _dump_http 'server { listen 80; server_name a.example; return 301 https://www.a.example$request_uri; }
+server { listen 443 ssl; server_name a.example; }'
+    _answer 'http://a.example/' 0 'HTTP/1.1 301 Moved Permanently' 'Location: https://www.a.example/'
+    _answer 'https://a.example/' 0 'HTTP/1.1 302 Found' 'Location: /login'
+    _answer 'https://a.example/login' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+    _vpssec_refute grep -qE '^webapp\.nginx_security_headers(_not_checked)?$' <<<"$(_ids)"
+}
+
+@test "headers: a redirect loop is given up after three hops" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    _answer 'http://a.example/' 0 'HTTP/1.1 302 Found' 'Location: /'
+    _audit_nginx
+    [ "$(grep -c '^curl ' "$VPSSEC_STUB_LOG")" -eq 4 ]
+    _vpssec_refute grep -qE '^webapp\.nginx_security_headers' <<<"$(_ids)"
+}
+
+@test "headers: a server that closes the connection serves no page" {
+    _dump_http 'server { listen 80 default_server; server_name _; return 444; }'
+    _answer 'http://127.0.0.1/' 52
+    _audit_nginx
+    _vpssec_stub_called curl 'http://127\.0\.0\.1/$'
+    _vpssec_refute grep -qE '^webapp\.nginx_security_headers' <<<"$(_ids)"
+}
+
+@test "headers: a server refusing every TLS handshake is not asked" {
+    _dump_http 'server { listen 443 ssl default_server; server_name _; ssl_reject_handshake on; }
+server { listen 80; server_name a.example; }'
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+    _vpssec_refute _vpssec_stub_called curl 'https://'
+}
+
+@test "headers: a stream server is not an http site" {
+    printf '# configuration file /etc/nginx/nginx.conf:\nstream { server { listen 5353; proxy_pass 10.0.0.1:53; } }\nhttp { server { listen 80; server_name a.example; } }\n' > "$BATS_TEST_TMPDIR/dump"
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _audit_nginx
+    grep -qxF webapp.nginx_security_headers_ok <<<"$(_ids)"
+    _vpssec_refute grep -qxF webapp.nginx_security_headers_not_checked <<<"$(_ids)"
+}
+
+@test "headers: a server only on a unix socket is not checked, and not scored" {
+    _dump_http 'server { listen unix:/run/app.sock; server_name up.example; }'
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "up.example: no listen address this host can send a request to (a unix socket, QUIC, proxy_protocol or a host name)" ]
+    [ "${CHECK_SCORE_CATEGORY[webapp.nginx_security_headers_not_checked]}" = info ]
+    _vpssec_refute _vpssec_stub_called curl
+}
+
+@test "headers: a request that fails is not checked rather than missing" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    _answer 'http://a.example/' 28
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "http://a.example/: the request failed (curl exit code 28)" ]
+    _vpssec_refute grep -qxF webapp.nginx_security_headers <<<"$(_ids)"
+}
+
+@test "headers: without curl no site is asked, and the finding says so" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    _vpssec_absent_command curl
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "curl is not installed, so no site was requested" ]
+    _vpssec_refute _vpssec_stub_called curl
+}
+
+@test "headers: sites past the time budget are not checked" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    WEBAPP_PROBE_BUDGET=0
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "http://a.example/: not requested: the time allowed for these requests ran out" ]
+    _vpssec_refute _vpssec_stub_called curl
+}
+
+@test "verify: a site still missing a header right after a reload is asked again" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    sleep() { :; }
+    # The first answer comes from the old workers, the second from the new ones.
+    _vpssec_stub_script curl <<SH
+n=\$(( \$(cat "$BATS_TEST_TMPDIR/n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BATS_TEST_TMPDIR/n"
+printf 'HTTP/1.1 200 OK\r\n'
+(( n < 2 )) || printf '%s\r\n' 'X-Frame-Options: DENY' 'X-Content-Type-Options: nosniff' 'X-XSS-Protection: 0' 'Referrer-Policy: no-referrer'
+SH
+    run _webapp_nginx_security_headers_ok
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/n")" -eq 2 ]
+}
+
+@test "verify: a site missing a header on every try fails after three" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    sleep() { :; }
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK'
+    run _webapp_nginx_security_headers_ok
+    [ "$status" -eq 1 ]
+    [ "$(grep -c '^curl ' "$VPSSEC_STUB_LOG")" -eq 3 ]
 }
 
 @test "presence: nginx with its config outside /etc/nginx is still audited" {

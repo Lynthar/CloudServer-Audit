@@ -712,6 +712,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.nginx_server_tokens_ok"]="conditional"
     ["webapp.nginx_security_headers"]="conditional"
     ["webapp.nginx_security_headers_ok"]="conditional"
+    ["webapp.nginx_security_headers_not_checked"]="info"   # not measured: no score either way
     ["webapp.nginx_hsts_missing"]="conditional"
     ["webapp.nginx_hsts_weak"]="conditional"
     ["webapp.nginx_directory_listing"]="conditional"

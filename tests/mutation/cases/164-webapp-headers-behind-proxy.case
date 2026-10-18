@@ -1,0 +1,57 @@
+# Plant: a site proxied to an application that sends X-Frame-Options DENY and its own
+# Referrer-Policy (an nginx server on a unix socket, which the audit cannot request,
+# so it stays unscored), beside the stock default site, which sends none of the four.
+# Expect: webapp.nginx_security_headers → webapp.nginx_security_headers → nginx_security_headers_ok.
+# postfix: the proxied site still answers with one X-Frame-Options, the application's
+# DENY; a plain add_header beside it is the conflicting pair this case exists to catch.
+# Rollback deletes the drop-in, so the default site is missing them again.
+TEST_DESC="headers behind proxy_pass: the fix adds only what the response lacks, never a second X-Frame-Options"
+EXPECT_ID="webapp.nginx_security_headers"
+EXPECT_STATUS="failed"
+EXPECT_SEVERITY="low"
+MODULE="webapp"
+FIX_ID="webapp.nginx_security_headers"
+EXPECT_FIXED_ID="webapp.nginx_security_headers_ok"
+EXPECT_FIXED_STATUS="passed"
+EXPECT_ROLLBACK_ID="webapp.nginx_security_headers"
+EXPECT_ROLLBACK_STATUS="failed"
+EXPECT_ROLLBACK_RC=0
+
+_DROPIN="/etc/nginx/conf.d/security-headers.conf"
+_SITE="/etc/nginx/sites-enabled/vpssec-proxied"
+
+precheck() {
+    command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null \
+        && [[ ! -e "$_SITE" && -z "$(ss -Hltn 'sport = :8080' 2>/dev/null)" ]]
+}
+
+mutate() {
+    rm -f "$_DROPIN"
+    cat > "$_SITE" <<'EOF'
+server {
+    listen unix:/run/vpssec-app.sock;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    location / { return 200 "app\n"; }
+}
+server {
+    listen 127.0.0.1:8080;
+    server_name proxied.test;
+    location / { proxy_pass http://unix:/run/vpssec-app.sock; }
+}
+EOF
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1
+}
+
+postfix() {
+    local xfo
+    xfo=$(curl -s -o /dev/null -D - -H 'Host: proxied.test' http://127.0.0.1:8080/ \
+        | tr -d '\r' | grep -i '^x-frame-options:')
+    [[ "$xfo" == "X-Frame-Options: DENY" ]]
+}
+
+restore() {
+    rm -f "$_DROPIN" "$_SITE"
+    systemctl reload nginx >/dev/null 2>&1
+    return 0
+}
