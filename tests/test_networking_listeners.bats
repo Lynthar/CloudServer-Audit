@@ -15,6 +15,9 @@ setup() {
     SSH_DROPIN_DIR="$BATS_TEST_TMPDIR/sshd_config.d"
     printf 'Port 2222\n' > "$SSH_CONFIG"
     _vpssec_stub_sshd_merging
+    # get_ssh_ports asks systemd before sshd: with no stub the host's own
+    # ssh.socket answers, and the CI runner's is active on 22.
+    _vpssec_stub systemctl 3
 }
 
 # `ss -tulnpH` lines, as ss prints them, one argument each.

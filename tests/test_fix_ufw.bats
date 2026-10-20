@@ -24,6 +24,9 @@ setup() {
     UFW_USER_RULES="$BATS_TEST_TMPDIR/user.rules"
     UFW_USER6_RULES="$BATS_TEST_TMPDIR/user6.rules"
 
+    # get_ssh_ports asks systemd before sshd: with no stub the host's own
+    # ssh.socket answers, and the CI runner's is active on 22.
+    _vpssec_stub systemctl 3
     _sshd_ports 22
     _ufw_working
 }

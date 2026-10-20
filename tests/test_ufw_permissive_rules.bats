@@ -17,6 +17,9 @@ setup() {
     SSH_DROPIN_DIR="$BATS_TEST_TMPDIR/sshd_config.d"
     : > "$SSH_CONFIG"
     _vpssec_stub_sshd_merging
+    # get_ssh_ports asks systemd before sshd: with no stub the host's own
+    # ssh.socket answers, and the CI runner's is active on 22.
+    _vpssec_stub systemctl 3
     # ufw's rule store, where app profiles are resolved to ports; none unless a
     # test gives one.
     UFW_USER_RULES="$BATS_TEST_TMPDIR/absent/user.rules"
