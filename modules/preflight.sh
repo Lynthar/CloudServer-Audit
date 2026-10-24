@@ -48,30 +48,12 @@ _preflight_check_os() {
 
 # Check network connectivity
 _preflight_check_network() {
-    # If neither curl nor wget exists we genuinely cannot test reachability —
-    # don't emit a "network OK" check (which would be a false, untested
-    # success). Skip silently; this is an info-only context check.
-    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
-        log_debug "preflight: no curl/wget available; skipping network reachability check"
-        return 0
-    fi
-
     local network_ok=1
 
     # Check if we can reach common endpoints
-    if command -v curl &>/dev/null; then
-        if ! curl -s --max-time 5 https://www.google.com > /dev/null 2>&1; then
-            if ! curl -s --max-time 5 https://www.baidu.com > /dev/null 2>&1; then
-                network_ok=0
-            fi
-        fi
-    elif command -v wget &>/dev/null; then
-        # --tries=1: without it wget retries a black-holed host up to 20 times,
-        # so the 5s timeout could stall the audit for minutes.
-        if ! wget -q --tries=1 --timeout=5 -O /dev/null https://www.google.com 2>&1; then
-            if ! wget -q --tries=1 --timeout=5 -O /dev/null https://www.baidu.com 2>&1; then
-                network_ok=0
-            fi
+    if ! curl -s --max-time 5 https://www.google.com > /dev/null 2>&1; then
+        if ! curl -s --max-time 5 https://www.baidu.com > /dev/null 2>&1; then
+            network_ok=0
         fi
     fi
 
@@ -100,9 +82,6 @@ _preflight_check_deps() {
     if ! check_command whiptail && ! check_command dialog; then
         # dialog: one package name on every family (whiptail is newt on RHEL).
         lacking+=("$(i18n 'preflight.cap_tui')"); lacking_cmds+=(dialog)
-    fi
-    if ! check_command curl && ! check_command wget; then
-        lacking+=("$(i18n 'preflight.cap_network')"); lacking_cmds+=(curl)
     fi
     # The package-lock check's own tool, as pkg_manager_locked uses it: lsof
     # backs up /proc/locks for apt, dnf's check is pgrep, pacman's is a file test.

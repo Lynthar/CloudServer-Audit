@@ -548,6 +548,28 @@ STUB
     _vpssec_refute _vpssec_stub_called chgrp
 }
 
+@test "perms fix: group shadow keeps its read on shadow, which unix_chkpwd needs" {
+    # Clearing 0604 down to 0600 locked setgid-shadow unix_chkpwd out of
+    # /etc/shadow; a root-group shadow (RHEL's 0000) gains nothing.
+    _make shadow 604
+    _sensitive "shadow:640"
+    _perms_seeing 604 root shadow
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    [ "$(find "$etc/shadow" -printf '%m')" = "640" ]
+}
+
+@test "perms fix: a foreign group is not handed the group read back" {
+    _make shadow 604
+    _sensitive "shadow:640"
+    _perms_seeing 604 root users
+
+    run _fs_fix_sensitive_perms
+    [ "$status" -eq 0 ]
+    [ "$(find "$etc/shadow" -printf '%m')" = "600" ]
+}
+
 @test "perms fix: a foreign group that can read is replaced by root" {
     _make shadow 640
     _sensitive "shadow:640"

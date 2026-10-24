@@ -41,4 +41,10 @@ for _ in $(seq 1 30); do
 done
 
 docker cp "${PROJECT_ROOT}/." "$cid:/opt/vpssec"
-docker exec "$cid" bash /opt/vpssec/tests/mutation/run.sh --strict "$@"
+# docker exec exits 0 when Ctrl-C stops it, so an interrupted run read as a pass.
+interrupted=0
+trap 'interrupted=1' INT
+rc=0
+docker exec "$cid" bash /opt/vpssec/tests/mutation/run.sh --strict "$@" || rc=$?
+(( interrupted == 0 )) || rc=130
+(( rc == 0 )) || exit "$rc"

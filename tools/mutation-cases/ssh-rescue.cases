@@ -50,3 +50,20 @@ run_case "teardown/failure-silent" 1 \
 run_case "teardown/source-dropped" 1 \
     '    [[ -n "$ip" ]] && rule=(allow from "$ip" to any port "$port" proto tcp)' \
     '    :'
+
+# ---- the caller's traps ------------------------------------------------------
+
+run_case "traps/caller-traps-not-restored" 1 \
+    '        eval "$SSH_RESCUE_PRIOR_TRAPS"' \
+    '        :'
+
+# Unguarded, a second close clears the traps the first one put back.
+run_case "traps/second-close-clears-caller" 1 \
+    '    if (( SSH_RESCUE_TRAPS_ARMED )); then' \
+    '    if true; then'
+
+# Run from the EXIT trap, the close restores the caller's EXIT command too late
+# for it to run.
+run_case "traps/caller-exit-not-chained" 1 \
+    '    trap "_ssh_close_rescue_port${prior_exit[2]:+; ${prior_exit[2]}}" EXIT' \
+    "    trap '_ssh_close_rescue_port' EXIT"

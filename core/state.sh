@@ -410,9 +410,9 @@ backup_restore() {
     return 0
 }
 
-# Preview one backup: "restore", "delete", "rmdir" and "missing" lines, from the
-# same lists backup_restore acts on. Same timestamp-shape gate as backup_restore,
-# so an unvalidated argument cannot list arbitrary dirs.
+# Preview one backup: "restore", "delete", "rmdir", "missing" and "nomanifest"
+# lines, from the same lists backup_restore acts on. Same timestamp-shape gate as
+# backup_restore, so an unvalidated argument cannot list arbitrary dirs.
 backup_list_contents() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -427,6 +427,9 @@ backup_list_contents() {
     _backup_session_created "$backup_dir" | sed 's/^/delete /'
     _backup_session_created_dirs "$backup_dir" | sed 's/^/rmdir /'
     _backup_session_missing "$backup_dir" | sed 's/^/missing /'
+    # The restore that backup_restore reports incomplete: created files stay.
+    [[ -f "${backup_dir}/${VPSSEC_CREATED_MANIFEST}" ]] \
+        || printf 'nomanifest %s\n' "${backup_dir}/${VPSSEC_CREATED_MANIFEST}"
 }
 
 # --- Score Calculation ---

@@ -69,13 +69,50 @@ run_case "caps/suggestion-is-description" 1 \
 
 # Unbounded, a daemon that never answers holds the whole audit.
 run_case "probe/no-timeout" 1 \
-    '        timeout "$DOCKER_PROBE_TIMEOUT" docker info &>/dev/null' \
-    '        docker info &>/dev/null'
+    '    timeout "$DOCKER_PROBE_TIMEOUT" docker "$@" || rc=$?' \
+    '    docker "$@" || rc=$?'
 
 # Without timeout(1) a host with a running daemon reads as unreachable.
 run_case "probe/no-timeout-tool-unreachable" 1 \
-    '        docker info &>/dev/null' \
-    '        return 1'
+    '    check_command timeout || { docker "$@"; return; }' \
+    '    check_command timeout || return 1'
+
+# Bounded but not short-circuited, a daemon that hangs mid-audit costs the
+# timeout once per container and per check.
+run_case "stall/not-short-circuited" 1 \
+    '    [[ -e "$DOCKER_STALL_MARK" ]] && return 124' \
+    '    :'
+
+run_case "stall/not-marked" 1 \
+    '        : > "$DOCKER_STALL_MARK"' \
+    '        :'
+
+# A stall that is not reported leaves the audit complete on half the answers.
+run_case "stall/audit-not-incomplete" 1 \
+    '        _module_record_failure docker query' \
+    '        :'
+
+run_case "stall/no-finding" 1 \
+    '        check_emit "docker.query_incomplete" info failed \' \
+    '        : \'
+
+# Occurrence 2 is the privileged check's; 1 is the published-ports one.
+run_case "stall/ports-passed-anyway" 1 \
+    '    elif ! _docker_stalled; then' \
+    '    else'
+
+run_case "stall/privileged-passed-anyway" 2 \
+    '    elif ! _docker_stalled; then' \
+    '    else'
+
+run_case "stall/memory-passed-anyway" 8 \
+    '    elif ! _docker_stalled; then' \
+    '    else'
+
+# A mark left over from the previous run fails every docker call at once.
+run_case "stall/stale-mark-kept" 1 \
+    '    rm -f "$DOCKER_STALL_MARK"' \
+    '    :'
 
 # The env-secret sample joined without its separator, or not cut at five.
 run_case "env/sample-separator-lost" 1 \

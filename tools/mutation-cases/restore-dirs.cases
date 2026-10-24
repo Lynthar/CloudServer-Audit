@@ -25,3 +25,8 @@ run_case "rmdir/not-an-undo" 1 \
 run_case "rmdir/not-previewed" 1 \
     "    _backup_session_created_dirs \"\$backup_dir\" | sed 's/^/rmdir /'" \
     '    :'
+
+# The preview silent about a missing created-files record, which leaves those files in place.
+run_case "preview/no-manifest-unsaid" 1 \
+    '        || printf '"'"'nomanifest %s\n'"'"' "${backup_dir}/${VPSSEC_CREATED_MANIFEST}"' \
+    '        || :'

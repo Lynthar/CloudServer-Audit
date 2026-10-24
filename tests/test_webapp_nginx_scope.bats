@@ -261,14 +261,6 @@ server { listen 80; server_name a.example; }'
     _vpssec_refute grep -qxF webapp.nginx_security_headers <<<"$(_ids)"
 }
 
-@test "headers: without curl no site is asked, and the finding says so" {
-    _dump_http 'server { listen 80; server_name a.example; }'
-    _vpssec_absent_command curl
-    _audit_nginx
-    [ "$(_desc webapp.nginx_security_headers_not_checked)" = "curl is not installed, so no site was requested" ]
-    _vpssec_refute _vpssec_stub_called curl
-}
-
 @test "headers: sites past the time budget are not checked" {
     _dump_http 'server { listen 80; server_name a.example; }'
     WEBAPP_PROBE_BUDGET=0

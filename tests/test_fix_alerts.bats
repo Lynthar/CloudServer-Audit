@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load
+    _vpssec_load core/state.sh
     # Without this, i18n echoes the KEY, and a grep for the key name passes
     # whether or not the string exists in either language file.
     i18n_load en_US
@@ -321,16 +321,42 @@ setup() {
     [ -z "$(ls -A "$etc")" ]
 }
 
-@test "setup_config: nothing is registered for rollback" {
-    # These artifacts live in vpssec's own trees, so backup_file must NOT be
-    # called on them — a path recorded in .vpssec_created would make a
-    # rollback delete part of vpssec's own state.
+@test "setup_config: a new config is not registered for rollback" {
+    # A path recorded in .vpssec_created would make a rollback delete part of
+    # vpssec's own state.
     _alerts_should_prompt() { return 1; }
     _vpssec_begin_backup_session
 
     run _alerts_fix_setup_config
     [ "$status" -eq 0 ]
     _vpssec_refute test -f "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+}
+
+@test "setup_config: an existing config is backed up, and a rollback restores it" {
+    _alerts_should_prompt() { return 1; }
+    mkdir -p "$(dirname "$ALERTS_CONFIG_FILE")"
+    printf '{"throttle_minutes": 30}\n' > "$ALERTS_CONFIG_FILE"
+    _vpssec_begin_backup_session
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 0 ]
+    jq -e '.events.security_audit' "$ALERTS_CONFIG_FILE" >/dev/null
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ALERTS_CONFIG_FILE")" = '{"throttle_minutes": 30}' ]
+    _vpssec_refute grep -qF "$ALERTS_CONFIG_FILE" "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+}
+
+@test "setup_config: a backup that cannot be taken stops the rewrite" {
+    _alerts_should_prompt() { return 1; }
+    mkdir -p "$(dirname "$ALERTS_CONFIG_FILE")"
+    printf '{"throttle_minutes": 30}\n' > "$ALERTS_CONFIG_FILE"
+    backup_file() { return 1; }
+
+    run _alerts_fix_setup_config
+    [ "$status" -eq 1 ]
+    [ "$(cat "$ALERTS_CONFIG_FILE")" = '{"throttle_minutes": 30}' ]
 }
 
 # ---- the generated library, executed ----------------------------------

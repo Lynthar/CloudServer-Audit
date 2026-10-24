@@ -60,6 +60,36 @@ _flagged() { _ufw_find_permissive_rules | sort -u; }
     [ "$output" = "3306 (MySQL) open to Anywhere" ]
 }
 
+# A rule table holding these lines, in ufw 0.36.2's columns.
+_ufw_table() {
+    printf '%s\n' 'Status: active' '' \
+        'To                         Action      From' \
+        '--                         ------      ----' "$@" > "$BATS_TEST_TMPDIR/ufw-status"
+    VPSSEC_TEST_UFW_STATUS="$BATS_TEST_TMPDIR/ufw-status"
+}
+
+@test "permissive rules: a comment that reads like a rule changes nothing" {
+    # The match took the comment's "ALLOW Anywhere" for the rule's: one address
+    # read as the world, a DENY as an ALLOW, the comment's last word as the port.
+    _ufw_table \
+        '8443/tcp                   ALLOW       203.0.113.9                # was ALLOW Anywhere' \
+        '6379                       DENY        Anywhere                   # DENY, not ALLOW Anywhere'
+    run _flagged
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "permissive rules: a sensitive port rate-limited from anywhere is still open to it" {
+    # LIMIT only slows a client down; the generic pass skips sensitive ports,
+    # so a LIMIT on one was reported by neither.
+    _ufw_table \
+        '5432/tcp                   LIMIT       Anywhere                  ' \
+        '6379/udp                   LIMIT       Anywhere                  '
+    run _flagged
+    [[ "$output" == *"5432 (PostgreSQL) open to Anywhere"* ]]
+    [[ "$output" == *"6379/udp (Redis) open to Anywhere"* ]]
+}
+
 @test "permissive rules: a rule and its (v6) twin are one entry" {
     run _ufw_find_permissive_rules
     [ "$(grep -c '2222/tcp' <<<"$output")" -eq 1 ]

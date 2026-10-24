@@ -21,7 +21,7 @@
 # Same defect from the other side: taking daemon.json first makes the
 # daemon's answer irrelevant.
 run_case "live-restore/daemon-not-asked-first" 1 \
-    '    if live=$(docker info --format '"'"'{{.LiveRestoreEnabled}}'"'"' 2>/dev/null); then' \
+    '    if live=$(_docker info --format '"'"'{{.LiveRestoreEnabled}}'"'"' 2>/dev/null); then' \
     '    if false; then'
 
 # The fallback exists for an unreachable daemon only. Removing it makes a
@@ -53,13 +53,13 @@ run_case "live-restore/case-sensitive-compare" 1 \
 # Engine 24+ reports the setting; skipping the question trusts a daemon.json
 # the daemon never loaded.
 run_case "nnp/daemon-not-asked" 1 \
-    '    if (( major >= 24 )) && opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
+    '    if (( major >= 24 )) && opts=$(_docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
     '    if false; then'
 
 # An older daemon has no such field: asking it anyway reads "off" everywhere.
 run_case "nnp/older-daemon-asked" 1 \
-    '    if (( major >= 24 )) && opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
-    '    if opts=$(docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then'
+    '    if (( major >= 24 )) && opts=$(_docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then' \
+    '    if opts=$(_docker info --format '"'"'{{json .SecurityOptions}}'"'"' 2>/dev/null); then'
 
 # The flag's value, not its presence: --no-new-privileges=false is off.
 run_case "flag/presence-read-as-true" 1 \

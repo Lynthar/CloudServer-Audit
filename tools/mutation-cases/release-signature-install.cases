@@ -58,5 +58,10 @@ run_case "release-signature-install/tlog-ignored" 1 \
     '                --bundle "$bundle" --insecure-ignore-tlog \'
 
 run_case "release-signature-install/repo-constant" 1 \
-    'GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"' \
-    'GITHUB_REPO="${GITHUB_REPO:-someone-else/CloudServer-Audit}"'
+    'GITHUB_REPO="Lynthar/CloudServer-Audit"' \
+    'GITHUB_REPO="someone-else/CloudServer-Audit"'
+
+# An environment override moves the identity cosign checks along with the download.
+run_case "release-signature-install/repo-overridable" 1 \
+    'GITHUB_REPO="Lynthar/CloudServer-Audit"' \
+    'GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"'

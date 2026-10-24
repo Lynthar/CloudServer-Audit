@@ -227,6 +227,18 @@ _completed_fixes() {
     grep -q 'Template only' "$BATS_TEST_TMPDIR/summary.md"
 }
 
+@test "the Markdown report's Fix ID label follows the language" {
+    i18n_load zh_CN
+    state_add_check "$(create_check_json \
+        "ufw.disabled" "ufw" "medium" "failed" \
+        "Firewall disabled" "ufw is installed but inactive" \
+        "Enable ufw" "ufw.enable")"
+
+    run report_generate_markdown "$BATS_TEST_TMPDIR/summary.md"
+    [ "$status" -eq 0 ]
+    grep -qF -- '- **修复 ID**: ufw.enable' "$BATS_TEST_TMPDIR/summary.md"
+}
+
 @test "the Markdown report leaves an ordinary Fix ID unannotated" {
     state_add_check "$(create_check_json \
         "ufw.disabled" "ufw" "medium" "failed" \

@@ -158,3 +158,23 @@ _on_rocky() {
     _vpssec_stub systemd-detect-virt 1
     [ "$(detect_virtualization)" = "unknown" ]
 }
+
+# A /proc holding these directories, for detect_container.
+_proc_with() {
+    DETECT_PROC_DIR="$BATS_TEST_TMPDIR/proc"
+    mkdir -p "$DETECT_PROC_DIR/1"
+    local d
+    for d in "$@"; do mkdir -p "$DETECT_PROC_DIR/$d"; done
+}
+
+@test "container: an OpenVZ container has /proc/vz without /proc/bc" {
+    _proc_with vz
+    [ "$(detect_container)" = "openvz" ]
+}
+
+@test "container: an OpenVZ host node, which has both, is not an OpenVZ container" {
+    # systemd's rule. The node's own kernel parameters are its to set, and it
+    # was told they belong to "the host".
+    _proc_with vz bc
+    [ "$(detect_container || true)" != "openvz" ]
+}

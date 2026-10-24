@@ -316,6 +316,18 @@ $etc/a/b/c/" ]
 rmdir $etc/p" ]
 }
 
+@test "the rollback preview names a missing created-files record, and only then" {
+    backup_file "$etc/f.conf" >/dev/null
+    run backup_list_contents "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q '^nomanifest ' <<<"$output"
+
+    rm "${VPSSEC_BACKUP_SESSION}/.vpssec_created"
+    run backup_list_contents "$VPSSEC_TEST_BACKUP_SESSION_TS"
+    [ "$status" -eq 0 ]
+    [ "$(grep '^nomanifest ' <<<"$output")" = "nomanifest ${VPSSEC_BACKUP_SESSION}/.vpssec_created" ]
+}
+
 @test "nginx: a rollback of the catchall leaves no directory behind" {
     # /etc/nginx/ssl stayed, empty, after the certificate in it was deleted.
     _load_module nginx

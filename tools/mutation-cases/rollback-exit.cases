@@ -65,5 +65,9 @@ run_case "rollback-exit/ufw-sysctl-missed" 1 \
     "    grep -qE '^(restore|delete) .*/sysctl\.d/.+\$' <<<\"\$contents\" && kernel_files=1"
 
 run_case "rollback-exit/rmdir-not-previewed" 1 \
-    '    for verb in restore delete rmdir missing; do' \
-    '    for verb in restore delete missing; do'
+    '    for verb in restore delete rmdir missing nomanifest; do' \
+    '    for verb in restore delete missing nomanifest; do'
+
+run_case "rollback-exit/no-manifest-not-previewed" 1 \
+    '    for verb in restore delete rmdir missing nomanifest; do' \
+    '    for verb in restore delete rmdir missing; do'

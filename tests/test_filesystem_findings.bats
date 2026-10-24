@@ -100,29 +100,85 @@ cat "$TMPDIR/getcap.out"
 SH
 }
 
+# file_package_verified's own tests need a real package manager; this answers
+# "unmodified copy of package $2" for every path ending in $1, one pair per call.
+_owned() {
+    _OWNERS+=("$1=$2")
+    file_package_verified() {
+        local o
+        for o in "${_OWNERS[@]}"; do
+            [[ "$1" == *"${o%%=*}" ]] && { echo "${o#*=}"; return 0; }
+        done
+        return 1
+    }
+}
+_OWNERS=()
+
 @test "an extra clause on a whitelisted binary is not hidden by the first" {
     # libcap 2.66 prints a second flag set as its own clause.
+    _owned /ping iputils-ping
     _getcap '/usr/bin/ping cap_net_raw=eip cap_sys_admin+ep'
     _fs_audit_caps
     [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/bin/ping:cap_net_raw=eip cap_sys_admin+ep"* ]]
 }
 
 @test "every capability (=ep) on a whitelisted binary is reported" {
+    _owned /ping iputils-ping
     _getcap '/usr/bin/ping =ep'
     _fs_audit_caps
     [ "$(_check filesystem.caps_ok)" = "" ]
 }
 
 @test "the whitelisted capability alone passes, in either getcap format" {
+    _owned /ping iputils-ping
+    _owned /arping iputils-arping
     _getcap '/usr/bin/ping cap_net_raw=ep' '/usr/sbin/arping = cap_net_raw+ep'
     _fs_audit_caps
     [ "$(_check filesystem.caps_ok)" != "" ]
 }
 
 @test "a whitelisted capability name one directory off is reported" {
+    _owned /arping iputils-arping
     _getcap '/usr/local/sbin/arping cap_net_raw=ep'
     _fs_audit_caps
     [[ "$(_desc filesystem.non_standard_caps)" == *"/usr/local/sbin/arping"* ]]
+}
+
+# ---- every entry is held to its package -------------------------------------------
+
+@test "every capability entry names its packages, base list and each family's" {
+    # Path and capabilities alone let a binary swapped in at a whitelisted path
+    # keep its capabilities unreported.
+    local family entry bad=""
+    for family in debian rhel arch suse; do
+        VPSSEC_DISTRO_FAMILY=$family
+        while IFS= read -r entry; do
+            [[ "$entry" =~ ^[^:]+:[^:]+:[^:]+$ ]] || bad+="[$family] $entry "
+        done < <(printf '%s\n' "${FS_CAPS_WHITELIST[@]}"; distro_caps_whitelist)
+    done
+    [ -z "$bad" ] || { echo "no package: $bad"; false; }
+}
+
+@test "a whitelisted binary that is not its package's unmodified copy is reported" {
+    file_package_verified() { return 1; }
+    _getcap '/usr/bin/ping cap_net_raw=ep'
+    _fs_audit_caps
+    [[ "$(_desc filesystem.non_standard_caps)" == *"/usr/bin/ping"* ]]
+}
+
+@test "a whitelisted binary owned by a package the entry does not name is reported" {
+    _owned /ping busybox
+    _getcap '/usr/bin/ping cap_net_raw=ep'
+    _fs_audit_caps
+    [[ "$(_desc filesystem.non_standard_caps)" == *"/usr/bin/ping"* ]]
+}
+
+@test "each family's spelling of the package passes the same entry" {
+    VPSSEC_DISTRO_FAMILY=rhel
+    _owned /ping iputils
+    _getcap '/usr/bin/ping cap_net_raw=ep'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
 }
 
 # ---- snap-confine: snapd's file capabilities, on snapd's own copy only ------------
@@ -132,13 +188,6 @@ _SNAP_CONFINE='/usr/lib/snapd/snap-confine cap_chown,cap_dac_override,cap_dac_re
 
 # file_package_verified's own tests need a dpkg host; this answers for one.
 _snapd_owns_it() { file_package_verified() { [[ "$1" == /usr/lib/snapd/snap-confine ]] && echo snapd; }; }
-
-@test "an entry naming no package passes whichever package owns the file" {
-    file_package_verified() { echo iputils-ping; }
-    _getcap '/usr/bin/ping cap_net_raw=ep'
-    _fs_audit_caps
-    [ "$(_check filesystem.caps_ok)" != "" ]
-}
 
 @test "snap-confine: snapd's capability set passes on snapd's unmodified copy" {
     _snapd_owns_it
@@ -186,7 +235,42 @@ _snapd_owns_it() { file_package_verified() { [[ "$1" == /usr/lib/snapd/snap-conf
 
 @test "rhel: mtr-packet's capability at its RHEL path is not reported" {
     VPSSEC_DISTRO_FAMILY=rhel
+    _owned /mtr-packet mtr
     _getcap '/usr/sbin/mtr-packet cap_net_raw=ep'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+@test "rhel: what Rocky 9's packages carry passes, sssd children under any sssd subpackage" {
+    # getcap readings from Rocky 9 with these packages installed.
+    VPSSEC_DISTRO_FAMILY=rhel
+    _owned /suexec httpd-core
+    _owned /krb5_child sssd-krb5-common
+    _owned /gst-ptp-helper gstreamer1
+    _owned /newuidmap shadow-utils
+    _getcap '/usr/sbin/suexec cap_setgid,cap_setuid=ep' \
+        '/usr/libexec/sssd/krb5_child cap_dac_read_search=p' \
+        '/usr/libexec/gstreamer-1.0/gst-ptp-helper cap_net_bind_service,cap_net_admin,cap_sys_nice=ep' \
+        '/usr/bin/newuidmap cap_setuid=ep'
+    _fs_audit_caps
+    [ "$(_check filesystem.caps_ok)" != "" ]
+}
+
+@test "rhel: an sssd child no sssd package vouches for is reported" {
+    VPSSEC_DISTRO_FAMILY=rhel
+    _owned /krb5_child notsssd-common
+    _getcap '/usr/libexec/sssd/krb5_child cap_dac_read_search=p'
+    _fs_audit_caps
+    [[ "$(_desc filesystem.dangerous_caps)" == *"/usr/libexec/sssd/krb5_child"* ]]
+}
+
+@test "arch: what Arch's mtr and gstreamer carry passes" {
+    # getcap readings from archlinux:latest with these packages installed.
+    VPSSEC_DISTRO_FAMILY=arch
+    _owned /mtr-packet mtr
+    _owned /gst-ptp-helper gstreamer
+    _getcap '/usr/bin/mtr-packet cap_net_bind_service,cap_net_raw=ep' \
+        '/usr/lib/gstreamer-1.0/gst-ptp-helper cap_net_bind_service,cap_net_admin=ep'
     _fs_audit_caps
     [ "$(_check filesystem.caps_ok)" != "" ]
 }

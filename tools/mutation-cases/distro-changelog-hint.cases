@@ -1,0 +1,10 @@
+# Mutation cases: tests/test_webapp_php2shell.bats against core/distro.sh.
+# mutate-suite: core/distro.sh tests/test_webapp_php2shell.bats
+
+run_case "changelog/apt-path-wrong" 1 \
+    "        apt) echo \"zgrep -E '\$2' /usr/share/doc/\$1/changelog.Debian.gz\" ;;" \
+    "        apt) echo \"zgrep -E '\$2' /usr/share/doc/\$1/changelog.gz\" ;;"
+
+run_case "changelog/rpm-hosts-told-nothing" 1 \
+    "        dnf) echo \"rpm -q --changelog \$1 | grep -E '\$2'\" ;;" \
+    '        dnf) return 1 ;;'

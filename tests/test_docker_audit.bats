@@ -6,7 +6,7 @@
 load helpers.bash
 
 setup() {
-    _vpssec_load core/state.sh core/security_levels.sh
+    _vpssec_load core/state.sh core/security_levels.sh core/engine.sh
     i18n_load en_US
     state_init
     # shellcheck source=/dev/null
@@ -251,6 +251,60 @@ SH
     docker_audit >/dev/null
     [ $((SECONDS - t0)) -lt 4 ]
     _emitted | grep -qx 'docker.daemon_unreachable failed'
+}
+
+@test "a daemon that hangs after the probe costs one timeout, not one per container" {
+    # Every docker call was unbounded past `docker info`: a dockerd that froze
+    # mid-audit hung vpssec, and bounding each call alone waits once per call.
+    _vpssec_stub_script docker <<'SH'
+case "$*" in
+    "info") exit 0 ;;
+    "ps -q"|"ps -aq") printf 'c1\nc2\nc3\n' ;;
+    inspect*|"network inspect"*) exec sleep 5 ;;
+esac
+exit 0
+SH
+    DOCKER_PROBE_TIMEOUT=1
+    local t0=$SECONDS
+
+    docker_audit >/dev/null
+    [ $((SECONDS - t0)) -lt 4 ]
+    [[ " ${VPSSEC_MODULES_FAILED[*]} " == *" docker "* ]]
+    [ "$(_field docker.query_incomplete status)" = "failed" ]
+    [ "$(_field docker.query_incomplete severity)" = "info" ]
+}
+
+@test "a check whose docker calls timed out is not reported passed" {
+    _vpssec_stub_script docker <<'SH'
+case "$*" in
+    "info"|"--version") exit 0 ;;
+esac
+exec sleep 5
+SH
+    DOCKER_PROBE_TIMEOUT=1
+
+    docker_audit >/dev/null
+    local ok
+    for ok in no_exposed_ports no_privileged no_root_containers no_extra_caps no_seccomp_unconfined \
+              no_host_network no_env_secrets memory_limits_set; do
+        _vpssec_refute grep -q "^docker.$ok " <<<"$(_emitted)"
+    done
+}
+
+@test "a docker audit that never timed out is complete" {
+    _docker_with_ports ''
+    docker_audit >/dev/null
+    [ "${#VPSSEC_MODULES_FAILED[@]}" -eq 0 ]
+    _vpssec_refute grep -q 'docker.query_incomplete' <<<"$(_emitted)"
+    _emitted | grep -qx 'docker.no_privileged passed'
+}
+
+@test "a stall recorded by an earlier run does not skip this run's docker calls" {
+    _docker_with_ports ''
+    : > "$DOCKER_STALL_MARK"
+    docker_audit >/dev/null
+    _emitted | grep -qx 'docker.no_privileged passed'
+    _vpssec_refute grep -q 'docker.daemon_unreachable' <<<"$(_emitted)"
 }
 
 @test "a host without timeout(1) still asks the daemon, unbounded" {

@@ -150,16 +150,6 @@ _github_token() {
     printf 'ghp_%s' "$(printf 'a%.0s' {1..36})"
 }
 
-@test "imds: without curl the metadata checks are reported as not run" {
-    _droplet
-    _user_data ""
-    _vpssec_absent_command curl
-
-    _cloud_audit_imds >/dev/null
-    _emitted | grep -qx 'cloud.imds_not_checked failed'
-    [ "${CHECK_SCORE_CATEGORY[cloud.imds_not_checked]}" = "info" ]
-}
-
 @test "user-data: plain text without credentials is scanned clean" {
     printf '#cloud-config\npackages: [nginx]\n' > "$BATS_TEST_TMPDIR/ud"
     _droplet

@@ -8,9 +8,6 @@
 run_case "group/tui-needs-both" 1 \
     '    if ! check_command whiptail && ! check_command dialog; then' \
     '    if ! check_command whiptail || ! check_command dialog; then'
-run_case "group/network-needs-both" 1 \
-    '    if ! check_command curl && ! check_command wget; then' \
-    '    if ! check_command curl || ! check_command wget; then'
 run_case "lock-tool/unchecked" 1 \
     '    if [[ -n "$lock_tool" ]] && ! check_command "$lock_tool"; then' \
     '    if false; then'

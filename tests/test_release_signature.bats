@@ -148,6 +148,14 @@ _expected_argv() {
     [ "$(cat "$ARGV")" = "$(_expected_argv vpssec-9.8.7.tar.gz)" ]
 }
 
+@test "install.sh's repo, and with it the signer identity, ignores the environment" {
+    # An override redirected the download and moved the identity cosign checks
+    # along with it; run.sh never took one.
+    local GITHUB_REPO=someone-else/CloudServer-Audit
+    eval "$(grep -E '^GITHUB_REPO=' "$(_vpssec_repo_root)/install.sh")"
+    [ "$GITHUB_REPO" = "Lynthar/CloudServer-Audit" ]
+}
+
 @test "install.sh asks cosign for this repo's release workflow at the requested tag, and nothing looser" {
     local src
     src="$(_vpssec_repo_root)/install.sh"

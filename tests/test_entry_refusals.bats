@@ -24,6 +24,29 @@ _load_entry() {
     eval "$(awk '/^main\(\)/,/^}/' "$src")"
 }
 
+# ---- an unknown word ----------------------------------------------------------
+
+@test "an unknown word is reported in the language of a --lang that follows it" {
+    # It was rejected mid-parse, before the --lang after it was read.
+    _load_entry
+    run --separate-stderr _errexit main --bogus --lang=zh_CN
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"未知的命令或选项：--bogus"* ]]
+}
+
+@test "an unknown word outranks --version, and without jq it is reported in English" {
+    _load_entry
+    run --separate-stderr _errexit main --version auditt
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"Unknown command or option: auditt"* ]]
+
+    _vpssec_absent_command jq
+    run --separate-stderr _errexit main auditt --lang=zh_CN
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"Unknown command or option: auditt"* ]]
+}
+
 # ---- no jq ------------------------------------------------------------------
 
 @test "without jq, --help and status say jq is missing on stderr and exit 1" {

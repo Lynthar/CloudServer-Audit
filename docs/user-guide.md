@@ -1581,7 +1581,7 @@ jobs:
       - name: Upload SARIF
         # 审计退出 3 时上一步是失败的，这一步照样上传：没跑完的扫描更要看；运行被取消时不传
         if: ${{ !cancelled() }}
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/vpssec.sarif
 ```

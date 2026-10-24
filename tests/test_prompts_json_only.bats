@@ -39,6 +39,21 @@ SH
     [[ "$output" == *"stdout=[]"* ]]
 }
 
+@test "the output helpers print a backslash the operator typed as typed" {
+    # echo -e turned a mistyped --include=ss\th into "ss<TAB>h".
+    VPSSEC_JSON_ONLY=0
+    run print_msg 'unknown: ss\th\b'
+    [ "$output" = 'unknown: ss\th\b' ]
+
+    VPSSEC_JSON_ONLY=1
+    run --separate-stderr print_error 'bad: a\nb'
+    [[ "$stderr" == *'bad: a\nb' ]]
+
+    _VPSSEC_TTY=/nonexistent/tty
+    run --separate-stderr tty_say 'menu: c:\tmp'
+    [ "$stderr" = 'menu: c:\tmp' ]
+}
+
 @test "print_error under --json-only goes to stderr, not nowhere and not stdout" {
     VPSSEC_JSON_ONLY=1
     run --separate-stderr print_error "boom"

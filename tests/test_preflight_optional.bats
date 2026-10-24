@@ -18,7 +18,6 @@ _optional_check() {
 }
 
 @test "optional: no menu tool and no lsof are one unscored check naming both" {
-    _vpssec_stub curl 0
     _vpssec_absent_command whiptail
     _vpssec_absent_command dialog
     _vpssec_absent_command lsof
@@ -28,7 +27,6 @@ _optional_check() {
     [ "$(jq -r '.status' <<<"$c")" = "failed" ]
     jq -r '.desc' <<<"$c" | grep -q 'menus (whiptail or dialog)'
     jq -r '.desc' <<<"$c" | grep -q 'package-lock check fallback (lsof)'
-    _vpssec_refute grep -q 'curl or wget' <<<"$(jq -r '.desc' <<<"$c")"
     [ "$(jq -r '.suggestion' <<<"$c")" = "apt install dialog lsof" ]
     [ "${CHECK_SCORE_CATEGORY[preflight.optional_missing]}" = "info" ]
 }
@@ -36,10 +34,8 @@ _optional_check() {
 @test "optional: one tool of a pair is enough, and all present emits nothing" {
     # The old line listed dialog as missing next to a working whiptail.
     _vpssec_stub whiptail 0
-    _vpssec_stub wget 0
     _vpssec_stub lsof 0
     _vpssec_absent_command dialog
-    _vpssec_absent_command curl
     _preflight_check_deps
     [ -z "$(_optional_check)" ]
 }
@@ -48,13 +44,12 @@ _optional_check() {
     _preflight_check_os() { :; }
     _preflight_check_network() { :; }
     _preflight_check_ports() { :; }
-    _vpssec_absent_command curl
-    _vpssec_absent_command wget
-    _vpssec_stub whiptail 0
+    _vpssec_absent_command whiptail
+    _vpssec_absent_command dialog
     _vpssec_stub lsof 0
     VPSSEC_QUIET_SCAN=1
     preflight_audit
-    _optional_check | jq -r '.desc' | grep -q 'network reachability check (curl or wget)'
+    _optional_check | jq -r '.desc' | grep -q 'menus (whiptail or dialog)'
 }
 
 # ---- the package-lock check's tool follows the package manager ----------------

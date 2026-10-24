@@ -10,7 +10,7 @@ VPSSEC_VERSION="${VPSSEC_VERSION:-latest}"
 VPSSEC_NO_VERIFY="${VPSSEC_NO_VERIFY:-0}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vpssec}"
 BIN_LINK="/usr/local/bin/vpssec"
-GITHUB_REPO="${GITHUB_REPO:-Lynthar/CloudServer-Audit}"
+GITHUB_REPO="Lynthar/CloudServer-Audit"
 
 # The identity must name this repo's release workflow at EXACTLY the tag being
 # installed. A looser any-v*-tag match would accept a signed asset from another
@@ -181,7 +181,8 @@ check_system() {
         elif command -v yum &>/dev/null; then
             yum install -y "${missing[@]}"
         elif command -v pacman &>/dev/null; then
-            pacman -Sy --noconfirm --needed "${missing[@]}"
+            # -Syu, never -Sy: a partial upgrade, unsupported on Arch.
+            pacman -Syu --noconfirm --needed "${missing[@]}"
         elif command -v zypper &>/dev/null; then
             zypper --non-interactive install "${missing[@]}"
         else

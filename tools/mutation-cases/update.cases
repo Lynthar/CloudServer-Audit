@@ -39,13 +39,30 @@ run_case "rollback/dropin-backup-guarded-again" 1 \
 
 # ---- write failures --------------------------------------------------
 
-# Both writes span several lines, so the status check is broken at the CLOSING line
-# with `&& false`: the write still runs and only its result is ignored, which is the
-# defect. Replacing the opening line would delete the write itself.
+# The status check is broken with `&& false`: the write still runs and only its
+# result is ignored, which is the defect.
 
 run_case "write/auto-upgrades-status-unchecked" 1 \
-    "APT::Periodic::AutocleanInterval \"7\";'; then" \
-    "APT::Periodic::AutocleanInterval \"7\";' && false; then"
+    '    if ! write_file_atomic "$UPDATE_AUTO_UPGRADES_CONF" "$(_update_auto_upgrades_content "$current")"; then' \
+    '    if ! write_file_atomic "$UPDATE_AUTO_UPGRADES_CONF" "$(_update_auto_upgrades_content "$current")" && false; then'
+
+# ---- what an operator's 20auto-upgrades keeps --------------------------------
+
+run_case "auto-upgrades/weekly-interval-reset" 1 \
+    "                _auto_update_apt_interval_on \"\${BASH_REMATCH[2]}\" || line=\"APT::Periodic::\$key \\\"1\\\";\"" \
+    "                line=\"APT::Periodic::\$key \\\"1\\\";\""
+
+run_case "auto-upgrades/off-interval-left-off" 1 \
+    "                _auto_update_apt_interval_on \"\${BASH_REMATCH[2]}\" || line=\"APT::Periodic::\$key \\\"1\\\";\"" \
+    '                :'
+
+run_case "auto-upgrades/missing-key-not-added" 1 \
+    "        [[ -n \"\${seen[\$key]:-}\" ]] || out+=\"APT::Periodic::\$key \\\"1\\\";\"\$'\\n'" \
+    '        :'
+
+run_case "auto-upgrades/autoclean-written-twice" 1 \
+    '                seen[AutocleanInterval]=1' \
+    '                :'
 
 run_case "write/dropin-status-unchecked" 1 \
     '    if ! write_file_atomic "$uu_dropin" "$dropin_text"; then' \
@@ -54,8 +71,8 @@ run_case "write/dropin-status-unchecked" 1 \
 # ---- what the drop-in must say ---------------------------------------
 
 run_case "config/periodic-flag-off" 1 \
-    'APT::Periodic::Unattended-Upgrade "1";' \
-    'APT::Periodic::Unattended-Upgrade "0";'
+    "        [[ -n \"\${seen[\$key]:-}\" ]] || out+=\"APT::Periodic::\$key \\\"1\\\";\"\$'\\n'" \
+    "        [[ -n \"\${seen[\$key]:-}\" ]] || out+=\"APT::Periodic::\$key \\\"0\\\";\"\$'\\n'"
 
 # The "50unattended-upgrades is left alone" test only asserts that a file at that
 # path survives — which it would even if the fix wrote to the real /etc copy, since

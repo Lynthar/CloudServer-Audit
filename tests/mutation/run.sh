@@ -363,29 +363,33 @@ run_case() {
         run_fix_and_rollback "$case_name" || converged=0
     fi
 
+    # Restored before the verdict: a case that leaves the host dirty is an
+    # error, not a pass as well.
+    local restored=1
+    restore_case "$case_name" || restored=0
+
     # Severity drift is still a detection (the WARN line above stands in for
     # the PASS line); only a failed stage 2 or 3 turns the case red.
     if (( detected == 1 )); then
-        if (( converged == 1 )); then
+        if (( converged == 0 )); then
+            failed+=1
+        elif (( restored == 1 )); then
             local stages="${FIX_ID:+ → $FIX_ID → rollback}"
             [[ -n "${EXPECT_DECLINED:-}" ]] && stages=" → $FIX_ID declined"
             (( warned == 0 )) && results+=("PASS  | $case_name | $EXPECT_ID @ $hit_severity$stages")
             passed+=1
-        else
-            failed+=1
         fi
     fi
-
-    restore_case "$case_name"
 }
 
-# The case's restore(). One that fails is an error, not a warning: a half-planted
-# defect left behind changes the verdict of every case after it.
+# The case's restore(); returns 1 when it failed. That is an error, not a warning:
+# a half-planted defect left behind changes the verdict of every case after it.
 restore_case() {
     restore && return 0
     echo "  $(color red '[ERROR]') restore() failed — later cases run on a dirty host"
     results+=("ERROR | $1 | restore failed (manual cleanup needed)")
     errored+=1
+    return 1
 }
 
 # Stage 2 (fix → re-audit) and stage 3 (rollback → re-audit); returns 1 on the

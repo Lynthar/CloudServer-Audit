@@ -313,6 +313,20 @@ SH
     [[ "$output" == *"$(i18n 'backup.preview_rmdir')"*"  - /etc/nginx/ssl"* ]]
 }
 
+@test "rollback preview: a session without its created-files record says what stays" {
+    # backup_restore reported the restore incomplete; the preview, the only
+    # thing the operator reads before saying yes, did not mention it.
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    backup_list() { echo 20260501_120000; }
+    backup_list_contents() { printf 'restore /etc/ssh/sshd_config\nnomanifest /opt/vpssec/backups/20260501_120000/.vpssec_created\n'; }
+    confirm_critical() { return 1; }
+
+    run rollback_mode 20260501_120000
+
+    [[ "$output" == *"$(i18n 'backup.preview_no_manifest')"*"  - /opt/vpssec/backups/20260501_120000/.vpssec_created"* ]]
+}
+
 # A session of $1 lines in backup_list_contents' form, restored with outcome $2.
 _rollback_of() {
     source "$(_vpssec_repo_root)/core/engine.sh"

@@ -20,6 +20,8 @@ jobs:
     # tests that need root skip -- bats-container runs those, on Debian too.
     name: bats unit tests
     runs-on: ubuntu-latest
+    # The default of 360 would let one hung test hold the job for six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -45,6 +47,7 @@ jobs:
     name: bats on ${{ matrix.distro }}
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash  # a container's default is sh, dash on debian:12: no pipefail
@@ -65,13 +68,13 @@ jobs:
           DISTRO: ${{ matrix.distro }}
         run: |
           set -eu
-          # git for checkout, jq for vpssec, python3 for one fixture (Rocky ships
-          # it). Debian adds what its root-only tests read: the crontab group
-          # (cron), /etc/at.deny (at) and cvtsudoers (sudo).
+          # git for checkout, jq and curl for vpssec (Rocky and Arch ship curl),
+          # python3 for one fixture (Rocky ships it). Debian adds what its root-only
+          # tests read: the crontab group (cron), /etc/at.deny (at) and cvtsudoers (sudo).
           case "$DISTRO" in
               debian) apt-get update -qq
                       apt-get install -y -qq --no-install-recommends \
-                          ca-certificates git jq python3 cron at sudo ;;
+                          ca-certificates git jq curl python3 cron at sudo ;;
               rocky) dnf -q -y install git jq ;;
               arch)  pacman -Syu --noconfirm --needed git jq python ;;  # -Sy alone: a partial upgrade
               *)     echo "unknown distro: $DISTRO" >&2; exit 1 ;;

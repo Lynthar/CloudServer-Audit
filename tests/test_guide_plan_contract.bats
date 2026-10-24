@@ -63,6 +63,14 @@ _checklist_tags_only() {
     [ "$(grep -o "mod.shared_fix" <<<"$output" | wc -l | tr -d ' ')" -eq 1 ]
 }
 
+@test "the text menu's safety tags follow the language, and other classes get none" {
+    i18n_load zh_CN
+    [[ "$(_guide_safety_tag safe)" == *"[安全]"* ]]
+    [[ "$(_guide_safety_tag confirm)" == *"[需确认]"* ]]
+    [[ "$(_guide_safety_tag risky)" == *"[高风险]"* ]]
+    [ -z "$(_guide_safety_tag alert_only)" ]
+}
+
 @test "tui_select_fixes pre-ticks SAFE fixes only" {
     # Everything ticked put risky fixes in the plan on a bare Enter, while
     # the text menu plans nothing on one.

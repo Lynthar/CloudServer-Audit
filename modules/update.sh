@@ -412,6 +412,30 @@ _update_fix_install_unattended() {
     fi
 }
 
+# 20auto-upgrades content $1 with both intervals on: one already on (an
+# operator's "7") is kept, one off or missing becomes "1", other lines stay.
+_update_auto_upgrades_content() {
+    local line key out=""
+    local -A seen=()
+    if [[ -n "$1" ]]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*APT::Periodic::(Update-Package-Lists|Unattended-Upgrade)[[:space:]]+\"([^\"]*)\"\; ]]; then
+                key=${BASH_REMATCH[1]}
+                seen[$key]=1
+                _auto_update_apt_interval_on "${BASH_REMATCH[2]}" || line="APT::Periodic::$key \"1\";"
+            elif [[ "$line" =~ ^[[:space:]]*APT::Periodic::AutocleanInterval[[:space:]] ]]; then
+                seen[AutocleanInterval]=1
+            fi
+            out+="$line"$'\n'
+        done <<<"$1"
+    fi
+    for key in Update-Package-Lists Unattended-Upgrade; do
+        [[ -n "${seen[$key]:-}" ]] || out+="APT::Periodic::$key \"1\";"$'\n'
+    done
+    [[ -n "${seen[AutocleanInterval]:-}" ]] || out+='APT::Periodic::AutocleanInterval "7";'$'\n'
+    printf '%s' "${out%$'\n'}"
+}
+
 _update_fix_enable_unattended() {
     print_info "$(i18n 'update.configuring_unattended')"
 
@@ -419,9 +443,11 @@ _update_fix_enable_unattended() {
     # thing that lets a rollback delete this file, and on a first run — the
     # common case here — it does not exist.
     backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1
-    if ! write_file_atomic "$UPDATE_AUTO_UPGRADES_CONF" 'APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::AutocleanInterval "7";'; then
+    local current=""
+    if [[ -e "$UPDATE_AUTO_UPGRADES_CONF" ]]; then
+        current=$(<"$UPDATE_AUTO_UPGRADES_CONF") || return 1
+    fi
+    if ! write_file_atomic "$UPDATE_AUTO_UPGRADES_CONF" "$(_update_auto_upgrades_content "$current")"; then
         print_error "$(i18n 'update.auto_upgrades_write_failed' "file=$UPDATE_AUTO_UPGRADES_CONF")"
         return 1
     fi

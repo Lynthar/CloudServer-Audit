@@ -576,9 +576,9 @@ file_owned_by_package() {
 
 # Print the package owning the file PATH resolves to, if its content still
 # matches that package's recorded sum: 0 = verified, 1 = not owned, modified or
-# unsummed, 2 = cannot tell (no tool, or pacman). Call it in a tested context.
+# unsummed, 2 = cannot tell (no tool). Call it in a tested context.
 file_package_verified() {
-    local real out pkg cand sums want have alt=""
+    local real out pkg cand sums want have alt="" db
     real=$(readlink -f -- "$1" 2>/dev/null) && [[ -f "$real" ]] || return 1
     case "$VPSSEC_PKG_MGR" in
         apt)
@@ -618,7 +618,32 @@ file_package_verified() {
             P="$real" awk '$NF == ENVIRON["P"] { bad = 1 } END { exit bad }' <<<"$sums" || return 1
             echo "${out%%$'\n'*}"
             ;;
+        pacman)
+            command -v pacman >/dev/null 2>&1 || return 2
+            pkg=$(pacman -Qqo -- "$real" 2>/dev/null) || return 1
+            pkg="${pkg%%$'\n'*}"
+            out=$(pacman -Q -- "$pkg" 2>/dev/null) || return 1
+            # The sum is read from the local database's mtree, as dpkg's md5sums
+            # are: pacman -Qkk names only mismatches, so an unsummed file passes.
+            db=$(pacman-conf DBPath 2>/dev/null) || db=/var/lib/pacman/
+            sums=$(gzip -dc -- "${db%/}/local/${pkg}-${out#* }/mtree" 2>/dev/null) || return 1
+            want=$(P="./${real#/}" awk '$1 == ENVIRON["P"] {
+                for (i = 2; i <= NF; i++) if ($i ~ /^sha256digest=/) { print substr($i, 14); exit } }' <<<"$sums")
+            have=$(sha256sum < "$real") || return 2
+            [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1
+            echo "$pkg"
+            ;;
         *) return 2 ;;
+    esac
+}
+
+# A command that searches the changelog of installed package $1 for the
+# extended regex $2; status 1 where packages carry no distribution changelog.
+pkg_changelog_grep_hint() {
+    case "$VPSSEC_PKG_MGR" in
+        apt) echo "zgrep -E '$2' /usr/share/doc/$1/changelog.Debian.gz" ;;
+        dnf) echo "rpm -q --changelog $1 | grep -E '$2'" ;;
+        *) return 1 ;;
     esac
 }
 
@@ -922,22 +947,25 @@ distro_sgid_whitelist() {
     esac
 }
 
-# Extra legitimate file-capability entries ("path:cap_name").
+# Extra legitimate file-capability entries, in FS_CAPS_WHITELIST's
+# "path:caps:packages" form.
 distro_caps_whitelist() {
     case "$VPSSEC_DISTRO_FAMILY" in
         rhel)
             printf '%s\n' \
-                /usr/sbin/mtr-packet:cap_net_raw \
-                /usr/sbin/suexec:cap_setuid,cap_setgid \
-                /usr/bin/newgidmap:cap_setgid \
-                /usr/bin/newuidmap:cap_setuid \
-                /usr/libexec/sssd/*:cap_dac_read_search
+                '/usr/sbin/mtr-packet:cap_net_raw:mtr' \
+                '/usr/sbin/suexec:cap_setuid,cap_setgid:httpd-core|httpd' \
+                '/usr/bin/newgidmap:cap_setgid:shadow-utils' \
+                '/usr/bin/newuidmap:cap_setuid:shadow-utils' \
+                '/usr/libexec/sssd/*:cap_dac_read_search:sssd-*' \
+                '/usr/libexec/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice:gstreamer1'
             ;;
         arch)
             printf '%s\n' \
-                /usr/bin/ping:cap_net_raw \
-                /usr/bin/newgidmap:cap_setgid \
-                /usr/bin/newuidmap:cap_setuid
+                '/usr/bin/mtr-packet:cap_net_bind_service,cap_net_raw:mtr' \
+                '/usr/bin/newgidmap:cap_setgid:shadow' \
+                '/usr/bin/newuidmap:cap_setuid:shadow' \
+                '/usr/lib/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service:gstreamer'
             ;;
         *) : ;;
     esac

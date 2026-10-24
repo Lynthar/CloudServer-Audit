@@ -1092,6 +1092,22 @@ SH
     _kernel_ip_forward_needed
 }
 
+@test "forwarding: a WireGuard unit early in a long unit list counts" {
+    # grep -q stopped reading at the match, awk died of SIGPIPE writing the rest,
+    # and under pipefail the pipeline the if tested reported failure.
+    _host_has_link_type dummy
+    {
+        echo "wg-quick@wg0.service loaded active running WireGuard via wg-quick(8) for wg0"
+        for ((i = 0; i < 20000; i++)); do echo "filler$i.service loaded active running Filler"; done
+    } > "$BATS_TEST_TMPDIR/units"
+    _vpssec_stub_script systemctl <<SH
+[[ "\$1" == list-units ]] && { cat "$BATS_TEST_TMPDIR/units"; exit 0; }
+exit 3
+SH
+    set -o pipefail
+    _kernel_ip_forward_needed
+}
+
 @test "harden_network: ip_forward is left enabled on a host with a bridge and no unit" {
     _host_has_link_type bridge
     _sysctl_seed "net.ipv4.ip_forward" "1"

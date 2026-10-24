@@ -105,9 +105,16 @@ _as_distro() {
     # End to end, on the exact dependency list the entry point checks.
     _as_distro rhel dnf
     local pkgs
-    pkgs=$(distro_packages_for_commands jq ss systemctl sed awk tar grep)
+    pkgs=$(distro_packages_for_commands jq ss systemctl sed awk tar grep curl)
     # shellcheck disable=SC2086
-    [ "$(pkg_install_hint $pkgs)" = "dnf install jq iproute systemd sed gawk tar grep" ]
+    [ "$(pkg_install_hint $pkgs)" = "dnf install jq iproute systemd sed gawk tar grep curl" ]
+}
+
+@test "packages: curl is required at the entry point, so no check copes without it" {
+    _vpssec_absent_command curl
+    run check_required_deps
+    [ "$status" -eq 1 ]
+    [[ " $output " == *" curl "* ]]
 }
 
 # ==============================================================================

@@ -198,11 +198,11 @@ _ufw_find_permissive_rules() {
         local port="${entry%%:*}"
         local service="${entry#*:}"
 
-        # Check if this port is ALLOW from Anywhere
-        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then
+        # ALLOW or LIMIT from Anywhere: a rate limit still lets the world in.
+        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then
             issues+=("$(i18n 'ufw.f_open_anywhere' "port=$port ($service)")")
         fi
-        if echo "$ufw_output" | grep -qE "^${port}/udp\s+ALLOW\s+(IN\s+)?Anywhere"; then
+        if echo "$ufw_output" | grep -qE "^${port}/udp\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then
             issues+=("$(i18n 'ufw.f_open_anywhere' "port=$port/udp ($service)")")
         fi
     done
@@ -213,6 +213,8 @@ _ufw_find_permissive_rules() {
     local open_ok=" 22 80 443 $(get_ssh_ports | tr '\n' ' ')"
     local line to tok ports
     while IFS= read -r line; do
+        # Without its comment: one reading "ALLOW Anywhere" would be matched instead.
+        line="${line%%#*}"
         [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere ]] || continue
         to="${BASH_REMATCH[1]}"
         [[ "$to" == *" on "* || "$to" == *" (v6)" ]] && continue

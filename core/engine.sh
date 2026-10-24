@@ -852,6 +852,17 @@ _guide_resume() {
 }
 
 # Guide mode main flow
+# The text menu's tag for a fix's safety class. Only the three applicable
+# classes reach that menu: get_available_fixes drops alert_only, and an
+# unclassified fix_id is a CI failure, not a menu entry.
+_guide_safety_tag() {
+    case "$1" in
+        safe)    printf '%s' "${GREEN}$(i18n 'guide.tag_safe')${NC}" ;;
+        confirm) printf '%s' "${YELLOW}$(i18n 'guide.tag_confirm')${NC}" ;;
+        risky)   printf '%s' "${RED}$(i18n 'guide.tag_risky')${NC}" ;;
+    esac
+}
+
 guide_mode() {
     # Fix paths are apt/dpkg-based; refuse rather than run apt where it is
     # absent. Exit 4 = capability not supported, distinct from success (0) and
@@ -1000,18 +1011,7 @@ guide_mode() {
                 low)    prefix="${BLUE}[-]${NC}" ;;
             esac
 
-            # Add safety indicator. Only the three applicable classes reach
-            # this list: get_available_fixes drops alert_only, and an
-            # unclassified fix_id is a CI failure, not a menu entry.
-            local safety_indicator=""
-            case "$safety" in
-                safe)    safety_indicator="${GREEN}[safe]${NC}" ;;
-                confirm) safety_indicator="${YELLOW}[confirm]${NC}" ;;
-                risky)   safety_indicator="${RED}[risky]${NC}" ;;
-                *)       safety_indicator="" ;;
-            esac
-
-            tty_say "  $i) $prefix $title $safety_indicator"
+            tty_say "  $i) $prefix $title $(_guide_safety_tag "$safety")"
             ((i++))
         done < <(echo "$fixes" | jq -c '.[]')
 
@@ -1189,13 +1189,14 @@ rollback_mode() {
 
     local contents verb heading
     contents=$(backup_list_contents "$timestamp")
-    for verb in restore delete rmdir missing; do
+    for verb in restore delete rmdir missing nomanifest; do
         grep -q "^$verb " <<<"$contents" || continue
         case "$verb" in
             restore) heading=$(i18n 'backup.preview_restore') ;;
             delete)  heading=$(i18n 'backup.preview_delete') ;;
             rmdir)   heading=$(i18n 'backup.preview_rmdir') ;;
             missing) heading=$(i18n 'backup.preview_missing') ;;
+            nomanifest) heading=$(i18n 'backup.preview_no_manifest') ;;
         esac
         tty_say ""
         tty_say "$heading"

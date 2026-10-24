@@ -9,13 +9,26 @@ run_case "permissive/translated-table" 1 \
     '    ufw_output=$(ufw status 2>/dev/null)'
 
 run_case "permissive/database-port-ignored" 1 \
-    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then' \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then' \
     '        if false; then'
 
 # ALLOW OUT read as an inbound exposure, for a database port and for any other.
 run_case "permissive/outbound-database-port-counted" 1 \
-    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then' \
-    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+([A-Z]+\s+)?Anywhere"; then'
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then' \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+(ALLOW|LIMIT)\s+([A-Z]+\s+)?Anywhere"; then'
+
+# A rate limit read as closed: LIMIT from Anywhere on a database port goes unreported.
+run_case "permissive/database-port-limit-ignored" 1 \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then' \
+    '        if echo "$ufw_output" | grep -qE "^${port}(/tcp)?\s+ALLOW\s+(IN\s+)?Anywhere"; then'
+
+run_case "permissive/database-udp-limit-ignored" 1 \
+    '        if echo "$ufw_output" | grep -qE "^${port}/udp\s+(ALLOW|LIMIT)\s+(IN\s+)?Anywhere"; then' \
+    '        if echo "$ufw_output" | grep -qE "^${port}/udp\s+ALLOW\s+(IN\s+)?Anywhere"; then'
+
+run_case "permissive/comment-read-as-rule" 1 \
+    '        line="${line%%#*}"' \
+    '        :'
 
 run_case "permissive/outbound-counted" 1 \
     '        [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+(ALLOW|LIMIT)[[:space:]]+(IN[[:space:]]+)?Anywhere ]] || continue' \

@@ -36,10 +36,6 @@ run_case "agents/azure-listed-twice" 1 \
 
 # ---- metadata service --------------------------------------------------
 
-run_case "imds/no-curl-silent" 1 \
-    '    if ! check_command curl; then' \
-    '    if false; then'
-
 # Without -f a 404 page is a body, and it scans clean.
 run_case "user-data/error-page-is-body" 1 \
     '    curl -fsS --max-time 2 --connect-timeout 1 "$@" "$url" 2>/dev/null' \

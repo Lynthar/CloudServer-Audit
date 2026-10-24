@@ -43,8 +43,8 @@ sudo vpssec audit
 curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.5.0 bash
 ```
 
-服务器自带的那些（bash、coreutils、systemd、iproute2 里的 `ss`）之外，只额外需要
-`jq`，缺了两个脚本都会自己装。验签用的 `cosign` 优先装发行版软件源里的；软件源里没有，
+服务器自带的那些（bash、coreutils、systemd、iproute2 里的 `ss`）之外，还需要
+`jq` 与 `curl`，缺哪个两个脚本都会自己装。验签用的 `cosign` 优先装发行版软件源里的；软件源里没有，
 就装一个钉死版本、先核对哈希。脚本装上的东西都会留在系统里，一次性运行也一样。
 
 ## 用法
@@ -74,16 +74,16 @@ vpssec help ssh      # 某个模块里的检查项与 fix id
 
 ## 检查什么
 
-`vpssec audit` 跑 21 个模块共 356 项检查：
+`vpssec audit` 跑 21 个模块共 357 项检查：
 
 | 领域 | 项数 | 主要检查内容 |
 |---|---|---|
-| 系统与内核 | 83 | `sysctl` 的网络与内存参数及其开机后能否保持、挂载选项、全局可写与 SUID 文件、自动更新、时间同步、cron 与 `at` 的访问控制 |
+| 系统与内核 | 84 | `sysctl` 的网络与内存参数及其开机后能否保持、挂载选项、全局可写与 SUID 文件、自动更新、时间同步、cron 与 `at` 的访问控制 |
 | SSH 与账号 | 73 | sshd 配置从头到尾、密钥与口令登录、root 登录、空口令、sudo 规则、僵尸账号、口令时效 |
-| 容器与 Web 应用 | 57 | Docker 守护进程暴露面、特权容器与 `--net=host`、socket 权限、nginx 的 TLS 与响应头、暴露的管理路径 |
-| 检测与日志 | 53 | fail2ban 的 jail、rootkit 与可疑二进制扫描、journald 保留策略、日志权限、出事时到底有没有人会被通知到 |
+| 容器与 Web 应用 | 59 | Docker 守护进程暴露面、特权容器与 `--net=host`、socket 权限、nginx 的 TLS 与响应头、暴露的管理路径 |
+| 检测与日志 | 52 | fail2ban 的 jail、rootkit 与可疑二进制扫描、journald 保留策略、日志权限、出事时到底有没有人会被通知到 |
 | 网络与防火墙 | 46 | UFW 规则与默认策略、监听端口与你以为暴露的是否一致、nginx 反代暴露面、cloudflared 隧道 |
-| 基线与运维 | 44 | 与上次运行的偏差、cloud-init 与云厂商 metadata 暴露、备份是否存在、依赖预检 |
+| 基线与运维 | 43 | 与上次运行的偏差、cloud-init 与云厂商 metadata 暴露、备份是否存在、依赖预检 |
 
 **vpssec 能执行 50 个修复**，按可能造成的影响分档：25 个直接执行、20 个执行前询问、
 5 个需要你在终端输入确认。另有 73 类发现只给建议、没有修复，要你手工处理。
@@ -141,7 +141,7 @@ vpssec 与两个入口脚本自己发起的连接只有下面这些：
 | `status` | `api.github.com` | 检查有没有新版本，5 秒；`audit` 与 `guide` 从不调用 |
 | `guide`，修复需要安装或升级软件包时 | 这台主机已配置的软件源 | 只针对你选中的修复 |
 | `guide` 写出的告警脚本，在你把它们启用之后 | 你配置的 webhook 或邮件 | 发送你的告警；vpssec 本身从不发送 |
-| `run.sh` / `install.sh` | `github.com` 与 `api.github.com` · sigstore · 缺 `jq` 或 `cosign` 时，你的软件源或 cosign 的 GitHub release | 下载 release（`latest` 经 API 解析成 tag），并按 cosign 的信任根验签；安装缺的依赖 |
+| `run.sh` / `install.sh` | `github.com` 与 `api.github.com` · sigstore · 缺 `jq`、`curl` 或 `cosign` 时，你的软件源或 cosign 的 GitHub release | 下载 release（`latest` 经 API 解析成 tag），并按 cosign 的信任根验签；安装缺的依赖 |
 
 在禁用密码或 root 登录之前，会在另一个端口起第二个 sshd 并要求你确认还能连进来。
 修复改动文件之前，先把原件存进 `backups/<时间戳>/`。

@@ -632,15 +632,6 @@ _cloud_imds_in_container() {
 _cloud_audit_imds() {
     local tier; tier=$(vpssec_cloud_tier)
     [[ "$tier" == "unknown" ]] && return 0
-    if ! check_command curl; then
-        local hint
-        hint=$(pkg_install_hint curl) || hint=$(i18n 'preflight.install_deps' "deps=curl")
-        check_emit "cloud.imds_not_checked" low failed \
-            desc="$(i18n 'cloud.imds_not_checked_desc')" \
-            suggestion="$hint"
-        print_severity "low" "$(i18n 'cloud.imds_not_checked')"
-        return 0
-    fi
 
     local provider; provider=$(vpssec_cloud_provider)
 

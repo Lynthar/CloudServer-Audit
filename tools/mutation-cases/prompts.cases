@@ -17,5 +17,14 @@ run_case "confirm/question-on-stdout" 1 \
     '    echo -n "$prompt_text"'
 
 run_case "error/swallowed-under-json-only" 1 \
-    '        echo -e "${RED}${SYM_FAIL}${NC} $*" >&2' \
+    "        printf '%s\\n' \"\${RED}\${SYM_FAIL}\${NC} \$*\" >&2" \
     '        :'
+
+# echo -e back in the output helpers: a backslash the operator typed is expanded.
+run_case "print/backslash-expanded" 1 \
+    "    printf '%s\n' \"\$*\"" \
+    '    echo -e "$*"'
+
+run_case "tty/backslash-expanded" 1 \
+    "        printf '%s\n' \"\$*\" | tty_out" \
+    '        echo -e "$*" | tty_out'

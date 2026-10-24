@@ -35,10 +35,6 @@ _alerts_check_mail_configured() {
     check_command mail || check_command sendmail || check_command msmtp
 }
 
-_alerts_check_curl() {
-    check_command curl
-}
-
 # Is there somebody to ask for a webhook URL? Both predicates are required:
 # a readable /dev/tty (the prompts do not read stdin) AND no --yes /
 # --json-only, or an automated run parks on the prompt forever.
@@ -104,29 +100,19 @@ _alerts_audit_config() {
     fi
 }
 
+# Webhooks need curl, which the entry point requires, so they are always there.
 _alerts_audit_capabilities() {
-    local capabilities=()
-
-    if _alerts_check_curl; then
-        capabilities+=("webhook")
-    fi
+    local capabilities=(webhook)
 
     if _alerts_check_mail_configured; then
         capabilities+=("email")
     fi
 
-    if [[ ${#capabilities[@]} -gt 0 ]]; then
-        local caps_list="${capabilities[*]}"
-        check_emit "alerts.capabilities_ok" low passed \
-            title="$(i18n 'alerts.capabilities_available')" \
-            desc="$(i18n 'alerts.capabilities_list' "types=$caps_list")"
-        print_ok "$(i18n 'alerts.capabilities' "types=$caps_list")"
-    else
-        check_emit "alerts.no_capabilities" low failed \
-            desc="$(i18n 'alerts.no_capabilities_desc')" \
-            suggestion="$(i18n 'alerts.fix_install_curl')"
-        print_severity "low" "$(i18n 'alerts.no_capabilities')"
-    fi
+    local caps_list="${capabilities[*]}"
+    check_emit "alerts.capabilities_ok" low passed \
+        title="$(i18n 'alerts.capabilities_available')" \
+        desc="$(i18n 'alerts.capabilities_list' "types=$caps_list")"
+    print_ok "$(i18n 'alerts.capabilities' "types=$caps_list")"
 }
 
 # --- Alert Fix Functions ---
@@ -205,8 +191,12 @@ _alerts_fix_setup_config() {
     # alerts.json holds webhook URLs, so it is 0600 from the moment it exists:
     # created empty under umask 077, then replaced atomically, which keeps an
     # existing file's mode. A failed write leaves the old file whole.
+    # An existing config is backed up so a rollback restores it; a new one is
+    # not registered, or the rollback would delete vpssec's own state.
     local created=0
-    if [[ ! -e "$ALERTS_CONFIG_FILE" ]] && ( umask 077 && : > "$ALERTS_CONFIG_FILE" ); then
+    if [[ -e "$ALERTS_CONFIG_FILE" ]]; then
+        backup_file "$ALERTS_CONFIG_FILE" >/dev/null || return 1
+    elif ( umask 077 && : > "$ALERTS_CONFIG_FILE" ); then
         created=1
     fi
     if ! write_file_atomic "$ALERTS_CONFIG_FILE" "$config_json"$'\n'; then

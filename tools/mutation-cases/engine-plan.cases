@@ -151,3 +151,8 @@ run_case "preview/box-under-yes" 1 \
 run_case "preview/box-never" 1 \
     '    if tui_available && [[ "${VPSSEC_YES:-0}" != "1" ]]; then' \
     '    if false; then'
+
+# The text menu's tags back to fixed English.
+run_case "menu/safe-tag-unlocalised" 1 \
+    "        safe)    printf '%s' \"\${GREEN}\$(i18n 'guide.tag_safe')\${NC}\" ;;" \
+    "        safe)    printf '%s' \"\${GREEN}[safe]\${NC}\" ;;"

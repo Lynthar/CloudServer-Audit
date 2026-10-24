@@ -217,6 +217,40 @@ SH
     grep -qF 'Unattended-Upgrade "0";' "${VPSSEC_BACKUP_SESSION}${UPDATE_AUTO_UPGRADES_CONF}"
 }
 
+@test "enable: an operator's weekly intervals are kept, and only what is off is turned on" {
+    # The whole file was rewritten: a "7" written back as "1", other lines lost.
+    printf '%s\n' '// weekly, set by ops' 'APT::Periodic::Update-Package-Lists "7";' \
+        'APT::Periodic::Unattended-Upgrade "0";' 'APT::Periodic::Download-Upgradeable-Packages "1";' \
+        > "$UPDATE_AUTO_UPGRADES_CONF"
+
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    grep -qxF 'APT::Periodic::Update-Package-Lists "7";' "$UPDATE_AUTO_UPGRADES_CONF"
+    grep -qxF 'APT::Periodic::Unattended-Upgrade "1";' "$UPDATE_AUTO_UPGRADES_CONF"
+    grep -qxF 'APT::Periodic::Download-Upgradeable-Packages "1";' "$UPDATE_AUTO_UPGRADES_CONF"
+    grep -qxF '// weekly, set by ops' "$UPDATE_AUTO_UPGRADES_CONF"
+    _vpssec_refute grep -qF 'Unattended-Upgrade "0"' "$UPDATE_AUTO_UPGRADES_CONF"
+}
+
+@test "enable: keys the file lacks are added, an existing autoclean interval kept" {
+    printf 'APT::Periodic::AutocleanInterval "21";\n' > "$UPDATE_AUTO_UPGRADES_CONF"
+
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    grep -qxF 'APT::Periodic::Update-Package-Lists "1";' "$UPDATE_AUTO_UPGRADES_CONF"
+    grep -qxF 'APT::Periodic::Unattended-Upgrade "1";' "$UPDATE_AUTO_UPGRADES_CONF"
+    [ "$(grep -c AutocleanInterval "$UPDATE_AUTO_UPGRADES_CONF")" -eq 1 ]
+    grep -qxF 'APT::Periodic::AutocleanInterval "21";' "$UPDATE_AUTO_UPGRADES_CONF"
+}
+
+@test "enable: a first run writes the three keys and nothing else" {
+    run _update_fix_enable_unattended
+    [ "$status" -eq 0 ]
+    [ "$(cat "$UPDATE_AUTO_UPGRADES_CONF")" = 'APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";' ]
+}
+
 @test "enable: a write the atomic writer refuses is reported, not ignored" {
     # A regular file where the parent directory belongs defeats both the mkdir -p
     # and the mktemp inside write_file_atomic. The postcondition reads the MERGED

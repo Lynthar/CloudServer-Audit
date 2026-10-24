@@ -135,17 +135,19 @@ _vpssec_scan_secrets_in_content() {
 if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
     VPSSEC_COLOR=0
 fi
+# Real ESC bytes, not "\033" text: the output helpers print with %s, so that a
+# backslash the operator typed stays literal, and %s shows "\033" as text.
 if [[ "${VPSSEC_COLOR}" == "1" ]] && [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    MAGENTA='\033[0;35m'
-    CYAN='\033[0;36m'
-    WHITE='\033[0;37m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m' # No Color
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    BLUE=$'\033[0;34m'
+    MAGENTA=$'\033[0;35m'
+    CYAN=$'\033[0;36m'
+    WHITE=$'\033[0;37m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    NC=$'\033[0m' # No Color
 else
     RED=''
     GREEN=''
@@ -233,7 +235,7 @@ log_error() {
 
 print_msg() {
     [[ "${VPSSEC_JSON_ONLY}" == "1" ]] && return
-    echo -e "$*"
+    printf '%s\n' "$*"
 }
 
 print_info() {
@@ -258,7 +260,7 @@ print_warn() {
 # reserved for the JSON document, and a swallowed error leaves no trace.
 print_error() {
     if [[ "${VPSSEC_JSON_ONLY}" == "1" ]]; then
-        echo -e "${RED}${SYM_FAIL}${NC} $*" >&2
+        printf '%s\n' "${RED}${SYM_FAIL}${NC} $*" >&2
         return 0
     fi
     print_msg "${RED}${SYM_FAIL}${NC} $*"
@@ -269,16 +271,15 @@ print_error() {
 # --json-only or quiet scan: an unseen safety note cannot be acted on.
 _VPSSEC_TTY=/dev/tty
 tty_say() {
-    local -a opt=(-e)
     if [[ "${1:-}" == "-n" ]]; then
-        opt+=(-n)
         shift
+        printf '%s' "$*" | tty_out
+    else
+        printf '%s\n' "$*" | tty_out
     fi
-    echo "${opt[@]}" "$*" | tty_out
 }
 
-# stdin, verbatim, to the same place: data such as a plan or a rule list
-# must not go through echo -e, which would expand backslashes in it.
+# stdin, verbatim, to the same place: data such as a plan or a rule list.
 tty_out() {
     if { : >"$_VPSSEC_TTY"; } 2>/dev/null; then
         cat >"$_VPSSEC_TTY"
@@ -333,9 +334,9 @@ print_severity() {
 
 # --- Text Width Helpers (terminal cells, CJK-aware) ---
 
-# One colour code: the literal "\033[...m" text (the colour vars are single-
-# quoted) or a real ESC byte. A regex, not a glob: in a glob `[0-9;]*m` runs to
-# the LAST "m" in the string and takes the visible text with it.
+# One colour code: a real ESC byte, as the colour vars hold, or its literal
+# "\033[...m" spelling. A regex, not a glob: in a glob `[0-9;]*m` runs to the
+# LAST "m" in the string and takes the visible text with it.
 _VPSSEC_ANSI_RE='(\\033|'$'\033'')\[[0-9;]*m'
 
 # Remove every colour code from the variable named $1, in place (no fork).
@@ -515,8 +516,6 @@ i18n_load() {
 # a status command that errors because GitHub is unreachable is worse than one
 # that says nothing about updates.
 _vpssec_latest_release_tag() {
-    command -v curl &>/dev/null || return 0
-    command -v jq &>/dev/null || return 0
     curl -fsSL --connect-timeout 3 --max-time 5 \
         "https://api.github.com/repos/${VPSSEC_REPO}/releases/latest" 2>/dev/null \
         | jq -r '.tag_name // empty' 2>/dev/null || true
@@ -598,27 +597,31 @@ detect_virtualization() {
     fi
 }
 
+# The /proc detect_container reads; tests point it at a fake one.
+DETECT_PROC_DIR="/proc"
+
 # The container type (openvz, lxc, docker, nspawn, container) when vpssec runs
 # inside one, else nothing and 1. Kernel parameters and the MAC policy there
 # belong to the host kernel, which nothing inside the container can change.
 detect_container() {
-    if [[ -f /proc/vz/veinfo ]] || [[ -d /proc/vz ]]; then
+    # systemd's rule: an OpenVZ host node has /proc/bc as well, and is no container.
+    if [[ -d "$DETECT_PROC_DIR/vz" && ! -d "$DETECT_PROC_DIR/bc" ]]; then
         echo "openvz"
         return 0
     fi
-    if grep -qa "lxc" /proc/1/cgroup 2>/dev/null; then
+    if grep -qa "lxc" "$DETECT_PROC_DIR/1/cgroup" 2>/dev/null; then
         echo "lxc"
         return 0
     fi
-    if [[ -f /.dockerenv ]] || grep -qa "docker" /proc/1/cgroup 2>/dev/null; then
+    if [[ -f /.dockerenv ]] || grep -qa "docker" "$DETECT_PROC_DIR/1/cgroup" 2>/dev/null; then
         echo "docker"
         return 0
     fi
-    if grep -qa "machine.slice" /proc/1/cgroup 2>/dev/null; then
+    if grep -qa "machine.slice" "$DETECT_PROC_DIR/1/cgroup" 2>/dev/null; then
         echo "nspawn"
         return 0
     fi
-    if grep -qa "container=" /proc/1/environ 2>/dev/null; then
+    if grep -qa "container=" "$DETECT_PROC_DIR/1/environ" 2>/dev/null; then
         echo "container"
         return 0
     fi
@@ -678,7 +681,7 @@ check_command() {
 
 check_required_deps() {
     local missing=()
-    local deps=(jq ss systemctl sed awk tar grep)
+    local deps=(jq ss systemctl sed awk tar grep curl)
 
     for dep in "${deps[@]}"; do
         if ! check_command "$dep"; then

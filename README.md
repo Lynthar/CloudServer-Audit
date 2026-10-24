@@ -49,8 +49,8 @@ curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.5.0 bash
 ```
 
 Beyond what a stock server install already has (bash, coreutils, systemd, `ss`
-from iproute2), the one extra dependency is `jq`, and both scripts install it
-if it is missing. `cosign`, which checks the signature, comes from the
+from iproute2), vpssec needs `jq` and `curl`, and both scripts install whichever
+is missing. `cosign`, which checks the signature, comes from the
 distribution's packages where they have it, and otherwise from a pinned release
 checked against its hash. Whatever the scripts install stays installed, after a
 one-shot run too.
@@ -86,16 +86,16 @@ no); `--yes` and `--json-only` always write them.
 
 ## What it checks
 
-`vpssec audit` runs 356 checks across 21 modules:
+`vpssec audit` runs 357 checks across 21 modules:
 
 | Area | Checks | What it covers |
 |---|---|---|
-| System and kernel | 83 | `sysctl` network and memory settings and whether they survive a reboot, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
+| System and kernel | 84 | `sysctl` network and memory settings and whether they survive a reboot, mount options, world-writable and SUID files, unattended upgrades, time sync, cron and `at` access |
 | SSH and accounts | 73 | sshd config end to end, key vs password auth, root login, empty passwords, sudo rules, stale accounts, password aging |
-| Containers and web apps | 57 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
-| Detection and logging | 53 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
+| Containers and web apps | 59 | Docker daemon exposure, privileged and `--net=host` containers, socket permissions, nginx TLS and headers, exposed admin paths |
+| Detection and logging | 52 | fail2ban jails, rootkit and suspicious-binary scans, journald retention, log permissions, whether anything would actually alert you |
 | Network and firewall | 46 | UFW rules and default policy, listening sockets vs what you meant to expose, nginx reverse-proxy exposure, cloudflared tunnels |
-| Baseline and ops | 44 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
+| Baseline and ops | 43 | drift from the last run, cloud-init and provider metadata exposure, backup presence, dependency preflight |
 
 **vpssec can apply 50 fixes**, graded by how much impact they can have: 25
 apply straight away, 20 ask before applying, and 5 require you to type a
@@ -164,7 +164,7 @@ These are the only connections vpssec and its two entry scripts make on their ow
 | `status` | `api.github.com` | newer-release check, 5 s; never during `audit` or `guide` |
 | `guide`, for a fix that installs or upgrades packages | the package sources this host already uses | only for fixes you select |
 | the alert scripts `guide` writes, once you set them up | the webhook or mail setup you configure | delivering your alerts; vpssec itself never sends one |
-| `run.sh` / `install.sh` | `github.com` and `api.github.com` · sigstore · when `jq` or `cosign` is missing, your package sources or cosign's GitHub releases | downloading the release (`latest` resolved to a tag through the API) and checking its signature against cosign's trust root; installing what is missing |
+| `run.sh` / `install.sh` | `github.com` and `api.github.com` · sigstore · when `jq`, `curl` or `cosign` is missing, your package sources or cosign's GitHub releases | downloading the release (`latest` resolved to a tag through the API) and checking its signature against cosign's trust root; installing what is missing |
 
 Before disabling password or root SSH login, a second sshd comes up on a spare
 port and you have to confirm you can still connect. Before a fix changes a file,

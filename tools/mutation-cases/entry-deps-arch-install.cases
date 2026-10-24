@@ -1,0 +1,6 @@
+# Mutation cases: tests/test_entry_deps_arch.bats against install.sh.
+# mutate-suite: install.sh tests/test_entry_deps_arch.bats
+
+run_case "arch-deps/partial-upgrade" 1 \
+    '            pacman -Syu --noconfirm --needed "${missing[@]}"' \
+    '            pacman -Sy --noconfirm --needed "${missing[@]}"'

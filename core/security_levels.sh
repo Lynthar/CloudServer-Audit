@@ -567,7 +567,6 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["alerts.no_config"]="info"
     ["alerts.config_invalid"]="info"
     ["alerts.capabilities_ok"]="info"
-    ["alerts.no_capabilities"]="info"
 
     # === Kernel Module - required/recommended ===
     ["kernel.aslr_full"]="required"
@@ -641,7 +640,6 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["cloud.user_data_clean"]="info"
     ["cloud.imds_unrestricted"]="info"
     ["cloud.imds_restricted"]="info"
-    ["cloud.imds_not_checked"]="info"        # not measured: no score either way
     ["cloud.user_data_not_scanned"]="info"   # not measured: no score either way
 
     # === Users Module ===
@@ -714,6 +712,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.nginx_security_headers"]="conditional"
     ["webapp.nginx_security_headers_ok"]="conditional"
     ["webapp.nginx_security_headers_not_checked"]="info"   # not measured: no score either way
+    ["webapp.php2shell"]="info"   # a lead, not a verdict: distributions backport under the old number
     ["webapp.nginx_hsts_missing"]="conditional"
     ["webapp.nginx_hsts_weak"]="conditional"
     ["webapp.nginx_directory_listing"]="conditional"
@@ -756,6 +755,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["webapp.scan_incomplete"]="info"
     ["malware.scan_incomplete"]="info"
     ["nginx.config_unreadable"]="info"
+    ["docker.query_incomplete"]="info"
     ["webapp.nginx_config_unreadable"]="info"
     ["preflight.os_supported"]="info"
     ["preflight.os_unsupported"]="info"

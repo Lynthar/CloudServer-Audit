@@ -362,6 +362,7 @@ _md_section() {
         --arg recs "$label_recs" \
         --argjson tmpl_fixes "$(fix_template_only_ids_json)" \
         --arg tmpl_label "$(i18n 'fix.template_only')" \
+        --arg fixid "$(i18n 'report.fix_id')" \
         --arg unscored "$(i18n 'report.not_scored')" "$_VPSSEC_JQ_DEFS"'
         . as $checks
         # One check -> one Markdown block ending in exactly one newline.
@@ -380,7 +381,7 @@ _md_section() {
             elif $kind == "low" then
                 "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n"
             else
-                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **Fix ID**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"
+                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **\($fixid)**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"
             end;
         # The join happens in jq: command substitution strips the trailing
         # newline, which glued the next heading onto the previous line.
@@ -491,9 +492,9 @@ _print_columns_clean() {
         ((pad_needed > 0)) && padding=$(printf '%*s' "$pad_needed" '')
 
         if [[ -n "$right_line" ]]; then
-            echo -e " ${left_line}${padding} ${DIM}│${NC} ${right_line}"
+            printf '%s\n' " ${left_line}${padding} ${DIM}│${NC} ${right_line}"
         else
-            echo -e " ${left_line}"
+            printf '%s\n' " ${left_line}"
         fi
     done
 }
@@ -517,7 +518,7 @@ _print_category_header() {
 
     # Only one blank line before header, none after
     echo ""
-    echo -e "${DIM}${prefix_line}${NC} ${BOLD}${MAGENTA}${title}${NC} ${DIM}${suffix_line}${NC}"
+    printf '%s\n' "${DIM}${prefix_line}${NC} ${BOLD}${MAGENTA}${title}${NC} ${DIM}${suffix_line}${NC}"
 }
 
 # Print detailed test results - dual column layout (compact style)
@@ -567,7 +568,7 @@ report_print_details() {
             local module="${active_modules[0]}"
             _render_module_clean "$module" "$checks" "$col_width"
             for line in "${REPLY_LINES[@]}"; do
-                echo -e " ${line}"
+                printf '%s\n' " ${line}"
             done
         elif ((mod_count == 2)); then
             # Two modules - side by side
@@ -595,7 +596,7 @@ report_print_details() {
                 else
                     # Odd module - print alone
                     for line in "${left_lines[@]}"; do
-                        echo -e " ${line}"
+                        printf '%s\n' " ${line}"
                     done
                 fi
 
@@ -673,7 +674,7 @@ report_print_summary() {
         stats_line+="${BLUE}●${NC} ${low} $(i18n 'common.low')  "
     fi
     stats_line+="${GREEN}●${NC} ${passed} $(i18n 'common.safe')"
-    echo -e "$stats_line"
+    printf '%s\n' "$stats_line"
 
     # Advisory findings look identical to scoring ones in the body, so the
     # count that does NOT move the score has to be stated here.

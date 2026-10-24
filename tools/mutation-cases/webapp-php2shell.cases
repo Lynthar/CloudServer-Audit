@@ -1,0 +1,49 @@
+# Mutation cases: tests/test_webapp_php2shell.bats against modules/webapp.sh.
+# mutate-suite: modules/webapp.sh tests/test_webapp_php2shell.bats
+#
+# php-fpm is a stub reporting a version; the package lookup and the php.ini
+# reader are shell functions, so nothing here reads a real PHP install.
+
+# The fix release itself reported as unfixed, or one branch's fix off by one.
+run_case "range/fix-release-affected" 1 \
+    '    [[ -n "$fixed" ]] && return $(( patch < fixed ? 0 : 1 ))' \
+    '    [[ -n "$fixed" ]] && return $(( patch <= fixed ? 0 : 1 ))'
+
+run_case "range/branch-fix-off-by-one" 1 \
+    'declare -gA WEBAPP_PHP2SHELL_FIXED=([8.2]=35 [8.3]=36 [8.4]=27 [8.5]=12)' \
+    'declare -gA WEBAPP_PHP2SHELL_FIXED=([8.2]=35 [8.3]=36 [8.4]=26 [8.5]=12)'
+
+# 8.1 and older have no official release with the fix; dropping them passes
+# exactly the hosts most exposed.
+run_case "range/old-branches-pass" 1 \
+    '    (( major < 8 || (major == 8 && minor < 2) )) && return 0' \
+    '    :'
+
+run_case "range/early-8.6-prerelease-passes" 1 \
+    '    (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-3]$) ]]' \
+    '    false'
+
+run_case "range/8.6-rc4-affected" 1 \
+    '    (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-3]$) ]]' \
+    '    (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-4]$) ]]'
+
+run_case "versions/fpm-not-asked" 1 \
+    '    for bin in "$(command -v php 2>/dev/null)" "$(command -v php-fpm 2>/dev/null)" /usr/sbin/php-fpm*; do' \
+    '    for bin in "$(command -v php 2>/dev/null)" /usr/sbin/php-fpm*; do'
+
+run_case "note/fixed-php-noted" 1 \
+    '        _webapp_php2shell_affected "$v" || continue' \
+    '        :'
+
+run_case "note/no-fix-unsaid" 1 \
+    '        if [[ "$v" =~ ^([0-7]|8\.[01])\. ]]; then' \
+    '        if false; then'
+
+run_case "note/changelog-command-dropped" 1 \
+    '            checks+=("$hint")' \
+    '            :'
+
+# Unset is PHP's default, which leaves the upload-progress path open.
+run_case "stopgap/unset-read-as-off" 1 \
+    '    if _webapp_php_is_true "${stopgap:-On}"; then' \
+    '    if _webapp_php_is_true "${stopgap:-Off}"; then'

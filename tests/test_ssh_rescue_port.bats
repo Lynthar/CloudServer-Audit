@@ -238,6 +238,45 @@ SH
     [[ "$output" == *rc=1* ]]
 }
 
+# A shell with an EXIT trap of its own that opens the rescue over a stand-in
+# daemon, closes it when $1 is "close", then exits. Prints what it saw.
+_caller_with_exit_trap() {
+    printf '#!/usr/bin/env bash\nexec sleep 300\n' > "$BATS_TEST_TMPDIR/fake-sshd"
+    chmod +x "$BATS_TEST_TMPDIR/fake-sshd"
+    _vpssec_stub sshd
+    bash -c 'source "$1/core/common.sh"; source "$1/modules/ssh.sh"
+        _log_file=/dev/null; SSH_RESCUE_SSHD="$2"
+        _ssh_pick_rescue_port() { echo 2299; }
+        _ssh_rescue_is_up() { kill -0 "$SSH_RESCUE_PID" 2>/dev/null; }
+        _ssh_rescue_allow_firewall() { :; }
+        _ssh_rescue_start_watchdog() { :; }
+        trap "echo caller-exit" EXIT
+        _ssh_open_rescue_port >/dev/null 2>&1
+        echo "rescue=$SSH_RESCUE_PID"
+        if [[ "$3" == close ]]; then
+            _ssh_close_rescue_port
+            _ssh_close_rescue_port
+            trap -p EXIT | grep -q caller-exit && echo caller-trap-back
+        fi
+        exit 0' _ "$(_vpssec_repo_root)" "$BATS_TEST_TMPDIR/fake-sshd" "${1:-}" 2>/dev/null
+}
+
+@test "rescue close: the caller's own traps are put back, even after a second close" {
+    # trap - cleared them, so a caller's EXIT cleanup never ran.
+    run _caller_with_exit_trap close
+    [[ "$output" == *caller-trap-back* ]]
+    [ "$(grep -c caller-exit <<<"$output")" -eq 1 ]
+}
+
+@test "rescue close at exit: the rescue is closed and the caller's EXIT command still runs once" {
+    run _caller_with_exit_trap
+    [ "$(grep -c caller-exit <<<"$output")" -eq 1 ]
+    local rescue
+    rescue=$(sed -n 's/^rescue=//p' <<<"$output")
+    [ -n "$rescue" ]
+    _vpssec_refute _alive "$rescue"
+}
+
 @test "rescue open: a daemon confirmed listening gets its watchdog" {
     # Through the real open path, with a stand-in daemon: the watchdog is what
     # bounds the rescue once vpssec itself can no longer run its traps.

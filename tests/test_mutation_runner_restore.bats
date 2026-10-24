@@ -35,13 +35,29 @@ _case() {
     [ ! -e "$PLANTED" ]
 }
 
-@test "runner: a restore() that fails is an error, not a warning" {
+@test "runner: a restore() that fails is an error, not a warning, and not also a pass" {
+    # The detection passed, and was counted as Passed and Errored at once.
     _case 010-dirty "touch $PLANTED" "return 1"
     run bash "$ROOT/tests/mutation/run.sh"
     [ "$status" -eq 1 ]
-    # The detection passed; the restore is what failed the run.
-    [[ "$output" == *"PASS  | 010-dirty | fx.planted @ low"* ]]
     [[ "$output" == *"ERROR | 010-dirty | restore failed"* ]]
+    [[ "$output" != *"PASS  | 010-dirty"* ]]
+    [[ "$output" == *$'Passed: \033[0;32m0\033'*$'Errored: \033[0;31m1\033'* ]]
+}
+
+@test "run-in-container: a run stopped with Ctrl-C exits 130, not docker exec's 0" {
+    # The stub stands in for docker exec as Ctrl-C finds it: the INT reaches the
+    # script too, and the client exits 0.
+    _vpssec_stub_script docker <<'SH'
+case "$1" in
+    exec) [[ "$*" == *run.sh* ]] && { kill -INT "$PPID"; sleep 0.2; exit 0; }
+          echo running ;;
+    run) echo cid0 ;;
+esac
+exit 0
+SH
+    run bash "$(_vpssec_repo_root)/tests/mutation/run-in-container.sh"
+    [ "$status" -eq 130 ]
 }
 
 @test "runner: a case that plants and restores cleanly passes the run" {

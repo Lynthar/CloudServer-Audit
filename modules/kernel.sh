@@ -202,11 +202,12 @@ _kernel_ip_forward_needed() {
     systemctl is-active --quiet strongswan 2>/dev/null && return 0
     systemctl is-active --quiet strongswan-starter 2>/dev/null && return 0
     systemctl is-active --quiet ipsec 2>/dev/null && return 0
-    if systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null \
-        | awk '{print $1}' \
-        | grep -qE '^(wg-quick@|openvpn-(client|server)@)'; then
-        return 0
-    fi
+    # Captured, then matched: grep -q leaves the list unread and, under
+    # pipefail, the writer's SIGPIPE fails the whole pipeline.
+    local units
+    units=$(systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null \
+        | awk '{print $1}') || true
+    grep -qE '^(wg-quick@|openvpn-(client|server)@)' <<<"$units" && return 0
 
     # Kubernetes node
     systemctl is-active --quiet k3s 2>/dev/null && return 0

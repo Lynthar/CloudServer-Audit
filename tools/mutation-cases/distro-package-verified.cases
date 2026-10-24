@@ -2,8 +2,8 @@
 # mutate-suite: core/distro.sh tests/test_malware_preload.bats
 #
 # file_package_verified vouches only for a file whose content still matches the
-# sum its owning package recorded. The suite drives it through stub dpkg-query
-# and rpm, plus one real dpkg query that only a Debian-family image answers.
+# sum its owning package recorded. The suite drives it through stub dpkg-query,
+# rpm and pacman, plus real queries that only the matching image answers.
 
 run_case "verify/content-not-compared" 1 \
     '                [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
@@ -26,3 +26,16 @@ run_case "verify/usrmerge-alias-untried" 1 \
 run_case "verify/rpm-verdict-ignored" 1 \
     "            P=\"\$real\" awk '\$NF == ENVIRON[\"P\"] { bad = 1 } END { exit bad }' <<<\"\$sums\" || return 1" \
     '            true'
+
+# pacman: the sum read from the local database's mtree, as for dpkg.
+run_case "verify/pacman-content-not-compared" 1 \
+    '            [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '            [[ -n "$want" ]] || return 1'
+
+run_case "verify/pacman-unsummed-vouched" 1 \
+    '            [[ -n "$want" && "${have%% *}" == "$want" ]] || return 1' \
+    '            [[ -z "$want" || "${have%% *}" == "$want" ]] || return 1'
+
+run_case "verify/pacman-cannot-tell" 1 \
+    '            pkg=$(pacman -Qqo -- "$real" 2>/dev/null) || return 1' \
+    '            return 2'

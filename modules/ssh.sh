@@ -982,8 +982,7 @@ EOF
             # Armed the moment the daemon is confirmed listening: without it
             # a killed vpssec leaves a root-and-password sshd running forever,
             # since sshd re-execs on HUP rather than exiting.
-            trap '_ssh_close_rescue_port' EXIT
-            trap '_ssh_close_rescue_port; exit 130' INT TERM HUP
+            _ssh_rescue_arm_traps
             _ssh_rescue_allow_firewall
             # After the firewall rule exists, so the watchdog knows to remove it.
             _ssh_rescue_start_watchdog
@@ -1054,10 +1053,30 @@ _ssh_close_rescue_port() {
     SSH_RESCUE_CONFIG=""
     SSH_RESCUE_PIDFILE=""
 
-    # Disarm the safety-net traps set when the rescue came up. Idempotent:
-    # clearing unset traps is a no-op, and when the EXIT trap itself invoked
-    # us, clearing here prevents a second run.
-    trap - EXIT INT TERM HUP
+    # Put back the traps the rescue replaced, once: a second close must not
+    # clear the caller's. When the EXIT trap invoked us this prevents a rerun.
+    if (( SSH_RESCUE_TRAPS_ARMED )); then
+        trap - EXIT INT TERM HUP
+        eval "$SSH_RESCUE_PRIOR_TRAPS"
+        SSH_RESCUE_PRIOR_TRAPS=""
+        SSH_RESCUE_TRAPS_ARMED=0
+    fi
+}
+
+# The caller's EXIT/INT/TERM/HUP traps, as `trap -p` prints them, while the
+# rescue's own are armed.
+SSH_RESCUE_PRIOR_TRAPS=""
+SSH_RESCUE_TRAPS_ARMED=0
+
+# Close the rescue on exit or a signal. The caller's EXIT command is chained
+# after the close: run from the EXIT trap, the close puts it back too late.
+_ssh_rescue_arm_traps() {
+    local -a prior_exit=()
+    SSH_RESCUE_PRIOR_TRAPS=$(trap -p EXIT INT TERM HUP)
+    eval "prior_exit=($(trap -p EXIT))"
+    trap "_ssh_close_rescue_port${prior_exit[2]:+; ${prior_exit[2]}}" EXIT
+    trap '_ssh_close_rescue_port; exit 130' INT TERM HUP
+    SSH_RESCUE_TRAPS_ARMED=1
 }
 
 # What the most recent write replaced, for _ssh_reload_safe's rollback: "NEW"

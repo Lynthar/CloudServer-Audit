@@ -32,17 +32,31 @@ run_case "caps/snap-confine-set-narrowed" 1 \
     '    "/usr/lib/snapd/snap-confine:cap_sys_admin"'
 
 run_case "caps/package-check-dropped" 1 \
-    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
+    '               && _fs_caps_package_ok "$file" "$wl_pkg"; then' \
     '               && true; then'
 
-run_case "caps/any-package-vouches" 1 \
-    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
-    '               && { [[ -z "$wl_pkg" ]] || [[ -n "$(file_package_verified "$file")" ]]; }; then'
+# A copy no package vouches for (swapped, or the manager cannot tell) let through.
+run_case "caps/unverified-copy-passes" 1 \
+    '    pkg=$(file_package_verified "$1") || return 1' \
+    '    pkg=$(file_package_verified "$1") || return 0'
 
-# Every entry made to need a package, so ping's plain whitelist stops passing.
-run_case "caps/package-demanded-of-all" 1 \
-    '               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then' \
-    '               && [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; then'
+run_case "caps/any-package-vouches" 1 \
+    '        [[ -n "$alt" && "$pkg" == $alt ]] && return 0' \
+    '        [[ -n "$alt" ]] && return 0'
+
+# Quoted, the pattern is literal and sssd-* matches no sssd subpackage.
+run_case "caps/package-glob-literal" 1 \
+    '        [[ -n "$alt" && "$pkg" == $alt ]] && return 0' \
+    '        [[ -n "$alt" && "$pkg" == "$alt" ]] && return 0'
+
+# Unsplit, "iputils-ping|iputils" names no package on any family.
+run_case "caps/alternatives-unsplit" 1 \
+    "    IFS='|' read -ra alts <<<\"\$2\"" \
+    '    alts=("$2")'
+
+run_case "caps/family-entries-dropped" 1 \
+    '    mapfile -t -O "${#caps_whitelist[@]}" caps_whitelist < <(distro_caps_whitelist)' \
+    '    :'
 
 run_case "names/newline-raw" 1 \
     "    if [[ \"\$1\" == *[[:cntrl:]]* ]]; then printf '%q\\n' \"\$1\"; else printf '%s\\n' \"\$1\"; fi" \

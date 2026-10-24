@@ -562,25 +562,40 @@ _fs_check_pam_umask_enabled() {
     return 1
 }
 
-# Legitimate cap-bearing binaries, "path:caps[:package]". The cap field is the
-# COMPLETE allowed set, matched as a subset, never a substring. A package field
-# also requires the file to be that package's unmodified copy.
+# Legitimate cap-bearing binaries, "path:caps:packages". The cap field is the
+# COMPLETE allowed set, matched as a subset, never a substring. The file must be
+# the unmodified copy of one of the |-separated package globs, or a swapped
+# binary inherits the entry.
 declare -ga FS_CAPS_WHITELIST=(
-    "/usr/bin/ping:cap_net_raw"
-    "/usr/bin/traceroute:cap_net_raw"
-    "/usr/bin/mtr-packet:cap_net_raw"
+    "/usr/bin/ping:cap_net_raw:iputils-ping|iputils"
+    "/usr/bin/traceroute:cap_net_raw:traceroute"
+    "/usr/bin/mtr-packet:cap_net_raw:mtr-tiny|mtr"
     # arping/clockdiff swap between /usr/bin and /usr/sbin across distros (RHEL vs Debian) — glob both
-    "/usr/*bin/arping:cap_net_raw"
-    "/usr/*bin/clockdiff:cap_net_raw,cap_sys_nice"
-    "/usr/bin/gnome-keyring-daemon:cap_ipc_lock"
-    "/usr/bin/systemd-resolve:cap_net_bind_service"
+    "/usr/*bin/arping:cap_net_raw:iputils-arping|iputils"
+    "/usr/*bin/clockdiff:cap_net_raw,cap_sys_nice:iputils-clockdiff|iputils"
+    "/usr/bin/gnome-keyring-daemon:cap_ipc_lock:gnome-keyring"
+    "/usr/bin/systemd-resolve:cap_net_bind_service:systemd|systemd-resolved"
     # snapd's sandbox launcher: file capabilities instead of setuid root since
-    # snapd 2.70. The broadest set here, so a swapped binary must not inherit it.
+    # snapd 2.70. The broadest set here.
     "/usr/lib/snapd/snap-confine:cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_setgid,cap_setuid,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin,cap_sys_resource:snapd"
     # GStreamer PTP helper — Debian ships net_bind_service+net_admin, some
     # builds add sys_nice (multiarch path)
-    "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice"
+    "/usr/lib/*/gstreamer1.0/gstreamer-1.0/gst-ptp-helper:cap_net_admin,cap_net_bind_service,cap_sys_nice:libgstreamer1.0-0"
 )
+
+# True when the file $1 is its package's unmodified copy and that package
+# matches one of the |-separated globs $2.
+_fs_caps_package_ok() {
+    local pkg alt
+    local -a alts=()
+    pkg=$(file_package_verified "$1") || return 1
+    IFS='|' read -ra alts <<<"$2"
+    for alt in "${alts[@]}"; do
+        # shellcheck disable=SC2053  # $alt is a glob on purpose (sssd-*)
+        [[ -n "$alt" && "$pkg" == $alt ]] && return 0
+    done
+    return 1
+}
 
 # True when every capability the getcap value $1 names is in the comma list
 # $2. Each space-separated clause ("cap_a,cap_b=ep", "cap_c+ep") names its own;
@@ -626,6 +641,9 @@ _fs_find_caps_files() {
         return
     fi
 
+    local -a caps_whitelist=("${FS_CAPS_WHITELIST[@]}")
+    mapfile -t -O "${#caps_whitelist[@]}" caps_whitelist < <(distro_caps_whitelist)
+
     # getcap prints "path cap=ep" (libcap 2.43+) or "path = cap+ep", one per line;
     # tr below makes each line a NUL record like the other walks. Split on the
     # first space, then strip a leading "= " so both forms parse.
@@ -651,26 +669,14 @@ _fs_find_caps_files() {
         # Check if in whitelist. Subset semantics (see FS_CAPS_WHITELIST):
         # the file's WHOLE capability set must be covered by its entry.
         local whitelisted=false wl_file wl_cap wl_pkg
-        for entry in "${FS_CAPS_WHITELIST[@]}"; do
+        for entry in "${caps_whitelist[@]}"; do
             IFS=: read -r wl_file wl_cap wl_pkg <<<"$entry"
             if _fs_path_glob "$file" "$wl_file" && _fs_caps_subset_of "$caps" "$wl_cap" \
-               && { [[ -z "$wl_pkg" ]] || [[ "$(file_package_verified "$file")" == "$wl_pkg" ]]; }; then
+               && _fs_caps_package_ok "$file" "$wl_pkg"; then
                 whitelisted=true
                 break
             fi
         done
-
-        # Distro-specific cap entries (RHEL/Arch) from core/distro.sh
-        if [[ "$whitelisted" == false ]]; then
-            local dentry
-            while IFS= read -r dentry; do
-                [[ -z "$dentry" ]] && continue
-                if _fs_path_glob "$file" "${dentry%%:*}" && _fs_caps_subset_of "$caps" "${dentry#*:}"; then
-                    whitelisted=true
-                    break
-                fi
-            done < <(distro_caps_whitelist)
-        fi
 
         if [[ "$whitelisted" == false ]]; then
             # Check if dangerous capability
@@ -1219,12 +1225,18 @@ _fs_fix_sensitive_perms() {
         # bits are cleared: 0602 must not gain group and world read.
         local extra_bits=$(( (actual_num & ~expected_num) & 07777 ))
         local target=$(( actual_num & expected_num & 07777 ))
+        # Except group read for a non-root group the file legitimately serves: its
+        # setgid reader needs it, and 0604 cleared to 0600 locks unix_chkpwd out.
+        local group
+        group=$(stat -L -c "%G" "$file" 2>/dev/null)
+        if [[ -n "$group" && "$group" != root ]] && ! _fs_group_grants_access "$file" "$group" 070; then
+            target=$(( target | (expected_num & 0040) ))
+        fi
 
         # Owner and group as the audit judges them, which it does only as root.
-        local owner="" group="" chown_owner=0 chown_group=0
+        local owner="" chown_owner=0 chown_group=0
         if [[ "$(id -u)" == "0" ]]; then
             owner=$(stat -L -c "%U" "$file" 2>/dev/null)
-            group=$(stat -L -c "%G" "$file" 2>/dev/null)
             [[ -n "$owner" && "$owner" != "root" ]] && chown_owner=1
             _fs_group_grants_access "$file" "$group" "$target" && chown_group=1
         fi

@@ -8,20 +8,37 @@
 DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
 DOCKER_SOCK="/var/run/docker.sock"
 DOCKER_TEMPLATES_DIR="${VPSSEC_TEMPLATES}/docker"
-# Seconds a daemon gets to answer `docker info` before it counts as unreachable.
+# Seconds any docker call gets to answer; a first `docker info` that runs out
+# means the daemon is unreachable.
 DOCKER_PROBE_TIMEOUT=10
+# Exists once a docker call has timed out since docker_audit began. A file, not
+# a variable: most calls run in $(...) subshells, whose assignments never return.
+DOCKER_STALL_MARK="${VPSSEC_STATE}/.docker-stalled"
 
 # --- Docker Helper Functions ---
 
-# Bounded: a deadlocked dockerd never answers, and the whole audit would wait.
-# Without timeout(1) the probe runs unbounded, as the filesystem walks do.
+# docker, bounded: a deadlocked dockerd never answers and the audit would wait.
+# After one timeout the rest fail at once (124), not once per container. Without
+# timeout(1) it runs unbounded, as the filesystem walks do.
+_docker() {
+    [[ -e "$DOCKER_STALL_MARK" ]] && return 124
+    check_command timeout || { docker "$@"; return; }
+    local rc=0
+    timeout "$DOCKER_PROBE_TIMEOUT" docker "$@" || rc=$?
+    if (( rc == 124 )); then
+        log_warn "docker $1 gave no answer within ${DOCKER_PROBE_TIMEOUT}s; later docker calls are skipped"
+        : > "$DOCKER_STALL_MARK"
+    fi
+    return "$rc"
+}
+
+_docker_stalled() {
+    [[ -e "$DOCKER_STALL_MARK" ]]
+}
+
 _docker_installed() {
     check_command docker || return 1
-    if check_command timeout; then
-        timeout "$DOCKER_PROBE_TIMEOUT" docker info &>/dev/null
-    else
-        docker info &>/dev/null
-    fi
+    _docker info &>/dev/null
 }
 
 # podman-docker's `docker` is podman, which has no dockerd behind it: the
@@ -33,7 +50,7 @@ _docker_is_podman() {
 # Major version of the answering dockerd; fails when none answers.
 _docker_server_major() {
     local v
-    v=$(docker info --format '{{.ServerVersion}}' 2>/dev/null) || return 1
+    v=$(_docker info --format '{{.ServerVersion}}' 2>/dev/null) || return 1
     [[ "${v%%.*}" =~ ^[0-9]+$ ]] || return 1
     echo "${v%%.*}"
 }
@@ -119,7 +136,7 @@ _docker_get_exposed_ports() {
     # Publicly published ports: the port or range ("9000-9001", the CLI merges
     # adjacent ones) before "->" on any NON-loopback binding — IPv6 wildcard,
     # bracketed IPv6 and specific public IPs included.
-    docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | awk '
+    _docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | awk '
         /->/ {
             hp = $0; sub(/->.*/, "", hp); gsub(/[[:space:]]/, "", hp)
             port = hp; sub(/.*:/, "", port)
@@ -132,9 +149,9 @@ _docker_get_exposed_ports() {
 
 _docker_get_privileged_containers() {
     local privileged=()
-    for container in $(docker ps -q 2>/dev/null); do
-        if docker inspect "$container" 2>/dev/null | jq -e '.[0].HostConfig.Privileged == true' &>/dev/null; then
-            local name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+    for container in $(_docker ps -q 2>/dev/null); do
+        if _docker inspect "$container" 2>/dev/null | jq -e '.[0].HostConfig.Privileged == true' &>/dev/null; then
+            local name=$(_docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             privileged+=("$name")
         fi
     done
@@ -143,12 +160,12 @@ _docker_get_privileged_containers() {
 
 _docker_get_root_containers() {
     local root_containers=()
-    for container in $(docker ps -q 2>/dev/null); do
-        local user=$(docker inspect "$container" --format '{{.Config.User}}' 2>/dev/null)
+    for container in $(_docker ps -q 2>/dev/null); do
+        local user=$(_docker inspect "$container" --format '{{.Config.User}}' 2>/dev/null)
         # user[:group]; only the user part decides who the process runs as.
         user="${user%%:*}"
         if [[ -z "$user" || "$user" == "root" || "$user" == "0" ]]; then
-            local name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            local name=$(_docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             root_containers+=("$name")
         fi
     done
@@ -158,10 +175,10 @@ _docker_get_root_containers() {
 # "name: CAP,CAP" for each running container granted capabilities.
 _docker_get_containers_with_caps() {
     local cap_containers=()
-    for container in $(docker ps -q 2>/dev/null); do
-        local caps=$(docker inspect "$container" 2>/dev/null | jq -r '.[0].HostConfig.CapAdd // [] | join(",")')
+    for container in $(_docker ps -q 2>/dev/null); do
+        local caps=$(_docker inspect "$container" 2>/dev/null | jq -r '.[0].HostConfig.CapAdd // [] | join(",")')
         if [[ -n "$caps" ]]; then
-            local name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            local name=$(_docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             cap_containers+=("${name}: ${caps}")
         fi
     done
@@ -172,7 +189,7 @@ _docker_check_userns() {
     # SecurityOptions is the authoritative signal: docker info also prints
     # warnings containing "userns" when the feature is NOT configured, so a
     # bare grep reads the opposite of the truth.
-    docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
+    _docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
 }
 
 # Numeric mode (e.g. "660") of the docker socket, empty when there is none.
@@ -188,12 +205,12 @@ _docker_sock_mode() {
 _docker_seccomp_unconfined_containers() {
     local unconfined=()
     local container
-    for container in $(docker ps -q 2>/dev/null); do
+    for container in $(_docker ps -q 2>/dev/null); do
         # jq -e returns non-zero if the filter produces no matches.
-        if docker inspect "$container" 2>/dev/null \
+        if _docker inspect "$container" 2>/dev/null \
             | jq -e '.[0].HostConfig.SecurityOpt // [] | any(test("^seccomp[=:]unconfined$"))' &>/dev/null; then
             local name
-            name=$(docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            name=$(_docker inspect "$container" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             [[ -n "$name" ]] && unconfined+=("$name")
         fi
     done
@@ -205,7 +222,7 @@ _docker_check_live_restore() {
     # daemon.json and any systemd override. When the daemon answers, its
     # answer is FINAL — including "false"; never fall through to the file.
     local live=""
-    if live=$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null); then
+    if live=$(_docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null); then
         [[ "${live,,}" == "true" ]]
         return
     fi
@@ -224,7 +241,7 @@ _docker_check_live_restore() {
 _docker_check_no_new_privileges() {
     local major opts
     major=$(_docker_server_major) || major=0
-    if (( major >= 24 )) && opts=$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null); then
+    if (( major >= 24 )) && opts=$(_docker info --format '{{json .SecurityOptions}}' 2>/dev/null); then
         [[ "$opts" == *'name=no-new-privileges'* ]]
         return
     fi
@@ -238,10 +255,10 @@ _docker_check_no_new_privileges() {
 _docker_get_host_network_containers() {
     local hn=()
     local c name mode
-    for c in $(docker ps -q 2>/dev/null); do
-        mode=$(docker inspect "$c" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)
+    for c in $(_docker ps -q 2>/dev/null); do
+        mode=$(_docker inspect "$c" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)
         if [[ "$mode" == "host" ]]; then
-            name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            name=$(_docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             hn+=("$name")
         fi
     done
@@ -253,10 +270,10 @@ _docker_get_host_network_containers() {
 _docker_get_unlimited_memory_containers() {
     local um=()
     local c name mem
-    for c in $(docker ps -q 2>/dev/null); do
-        mem=$(docker inspect "$c" --format '{{.HostConfig.Memory}}' 2>/dev/null)
+    for c in $(_docker ps -q 2>/dev/null); do
+        mem=$(_docker inspect "$c" --format '{{.HostConfig.Memory}}' 2>/dev/null)
         if [[ "$mem" == "0" ]]; then
-            name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            name=$(_docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
             um+=("$name")
         fi
     done
@@ -269,13 +286,13 @@ _docker_get_unlimited_memory_containers() {
 _docker_get_containers_with_env_secrets() {
     local hits=()
     local c name env_str finding
-    for c in $(docker ps -aq 2>/dev/null); do
-        env_str=$(docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    for c in $(_docker ps -aq 2>/dev/null); do
+        env_str=$(_docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
         [[ -z "$env_str" ]] && continue
         finding=$(_vpssec_scan_secrets_in_content "$env_str")
         finding="${finding% }"
         [[ -z "$finding" ]] && continue
-        name=$(docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+        name=$(_docker inspect "$c" --format '{{.Name}}' 2>/dev/null | tr -d '/')
         hits+=("${name}: ${finding}")
     done
     printf '%s\n' "${hits[@]}"
@@ -286,7 +303,7 @@ _docker_get_containers_with_env_secrets() {
 # daemon that cannot say falls back to the configuration.
 _docker_check_icc_disabled() {
     local icc
-    icc=$(docker network inspect bridge \
+    icc=$(_docker network inspect bridge \
         --format '{{index .Options "com.docker.network.bridge.enable_icc"}}' 2>/dev/null) || icc=""
     if [[ "$icc" == "true" || "$icc" == "false" ]]; then
         [[ "$icc" == "false" ]]
@@ -299,6 +316,7 @@ _docker_check_icc_disabled() {
 
 docker_audit() {
     local module="docker"
+    rm -f "$DOCKER_STALL_MARK"
 
     # Check if Docker is installed
     print_item "$(i18n 'docker.check_installed')"
@@ -380,6 +398,16 @@ docker_audit() {
 
     print_item "$(i18n 'docker.check_unlimited_memory')"
     _docker_audit_unlimited_memory
+
+    # A timed-out docker call withheld its "passed" above; say so, and mark the
+    # audit incomplete rather than let the skipped checks read as clean.
+    if _docker_stalled; then
+        check_emit "docker.query_incomplete" info failed \
+            desc="$(i18n 'docker.query_incomplete_desc' "timeout=$DOCKER_PROBE_TIMEOUT")" \
+            suggestion="$(i18n 'docker.query_incomplete_fix')"
+        print_warn "$(i18n 'docker.query_incomplete')"
+        _module_record_failure docker query
+    fi
 }
 
 _docker_audit_exposed_ports() {
@@ -394,7 +422,7 @@ _docker_audit_exposed_ports() {
             suggestion="$(i18n 'docker.exposed_ports_suggestion')" \
             fix="docker.generate_proxy_template"
         print_severity "medium" "$(i18n 'docker.exposed_ports' "count=$count"): $port_list"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_exposed_ports" low passed
         print_ok "$(i18n 'docker.no_exposed_ports')"
     fi
@@ -411,7 +439,7 @@ _docker_audit_privileged() {
             desc="$(i18n 'docker.privileged_containers_desc' "list=$container_list")" \
             suggestion="$(i18n 'docker.privileged_containers_suggestion')"
         print_severity "medium" "$(i18n 'docker.privileged_containers' "count=$count"): $container_list"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_privileged" low passed
         print_ok "$(i18n 'docker.no_privileged')"
     fi
@@ -420,7 +448,7 @@ _docker_audit_privileged() {
 _docker_audit_root_containers() {
     local containers=$(_docker_get_root_containers)
     local count=$(count_lines "$containers")
-    local total=$(docker ps -q 2>/dev/null | wc -l)
+    local total=$(_docker ps -q 2>/dev/null | wc -l)
 
     if ((count > 0 && count == total)); then
         check_emit "docker.all_root_containers" low failed \
@@ -434,7 +462,7 @@ _docker_audit_root_containers() {
             desc="$(i18n 'docker.some_root_containers_desc')" \
             suggestion="$(i18n 'docker.root_containers_suggestion')"
         print_severity "low" "$(i18n 'docker.some_root_containers' "count=$count" "total=$total")"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_root_containers" low passed
         print_ok "$(i18n 'docker.no_root_containers')"
     fi
@@ -451,7 +479,7 @@ _docker_audit_capabilities() {
             desc="$(i18n 'docker.added_capabilities_desc' "list=$container_list")" \
             suggestion="$(i18n 'docker.added_capabilities_suggestion')"
         print_severity "medium" "$(i18n 'docker.added_capabilities' "count=$count"): $container_list"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_extra_caps" low passed \
             title="$(i18n 'docker.no_added_capabilities')"
         print_ok "$(i18n 'docker.no_added_capabilities')"
@@ -538,7 +566,7 @@ _docker_audit_seccomp_unconfined() {
             desc="$(i18n 'docker.seccomp_unconfined_desc' "containers=$list")" \
             suggestion="$(i18n 'docker.seccomp_fix')"
         print_severity "medium" "$(i18n 'docker.seccomp_unconfined' "count=$count"): $list"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_seccomp_unconfined" low passed
         print_ok "$(i18n 'docker.no_seccomp_unconfined')"
     fi
@@ -573,7 +601,7 @@ _docker_audit_host_network() {
             desc="$(i18n 'docker.host_network_used_desc' "list=${hn_list% }")" \
             suggestion="$(i18n 'docker.fix_host_network')"
         print_severity "medium" "$(i18n 'docker.host_network_used' "count=$count")"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_host_network" low passed
         print_ok "$(i18n 'docker.no_host_network')"
     fi
@@ -612,7 +640,7 @@ _docker_audit_secrets_in_env() {
             desc="$(i18n 'docker.secrets_in_env_desc' "sample=${sample}")" \
             suggestion="$(i18n 'docker.fix_secrets_in_env')"
         print_severity "medium" "$(i18n 'docker.secrets_in_env' "count=$count")"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.no_env_secrets" low passed
         print_ok "$(i18n 'docker.no_env_secrets')"
     fi
@@ -631,7 +659,7 @@ _docker_audit_unlimited_memory() {
             desc="$(i18n 'docker.unlimited_memory_desc' "list=${um_list% }")" \
             suggestion="$(i18n 'docker.fix_unlimited_memory')"
         print_severity "low" "$(i18n 'docker.unlimited_memory' "count=$count")"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.memory_limits_set" low passed
         print_ok "$(i18n 'docker.memory_limits_set')"
     fi

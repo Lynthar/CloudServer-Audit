@@ -83,6 +83,7 @@ parse_args() {
     VPSSEC_HELP_TOPIC=""
     VPSSEC_HELP_SUBCOMMAND=0
     VPSSEC_VERSION_REQUESTED=0
+    VPSSEC_UNKNOWN_ARG=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -173,11 +174,10 @@ parse_args() {
                 shift
                 ;;
             *)
-                # English: the language files are not loaded yet, and the
-                # word may be a mistyped command rather than an option.
-                echo "Unknown command or option: $1" >&2
-                echo "Run 'vpssec --help' for usage" >&2
-                exit 1
+                # Reported by main once the whole line is read, so a --lang
+                # after the mistyped word still applies.
+                [[ -n "$VPSSEC_UNKNOWN_ARG" ]] || VPSSEC_UNKNOWN_ARG="$1"
+                shift
                 ;;
         esac
     done
@@ -188,6 +188,18 @@ parse_args() {
 main() {
     # One pass over the command line; everything lands in globals.
     parse_args "$@"
+
+    # Without jq no language file loads, so that message stays English.
+    if [[ -n "$VPSSEC_UNKNOWN_ARG" ]]; then
+        if check_command jq && i18n_load "${VPSSEC_LANG}" 2>/dev/null; then
+            echo "$(i18n 'error.unknown_arg' "arg=$VPSSEC_UNKNOWN_ARG")" >&2
+            echo "$(i18n 'error.see_help')" >&2
+        else
+            echo "Unknown command or option: $VPSSEC_UNKNOWN_ARG" >&2
+            echo "Run 'vpssec --help' for usage" >&2
+        fi
+        exit 1
+    fi
 
     # Terminal sub-commands, dispatched only after the WHOLE line has
     # been read so `vpssec help --lang=en_US` honours the language.

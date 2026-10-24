@@ -318,3 +318,9 @@ run_case "ufw-sysctl/not-backed-up" 1 \
 run_case "ufw-sysctl/override-first" 1 \
     '    write_file_atomic "$file" "$content"$'"'"'\n\n'"'"'"# vpssec: overrides the values above"$'"'"'\n'"'"'"$lines"' \
     '    write_file_atomic "$file" "$lines$content"'
+
+# The template-unit scan dropped: a WireGuard or OpenVPN gateway with no
+# interface the link probe knows loses its forwarding.
+run_case "forwarding/vpn-template-units-unscanned" 1 \
+    "    grep -qE '^(wg-quick@|openvpn-(client|server)@)' <<<\"\$units\" && return 0" \
+    '    :'

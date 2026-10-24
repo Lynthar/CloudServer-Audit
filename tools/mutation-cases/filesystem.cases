@@ -112,6 +112,21 @@ run_case "perms/fix-adds-bits" 1 \
     '        local target=$(( actual_num & expected_num & 07777 ))' \
     '        local target=$expected_num'
 
+# A setgid reader's group read is cleared with the rest: /etc/shadow at 0604
+# becomes 0600 and unix_chkpwd can no longer read it.
+run_case "perms/setgid-reader-read-dropped" 1 \
+    '            target=$(( target | (expected_num & 0040) ))' \
+    '            :'
+
+run_case "perms/foreign-group-read-kept" 1 \
+    '        if [[ -n "$group" && "$group" != root ]] && ! _fs_group_grants_access "$file" "$group" 070; then' \
+    '        if [[ -n "$group" && "$group" != root ]]; then'
+
+# Root group is not a reader the fix should arm: 0604 root:root stays 0600.
+run_case "perms/root-group-read-added" 1 \
+    '        if [[ -n "$group" && "$group" != root ]] && ! _fs_group_grants_access "$file" "$group" 070; then' \
+    '        if [[ -n "$group" ]]; then'
+
 # The audit reports owner and group; a fix that only chmods never clears them.
 run_case "perms/owner-not-repaired" 1 \
     '        (( chown_owner )) && { chown root "$file" 2>/dev/null || ok=0; }' \

@@ -383,9 +383,6 @@ _webapp_nginx_header_results() {
         if [[ "$kind" == unchecked ]]; then
             printf 'unchecked\t%s\t%s\n' "$where" "$how"
             continue
-        elif ! check_command curl; then
-            printf 'unchecked\t%s\tcurl\n' "$where"
-            continue
         elif (( SECONDS >= deadline )); then
             printf 'unchecked\t%s\tbudget\n' "$where"
             continue
@@ -694,6 +691,78 @@ _webapp_php_open_basedir() {
     echo "${val:-none}"
 }
 
+# The patch release that fixed php2shell (CVE-2026-109618 / 109619) on each
+# branch, from PHP's 2026-10-21 notice. Older branches have no official fix.
+declare -gA WEBAPP_PHP2SHELL_FIXED=([8.2]=35 [8.3]=36 [8.4]=27 [8.5]=12)
+
+# True when PHP version $1 ("8.3.6", "8.1.2-1ubuntu2.22", "8.6.0RC3") is
+# upstream-older than the fix. Distribution backports keep the old number.
+_webapp_php2shell_affected() {
+    [[ "$1" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(.*)$ ]] || return 1
+    local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]} rest=${BASH_REMATCH[4]}
+    local fixed="${WEBAPP_PHP2SHELL_FIXED[$major.$minor]:-}"
+    [[ -n "$fixed" ]] && return $(( patch < fixed ? 0 : 1 ))
+    (( major < 8 || (major == 8 && minor < 2) )) && return 0
+    # 8.6.0 took the fix in RC4; its earlier pre-releases do not have it.
+    (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-3]$) ]]
+}
+
+# "binary<TAB>version" for each PHP executable on the host, FPM and CLI, as
+# its own -v reports it.
+_webapp_php_versions() {
+    local bin real v
+    local -A seen=()
+    for bin in "$(command -v php 2>/dev/null)" "$(command -v php-fpm 2>/dev/null)" /usr/sbin/php-fpm*; do
+        [[ -x "$bin" ]] || continue
+        real=$(readlink -f -- "$bin") || continue
+        [[ -z "${seen[$real]:-}" ]] || continue
+        seen[$real]=1
+        v=$("$bin" -v 2>/dev/null | sed -n '1s/^PHP \([0-9][^ ]*\) .*/\1/p')
+        [[ -n "$v" ]] && printf '%s\t%s\n' "$bin" "$v"
+    done
+}
+
+# PHP in php2shell's upstream range is an unscored note: a distribution may have
+# backported the fix under the old number. It says how to confirm that, and
+# whether the partial stopgap session.upload_progress.enabled=0 is set.
+_webapp_audit_php2shell() {
+    local bin v pkg hint confirm stopgap joined
+    local -a found=() checks=()
+    while IFS=$'\t' read -r bin v; do
+        _webapp_php2shell_affected "$v" || continue
+        if [[ "$v" =~ ^([0-7]|8\.[01])\. ]]; then
+            found+=("$bin $v ($(i18n 'webapp.php2shell_no_fix'))")
+        else
+            found+=("$bin $v")
+        fi
+        if pkg=$(file_package_verified "$bin") \
+           && hint=$(pkg_changelog_grep_hint "$pkg" 'CVE-2026-10961[89]') \
+           && [[ " ${checks[*]} " != *" $hint "* ]]; then
+            checks+=("$hint")
+        fi
+    done < <(_webapp_php_versions)
+    (( ${#found[@]} )) || return 0
+
+    if (( ${#checks[@]} )); then
+        printf -v joined '%s; ' "${checks[@]}"
+        confirm=$(i18n 'webapp.php2shell_confirm' "cmd=${joined%; }")
+    else
+        confirm=$(i18n 'webapp.php2shell_confirm_unknown')
+    fi
+    stopgap=$(_webapp_get_php_config session.upload_progress.enabled)
+    if _webapp_php_is_true "${stopgap:-On}"; then
+        stopgap=$(i18n 'webapp.php2shell_stopgap_on')
+    else
+        stopgap=$(i18n 'webapp.php2shell_stopgap_off')
+    fi
+    printf -v joined '%s; ' "${found[@]}"
+    check_emit "webapp.php2shell" info failed \
+        title="$(i18n 'webapp.php2shell')" \
+        desc="$(i18n 'webapp.php2shell_desc' "versions=${joined%; }" "confirm=$confirm" "stopgap=$stopgap")" \
+        suggestion="$(i18n 'webapp.php2shell_fix')"
+    print_warn "$(i18n 'webapp.php2shell')"
+}
+
 # Missing entries in disable_functions, matched as comma-separated TOKENS.
 # A substring match reports `popen` as disabled whenever `proc_open` is in
 # the list, masking the real exposure.
@@ -922,7 +991,7 @@ _webapp_audit_nginx() {
 
     # 2. Security headers, as each site's response carries them: an application
     # behind proxy_pass may send them itself, which no nginx directive shows.
-    local kind where what joined hint headers_ok=0 no_curl=0
+    local kind where what joined headers_ok=0
     local -a headers_missing=() headers_unchecked=()
     while IFS=$'\t' read -r kind where what; do
         case "$kind" in
@@ -930,7 +999,6 @@ _webapp_audit_nginx() {
             ok) headers_ok=1 ;;
             unchecked)
                 case "$what" in
-                    curl) no_curl=1; continue ;;
                     listen) what=$(i18n 'webapp.headers_unchecked_listen') ;;
                     name) what=$(i18n 'webapp.headers_unchecked_name') ;;
                     budget) what=$(i18n 'webapp.headers_unchecked_budget') ;;
@@ -952,13 +1020,7 @@ _webapp_audit_nginx() {
             title="$(i18n 'webapp.security_headers_ok')" \
             desc="$(i18n 'webapp.nginx_security_headers_ok_desc')"
     fi
-    if (( no_curl )); then
-        hint=$(pkg_install_hint curl) || hint=$(i18n 'preflight.install_deps' "deps=curl")
-        check_emit "webapp.nginx_security_headers_not_checked" low failed \
-            title="$(i18n 'webapp.security_headers_not_checked')" \
-            desc="$(i18n 'webapp.headers_unchecked_curl')" \
-            suggestion="$hint"
-    elif (( ${#headers_unchecked[@]} > 0 )); then
+    if (( ${#headers_unchecked[@]} > 0 )); then
         printf -v joined '%s; ' "${headers_unchecked[@]}"
         check_emit "webapp.nginx_security_headers_not_checked" low failed \
             title="$(i18n 'webapp.security_headers_not_checked')" \
@@ -1168,6 +1230,8 @@ webapp_audit() {
                 desc="$(i18n 'webapp.php_open_basedir_desc')" \
                 suggestion="$(i18n 'webapp.set_open_basedir')"
         fi
+
+        _webapp_audit_php2shell
     fi
 
     # === SSL/TLS Certificate Checks ===

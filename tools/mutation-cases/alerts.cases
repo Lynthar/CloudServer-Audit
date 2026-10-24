@@ -89,6 +89,15 @@ run_case "config/existing-mode-not-tightened" 1 \
     '    chmod 600 "$ALERTS_CONFIG_FILE" 2>/dev/null || true' \
     '    true'
 
+# Rewritten without a backup, a rollback cannot bring the operator's config back.
+run_case "config/existing-not-backed-up" 1 \
+    '        backup_file "$ALERTS_CONFIG_FILE" >/dev/null || return 1' \
+    '        :'
+
+run_case "config/backup-failure-ignored" 1 \
+    '        backup_file "$ALERTS_CONFIG_FILE" >/dev/null || return 1' \
+    '        backup_file "$ALERTS_CONFIG_FILE" >/dev/null || true'
+
 # A config naming scripts that were never written is not a configured alert
 # channel, so the generator's status has to reach the caller.
 run_case "config/hook-failure-swallowed" 1 \

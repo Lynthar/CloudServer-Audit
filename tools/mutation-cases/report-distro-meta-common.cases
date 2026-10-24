@@ -13,3 +13,12 @@ run_case "virt/fallback-on-exit-status" 1 \
 run_case "virt/failure-reads-none" 1 \
     '        echo "${virt:-unknown}"' \
     '        echo "${virt:-none}"'
+
+# /proc/vz alone, as before: an OpenVZ host node calls itself a container.
+run_case "container/openvz-node-is-container" 1 \
+    '    if [[ -d "$DETECT_PROC_DIR/vz" && ! -d "$DETECT_PROC_DIR/bc" ]]; then' \
+    '    if [[ -d "$DETECT_PROC_DIR/vz" ]]; then'
+
+run_case "container/openvz-missed" 1 \
+    '    if [[ -d "$DETECT_PROC_DIR/vz" && ! -d "$DETECT_PROC_DIR/bc" ]]; then' \
+    '    if false; then'
