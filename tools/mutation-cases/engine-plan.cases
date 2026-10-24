@@ -142,3 +142,12 @@ run_case "pass/emit-failures-inherited" 1 \
 run_case "pass/load-failure-forgotten" 1 \
     '        VPSSEC_MODULES_FAILED+=("$module")' \
     '        :'
+
+# The plan preview under --yes: a whiptail box nobody is there to dismiss.
+run_case "preview/box-under-yes" 1 \
+    '    if tui_available && [[ "${VPSSEC_YES:-0}" != "1" ]]; then' \
+    '    if tui_available; then'
+
+run_case "preview/box-never" 1 \
+    '    if tui_available && [[ "${VPSSEC_YES:-0}" != "1" ]]; then' \
+    '    if false; then'

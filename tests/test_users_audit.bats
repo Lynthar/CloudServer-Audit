@@ -85,6 +85,21 @@ S
     [[ "$desc" != *hank* ]]
 }
 
+@test "users audit: passwordless sudo for root alone is no finding" {
+    # cloud-init writes the rule; sudo never asks root for a password anyway.
+    printf 'root ALL=(ALL) NOPASSWD:ALL\n#0 ALL=(ALL) NOPASSWD: ALL\nDefaults:root !authenticate\n' \
+        >> "$SUDOERS_FILE"
+    users_audit
+    _vpssec_refute _emitted users.nopasswd_sudo
+}
+
+@test "users audit: root named beside another account still is one" {
+    _account 'bob:x:1002:1002::/home/bob:/bin/bash'
+    printf 'root, bob ALL=(ALL) NOPASSWD: ALL\nDefaults:root,bob !authenticate\n' >> "$SUDOERS_FILE"
+    users_audit
+    [ "$(_desc users.nopasswd_sudo)" = "$SUDOERS_FILE: root, bob ALL=(ALL) NOPASSWD: ALL; $SUDOERS_FILE: Defaults:root,bob !authenticate" ]
+}
+
 @test "users audit: no passwordless rule, no NOPASSWD finding" {
     _account 'hank:x:1008:1008::/home/hank:/bin/bash'
     printf 'hank ALL=(ALL) ALL # NOPASSWD: removed\n' >> "$SUDOERS_FILE"

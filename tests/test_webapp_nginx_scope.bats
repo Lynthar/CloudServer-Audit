@@ -420,6 +420,37 @@ server { listen 8443 ssl; ssl_certificate $BATS_TEST_TMPDIR/elsewhere/site.crt; 
     [ "$(wc -l <<<"$output")" -eq 1 ]
 }
 
+# Let's Encrypt's live/<domain>/: cert.pem, and fullchain.pem holding it again.
+_le_live() {
+    _leaf_cert "$1/cert.pem" "$2"
+    _self_signed "$1/chain.pem" 900
+    cat "$1/cert.pem" "$1/chain.pem" > "$1/fullchain.pem"
+}
+
+@test "certs: Let's Encrypt's cert.pem and fullchain.pem are one certificate" {
+    _le_live "$BATS_TEST_TMPDIR/le/live/a.example" 3
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/le/live")
+    cp "$FIXTURE" "$BATS_TEST_TMPDIR/dump"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/le/live/a.example/"*"|expiring|"* ]]
+    [ "$(wc -l <<<"$output")" -eq 1 ]
+}
+
+@test "certs: a certificate found twice is reported by the path nginx serves" {
+    _le_live "$BATS_TEST_TMPDIR/le/live/a.example" 3
+    mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
+    cp "$BATS_TEST_TMPDIR/le/live/a.example/fullchain.pem" "$BATS_TEST_TMPDIR/elsewhere/a.pem"
+    SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/le/live")
+    _dump_with_site "server { listen 443 ssl; ssl_certificate $BATS_TEST_TMPDIR/elsewhere/a.pem; }"
+    nginx_dump_reset; nginx_dump_load
+
+    run _webapp_ssl_cert_expiry
+    [[ "$output" == "$BATS_TEST_TMPDIR/elsewhere/a.pem|expiring|"* ]]
+    [ "$(wc -l <<<"$output")" -eq 1 ]
+}
+
 @test "certs: a relative ssl_certificate resolves against nginx.conf's directory" {
     _self_signed "$BATS_TEST_TMPDIR/conf/certs/r.crt" 3
     SSL_CERT_PATHS=("$BATS_TEST_TMPDIR/ssl")

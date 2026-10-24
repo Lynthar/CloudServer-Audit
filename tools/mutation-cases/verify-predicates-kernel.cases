@@ -3,8 +3,8 @@
 
 # The 2026-09-28 ruling: on an RA host accept_ra=1 is not an IPv6 issue.
 run_case "ipv6/ra-host-accept-ra-flagged" 1 \
-    '        if [[ "$accept_ra" == "1" ]] && ! _kernel_ipv6_uses_ra; then' \
-    '        if [[ "$accept_ra" == "1" ]]; then'
+    '    _kernel_ipv6_uses_ra && check_ra=0' \
+    '    :'
 
 run_case "ipv6/idle-threshold-loosened" 1 \
     '        (( $2 <= 2 ))' \

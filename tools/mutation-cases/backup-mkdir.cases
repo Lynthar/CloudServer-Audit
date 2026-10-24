@@ -1,0 +1,17 @@
+# Mutation cases: tests/test_backup_created_contract.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_backup_created_contract.bats
+#
+# backup_mkdir and the atomic writer's use of it: a directory a fix creates is
+# recorded, or a rollback leaves it behind (an empty /etc/nginx/ssl did).
+
+run_case "mkdir/not-recorded" 1 \
+    '        backup_track_created "$d/" || return 1' \
+    '        :'
+
+run_case "mkdir/innermost-first" 1 \
+    '        missing=("$d" ${missing[@]+"${missing[@]}"})' \
+    '        missing+=("$d")'
+
+run_case "mkdir/atomic-writer-untracked" 1 \
+    '    backup_mkdir "$target_dir" || { log_error "write_file_atomic: cannot create $target_dir"; return 1; }' \
+    '    mkdir -p "$target_dir"'

@@ -67,17 +67,31 @@ tui_checklist() {
     fi
 }
 
-# Text box for viewing files/content
+# Text box for viewing files/content. newt erases the right border on every
+# text row under --scrolltext, and wraps by code points, so a CJK line can
+# overrun it: lines come wrapped by display cells, the scrollbar only if needed.
 tui_textbox() {
     local title="$1"
     local file="$2"
+    local view="" line rc=0
+    local -a scroll=(--scrolltext)
+
+    # Without a temp file the plan is still shown, unwrapped and scrollable.
+    if view=$(mktemp); then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            wrap_to_width "$line" $(( TUI_WIDTH - 6 ))
+        done < "$file" > "$view"
+        (( $(wc -l < "$view") > TUI_HEIGHT - 6 )) || scroll=()
+    fi
 
     if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" --scrolltext --textbox "$file" $TUI_HEIGHT $TUI_WIDTH
+        whiptail --title "$title" ${scroll[@]+"${scroll[@]}"} --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || rc=$?
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --textbox "$file" $TUI_HEIGHT $TUI_WIDTH
+        dialog --title "$title" --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || rc=$?
         clear 2>/dev/null >/dev/tty || true
     fi
+    [[ -z "$view" ]] || rm -f "$view"
+    return "$rc"
 }
 
 # --- High-level TUI Functions for vpssec ---
@@ -87,7 +101,7 @@ tui_textbox() {
 # display-only. Tags are deduped — whiptail rejects duplicates.
 tui_select_fixes() {
     local -n fixes_ref=$1
-    local items=()
+    local items=() ids=() texts=() states=()
     local -A seen=()
 
     for i in "${!fixes_ref[@]}"; do
@@ -111,7 +125,17 @@ tui_select_fixes() {
         # needs confirming.
         local state="off"
         [[ "$(echo "$fix" | jq -r '.safety // ""')" == "safe" ]] && state="on"
-        items+=("$fix_id" "$prefix $title" "$state")
+        ids+=("$fix_id") texts+=("$prefix $title") states+=("$state")
+    done
+
+    # A row is the check box, the tag column and the text: text past the box in
+    # cells loses the right border, as in tui_textbox.
+    local tag_w=0 id
+    for id in ${ids[@]+"${ids[@]}"}; do
+        if (( ${#id} > tag_w )); then tag_w=${#id}; fi
+    done
+    for i in "${!ids[@]}"; do
+        items+=("${ids[$i]}" "$(truncate_to_width "${texts[$i]}" $(( TUI_WIDTH - 13 - tag_w )))" "${states[$i]}")
     done
 
     local selected

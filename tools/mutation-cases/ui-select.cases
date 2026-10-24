@@ -25,3 +25,30 @@ run_case "tuiselect/all-preticked" 1 \
 run_case "tuiselect/preticks-non-safe" 1 \
     "        [[ \"\$(echo \"\$fix\" | jq -r '.safety // \"\"')\" == \"safe\" ]] && state=\"on\"" \
     "        [[ \"\$(echo \"\$fix\" | jq -r '.safety // \"\"')\" != \"safe\" ]] && state=\"on\""
+
+# ---- layout: newt counts code points, a CJK cell is two -----------------------
+
+run_case "tuiselect/text-not-truncated" 1 \
+    '        items+=("${ids[$i]}" "$(truncate_to_width "${texts[$i]}" $(( TUI_WIDTH - 13 - tag_w )))" "${states[$i]}")' \
+    '        items+=("${ids[$i]}" "${texts[$i]}" "${states[$i]}")'
+
+run_case "tuiselect/tag-column-ignored" 1 \
+    '        if (( ${#id} > tag_w )); then tag_w=${#id}; fi' \
+    '        :'
+
+# --scrolltext on a plan that fits: every text row loses the right border.
+run_case "textbox/always-scrolls" 1 \
+    '        (( $(wc -l < "$view") > TUI_HEIGHT - 6 )) || scroll=()' \
+    '        :'
+
+run_case "textbox/never-scrolls" 1 \
+    '        (( $(wc -l < "$view") > TUI_HEIGHT - 6 )) || scroll=()' \
+    '        scroll=()'
+
+run_case "textbox/unwrapped" 1 \
+    '            wrap_to_width "$line" $(( TUI_WIDTH - 6 ))' \
+    "            printf '%s\n' \"\$line\""
+
+run_case "textbox/temp-left-behind" 1 \
+    '    [[ -z "$view" ]] || rm -f "$view"' \
+    '    :'

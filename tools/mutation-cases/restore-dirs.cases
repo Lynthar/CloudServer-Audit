@@ -1,0 +1,27 @@
+# Mutation cases: tests/test_backup_created_contract.bats against core/state.sh.
+# mutate-suite: core/state.sh tests/test_backup_created_contract.bats
+#
+# What a rollback does with the directories a fix created: removes each left
+# empty, deepest first, never through a symlink, and lists them in the preview.
+
+run_case "rmdir/never-removed" 1 \
+    '        elif rmdir -- "$created_dir" 2>/dev/null; then' \
+    '        elif false; then'
+
+run_case "rmdir/symlink-not-counted" 1 \
+    '        if [[ -L "$created_dir" ]]; then' \
+    '        if false; then'
+
+# Outermost first: the parent is not empty yet, so it stays.
+run_case "rmdir/outermost-first" 1 \
+    '    done < "$manifest" | LC_ALL=C sort -ru' \
+    '    done < "$manifest"'
+
+# A session that only created directories read as "nothing to restore", rc 1.
+run_case "rmdir/not-an-undo" 1 \
+    '    if (( restored == 0 && dirs_removed == 0 )); then' \
+    '    if (( restored == 0 )); then'
+
+run_case "rmdir/not-previewed" 1 \
+    "    _backup_session_created_dirs \"\$backup_dir\" | sed 's/^/rmdir /'" \
+    '    :'

@@ -230,7 +230,7 @@ main() {
     if [[ -n "${VPSSEC_MODE:-}" && "$VPSSEC_MODE" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_error "$(i18n 'error.root_required')"
-        echo "$(i18n 'error.run_with_sudo' "cmd=$VPSSEC_MODE")"
+        echo "$(i18n 'error.run_with_sudo' "cmd=$VPSSEC_MODE")" >&2
         exit 1
     fi
 
@@ -256,7 +256,7 @@ main() {
     if [[ "${VPSSEC_MODE:-}" != "status" ]] && ! check_root; then
         i18n_load "${VPSSEC_LANG}" 2>/dev/null || true
         print_error "$(i18n 'error.root_required')"
-        echo "$(i18n 'error.run_with_sudo' "cmd=${VPSSEC_MODE:-}")"
+        echo "$(i18n 'error.run_with_sudo' "cmd=${VPSSEC_MODE:-}")" >&2
         exit 1
     fi
 
@@ -283,7 +283,7 @@ main() {
     # cheap syscall so the redundancy is fine.
     if [[ "$command" != "status" ]] && ! check_root; then
         print_error "$(i18n 'error.root_required')"
-        echo "$(i18n 'error.run_with_sudo' "cmd=$command")"
+        echo "$(i18n 'error.run_with_sudo' "cmd=$command")" >&2
         exit 1
     fi
 
@@ -320,9 +320,9 @@ main() {
         dep_pkgs=$(distro_packages_for_commands $missing_deps)
         # shellcheck disable=SC2086  # deliberate split: one package per word
         if dep_hint=$(pkg_install_hint $dep_pkgs); then
-            echo "$(i18n 'preflight.install_with' "cmd=$dep_hint")"
+            echo "$(i18n 'preflight.install_with' "cmd=$dep_hint")" >&2
         else
-            echo "$(i18n 'preflight.install_deps' "deps=$dep_pkgs")"
+            echo "$(i18n 'preflight.install_deps' "deps=$dep_pkgs")" >&2
         fi
         exit 1
     fi

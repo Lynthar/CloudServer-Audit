@@ -600,7 +600,7 @@ _baseline_fix_enable_apparmor() {
     if ! check_command aa-status; then
         mapfile -t missing < <(pkg_missing apparmor apparmor-utils)
         apt_refresh_index
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then
+        if ! apt_install apparmor apparmor-utils; then
             print_error "$(i18n 'baseline.apparmor_install_failed')"
             return 1
         fi

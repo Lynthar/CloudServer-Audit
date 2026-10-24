@@ -18,8 +18,9 @@ run_case "files/includedir-not-followed" 1 \
     '                _sudoers_lines "$f" $((depth + 1))' \
     '                :'
 
-# The first `local LC_ALL=C` in common.sh is _display_width's; this is the second.
-run_case "files/includedir-locale-order" 2 \
+# The fourth `local LC_ALL=C` in common.sh: _display_width, _drop_last_char_var and
+# wrap_to_width have the first three.
+run_case "files/includedir-locale-order" 4 \
     '    local LC_ALL=C' \
     '    :'
 

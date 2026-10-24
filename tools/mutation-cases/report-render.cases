@@ -38,3 +38,8 @@ run_case "scored/json-unmarked" 1 \
 run_case "scored/markdown-unmarked" 2 \
     '    local checks=$(checks_with_scoring)' \
     '    local checks=$(state_get_checks)'
+
+# A long CJK title cut by bytes under the C locale: the terminal gets half a character.
+run_case "render/title-cut-by-bytes" 1 \
+    '                _drop_last_char_var title' \
+    '                title="${title:0:-1}"'

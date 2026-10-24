@@ -411,9 +411,24 @@ pad_to_width() {
     fi
 }
 
+# Drop the last code point of the variable named $1, in place. Byte-wise
+# under any locale: bash slices by bytes in the C locale, which an SSH
+# session often has, and half a CJK character is not UTF-8 any more.
+_drop_last_char_var() {
+    local -n _dlc_ref="$1"
+    local LC_ALL=C
+    local -i b
+    while [[ -n "$_dlc_ref" ]]; do
+        printf -v b '%d' "'${_dlc_ref: -1}"
+        (( b < 0 )) && b+=256
+        _dlc_ref="${_dlc_ref:0:-1}"
+        (( b >= 0x80 && b < 0xC0 )) || break
+    done
+}
+
 # Truncate $1 to at most $2 display cells, appending "…" when it had to
-# cut. Bash slicing is code-point based, so shrink in a loop and
-# re-measure rather than computing an index.
+# cut. Shrinks a code point at a time and re-measures: a cell count is
+# not an index.
 truncate_to_width() {
     local text="$1"
     local target="$2"
@@ -422,9 +437,39 @@ truncate_to_width() {
         return
     fi
     while [[ -n "$text" ]] && (( $(_display_width "$text") > target - 1 )); do
-        text="${text:0:-1}"
+        _drop_last_char_var text
     done
     printf '%s…' "$text"
+}
+
+# $1 as lines of at most $2 display cells, broken between code points
+# (walked byte-wise, as above); a single character wider than $2 still
+# gets a line of its own.
+wrap_to_width() {
+    local text="$1" line="" ch
+    local -i target="$2" w=0 cw i n len b
+    if (( $(_display_width "$text") <= target )); then
+        printf '%s\n' "$text"
+        return
+    fi
+    local LC_ALL=C
+    n=${#text}
+    for (( i = 0; i < n; i += len )); do
+        printf -v b '%d' "'${text:i:1}"
+        (( b < 0 )) && b+=256
+        # The lead byte gives the sequence length; a stray continuation byte is one.
+        if (( b >= 0xF0 )); then len=4; elif (( b >= 0xE0 )); then len=3
+        elif (( b >= 0xC0 )); then len=2; else len=1; fi
+        ch="${text:i:len}"
+        cw=$(_display_width "$ch")
+        if (( w > 0 && w + cw > target )); then
+            printf '%s\n' "$line"
+            line="" w=0
+        fi
+        line+="$ch"
+        w+=cw
+    done
+    printf '%s\n' "$line"
 }
 
 # --- Menu Box Drawing: every box renders from one interior width, measured
@@ -804,6 +849,24 @@ backup_track_created() {
     fi
 }
 
+# mkdir -p for a fix: each directory it is about to create is recorded first as
+# "<dir>/", and a rollback removes it again if left empty. A fix MUST create its
+# directories with this, or a rollback leaves them behind.
+backup_mkdir() {
+    local dir="${1%/}" d
+    local -a missing=()
+    [[ -d "$dir" ]] && return 0
+    d="$dir"
+    while [[ -n "$d" && ! -e "$d" ]]; do
+        missing=("$d" ${missing[@]+"${missing[@]}"})
+        d="${d%/*}"
+    done
+    for d in ${missing[@]+"${missing[@]}"}; do
+        backup_track_created "$d/" || return 1
+    done
+    mkdir -p "$dir"
+}
+
 backup_file() {
     local file="$1"
 
@@ -949,7 +1012,7 @@ write_file_atomic() {
     target_dir=$(dirname "$target")
 
     # Ensure target directory exists
-    mkdir -p "$target_dir"
+    backup_mkdir "$target_dir" || { log_error "write_file_atomic: cannot create $target_dir"; return 1; }
 
     # Create temp file in the same directory for atomic mv
     temp_file=$(mktemp "${target_dir}/.vpssec.XXXXXX") || {
@@ -1021,6 +1084,19 @@ write_template() {
 # third-party repo fails the refresh while the package is still installable.
 apt_refresh_index() {
     DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+}
+
+# Install packages $@ with apt, returning its status. Its output goes to the log,
+# not into the guide, so no prompt may wait there unseen: stdin is /dev/null and
+# dpkg keeps a changed conffile. On failure apt's last lines go to stderr.
+apt_install() {
+    local out rc=0
+    out=$(DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+              install -y "$@" </dev/null 2>&1) || rc=$?
+    log_info "apt-get install -y $* exited $rc:"$'\n'"$out"
+    (( rc == 0 )) || tail -n 5 <<<"$out" >&2
+    return "$rc"
 }
 
 # Apply changed fail2ban configuration to the running server. A plain reload

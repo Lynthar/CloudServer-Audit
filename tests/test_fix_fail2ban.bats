@@ -122,6 +122,29 @@ EOF
     grep -qE '^maxretry = 3' "$F2B_DROPIN"
 }
 
+@test "configure: fail2ban's own default log path is not presented as one detected" {
+    # With journald and no auth.log the jail is left to %(sshd_log)s, which
+    # fail2ban expands from its paths-*.conf: no path was found here.
+    _f2b_detect_ssh_logpath() { echo '%(sshd_log)s'; }
+    VPSSEC_QUIET_SCAN=0
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$(i18n 'fail2ban.detected_logpath' "path=")"* ]]
+    _vpssec_refute grep -q 'Detected logpath' "$F2B_DROPIN"
+    grep -qxF 'logpath = %(sshd_log)s' "$F2B_DROPIN"
+}
+
+@test "configure: a log file found on the host is named" {
+    _f2b_detect_ssh_logpath() { echo /var/log/auth.log; }
+    VPSSEC_QUIET_SCAN=0
+    _f2b_jail_comes_up
+    run _f2b_fix_configure_ssh_jail
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(i18n 'fail2ban.detected_logpath' "path=/var/log/auth.log")"* ]]
+    grep -qxF '# Detected logpath: /var/log/auth.log' "$F2B_DROPIN"
+}
+
 @test "configure: loopback is always in ignoreip" {
     # maxretry=3 over a 10-minute window means three fat-fingered passwords
     # ban the source. Without this the tool's own jail can lock the operator

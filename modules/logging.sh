@@ -349,7 +349,7 @@ _logging_fix_enable_persistent_journal() {
     # backup_file is UNCONDITIONAL: it also records an absent path as
     # fix-created, which is the only thing that lets a rollback delete this
     # drop-in. Never guard it on the file already existing.
-    mkdir -p "$JOURNALD_CONF_D"
+    backup_mkdir "$JOURNALD_CONF_D" || return 1
     backup_file "$JOURNALD_DROPIN" >/dev/null || return 1
     if ! write_file_atomic "$JOURNALD_DROPIN" '# vpssec journald configuration
 [Journal]
@@ -386,7 +386,7 @@ _logging_fix_setup_logrotate() {
     if ! check_command logrotate; then
         mapfile -t missing < <(pkg_missing logrotate)
         apt_refresh_index
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then
+        if ! apt_install logrotate; then
             print_error "$(i18n 'logging.logrotate_install_failed')"
             return 1
         fi
@@ -421,7 +421,7 @@ _logging_fix_install_auditd() {
     local -a missing=()
     mapfile -t missing < <(pkg_missing auditd audispd-plugins)
     apt_refresh_index
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then
+    if apt_install auditd audispd-plugins; then
         print_ok "$(i18n 'logging.auditd_installed')"
         (( ${#missing[@]} )) && record_undo logging.install_auditd "$(pkg_remove_hint "${missing[@]}")"
 
@@ -442,7 +442,7 @@ _logging_fix_enable_auditd() {
 
     local undo
     undo=$(service_undo_cmd auditd)
-    if systemctl enable auditd && systemctl start auditd; then
+    if systemctl enable auditd --quiet && systemctl start auditd; then
         print_ok "$(i18n 'logging.auditd_service_enabled')"
         record_undo logging.enable_auditd "$undo"
         return 0
@@ -454,7 +454,7 @@ _logging_fix_enable_auditd() {
 _logging_fix_setup_audit_rules() {
     print_info "$(i18n 'logging.configuring_audit_rules')"
 
-    mkdir -p "$AUDIT_RULES_D"
+    backup_mkdir "$AUDIT_RULES_D" || return 1
 
     # Built then written atomically: a truncated 99-vpssec.rules is rejected
     # by auditd on the next load.
@@ -530,7 +530,7 @@ EOF
     # Report whether the KERNEL took the rules, not whether the file exists:
     # augenrules can fail while the file looks fine on disk, and auditctl -l
     # prints "No rules" for an empty set, so look for one of these rules.
-    augenrules --load 2>/dev/null || auditctl -R "$AUDIT_RULES_FILE" 2>/dev/null || true
+    augenrules --load >/dev/null 2>&1 || auditctl -R "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true
 
     local loaded
     loaded=$(auditctl -l 2>/dev/null) || loaded=""

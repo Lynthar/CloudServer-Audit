@@ -249,9 +249,14 @@ _update_audit_reboot() {
 
     if (( rc == 0 )); then
         local -a shown=()
-        local desc="" list
-        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")
-        if (( ${#shown[@]} )); then
+        local desc="" list total
+        # The last five: Ubuntu's list ends with the newest request.
+        [[ -n "$reasons" ]] && mapfile -t shown < <(tail -5 <<<"$reasons")
+        total=$(count_lines "$reasons")
+        if (( total > ${#shown[@]} )); then
+            printf -v list '%s, ' "${shown[@]}"
+            desc="$(i18n 'update.reboot_required_desc_more' "count=$total" "list=${list%, }")"
+        elif (( ${#shown[@]} )); then
             printf -v list '%s, ' "${shown[@]}"
             desc="$(i18n 'update.reboot_required_desc' "list=${list%, }")"
         fi
@@ -307,7 +312,7 @@ _update_fix_apply_security() {
         backup_file "$UPDATE_AUTO_UPGRADES_CONF" >/dev/null || return 1
         _update_uu_no_auto_enable
         apt_refresh_index
-        if ! apt-get install -y unattended-upgrades; then
+        if ! apt_install unattended-upgrades; then
             print_error "$(i18n 'update.unattended_install_failed')"
             print_info "$(i18n 'update.security_aborted_install_uu_first')"
             return 1
@@ -397,7 +402,7 @@ _update_fix_install_unattended() {
     mapfile -t missing < <(pkg_missing unattended-upgrades apt-listchanges)
 
     apt_refresh_index
-    if apt-get install -y unattended-upgrades apt-listchanges; then
+    if apt_install unattended-upgrades apt-listchanges; then
         _update_fix_enable_unattended || return 1
         (( ${#missing[@]} )) && record_undo update.install_unattended "$(pkg_remove_hint "${missing[@]}")"
         return 0

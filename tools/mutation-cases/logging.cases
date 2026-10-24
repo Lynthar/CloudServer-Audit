@@ -58,15 +58,23 @@ run_case "auditd/predicate-always-active" 1 \
     '    true'
 
 run_case "auditd/never-started" 1 \
-    '    if systemctl enable auditd && systemctl start auditd; then' \
-    '    if systemctl enable auditd; then'
+    '    if systemctl enable auditd --quiet && systemctl start auditd; then' \
+    '    if systemctl enable auditd --quiet; then'
 
 run_case "auditd/start-failure-swallowed" 1 \
-    '    if systemctl enable auditd && systemctl start auditd; then' \
+    '    if systemctl enable auditd --quiet && systemctl start auditd; then' \
     '    if true; then'
 
+run_case "auditd/systemctl-chatter-shown" 1 \
+    '    if systemctl enable auditd --quiet && systemctl start auditd; then' \
+    '    if systemctl enable auditd && systemctl start auditd; then'
+
+run_case "rules/auditctl-status-shown" 1 \
+    '    augenrules --load >/dev/null 2>&1 || auditctl -R "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true' \
+    '    augenrules --load || auditctl -R "$AUDIT_RULES_FILE" >/dev/null 2>&1 || true'
+
 run_case "install/failure-swallowed" 1 \
-    '    if DEBIAN_FRONTEND=noninteractive apt-get install -y auditd audispd-plugins 2>/dev/null; then' \
+    '    if apt_install auditd audispd-plugins; then' \
     '    if true; then'
 
 run_case "install/rules-not-configured" 1 \

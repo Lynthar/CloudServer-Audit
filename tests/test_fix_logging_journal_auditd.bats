@@ -301,6 +301,29 @@ SH
     _vpssec_stub_called systemctl 'start auditd'
 }
 
+@test "enable auditd: systemctl's SysV note stays out of the guide's terminal" {
+    # As systemd 249 prints it, unless asked to be quiet.
+    _vpssec_stub_script systemctl <<'SH'
+[[ " $* " == *" --quiet "* || " $* " == *" -q "* ]] && exit 0
+[[ "$1" == enable ]] && echo "Synchronizing state of $2.service with SysV service script with /lib/systemd/systemd-sysv-install."
+exit 0
+SH
+    run _logging_fix_enable_auditd
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Synchronizing state"* ]]
+}
+
+@test "audit rules: the status auditctl prints on load stays out of the guide's terminal" {
+    _auditd_accepts_rules
+    _vpssec_stub_script augenrules <<SH
+touch "$BATS_TEST_TMPDIR/rules-loaded"
+printf 'No rules\nenabled 1\nbacklog_limit 8192\n'
+SH
+    run _logging_fix_setup_audit_rules
+    [ "$status" -eq 0 ]
+    [[ "$output" != *backlog_limit* ]]
+}
+
 @test "enable auditd: starting a stopped, disabled unit logs the command that undoes it" {
     _vpssec_stub_script systemctl <<'SH'
 case "$1" in is-enabled|is-active) exit 1 ;; esac

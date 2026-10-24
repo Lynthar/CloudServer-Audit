@@ -142,6 +142,17 @@ _md_section_text() {
 
 # ---- colour codes and column width ------------------------------------------------------
 
+@test "terminal: a long CJK title is cut between characters under the C locale too" {
+    # bash slices by bytes there, and half a character is not UTF-8 any more.
+    command -v iconv >/dev/null || skip "iconv not installed"
+    local LC_ALL=C
+    _add users.mm users low failed "密码策略过弱：最短长度、复杂度与历史记录都没有按建议配置，账户容易被猜中" "" "" ""
+    COLUMNS=100 run report_print_details
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"密码策略过弱"*".."* ]]
+    iconv -f UTF-8 -t UTF-8 <<<"$output" >/dev/null
+}
+
 @test "width: colour codes count as nothing, the text around them as itself" {
     [ "$(_display_width '\033[1m\033[0;36mEnvironment Preflight\033[0m')" = "21" ]
     [ "$(_display_width '  \033[0;32m✓\033[0m Kernel param missing')" = "24" ]

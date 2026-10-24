@@ -356,6 +356,17 @@ _distro_kernel_reboot_check() {
     echo "kernel: $running → $latest"
 }
 
+# Ubuntu's reboot-required.pkgs, which each asking package appends to and nothing
+# prunes: every name once, at its last request, without packages since removed.
+_distro_reboot_flag_pkgs() {
+    local p rc
+    tac "$1" 2>/dev/null | awk 'NF && !seen[$0]++' | tac | while IFS= read -r p; do
+        rc=0
+        pkg_is_installed "$p" || rc=$?
+        (( rc == 1 )) || printf '%s\n' "$p"
+    done
+}
+
 # Does the host need a reboot? 0 = yes, reasons (packages, or the kernel change)
 # on stdout one per line, possibly none; 1 = no; 2 = could not tell. Capture
 # with `|| rc=$?`: under a bare `if`, "could not tell" reads as "no".
@@ -366,7 +377,7 @@ pkg_reboot_required() {
             # The flag comes with update-notifier-common (Ubuntu). Debian does
             # not ship it, so its absence alone proves nothing.
             if [[ -f "$DISTRO_REBOOT_FLAG" ]]; then
-                cat "$DISTRO_REBOOT_FLAG.pkgs" 2>/dev/null
+                _distro_reboot_flag_pkgs "$DISTRO_REBOOT_FLAG.pkgs"
                 return 0
             fi
             if command -v needrestart >/dev/null 2>&1 && out=$(needrestart -k -b 2>/dev/null); then

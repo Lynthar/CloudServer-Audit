@@ -1099,7 +1099,8 @@ guide_mode() {
         fi
     done < <(echo "$plan" | jq -c '.fixes[]')
 
-    if tui_available; then
+    # Under --yes nothing may wait for a key: whiptail would hang `ssh -t … --yes`.
+    if tui_available && [[ "${VPSSEC_YES:-0}" != "1" ]]; then
         tui_review_plan "$plan_preview"
     else
         # The plan is what the confirmations below refer to, so it goes where
@@ -1188,11 +1189,12 @@ rollback_mode() {
 
     local contents verb heading
     contents=$(backup_list_contents "$timestamp")
-    for verb in restore delete missing; do
+    for verb in restore delete rmdir missing; do
         grep -q "^$verb " <<<"$contents" || continue
         case "$verb" in
             restore) heading=$(i18n 'backup.preview_restore') ;;
             delete)  heading=$(i18n 'backup.preview_delete') ;;
+            rmdir)   heading=$(i18n 'backup.preview_rmdir') ;;
             missing) heading=$(i18n 'backup.preview_missing') ;;
         esac
         tty_say ""
@@ -1216,7 +1218,11 @@ rollback_mode() {
 # 0 / 1 / 2. `rollback` and the guide's failure menu both end here.
 _rollback_session() {
     local timestamp="$1"
-    local restore_rc=0
+    local restore_rc=0 contents kernel_files=0
+    # Read before the restore deletes them. A sysctl file going back changes no
+    # running value: the kernel keeps what the fix set until a reboot.
+    contents=$(backup_list_contents "$timestamp") || contents=""
+    grep -qE '^(restore|delete) .*/sysctl(\.conf|\.d/.+)$' <<<"$contents" && kernel_files=1
     backup_restore "$timestamp" || restore_rc=$?
 
     if (( restore_rc == 1 )); then
@@ -1233,6 +1239,7 @@ _rollback_session() {
     # Also after a partial restore: the files that did come back must take effect.
     print_info "$(i18n 'backup.reloading_services')"
     _rollback_reload_services
+    (( kernel_files == 0 )) || print_warn "$(i18n 'backup.sysctl_values_kept' "log=${VPSSEC_LOGS}/vpssec.log")"
 
     return "$restore_rc"
 }

@@ -15,14 +15,27 @@ run_case "audit/unknown-passes" 1 \
     '    elif (( rc != 0 )); then'
 
 run_case "audit/list-not-capped" 1 \
-    '        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")' \
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(tail -5 <<<"$reasons")' \
     '        [[ -n "$reasons" ]] && mapfile -t shown <<<"$reasons"'
+
+# The oldest five: on a real host they were kernels long removed, the pending one unseen.
+run_case "audit/oldest-listed" 1 \
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(tail -5 <<<"$reasons")' \
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")'
 
 # A here-string of nothing is one empty line: "Packages requiring reboot: ".
 run_case "audit/empty-list-listed" 1 \
-    '        [[ -n "$reasons" ]] && mapfile -t shown < <(head -5 <<<"$reasons")' \
-    '        mapfile -t shown < <(head -5 <<<"$reasons")'
+    '        [[ -n "$reasons" ]] && mapfile -t shown < <(tail -5 <<<"$reasons")' \
+    '        mapfile -t shown < <(tail -5 <<<"$reasons")'
+
+run_case "audit/total-not-given" 1 \
+    '        if (( total > ${#shown[@]} )); then' \
+    '        if false; then'
 
 run_case "audit/trailing-separator" 1 \
     "            desc=\"\$(i18n 'update.reboot_required_desc' \"list=\${list%, }\")\"" \
     "            desc=\"\$(i18n 'update.reboot_required_desc' \"list=\$list\")\""
+
+run_case "audit/trailing-separator-with-total" 1 \
+    "            desc=\"\$(i18n 'update.reboot_required_desc_more' \"count=\$total\" \"list=\${list%, }\")\"" \
+    "            desc=\"\$(i18n 'update.reboot_required_desc_more' \"count=\$total\" \"list=\$list\")\""

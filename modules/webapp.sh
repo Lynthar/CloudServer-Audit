@@ -775,13 +775,14 @@ _webapp_cert_days_left() {
     echo $(( (epoch - $(date +%s)) / 86400 ))
 }
 
-# Check certificate expiry: the server certificates under SSL_CERT_PATHS (CA
-# ones skipped there), then every certificate nginx serves, CA:TRUE or not and
-# wherever it lives: OpenSSL 3 makes `req -x509` self-signed ones CA:TRUE.
+# Check certificate expiry: every certificate nginx serves, CA:TRUE or not and
+# wherever it lives (OpenSSL 3 makes `req -x509` self-signed ones CA:TRUE), then
+# the server certificates under SSL_CERT_PATHS, CA ones skipped. Each once.
 _webapp_ssl_cert_expiry() {
-    local findings=() certs=() served=() cert dir days
+    local findings=() certs=() served=() cert dir days fp
     local -A seen=()
     mapfile -t served < <(_webapp_nginx_served_certs)
+    certs=(${served[@]+"${served[@]}"})
 
     for dir in "${SSL_CERT_PATHS[@]}"; do
         [[ -d "$dir" ]] || continue
@@ -793,11 +794,14 @@ _webapp_ssl_cert_expiry() {
         # LE certificate, expired ones included.
         done < <(find -L "$dir" -maxdepth 3 \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" \) -type f -print0 2>/dev/null)
     done
-    certs+=(${served[@]+"${served[@]}"})
 
     for cert in ${certs[@]+"${certs[@]}"}; do
-        [[ -f "$cert" && -z "${seen[$cert]:-}" ]] || continue
-        seen[$cert]=1
+        [[ -f "$cert" ]] || continue
+        # By the first certificate's fingerprint, not the path: Let's Encrypt's
+        # cert.pem and fullchain.pem both start with the same leaf.
+        fp=$(openssl x509 -noout -fingerprint -sha256 -in "$cert" 2>/dev/null) || continue
+        [[ -n "$fp" && -z "${seen[$fp]:-}" ]] || continue
+        seen[$fp]=1
         days=$(_webapp_cert_days_left "$cert") || continue
         if (( days < 0 )); then
             findings+=("$cert|expired|$(( -days ))")
@@ -1474,7 +1478,7 @@ EOF
 _webapp_fix_nginx_ssl() {
     print_info "$(i18n 'webapp.updating_ssl')"
 
-    if ! mkdir -p "$NGINX_SNIPPETS" 2>/dev/null; then
+    if ! backup_mkdir "$NGINX_SNIPPETS" 2>/dev/null; then
         print_error "$(i18n 'common.failed')"
         return 1
     fi

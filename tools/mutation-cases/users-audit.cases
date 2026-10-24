@@ -5,12 +5,25 @@
 # deserve, or hides one it does.
 
 run_case "nopasswd/defaults-dropped" 1 \
-    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 } \$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
-    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 }' <<<\"\$recs\""
+    "        \$1 == \"D\" && \$5 == \"0\" && !(\$3 == \"u\" && root_only(\$4)) { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
+    "        ' <<<\"\$recs\""
 
 run_case "nopasswd/rules-dropped" 1 \
-    "    awk -F'\\t' '\$1 == \"T\" { print \$2 \": \" \$4 } \$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
-    "    awk -F'\\t' '\$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\""
+    '        $1 == "T" && !root_only($3) { print $2 ": " $4 }' \
+    '        $1 == "T" && 0 { print $2 ": " $4 }'
+
+# cloud-init's root ALL=(ALL) NOPASSWD:ALL: no effect, since sudo never asks root.
+run_case "nopasswd/root-rule-reported" 1 \
+    '        $1 == "T" && !root_only($3) { print $2 ": " $4 }' \
+    '        $1 == "T" { print $2 ": " $4 }'
+
+run_case "nopasswd/root-defaults-reported" 1 \
+    "        \$1 == \"D\" && \$5 == \"0\" && !(\$3 == \"u\" && root_only(\$4)) { print \$2 \": \" \$6 }' <<<\"\$recs\"" \
+    "        \$1 == \"D\" && \$5 == \"0\" { print \$2 \": \" \$6 }' <<<\"\$recs\""
+
+run_case "nopasswd/root-beside-others-dropped" 1 \
+    '        function root_only(who) { return who == "+root" || who == "+#0" }' \
+    '        function root_only(who) { return index(who, "+root") > 0 }'
 
 run_case "shells/shutdown-halt-login" 1 \
     '        */nologin|*/false|/bin/sync|*/shutdown|*/halt)' \

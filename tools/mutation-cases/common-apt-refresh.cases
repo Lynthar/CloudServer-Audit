@@ -6,3 +6,26 @@
 run_case "apt-refresh/no-update" 1 \
     '    DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true' \
     '    :'
+
+# apt_install: what every install fix calls.
+run_case "apt-install/status-lost" 1 \
+    '              install -y "$@" </dev/null 2>&1) || rc=$?' \
+    '              install -y "$@" </dev/null 2>&1) || true'
+
+# apt's progress back in the guide's terminal.
+run_case "apt-install/output-on-terminal" 1 \
+    '              install -y "$@" </dev/null 2>&1) || rc=$?' \
+    '              install -y "$@" </dev/null 2>&1 | tee /dev/stderr) || rc=$?'
+
+# A dpkg question answered from, or left waiting on, a terminal that shows nothing.
+run_case "apt-install/prompt-on-terminal" 1 \
+    '              install -y "$@" </dev/null 2>&1) || rc=$?' \
+    '              install -y "$@" 2>&1) || rc=$?'
+
+run_case "apt-install/reason-dropped" 1 \
+    '    (( rc == 0 )) || tail -n 5 <<<"$out" >&2' \
+    '    :'
+
+run_case "apt-install/not-logged" 1 \
+    "    log_info \"apt-get install -y \$* exited \$rc:\"\$'\n'\"\$out\"" \
+    '    :'

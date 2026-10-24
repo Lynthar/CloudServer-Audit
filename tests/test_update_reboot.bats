@@ -170,6 +170,35 @@ _kernel_images() {
 
 @test "debian: Ubuntu's reboot flag is a reboot, with its package list" {
     _debian_host
+    _vpssec_stub dpkg-query 0 'install ok installed'
+    : > "$DISTRO_REBOOT_FLAG"
+    printf 'linux-image-6.8.0-45-generic\nlibc6\n' > "$DISTRO_REBOOT_FLAG.pkgs"
+    run pkg_reboot_required
+    [ "$status" -eq 0 ]
+    [ "$output" = "linux-image-6.8.0-45-generic
+libc6" ]
+}
+
+@test "debian: the flag's list names each package once, at its last request, none since removed" {
+    # Each package appends itself and nothing prunes the file: on a real host
+    # 4 of 18 names were kernels autoremove had already taken.
+    _debian_host
+    _vpssec_stub_script dpkg-query <<'SH'
+[[ "${*: -1}" == linux-image-6.8.0-40-generic ]] && { echo 'deinstall ok config-files'; exit 0; }
+echo 'install ok installed'
+SH
+    : > "$DISTRO_REBOOT_FLAG"
+    printf '%s\n' linux-image-6.8.0-40-generic libc6 linux-image-6.8.0-45-generic libc6 \
+        > "$DISTRO_REBOOT_FLAG.pkgs"
+    run pkg_reboot_required
+    [ "$status" -eq 0 ]
+    [ "$output" = "linux-image-6.8.0-45-generic
+libc6" ]
+}
+
+@test "debian: a package manager that cannot answer drops nothing from the flag's list" {
+    _debian_host
+    VPSSEC_PKG_MGR=""
     : > "$DISTRO_REBOOT_FLAG"
     printf 'linux-image-6.8.0-45-generic\nlibc6\n' > "$DISTRO_REBOOT_FLAG.pkgs"
     run pkg_reboot_required
@@ -270,10 +299,17 @@ _desc() {
     [ "$(_desc update.reboot_required)" = "Packages requiring reboot: glibc, dbus-daemon" ]
 }
 
-@test "audit: at most five are listed" {
-    pkg_reboot_required() { printf '%s\n' a b c d e f g; }
+@test "audit: five are listed as they are" {
+    pkg_reboot_required() { printf '%s\n' a b c d e; }
     _update_audit_reboot
     [ "$(_desc update.reboot_required)" = "Packages requiring reboot: a, b, c, d, e" ]
+}
+
+@test "audit: past five, the last five are listed with the total" {
+    # Ubuntu's list puts the newest request, the kernel to boot, last.
+    pkg_reboot_required() { printf '%s\n' a b c d e f g; }
+    _update_audit_reboot
+    [ "$(_desc update.reboot_required)" = "Packages requiring reboot (7), including: c, d, e, f, g" ]
 }
 
 @test "audit: a reboot with nothing to list says nothing about packages" {

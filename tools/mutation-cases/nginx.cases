@@ -90,8 +90,8 @@ run_case "status/config-write-unchecked" 1 \
     '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")" && false; then'
 
 run_case "status/ssl-mkdir-unchecked" 1 \
-    '    if ! mkdir -p "$NGINX_SSL_DIR" 2>/dev/null; then' \
-    '    if ! mkdir -p "$NGINX_SSL_DIR" 2>/dev/null && false; then'
+    '    if ! backup_mkdir "$NGINX_SSL_DIR" 2>/dev/null; then' \
+    '    if ! backup_mkdir "$NGINX_SSL_DIR" 2>/dev/null && false; then'
 
 run_case "status/openssl-unchecked" 1 \
     '            -subj "/CN=invalid" 2>/dev/null; then' \

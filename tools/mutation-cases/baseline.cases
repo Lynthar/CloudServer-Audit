@@ -69,8 +69,8 @@ run_case "apparmor/reinstalled-every-run" 1 \
     '    if true; then'
 
 run_case "apparmor/install-failure-swallowed" 1 \
-    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null; then' \
-    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y apparmor apparmor-utils 2>/dev/null && false; then'
+    '        if ! apt_install apparmor apparmor-utils; then' \
+    '        if ! apt_install apparmor apparmor-utils && false; then'
 
 run_case "apparmor/never-enabled" 1 \
     '    systemctl enable apparmor || log_warn "systemctl enable apparmor failed"' \

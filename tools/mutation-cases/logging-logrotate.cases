@@ -24,8 +24,8 @@ run_case "guard/reinstall-when-present" 1 \
 # audit re-flagged it as missing. Mutate the status check, not the action — the
 # install must still run so the stub log stays intact for the other assertions.
 run_case "install/failure-swallowed" 1 \
-    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null; then' \
-    '        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate 2>/dev/null && false; then'
+    '        if ! apt_install logrotate; then' \
+    '        if ! apt_install logrotate && false; then'
 
 # Without refreshing the index first, a host whose /var/lib/apt/lists is empty
 # gets "Unable to locate package" and the fix can never succeed.

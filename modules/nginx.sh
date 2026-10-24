@@ -447,7 +447,7 @@ _nginx_catchall_live() {
 _nginx_ensure_catchall_cert() {
     [[ -f "$NGINX_CATCHALL_CERT" ]] && return 0
 
-    if ! mkdir -p "$NGINX_SSL_DIR" 2>/dev/null; then
+    if ! backup_mkdir "$NGINX_SSL_DIR" 2>/dev/null; then
         print_error "$(i18n 'nginx.ssl_dir_failed' "dir=$NGINX_SSL_DIR")"
         return 1
     fi

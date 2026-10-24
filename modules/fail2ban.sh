@@ -458,7 +458,7 @@ _f2b_fix_install() {
     local -a missing=()
     mapfile -t missing < <(pkg_missing fail2ban)
     apt_refresh_index
-    if apt-get install -y fail2ban; then
+    if apt_install fail2ban; then
         print_ok "$(i18n 'fail2ban.install_success')"
         (( ${#missing[@]} )) && record_undo fail2ban.install "$(pkg_remove_hint "${missing[@]}")"
 
@@ -566,7 +566,13 @@ _f2b_fix_configure_ssh_jail() {
     f2b_current_ip=$(get_current_ssh_ip)
     [[ -n "$f2b_current_ip" ]] || print_warn "$(i18n 'fail2ban.operator_ip_unknown')"
 
-    print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
+    # %(sshd_log)s is fail2ban's own default, expanded from its paths-*.conf:
+    # nothing was detected, so nothing is named.
+    local logpath_note=""
+    if [[ "$ssh_logpath" == /* ]]; then
+        print_info "$(i18n 'fail2ban.detected_logpath' "path=$ssh_logpath")"
+        logpath_note="# Detected logpath: $ssh_logpath"$'\n'
+    fi
     print_info "$(i18n 'fail2ban.detected_backend' "backend=$f2b_backend")"
     print_info "$(i18n 'fail2ban.detected_banaction' "banaction=$f2b_banaction")"
 
@@ -576,8 +582,7 @@ _f2b_fix_configure_ssh_jail() {
     jail_content=$(cat <<EOF
 # vpssec fail2ban configuration
 # Generated: $(date -Iseconds)
-# Detected logpath: $ssh_logpath
-# Detected backend: $f2b_backend
+${logpath_note}# Detected backend: $f2b_backend
 
 [DEFAULT]
 # Every jail's ban action: the firewall tool this host can run (selected at

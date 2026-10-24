@@ -301,6 +301,52 @@ SH
     done
 }
 
+@test "rollback preview: directories to remove are listed under their own heading" {
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    backup_list() { echo 20260501_120000; }
+    backup_list_contents() { printf 'delete /etc/nginx/ssl/default.crt\nrmdir /etc/nginx/ssl\n'; }
+    confirm_critical() { return 1; }
+
+    run rollback_mode 20260501_120000
+
+    [[ "$output" == *"$(i18n 'backup.preview_rmdir')"*"  - /etc/nginx/ssl"* ]]
+}
+
+# A session of $1 lines in backup_list_contents' form, restored with outcome $2.
+_rollback_of() {
+    source "$(_vpssec_repo_root)/core/engine.sh"
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+    _rollback_reload_services() { :; }
+    SESSION_LINES="$1" RESTORE_RC="$2"
+    backup_list_contents() { printf '%s\n' "$SESSION_LINES"; }
+    backup_restore() { return "$RESTORE_RC"; }
+}
+
+@test "rollback: a kernel parameter file taken away says its values stay until a reboot" {
+    # Deleting the drop-in changes nothing running; the fix printed the
+    # commands that do, days earlier.
+    _rollback_of $'delete /etc/sysctl.d/99-vpssec-network.conf\nrestore /etc/ssh/sshd_config' 0
+    run _rollback_session 20260501_120000
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(i18n 'backup.sysctl_values_kept' "log=${VPSSEC_LOGS}/vpssec.log")"* ]]
+}
+
+@test "rollback: ufw's sysctl.conf put back is one too, after a partial restore as well" {
+    _rollback_of 'restore /etc/ufw/sysctl.conf' 2
+    run _rollback_session 20260501_120000
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"$(i18n 'backup.sysctl_values_kept' "log=${VPSSEC_LOGS}/vpssec.log")"* ]]
+}
+
+@test "rollback: no kernel parameter file, no reboot note" {
+    _rollback_of $'restore /etc/ssh/sshd_config\ndelete /etc/fail2ban/jail.d/99-vpssec-sshd.local' 0
+    run _rollback_session 20260501_120000
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$(i18n 'backup.sysctl_values_kept' "log=${VPSSEC_LOGS}/vpssec.log")"* ]]
+}
+
 @test "rollback reload: a running fail2ban restarts its jails, since fixes write its jail drop-in" {
     # Without it the drop-in is gone from disk while fail2ban keeps enforcing
     # it. A plain reload is not enough: restoring the distro's banaction renames

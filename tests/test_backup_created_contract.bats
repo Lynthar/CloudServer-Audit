@@ -233,7 +233,7 @@ SH
 @test "the contract assertion accepts a new symlink only while it stays untracked" {
     # A tracked link is skipped by the rollback, which then reports partial.
     snap=$(_vpssec_tree_snapshot "$etc")
-    mkdir -p "$etc/somewhere"
+    backup_mkdir "$etc/somewhere"
     ln -s "$etc/elsewhere.conf" "$etc/somewhere/link.conf"
 
     run _vpssec_assert_created_contract "$etc" "$snap"
@@ -243,6 +243,107 @@ SH
     run _vpssec_assert_created_contract "$etc" "$snap"
     [ "$status" -eq 1 ]
     [[ "$output" == *"symlink must not be tracked"* ]]
+}
+
+@test "the contract assertion fails on an untracked directory" {
+    # A rollback cannot remove a directory it was never told about.
+    snap=$(_vpssec_tree_snapshot "$etc")
+    mkdir -p "$etc/newdir"
+
+    run _vpssec_assert_created_contract "$etc" "$snap"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"directory created but not tracked"*"$etc/newdir"* ]]
+}
+
+# ==============================================================================
+# directories a fix creates
+# ==============================================================================
+
+@test "backup_mkdir: every directory it creates is recorded, outermost first" {
+    backup_mkdir "$etc/a/b/c"
+
+    [ -d "$etc/a/b/c" ]
+    [ "$(grep -F "$etc" "$(_manifest)")" = "$etc/a/
+$etc/a/b/
+$etc/a/b/c/" ]
+}
+
+@test "rollback removes the directories a fix created once empty, deepest first" {
+    backup_mkdir "$etc/nginx/ssl"
+    backup_file "$etc/nginx/ssl/default.crt" >/dev/null
+    printf 'cert\n' > "$etc/nginx/ssl/default.crt"
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+
+    [ "$status" -eq 0 ]
+    _vpssec_refute test -e "$etc/nginx"
+}
+
+@test "rollback keeps a created directory an operator has put a file in" {
+    backup_mkdir "$etc/x/y"
+    printf 'mine\n' > "$etc/x/operator.conf"
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+
+    [ "$status" -eq 0 ]
+    _vpssec_refute test -e "$etc/x/y"
+    [ "$(cat "$etc/x/operator.conf")" = mine ]
+}
+
+@test "rollback refuses a created directory that is now a symlink, and says partial" {
+    backup_file "$etc/f.conf" >/dev/null
+    printf 'x\n' > "$etc/f.conf"
+    backup_mkdir "$etc/d"
+    rmdir "$etc/d"
+    mkdir -p "$BATS_TEST_TMPDIR/target"
+    ln -s "$BATS_TEST_TMPDIR/target" "$etc/d"
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+
+    [ "$status" -eq 2 ]
+    [ -L "$etc/d" ]
+    [ -d "$BATS_TEST_TMPDIR/target" ]
+}
+
+@test "the rollback preview lists created directories deepest first" {
+    backup_mkdir "$etc/p/q"
+
+    run backup_list_contents "$VPSSEC_TEST_BACKUP_SESSION_TS"
+
+    [ "$status" -eq 0 ]
+    [ "$(grep '^rmdir ' <<<"$output")" = "rmdir $etc/p/q
+rmdir $etc/p" ]
+}
+
+@test "nginx: a rollback of the catchall leaves no directory behind" {
+    # /etc/nginx/ssl stayed, empty, after the certificate in it was deleted.
+    _load_module nginx
+    mkdir -p "$etc/nginx"
+    NGINX_SSL_DIR="$etc/nginx/ssl"
+    NGINX_CATCHALL_CERT="$NGINX_SSL_DIR/default.crt"
+    NGINX_CATCHALL_KEY="$NGINX_SSL_DIR/default.key"
+    _vpssec_stub_script openssl <<'SH'
+out=""; key=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -out) out="$2"; shift ;;
+        -keyout) key="$2"; shift ;;
+    esac
+    shift
+done
+[ -n "$out" ] && printf 'cert\n' > "$out"
+[ -n "$key" ] && printf 'key\n' > "$key"
+exit 0
+SH
+    snap=$(_vpssec_tree_snapshot "$etc")
+    _nginx_ensure_catchall_cert
+    [ -f "$NGINX_CATCHALL_CERT" ]
+
+    run backup_restore "$VPSSEC_TEST_BACKUP_SESSION_TS"
+
+    [ "$status" -eq 0 ]
+    [ "$(_vpssec_tree_snapshot "$etc")" = "$snap" ]
 }
 
 # ==============================================================================

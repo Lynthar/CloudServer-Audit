@@ -5,8 +5,12 @@
 # audits and the fixes read; the network/* cases below mutate that single copy.
 
 run_case "ipv6/ra-guard-inverted" 1 \
+    '    _kernel_ipv6_uses_ra && check_ra=0' \
+    '    ! _kernel_ipv6_uses_ra && check_ra=0'
+
+run_case "ipv6/ra-skip-unsaid" 1 \
     '    if _kernel_ipv6_uses_ra; then' \
-    '    if ! _kernel_ipv6_uses_ra; then'
+    '    if false; then'
 
 run_case "network/ra-guard-removed" 1 \
     '            if [[ "$host_uses_ra" == "yes" ]]; then' \
@@ -17,7 +21,7 @@ run_case "ra-probe/failsafe-removed" 1 \
     '    routes=$(ip -6 route show default 2>/dev/null) || true'
 
 run_case "coredump/dropin-needs-dir" 1 \
-    '        mkdir -p "$KERNEL_COREDUMP_D"' \
+    '        backup_mkdir "$KERNEL_COREDUMP_D" || return 1' \
     '        [[ -d "$KERNEL_COREDUMP_D" ]] || return 0'
 
 run_case "coredump/always-reports-success" 1 \
@@ -108,18 +112,10 @@ run_case "ipv6/nonexistent-key-listed" 1 \
     '    "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"' \
     '    "net.ipv6.conf.all.send_redirects:0:medium:IPv6 ICMP redirects sending"'
 
-run_case "ipv6/all-only-ra-key-written" 1 \
-    '            "net.ipv6.conf.default.accept_ra=0"' \
-    '            "net.ipv6.conf.all.accept_ra_defrtr=0"'
-
-# The pass and the suggested fix must say existing interfaces are unchanged.
-run_case "ipv6/secure-claims-every-interface" 1 \
-    "                desc=\"\$(i18n 'kernel.ipv6_secure_desc')\"" \
-    '                desc="IPv6 enabled and properly secured"'
-
-run_case "ipv6/fix-suggestion-unqualified" 1 \
-    "                suggestion=\"\$(i18n 'kernel.fix_ipv6')\" \\" \
-    '                suggestion="Harden IPv6 parameters" \'
+# Written under all, which the kernel copies to no interface.
+run_case "ipv6/all-written-for-interface" 1 \
+    '        [[ "$kind" == bad ]] && ipv6_params+=("$param=$want")' \
+    '        [[ "$kind" == bad ]] && ipv6_params+=("net.ipv6.conf.all.${param##*.}=$want")'
 
 # ---- who forwards, one check per key, core-dump limits ---------------------
 
@@ -219,7 +215,8 @@ run_case "iface/conf-all-keys-judged" 1 \
     'KERNEL_IFACE_KEYS='"'"'^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter)$'"'"'' \
     'KERNEL_IFACE_KEYS='"'"'^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter|log_martians|accept_source_route)$'"'"''
 
-run_case "iface/lo-judged" 1 \
+# Occurrence 2: _kernel_ipv6_scan, earlier in the file, has the same line.
+run_case "iface/lo-judged" 2 \
     '        case "$name" in all|default|lo) continue ;; esac' \
     '        case "$name" in all|default) continue ;; esac'
 
@@ -245,8 +242,59 @@ run_case "iface/glob-line-duplicated" 1 \
     '        :'
 
 run_case "iface/all-persisted-as-glob" 1 \
-    '       && [[ "${BASH_REMATCH[1]}" != all && "${BASH_REMATCH[1]}" != default ]]; then' \
+    '       && [[ "${BASH_REMATCH[2]}" != all && "${BASH_REMATCH[2]}" != default ]]; then' \
     '       && true; then'
+
+# An IPv6 interface's key persisted by name: a renamed or late interface misses it.
+run_case "iface/ipv6-persisted-by-name" 1 \
+    '    if [[ "$1" =~ ^net\.(ipv[46])\.conf\.([^.]+)\.([a-z_]+)$ ]] \' \
+    '    if [[ "$1" =~ ^net\.(ipv4)\.conf\.([^.]+)\.([a-z_]+)$ ]] \'
+
+# ---- IPv6: default and each interface's own value ------------------------------
+
+run_case "ipv6/default-unread" 1 \
+    '    local -a names=(default)' \
+    '    local -a names=()'
+
+run_case "ipv6/interfaces-unread" 1 \
+    '        names+=("$name")' \
+    '        :'
+
+run_case "ipv6/lo-judged" 1 \
+    '        case "$name" in all|default|lo) continue ;; esac' \
+    '        case "$name" in all|default) continue ;; esac'
+
+run_case "ipv6/forwarding-redirects-judged" 1 \
+    '        if [[ "$value" =~ ^[0-9]+$ ]] && (( value != 0 )) && [[ "$fwd" != 1 ]]; then' \
+    '        if [[ "$value" =~ ^[0-9]+$ ]] && (( value != 0 )); then'
+
+run_case "ipv6/forwarding-ra-judged-as-plain" 1 \
+    '            if [[ "$fwd" == 1 ]]; then accepts=$(( value == 2 )); else accepts=$(( value != 0 )); fi' \
+    '            accepts=$(( value != 0 ))'
+
+run_case "ipv6/tempaddr-minus-one-judged" 1 \
+    '        if [[ "$value" =~ ^[0-9]+$ ]] && (( value < 2 )); then' \
+    '        if [[ "$value" =~ ^-?[0-9]+$ ]] && (( value < 2 )); then'
+
+run_case "ipv6/networkd-links-judged" 1 \
+    '        grep -qxF -- "$name" <<<"$managed" && continue' \
+    '        :'
+
+run_case "ipv6/where-unsaid" 1 \
+    '        ipv6_text+="$(i18n "kernel.ipv6_issue_$tok")${where:+: $where}; "' \
+    '        ipv6_text+="$(i18n "kernel.ipv6_issue_$tok"); "'
+
+run_case "ipv6/networkd-note-dropped" 1 \
+    '    if [[ -n "$networkd_links" ]]; then' \
+    '    if false; then'
+
+run_case "ipv6/networkd-fix-unsaid" 1 \
+    '    [[ -z "$networkd_links" ]] || print_warn "$(i18n '"'"'kernel.ipv6_networkd_skipped'"'"' "links=$networkd_links")"' \
+    '    :'
+
+run_case "container/suid-dumpable-unsaid" 1 \
+    '            issues_medium+=("fs.suid_dumpable=$suid_dump")' \
+    '            :'
 
 run_case "undo/interface-value-lost" 1 \
     '                    [[ -n "${before[$param]+x}" ]] || before[$param]="$actual"' \

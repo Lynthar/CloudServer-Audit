@@ -160,7 +160,7 @@ _timezone_ntp_state() {
                 echo "active_not_synced chrony"
             fi ;;
         ntpsec|ntp|ntpd)
-            if ntpq -p &>/dev/null; then echo "synced ntpd"; else echo "active_not_synced ntpd"; fi ;;
+            if ntpq -n -p &>/dev/null; then echo "synced ntpd"; else echo "active_not_synced ntpd"; fi ;;
         openntpd)
             echo "active openntpd" ;;
     esac
@@ -433,7 +433,7 @@ _timezone_fix_enable_ntp() {
     local -a missing=()
     mapfile -t missing < <(pkg_missing chrony)
     apt_refresh_index
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y chrony &>/dev/null; then
+    if apt_install chrony; then
         systemctl enable chrony &>/dev/null
         systemctl start chrony &>/dev/null
         print_ok "$(i18n 'timezone.chrony_installed')"

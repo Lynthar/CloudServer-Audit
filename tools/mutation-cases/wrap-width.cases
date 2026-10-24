@@ -1,0 +1,38 @@
+# Mutation cases: tests/test_guide_plan_contract.bats against core/common.sh.
+# mutate-suite: core/common.sh tests/test_guide_plan_contract.bats
+#
+# wrap_to_width, which the plan preview's lines pass through before whiptail:
+# newt counts code points, so a CJK line measured that way overran the box.
+
+run_case "wrap/code-points-counted" 1 \
+    '        cw=$(_display_width "$ch")' \
+    '        cw=1'
+
+# A character wider than the line used to cost an empty line before it.
+run_case "wrap/empty-line-before-wide-char" 1 \
+    '        if (( w > 0 && w + cw > target )); then' \
+    '        if (( w + cw > target )); then'
+
+run_case "wrap/last-line-dropped" 1 \
+    "    printf '%s\n' \"\$line\"" \
+    '    :'
+
+# Under the C locale bash slices by bytes: a CJK character's three bytes taken
+# one at a time come out as invalid UTF-8.
+run_case "wrap/bytes-taken-as-characters" 1 \
+    '        if (( b >= 0xF0 )); then len=4; elif (( b >= 0xE0 )); then len=3' \
+    '        if (( b >= 0xF0 )); then len=4; elif (( b >= 0xE0 )); then len=1'
+
+run_case "truncate/one-byte-dropped" 1 \
+    '        (( b >= 0x80 && b < 0xC0 )) || break' \
+    '        break'
+
+# Occurrences 2 and 3 of `local LC_ALL=C` (the first is _display_width's): left in
+# the caller's UTF-8 locale, bash hands back code points where bytes are expected.
+run_case "truncate/locale-trusted" 2 \
+    '    local LC_ALL=C' \
+    '    :'
+
+run_case "wrap/locale-trusted" 3 \
+    '    local LC_ALL=C' \
+    '    :'

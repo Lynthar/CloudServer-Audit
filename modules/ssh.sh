@@ -1101,7 +1101,7 @@ _ssh_write_hardening_config() {
     local content="$1"
     local temp_file
 
-    mkdir -p "$SSH_DROPIN_DIR"
+    backup_mkdir "$SSH_DROPIN_DIR" || return 1
 
     # backup_file serves the plan-level rollback; this write's own undo keeps the
     # content it replaces, since the session copy predates the plan.

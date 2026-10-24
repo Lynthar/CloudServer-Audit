@@ -234,7 +234,7 @@ _backup_session_copies() {
 }
 
 # Files a fix created that are still there, one per line: rollback deletes
-# them (a symlinked one is refused and counted). A directory is never deleted.
+# them (a symlinked one is refused and counted). Directories are listed apart.
 _backup_session_created() {
     local manifest="$1/$VPSSEC_CREATED_MANIFEST" path
     [[ -f "$manifest" ]] || return 0
@@ -242,6 +242,19 @@ _backup_session_created() {
         [[ "$path" == /* && -e "$path" ]] || continue
         [[ -f "$path" || -L "$path" ]] && printf '%s\n' "$path"
     done < "$manifest"
+    return 0
+}
+
+# Directories a fix created that are still there, recorded as "<dir>/" and
+# printed without the slash, deepest first: rollback removes each left empty.
+_backup_session_created_dirs() {
+    local manifest="$1/$VPSSEC_CREATED_MANIFEST" path
+    [[ -f "$manifest" ]] || return 0
+    while IFS= read -r path || [[ -n "$path" ]]; do
+        [[ "$path" == /*/ ]] || continue
+        path="${path%/}"
+        [[ -d "$path" || -L "$path" ]] && printf '%s\n' "$path"
+    done < "$manifest" | LC_ALL=C sort -ru
     return 0
 }
 
@@ -356,8 +369,23 @@ backup_restore() {
         fi
     done < <(_backup_session_created "$backup_dir")
 
-    # Counts go to the terminal, not just the log; restored == 0 is a failure.
-    if (( restored == 0 )); then
+    # After the files, so a directory they emptied goes too. rmdir removes only
+    # an empty one: whatever an operator has put there since keeps it.
+    local created_dir dirs_removed=0
+    while IFS= read -r created_dir; do
+        if [[ -L "$created_dir" ]]; then
+            log_warn "Skipping removal of created directory (now a symlink): $created_dir"
+            ((skipped++)) || true
+        elif rmdir -- "$created_dir" 2>/dev/null; then
+            log_info "Removed fix-created directory on rollback: $created_dir"
+            ((dirs_removed++)) || true
+        else
+            log_info "Kept fix-created directory, not empty: $created_dir"
+        fi
+    done < <(_backup_session_created_dirs "$backup_dir")
+
+    # Counts go to the terminal, not just the log; nothing undone is a failure.
+    if (( restored == 0 && dirs_removed == 0 )); then
         if (( skipped > 0 )); then
             log_error "Restore failed: 0 restored, ${skipped} skipped (see logs/vpssec.log)"
             print_error "$(i18n 'backup.restore_none_skipped' "skipped=${skipped}")"
@@ -377,14 +405,14 @@ backup_restore() {
     fi
     (( skipped > 0 || mode_lost > 0 )) && return 2
 
-    log_info "Restore complete: ${restored} files"
+    log_info "Restore complete: ${restored} files, ${dirs_removed} directories removed"
     print_info "$(i18n 'backup.restore_count' "restored=${restored}")"
     return 0
 }
 
-# Preview one backup: "restore <path>", "delete <path>" and "missing <path>"
-# lines, from the same lists backup_restore acts on. Same timestamp-shape gate
-# as backup_restore, so an unvalidated argument cannot list arbitrary dirs.
+# Preview one backup: "restore", "delete", "rmdir" and "missing" lines, from the
+# same lists backup_restore acts on. Same timestamp-shape gate as backup_restore,
+# so an unvalidated argument cannot list arbitrary dirs.
 backup_list_contents() {
     local timestamp="$1"
     local backup_dir="${VPSSEC_BACKUPS}/${timestamp}"
@@ -397,6 +425,7 @@ backup_list_contents() {
         printf 'restore /%s\n' "${f#"$backup_dir"/}"
     done < <(_backup_session_copies "$backup_dir")
     _backup_session_created "$backup_dir" | sed 's/^/delete /'
+    _backup_session_created_dirs "$backup_dir" | sed 's/^/rmdir /'
     _backup_session_missing "$backup_dir" | sed 's/^/missing /'
 }
 

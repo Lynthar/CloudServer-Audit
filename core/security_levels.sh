@@ -599,6 +599,7 @@ declare -gA CHECK_SCORE_CATEGORY=(
     ["kernel.ipv6_firewall_missing"]="required"
     ["kernel.ipv6_firewall_ok"]="recommended"
     ["kernel.ipv6_firewall_unreadable"]="info"   # not measured: no score either way
+    ["kernel.ipv6_networkd_managed"]="info"      # networkd's settings, not sysctl's: said, not judged
     # Whether runtime hardening survives a reboot: advice, never scored.
     ["kernel.boot_params_ok"]="info"
     ["kernel.boot_params_revert"]="info"

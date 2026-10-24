@@ -220,20 +220,21 @@ SH
 # consults when deciding what a rollback deletes, so a fix that creates a file
 # without registering it leaves it behind after the operator undid the plan.
 
-# Every regular file and symlink under DIR, one "<type> <path>" line each.
-# `find -printf` would be shorter but is GNU-only; this stays portable to the
-# macOS dev checkout where much of the suite still runs.
+# Every regular file, symlink and directory under DIR, one "<type> <path>" line
+# each. `find -printf` would be shorter but is GNU-only; this stays portable to
+# the macOS dev checkout where much of the suite still runs.
 _vpssec_tree_snapshot() {
     local dir="$1"
     {
         find "$dir" -type f -print 2>/dev/null | sed 's|^|f |'
         find "$dir" -type l -print 2>/dev/null | sed 's|^|l |'
+        find "$dir" -mindepth 1 -type d -print 2>/dev/null | sed 's|^|d |'
     } | sort
 }
 
-# Assert, for everything that appeared under DIR since SNAPSHOT, that regular
-# files are tracked and symlinks are NOT — backup_restore skips a tracked
-# symlink and drags its return code to 2, reporting a partial restore.
+# Assert, for everything that appeared under DIR since SNAPSHOT, that files and
+# directories ("<dir>/") are tracked and symlinks are NOT — backup_restore skips
+# a tracked symlink and drags its return code to 2, reporting a partial restore.
 #
 # This asserts the OUTCOME, not the call shape: whatever appeared on disk must
 # match the manifest, whichever primitive wrote it. A grep for the calling
@@ -258,6 +259,13 @@ _vpssec_assert_created_contract() {
                 if grep -qxF "$path" "$manifest" 2>/dev/null; then
                     printf 'symlink must not be tracked (rollback skips it and returns 2): %s\n' \
                         "$path" >&2
+                    rc=1
+                fi
+                ;;
+            d)
+                if ! grep -qxF "$path/" "$manifest" 2>/dev/null; then
+                    printf 'directory created but not tracked in %s (use backup_mkdir): %s\n' \
+                        "$VPSSEC_CREATED_MANIFEST" "$path" >&2
                     rc=1
                 fi
                 ;;

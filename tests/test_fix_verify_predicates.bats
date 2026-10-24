@@ -190,10 +190,13 @@ SH
     source "$(_vpssec_repo_root)/modules/kernel.sh"
     _kernel_ipv6_enabled() { return 0; }
     _kernel_ip_forward_needed() { return 1; }
+    _kernel_networkd_links() { :; }
+    # The default only: no interface of the host's own is read.
+    KERNEL_IPV6_CONF_DIR="$BATS_TEST_TMPDIR/no-interfaces"
     _kernel_get_sysctl() {
         case "$1" in
-            net.ipv6.conf.all.accept_ra) echo 1 ;;
-            net.ipv6.conf.all.use_tempaddr) echo 2 ;;
+            net.ipv6.conf.default.accept_ra) echo 1 ;;
+            net.ipv6.conf.default.use_tempaddr) echo 2 ;;
             *) echo 0 ;;
         esac
     }

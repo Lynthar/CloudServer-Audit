@@ -164,10 +164,14 @@ _find_system_users_with_shells() {
 
 # Every way sudoers lets something run without a password, one per line as
 # "<file>: <rule>": rules carrying NOPASSWD and authenticate Defaults turned off.
+# Not those for root alone: sudo never asks root for a password (sudoers(5)).
 _find_nopasswd_sudo() {
     local recs
     recs=$(_sudoers_records)
-    awk -F'\t' '$1 == "T" { print $2 ": " $4 } $1 == "D" && $5 == "0" { print $2 ": " $6 }' <<<"$recs"
+    awk -F'\t' '
+        function root_only(who) { return who == "+root" || who == "+#0" }
+        $1 == "T" && !root_only($3) { print $2 ": " $4 }
+        $1 == "D" && $5 == "0" && !($3 == "u" && root_only($4)) { print $2 ": " $6 }' <<<"$recs"
 }
 
 # Regex of cloud-init default usernames FOR THE DETECTED PROVIDER; the union

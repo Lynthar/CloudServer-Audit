@@ -81,6 +81,84 @@ _checklist_tags_only() {
     grep -qx 'mod.other_fix=off' <<<"$output"
 }
 
+# ---- whiptail layout: newt counts code points, a CJK cell is two -------------
+
+@test "wrap_to_width: lines break by display cells, a line that fits stays whole" {
+    [ "$(wrap_to_width '中中中ab' 4)" = $'中中\n中ab' ]
+    [ "$(wrap_to_width 'fits as is' 10)" = 'fits as is' ]
+    [ "$(wrap_to_width '中' 1)" = '中' ]
+}
+
+@test "wrap_to_width and truncate_to_width cut between characters under the C locale too" {
+    # SSH sessions often arrive with LANG unset; bash then slices by bytes.
+    local LC_ALL=C
+    [ "$(wrap_to_width '中中中ab' 4)" = $'中中\n中ab' ]
+    [ "$(truncate_to_width '中中中中' 5)" = '中中…' ]
+}
+
+@test "truncate_to_width: a character between U+0080 and U+00BF is one character, not a tail byte" {
+    # Read as a code point in a UTF-8 locale, · (U+00B7) falls in the
+    # continuation-byte range and took the character before it along.
+    local LC_ALL=C.UTF-8
+    [ "$(truncate_to_width 'a·b·c·d' 4)" = 'a·b…' ]
+}
+
+@test "tui_select_fixes: a row's text fits the box beside the widest tag" {
+    # Past the box in cells, the row overran the border and the box lost its
+    # right edge (newt lays rows out by code points).
+    local cjk='SSH 允许密码登录，存在暴力破解风险，建议只用密钥认证并关闭密码登录'
+    local -a fixes=(
+        "{\"fix_id\":\"ssh.disable_password_auth\",\"title\":\"$cjk\",\"severity\":\"high\",\"safety\":\"confirm\"}"
+        '{"fix_id":"ufw.enable","title":"Firewall off","severity":"medium","safety":"safe"}'
+    )
+    tui_checklist() { shift 2; while [[ $# -gt 0 ]]; do printf '%s\n' "$2"; shift 3; done; }
+    run tui_select_fixes fixes
+    [ "$status" -eq 0 ]
+    local -a rows
+    mapfile -t rows <<<"$output"
+    # 25: ssh.disable_password_auth, the widest tag.
+    [ "$(_display_width "${rows[0]}")" -le $(( TUI_WIDTH - 13 - 25 )) ]
+    [[ "${rows[0]}" == "[!] SSH 允许密码登录"*"…" ]]
+    [ "${rows[1]}" = "[*] Firewall off" ]
+}
+
+# whiptail recording its arguments and the text it was handed.
+_whiptail_records() {
+    TUI_BACKEND=whiptail
+    export TMPDIR="$BATS_TEST_TMPDIR"
+    _vpssec_stub_script whiptail <<SH
+printf '%s\n' "\$@" > "$BATS_TEST_TMPDIR/wt-args"
+while [[ \$# -gt 0 ]]; do [[ \$1 == --textbox ]] && cp "\$2" "$BATS_TEST_TMPDIR/wt-text"; shift; done
+exit 0
+SH
+}
+
+@test "tui_textbox: a plan that fits is shown whole, wrapped by cells and without a scrollbar" {
+    # --scrolltext erases the right border on every text row, in every newt
+    # from 0.52.21 to 0.52.25.
+    _whiptail_records
+    local long='- [高] 禁用 SSH 密码登录，只允许密钥认证，修改前会先开一个救援通道并确认连通性 (ssh.disable_password_auth)'
+    printf '%s\n' '计划预览' "$long" > "$BATS_TEST_TMPDIR/plan"
+    run tui_textbox title "$BATS_TEST_TMPDIR/plan"
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -qx -- --scrolltext "$BATS_TEST_TMPDIR/wt-args"
+    local line
+    while IFS= read -r line; do
+        [ "$(_display_width "$line")" -le $(( TUI_WIDTH - 6 )) ]
+    done < "$BATS_TEST_TMPDIR/wt-text"
+    [ "$(tr -d '\n' < "$BATS_TEST_TMPDIR/wt-text")" = "计划预览$long" ]
+    _vpssec_refute compgen -G "$BATS_TEST_TMPDIR/tmp.*"
+}
+
+@test "tui_textbox: a plan taller than the box keeps its scrollbar" {
+    _whiptail_records
+    seq 1 30 > "$BATS_TEST_TMPDIR/plan"
+    run tui_textbox title "$BATS_TEST_TMPDIR/plan"
+    [ "$status" -eq 0 ]
+    grep -qx -- --scrolltext "$BATS_TEST_TMPDIR/wt-args"
+    [ "$(cat "$BATS_TEST_TMPDIR/wt-text")" = "$(seq 1 30)" ]
+}
+
 @test "generate_plan: one entry per unique fix id, even when selected twice" {
     # Selection repeats shared_fix (the UI can produce this when two rows
     # carried the same fix), and two checks in state match it.
@@ -383,6 +461,31 @@ _guide_fix_harness() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"EXEC mod.other_fix mod.shared_fix "* ]]
     _vpssec_refute grep -q "SELECTOR-RAN" <<<"$output"
+}
+
+@test "guide_mode --fix --yes on a terminal prints the plan rather than open a box" {
+    # whiptail waits for a key, and `ssh -t host vpssec guide --fix=… --yes`
+    # hung there with nobody to press it.
+    _guide_fix_harness
+    tui_available() { return 0; }
+    tui_review_plan() { echo "PLAN-BOX-OPENED"; }
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=1
+    run guide_mode
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q "PLAN-BOX-OPENED" <<<"$output"
+    [[ "$output" == *"- [$(i18n 'common.low')] Title C (mod.other_fix)"* ]]
+    [[ "$output" == *"EXEC mod.other_fix "* ]]
+}
+
+@test "guide_mode: without --yes a terminal still shows the plan in its box" {
+    _guide_fix_harness
+    tui_available() { return 0; }
+    tui_review_plan() { echo "PLAN-BOX-OPENED"; }
+    tui_confirm_execute() { return 0; }
+    export VPSSEC_FIX_IDS="mod.other_fix" VPSSEC_YES=0
+    run guide_mode
+    [ "$status" -eq 0 ]
+    grep -q "PLAN-BOX-OPENED" <<<"$output"
 }
 
 @test "guide_mode: the plan review names severity in the language asked for" {

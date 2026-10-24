@@ -110,10 +110,9 @@ _write_checks() {
     [ "$output" = "0" ]
 }
 
-@test "calculate_score: README example reproduces" {
-    # 2 high + 1 medium failures on a 15-scored-check host with 12 safe; the
-    # example shown in README.md / README.zh-CN.md. base = 100*12/15 = 80;
-    # penalty = 5*2 + 1.5*1 = 11.5, integer-divided in 4× space → 11; score 69.
+@test "calculate_score: 2 high + 1 medium of 15 scored checks scores 69" {
+    # base = 100*12/15 = 80; penalty = 5*2 + 1.5*1 = 11.5, integer-divided in
+    # 4× space → 11; score 69.
     local fails=(
         "ssh.password_auth_enabled|high|failed"
         "users.uid0_found|high|failed"

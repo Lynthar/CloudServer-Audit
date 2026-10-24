@@ -83,7 +83,7 @@ run_case "allow_ssh/undo-not-recorded" 1 \
     '    :'
 
 run_case "install/failure-swallowed" 1 \
-    '    if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then' \
+    '    if apt_install ufw; then' \
     '    if true; then'
 
 # The index is no longer refreshed: an empty apt cache cannot locate ufw.

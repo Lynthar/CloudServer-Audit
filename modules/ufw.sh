@@ -464,7 +464,7 @@ _ufw_fix_install() {
     print_info "$(i18n 'ufw.installing_ufw')"
 
     apt_refresh_index
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then
+    if apt_install ufw; then
         print_ok "$(i18n 'ufw.ufw_installed')"
         record_undo ufw.install "apt purge ufw"
         return 0

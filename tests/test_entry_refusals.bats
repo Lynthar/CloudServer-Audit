@@ -38,6 +38,28 @@ _load_entry() {
     done
 }
 
+# ---- --json-only keeps stdout for the JSON document ---------------------------
+
+@test "under --json-only a missing dependency and its install hint both reach stderr" {
+    _load_entry
+    check_root() { return 0; }
+    check_required_deps() { echo ss; return 1; }
+    run --separate-stderr _errexit main audit --json-only --yes --lang=en_US
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"$(i18n 'preflight.dep_missing' "dep=ss")"* ]]
+    [[ "$stderr" == *"Install with"* ]]
+}
+
+@test "under --json-only a run without root and its sudo hint both reach stderr" {
+    _load_entry
+    check_root() { return 1; }
+    run --separate-stderr _errexit main audit --json-only --lang=en_US
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"$(i18n 'error.run_with_sudo' "cmd=audit")"* ]]
+}
+
 # ---- an unknown --include module --------------------------------------------
 
 @test "--include naming an unknown module exits 1, the bad-arguments code, on stderr" {

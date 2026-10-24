@@ -14,8 +14,9 @@ VPSSEC_SYSCTL_CONF="${SYSCTL_D}/99-vpssec-hardening.conf"
 # SYSCTL_CONF is read at boot only through a link from one of them.
 declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d)
 
-# One directory per IPv4 interface, plus all and default.
+# One directory per IPv4 / IPv6 interface, plus all and default.
 KERNEL_IPV4_CONF_DIR="/proc/sys/net/ipv4/conf"
+KERNEL_IPV6_CONF_DIR="/proc/sys/net/ipv6/conf"
 
 # Variables, not literals, so the audit predicate and the fix read the SAME
 # locations, and so the fix is reachable from a test.
@@ -277,36 +278,80 @@ _kernel_ipv6_get_stats() {
     echo "$stats"
 }
 
+# Links systemd-networkd configures, one name per line. It takes RAs itself with
+# the kernel's accept_ra kept at 0, and writes use_tempaddr from
+# IPv6PrivacyExtensions=: no sysctl decides either on these links.
+_kernel_networkd_links() {
+    command -v networkctl >/dev/null 2>&1 || return 0
+    networkctl list --no-legend --no-pager 2>/dev/null \
+        | awk '$2 != "lo" && ($5 == "configured" || $5 == "configuring") { print $2 }'
+    return 0
+}
+
+# "bad <issue> <param> <want> <actual>" per weak value of the keys the kernel
+# reads per interface only (a write to all reaches none): default, which new
+# interfaces copy, and each interface's own, with its forwarding as the kernel has it.
+_kernel_ipv6_scan() {
+    local dir name sys fwd value accepts check_ra=1 managed
+    local -a names=(default)
+    _kernel_ipv6_uses_ra && check_ra=0
+    managed=$(_kernel_networkd_links)
+    for dir in "$KERNEL_IPV6_CONF_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        name="${dir%/}"
+        name="${name##*/}"
+        case "$name" in all|default|lo) continue ;; esac
+        names+=("$name")
+    done
+    for name in "${names[@]}"; do
+        # sysctl takes a dot inside an interface name (eth0.100) as a slash.
+        sys="net.ipv6.conf.${name//./\/}"
+        fwd=$(_kernel_get_sysctl "$sys.forwarding") || true
+        value=$(_kernel_get_sysctl "$sys.accept_redirects") || true
+        if [[ "$value" =~ ^[0-9]+$ ]] && (( value != 0 )) && [[ "$fwd" != 1 ]]; then
+            echo "bad accept_redirects_enabled $sys.accept_redirects 0 $value"
+        fi
+        grep -qxF -- "$name" <<<"$managed" && continue
+        value=$(_kernel_get_sysctl "$sys.accept_ra") || true
+        if (( check_ra )) && [[ "$value" =~ ^[0-9]+$ ]]; then
+            # A forwarding interface takes RAs only at accept_ra=2.
+            if [[ "$fwd" == 1 ]]; then accepts=$(( value == 2 )); else accepts=$(( value != 0 )); fi
+            (( accepts )) && echo "bad accept_ra_enabled $sys.accept_ra 0 $value"
+        fi
+        # -1 is a link that cannot have temporary addresses (loopback, tunnels).
+        value=$(_kernel_get_sysctl "$sys.use_tempaddr") || true
+        if [[ "$value" =~ ^[0-9]+$ ]] && (( value < 2 )); then
+            echo "bad privacy_extensions_weak $sys.use_tempaddr 2 $value"
+        fi
+    done
+    return 0
+}
+
+# Where issue $1 was found in scan $2: the interface names, comma-separated.
+_kernel_ipv6_where() {
+    awk -v tok="$1" '$1 == "bad" && $2 == tok { split($3, p, "."); n = p[4]; gsub("/", ".", n); print n }' <<<"$2" \
+        | paste -sd, - | sed 's/,/, /g'
+}
+
 # Check for IPv6-specific security issues
 _kernel_ipv6_check_security() {
-    local issues=()
+    local issues=() scan tok
 
-    # 1. Check if IPv6 is enabled but not secured
     if _kernel_ipv6_enabled; then
+        scan=$(_kernel_ipv6_scan)
         # Router Advertisements are a MITM vector, except on an RA/SLAAC host
         # where accept_ra=1 is what keeps the default route (as for net.*).
-        local accept_ra=$(_kernel_get_sysctl "net.ipv6.conf.all.accept_ra")
-        if [[ "$accept_ra" == "1" ]] && ! _kernel_ipv6_uses_ra; then
-            issues+=("accept_ra_enabled")
-        fi
+        grep -q '^bad accept_ra_enabled ' <<<"$scan" && issues+=("accept_ra_enabled")
 
-        # Check if forwarding is unexpectedly enabled
+        # forwarding is the one key here that all does set on every interface.
         local forward=$(_kernel_get_sysctl "net.ipv6.conf.all.forwarding")
         if [[ "$forward" == "1" ]] && ! _kernel_ip_forward_needed; then
             issues+=("forwarding_enabled")
         fi
 
-        # Check privacy extensions
-        local tempaddr=$(_kernel_get_sysctl "net.ipv6.conf.all.use_tempaddr")
-        if [[ "$tempaddr" != "2" ]]; then
-            issues+=("privacy_extensions_weak")
-        fi
-
-        # Check accept_redirects
-        local redirects=$(_kernel_get_sysctl "net.ipv6.conf.all.accept_redirects")
-        if [[ "$redirects" == "1" ]]; then
-            issues+=("accept_redirects_enabled")
-        fi
+        for tok in privacy_extensions_weak accept_redirects_enabled; do
+            grep -q "^bad $tok " <<<"$scan" && issues+=("$tok")
+        done
     fi
 
     echo "${issues[*]}"
@@ -511,10 +556,12 @@ _kernel_audit_ipv6() {
     local ipv6_in_use=$(_kernel_ipv6_in_use && echo "yes" || echo "no")
     local ipv6_issues=$(_kernel_ipv6_check_security)
     local ipv6_fw=$(_kernel_ipv6_firewall_check)
-    # Both failing branches name the weak settings.
-    local tok ipv6_text=""
+    # Both failing branches name the weak settings, and where each one is.
+    local tok where ipv6_scan ipv6_text=""
+    ipv6_scan=$(_kernel_ipv6_scan)
     for tok in $ipv6_issues; do
-        ipv6_text+="$(i18n "kernel.ipv6_issue_$tok"); "
+        where=$(_kernel_ipv6_where "$tok" "$ipv6_scan")
+        ipv6_text+="$(i18n "kernel.ipv6_issue_$tok")${where:+: $where}; "
     done
 
     # Report IPv6 status
@@ -549,6 +596,17 @@ _kernel_audit_ipv6() {
                 desc="$(i18n 'kernel.ipv6_enabled_unused_desc')"
             print_ok "$(i18n 'kernel.ipv6_enabled_unused')"
         fi
+    fi
+
+    # Left out of the issues above: said, with where to set them, never scored.
+    local networkd_links
+    networkd_links=$(_kernel_networkd_links | paste -sd, - | sed 's/,/, /g')
+    if [[ -n "$networkd_links" ]]; then
+        check_emit "kernel.ipv6_networkd_managed" low failed \
+            title="$(i18n 'kernel.ipv6_networkd_managed' "links=$networkd_links")" \
+            desc="$(i18n 'kernel.ipv6_networkd_managed_desc' "links=$networkd_links")" \
+            suggestion="$(i18n 'kernel.ipv6_networkd_managed_suggestion')"
+        print_info "$(i18n 'kernel.ipv6_networkd_managed' "links=$networkd_links")"
     fi
 
     # Check IPv6 firewall consistency (only if IPv6 is in use)
@@ -822,6 +880,16 @@ _kernel_audit_kernel_params() {
                 ;;
         esac
     done <<<"$scan"
+
+    # The core-dump check leaves a container's fs.suid_dumpable to the host too,
+    # so it is listed here, or no check would name it.
+    if [[ "$in_container" == true ]]; then
+        local suid_dump
+        suid_dump=$(_kernel_get_sysctl "fs.suid_dumpable") || suid_dump=""
+        if [[ "$suid_dump" =~ ^[0-9]+$ ]] && (( suid_dump != 0 )); then
+            issues_medium+=("fs.suid_dumpable=$suid_dump")
+        fi
+    fi
 
     local total_issues=$((${#issues_high[@]} + ${#issues_medium[@]} + ${#issues_low[@]}))
 
@@ -1183,32 +1251,28 @@ _kernel_param_is_ra_dependent() {
 _kernel_fix_ipv6() {
     print_info "$(i18n 'kernel.hardening_ipv6')"
 
-    # Always-safe params: these harden IPv6 without changing how the host
-    # obtains its address or default route.
+    # Exactly what the audit's scan flags, on default and on each interface; the
+    # source-route pair is always safe. The scan already leaves accept_ra alone
+    # on an RA/SLAAC host, where 0 would drop the default route.
     local ipv6_params=(
-        "net.ipv6.conf.all.accept_redirects=0"
-        "net.ipv6.conf.default.accept_redirects=0"
         "net.ipv6.conf.all.accept_source_route=0"
         "net.ipv6.conf.default.accept_source_route=0"
-        "net.ipv6.conf.all.use_tempaddr=2"
-        "net.ipv6.conf.default.use_tempaddr=2"
     )
+    local kind param want networkd_links
+    while read -r kind _ param want _; do
+        [[ "$kind" == bad ]] && ipv6_params+=("$param=$want")
+    done <<<"$(_kernel_ipv6_scan)"
 
-    # RA-disabling params remove the SLAAC default route and global address,
-    # so apply them ONLY on a host that does not rely on RA.
     if _kernel_ipv6_uses_ra; then
         print_warn "$(i18n 'kernel.ipv6_ra_skipped')"
         log_warn "kernel.harden_ipv6: host uses RA/SLAAC for its IPv6 default route; skipping accept_ra=0 to preserve connectivity"
-    else
-        ipv6_params+=(
-            "net.ipv6.conf.all.accept_ra=0"
-            "net.ipv6.conf.default.accept_ra=0"
-        )
     fi
+    networkd_links=$(_kernel_networkd_links | paste -sd, - | sed 's/,/, /g')
+    [[ -z "$networkd_links" ]] || print_warn "$(i18n 'kernel.ipv6_networkd_skipped' "links=$networkd_links")"
 
     # A parameter counts as fixed only when runtime AND persistence both
     # landed — a runtime-only success evaporates on reboot.
-    local fixed=0 runtime_failed=0 persist_failed=0 setting param value old rc
+    local fixed=0 runtime_failed=0 persist_failed=0 setting value old rc
     local -a undo=()
     for setting in "${ipv6_params[@]}"; do
         param="${setting%%=*}"
@@ -1238,7 +1302,7 @@ _kernel_fix_aslr() {
     # Fire-and-forget: FIX_VERIFY re-reads the runtime value afterwards.
     local old
     old=$(_kernel_get_sysctl kernel.randomize_va_space) || true
-    if sysctl -w kernel.randomize_va_space=2 2>/dev/null && [[ -n "$old" && "$old" != 2 ]]; then
+    if sysctl -w kernel.randomize_va_space=2 >/dev/null 2>&1 && [[ -n "$old" && "$old" != 2 ]]; then
         record_undo kernel.enable_aslr "$(_kernel_undo_cmd "kernel.randomize_va_space=$old")"
     fi
 
@@ -1395,7 +1459,7 @@ _kernel_fix_core_dump() {
     if ! detect_container >/dev/null; then
         local old
         old=$(_kernel_get_sysctl fs.suid_dumpable) || true
-        if sysctl -w fs.suid_dumpable=0 2>/dev/null && [[ -n "$old" && "$old" != 0 ]]; then
+        if sysctl -w fs.suid_dumpable=0 >/dev/null 2>&1 && [[ -n "$old" && "$old" != 0 ]]; then
             record_undo kernel.disable_core_dump "$(_kernel_undo_cmd "fs.suid_dumpable=$old")"
         fi
         _kernel_write_sysctl "fs.suid_dumpable" "0" || return 1
@@ -1413,7 +1477,7 @@ _kernel_fix_core_dump() {
     # directory while the audit accepts either path means the fix writes
     # nothing on a stock Debian host and claims success anyway.
     if [[ -f "$KERNEL_COREDUMP_CONF" || -d "$KERNEL_COREDUMP_D" ]]; then
-        mkdir -p "$KERNEL_COREDUMP_D"
+        backup_mkdir "$KERNEL_COREDUMP_D" || return 1
         backup_file "$KERNEL_COREDUMP_DROPIN" >/dev/null || return 1
         write_file_atomic "$KERNEL_COREDUMP_DROPIN" '[Coredump]
 Storage=none
@@ -1442,7 +1506,7 @@ _kernel_write_sysctl() {
     local param="$1"
     local value="$2"
 
-    mkdir -p "$SYSCTL_D"
+    backup_mkdir "$SYSCTL_D" || return 1
 
     # Strip previous header/blank lines AND any existing entry for this
     # param, leaving only clean `key = value` lines to replay.
@@ -1476,17 +1540,17 @@ _kernel_write_sysctl() {
 # kernel refused the runtime write (so nothing was persisted), 2 when only the
 # persist failed. Callers count 1 and 2 apart, since they mean different things.
 _kernel_set_sysctl() {
-    sysctl -w "$1=$2" 2>/dev/null || return 1
+    sysctl -w "$1=$2" >/dev/null 2>&1 || return 1
     _kernel_write_sysctl "$(_kernel_persist_key "$1")" "$2" || return 2
 }
 
-# The drop-in key that keeps $1 over a reboot. An interface's own key is kept as
-# the glob over all interfaces, which udev applies to each as it appears: a
-# name can change, and one made before systemd-sysctl runs misses the default.
+# The drop-in key that keeps $1 over a reboot. An interface's own key, IPv4 or
+# IPv6, is kept as the glob over all interfaces, which udev applies to each as it
+# appears: a name can change, and one made before systemd-sysctl runs misses the default.
 _kernel_persist_key() {
-    if [[ "$1" =~ ^net\.ipv4\.conf\.([^.]+)\.([a-z_]+)$ ]] \
-       && [[ "${BASH_REMATCH[1]}" != all && "${BASH_REMATCH[1]}" != default ]]; then
-        echo "net.ipv4.conf.*.${BASH_REMATCH[2]}"
+    if [[ "$1" =~ ^net\.(ipv[46])\.conf\.([^.]+)\.([a-z_]+)$ ]] \
+       && [[ "${BASH_REMATCH[2]}" != all && "${BASH_REMATCH[2]}" != default ]]; then
+        echo "net.${BASH_REMATCH[1]}.conf.*.${BASH_REMATCH[3]}"
     else
         echo "$1"
     fi

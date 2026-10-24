@@ -443,10 +443,10 @@ _render_module_clean() {
         if (( $(_display_width "$title") > max_title_len )); then
             local target=$(( max_title_len - 2 ))
             (( target < 0 )) && target=0
-            # Shrink until it fits. Bash slicing is code-point based,
-            # so re-measure each time rather than computing an index.
+            # Shrink a code point at a time and re-measure: a cell count is
+            # not an index, and bash slices by bytes in the C locale.
             while [[ -n "$title" ]] && (( $(_display_width "$title") > target )); do
-                title="${title:0:-1}"
+                _drop_last_char_var title
             done
             title="${title}.."
         fi

@@ -31,8 +31,21 @@ run_case "flag/not-read" 1 \
     '            if false; then'
 
 run_case "flag/packages-not-listed" 1 \
-    '                cat "$DISTRO_REBOOT_FLAG.pkgs" 2>/dev/null' \
+    '                _distro_reboot_flag_pkgs "$DISTRO_REBOOT_FLAG.pkgs"' \
     '                :'
+
+# The file is appended to and never pruned: repeats and removed kernels came through.
+run_case "flag/repeats-kept" 1 \
+    "    tac \"\$1\" 2>/dev/null | awk 'NF && !seen[\$0]++' | tac | while IFS= read -r p; do" \
+    '    cat "$1" 2>/dev/null | while IFS= read -r p; do'
+
+run_case "flag/removed-listed" 1 \
+    "        (( rc == 1 )) || printf '%s\\n' \"\$p\"" \
+    "        printf '%s\\n' \"\$p\""
+
+run_case "flag/unanswered-dropped" 1 \
+    "        (( rc == 1 )) || printf '%s\\n' \"\$p\"" \
+    "        (( rc == 0 )) && printf '%s\\n' \"\$p\""
 
 # The original defect: a separate binary from yum-utils, absent on a stock host.
 run_case "dnf/standalone-binary" 1 \

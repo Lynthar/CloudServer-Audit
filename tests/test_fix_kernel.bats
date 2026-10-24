@@ -20,6 +20,8 @@ setup() {
 
     _sysctl_stub
     _no_forwarding_daemons
+    # No link is systemd-networkd's unless a test says so, whatever the host runs.
+    _vpssec_stub networkctl 1
 }
 
 # Source the module, then repoint its paths at the fake /etc. The param table
@@ -40,6 +42,7 @@ _kernel_source() {
     KERNEL_COREDUMP_D="$etc/systemd/coredump.conf.d"
     KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
     KERNEL_IPV4_CONF_DIR="$BATS_TEST_TMPDIR/ipv4-conf"
+    KERNEL_IPV6_CONF_DIR="$BATS_TEST_TMPDIR/ipv6-conf"
 }
 
 # Rebuild the param table as the module builds it on distro $1 (family $2).
@@ -200,31 +203,45 @@ SH
 # The RA/SLAAC guard — both paths that can apply accept_ra
 # ==============================================================================
 
-@test "harden_ipv6: accept_ra is left alone on a SLAAC host" {
+# default and eth0 with every IPv6 key the IPv6 check reads at its weak value.
+_ipv6_all_weak() {
+    _sysctl_seed net.ipv6.conf.default.accept_ra 1
+    _sysctl_seed net.ipv6.conf.default.accept_redirects 1
+    _sysctl_seed net.ipv6.conf.default.use_tempaddr 0
+    _ipv6_iface eth0 accept_ra=1 accept_redirects=1 use_tempaddr=0 forwarding=0
+}
+
+@test "harden_ipv6: accept_ra is left alone on a SLAAC host, and the fix says so" {
+    _messages_on
     _host_uses_ra
+    _ipv6_all_weak
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q "accept_ra" "$VPSSEC_SYSCTL_CONF"
+    [ "$(_runtime net.ipv6.conf.eth0.accept_ra)" = 1 ]
+    [[ "$output" == *"$(i18n 'kernel.ipv6_ra_skipped')"* ]]
 }
 
 @test "harden_ipv6: the always-safe parameters are still applied on a SLAAC host" {
     # Skipping the RA parameters must not turn into skipping the fix.
     _host_uses_ra
+    _ipv6_all_weak
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
-    _dropin_has "net.ipv6.conf.all.accept_redirects" "0"
-    _dropin_has "net.ipv6.conf.all.use_tempaddr" "2"
+    _dropin_has "net.ipv6.conf.default.accept_redirects" "0"
+    _dropin_has "net.ipv6.conf.*.use_tempaddr" "2"
 }
 
 @test "harden_ipv6: accept_ra is applied on a statically configured host" {
     _host_static_ipv6
+    _ipv6_all_weak
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
-    _dropin_has "net.ipv6.conf.all.accept_ra" "0"
     _dropin_has "net.ipv6.conf.default.accept_ra" "0"
+    _dropin_has "net.ipv6.conf.*.accept_ra" "0"
 }
 
 @test "harden_ipv6: an unprobeable host is treated as SLAAC, not as static" {
@@ -232,6 +249,7 @@ SH
     # `ip` missing. Reading its failure as "no RA route" applied accept_ra=0
     # to exactly the hosts the guard exists to protect.
     _host_ipv6_unprobeable
+    _ipv6_all_weak
 
     run _kernel_fix_ipv6
     [ "$status" -eq 0 ]
@@ -308,23 +326,6 @@ _emitted_field() {
         "$VPSSEC_STATE/checks.json"
 }
 
-@test "the IPv6 results say existing interfaces such as eth0 are unchanged" {
-    # all/default reach only interfaces created later, so neither a pass nor
-    # the fix it suggests may read as covering eth0.
-    _host_static_ipv6
-    local lang
-    for lang in en_US zh_CN; do
-        i18n_load "$lang"
-        _ipv6_in_use_at 0
-        _kernel_audit_ipv6
-        [[ "$(_emitted_field kernel.ipv6_secure desc)" == *eth0* ]]
-
-        _ipv6_in_use_at 1
-        _kernel_audit_ipv6
-        [[ "$(_emitted_field kernel.ipv6_insecure suggestion)" == *eth0* ]]
-    done
-}
-
 @test "an IPv6 redirect, RA or privacy setting is judged by the IPv6 check alone" {
     # Listed in the network table as well, one weak value failed two scored checks.
     i18n_load en_US
@@ -354,12 +355,184 @@ _emitted_field() {
     _host_static_ipv6
     _ipv6_in_use_at 1
     _kernel_ipv6_in_use() { return 1; }
-    _sysctl_seed "net.ipv6.conf.all.use_tempaddr" 0
+    _sysctl_seed "net.ipv6.conf.default.accept_redirects" 1
+    _sysctl_seed "net.ipv6.conf.default.use_tempaddr" 0
     _kernel_audit_ipv6
     local desc
     desc=$(_emitted_field kernel.ipv6_unused_insecure desc)
     [[ "$desc" == *"$(i18n 'kernel.ipv6_issue_accept_redirects_enabled')"* ]]
     [[ "$desc" == *"$(i18n 'kernel.ipv6_issue_privacy_extensions_weak')"* ]]
+}
+
+# ==============================================================================
+# IPv6 accept_ra / accept_redirects / use_tempaddr: each interface's own value
+# ==============================================================================
+
+# The kernel reads these per interface only (ipv6_accept_ra, rt6_do_redirect,
+# manage_tempaddrs) and a write to "all" reaches none: default and all hardened.
+_ipv6_defaults_hardened() {
+    local scope
+    for scope in all default; do
+        _sysctl_seed "net.ipv6.conf.$scope.accept_ra" 0
+        _sysctl_seed "net.ipv6.conf.$scope.accept_redirects" 0
+        _sysctl_seed "net.ipv6.conf.$scope.use_tempaddr" 2
+        _sysctl_seed "net.ipv6.conf.$scope.forwarding" 0
+    done
+}
+
+# Interface $1 under the scanned conf directory, its keys given as key=value.
+_ipv6_iface() {
+    local name="$1" kv
+    shift
+    mkdir -p "$KERNEL_IPV6_CONF_DIR/$name"
+    for kv in "$@"; do
+        _sysctl_seed "net.ipv6.conf.$name.${kv%%=*}" "${kv#*=}"
+    done
+}
+
+# systemd-networkd configures link $1 (networkctl list, systemd 249 to 257).
+_networkd_configures() {
+    _vpssec_stub networkctl 0 "  1 lo    loopback carrier  unmanaged
+  2 $1 ether    routable configured"
+}
+
+@test "IPv6: an interface that takes redirects fails the check, with all and default hardened" {
+    # A host up 315 days had ens18 at 1: all=0 never reached it.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _ipv6_iface eth0 accept_ra=0 accept_redirects=1 use_tempaddr=2 forwarding=0
+    _kernel_audit_ipv6
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" == *"$(i18n 'kernel.ipv6_issue_accept_redirects_enabled')"*eth0* ]]
+}
+
+@test "IPv6: a forwarding interface takes no redirects, and RAs only at accept_ra=2" {
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _ipv6_iface eth0 accept_ra=1 accept_redirects=1 use_tempaddr=2 forwarding=1
+    _kernel_audit_ipv6
+    [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
+
+    _ipv6_in_use_at 0
+    _ipv6_iface eth0 accept_ra=2
+    _kernel_audit_ipv6
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" == *"$(i18n 'kernel.ipv6_issue_accept_ra_enabled')"*eth0* ]]
+}
+
+@test "IPv6: loopback is not judged" {
+    # Its accept_redirects is the kernel's 1 on every host.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _ipv6_iface lo accept_ra=1 accept_redirects=1 use_tempaddr=-1 forwarding=0
+    _kernel_audit_ipv6
+    [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
+}
+
+@test "IPv6: the default that new interfaces copy is judged as well" {
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _sysctl_seed net.ipv6.conf.default.use_tempaddr 0
+    _ipv6_iface eth0 accept_ra=0 accept_redirects=0 use_tempaddr=2 forwarding=0
+    _kernel_audit_ipv6
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" == *"$(i18n 'kernel.ipv6_issue_privacy_extensions_weak')"*default* ]]
+}
+
+@test "IPv6: a link without privacy extensions (use_tempaddr -1) is no finding" {
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _ipv6_iface sit0 accept_ra=0 accept_redirects=0 use_tempaddr=-1 forwarding=0
+    _kernel_audit_ipv6
+    [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
+}
+
+@test "IPv6: on a link systemd-networkd configures, RA and privacy are its own, listed unscored" {
+    # networkd keeps the kernel's accept_ra at 0 and takes RAs itself, and writes
+    # use_tempaddr from IPv6PrivacyExtensions=: no sysctl changes either there.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _networkd_configures ens18
+    _ipv6_iface ens18 accept_ra=0 accept_redirects=0 use_tempaddr=0 forwarding=0
+    _kernel_audit_ipv6
+    [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
+    [[ "$(_emitted_field kernel.ipv6_networkd_managed desc)" == *ens18* ]]
+    [[ "$(_emitted_field kernel.ipv6_networkd_managed suggestion)" == *"accept-ra: false"* ]]
+    source "$(_vpssec_repo_root)/core/security_levels.sh"
+    [ "${CHECK_SCORE_CATEGORY[kernel.ipv6_networkd_managed]}" = info ]
+}
+
+@test "IPv6: a link networkd leaves alone is judged like any other" {
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _networkd_configures ens18
+    _ipv6_iface ens18 accept_ra=0 accept_redirects=0 use_tempaddr=2 forwarding=0
+    _ipv6_iface eth1 accept_ra=0 accept_redirects=0 use_tempaddr=0 forwarding=0
+    _kernel_audit_ipv6
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" == *eth1* ]]
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" != *ens18* ]]
+}
+
+@test "harden_ipv6: an interface's values are set now, and kept by one glob line each" {
+    _host_static_ipv6
+    _ipv6_defaults_hardened
+    _ipv6_iface eth0 accept_ra=1 accept_redirects=1 use_tempaddr=0 forwarding=0
+
+    run _kernel_fix_ipv6
+    [ "$status" -eq 0 ]
+    [ "$(_runtime net.ipv6.conf.eth0.accept_ra)" = 0 ]
+    [ "$(_runtime net.ipv6.conf.eth0.accept_redirects)" = 0 ]
+    [ "$(_runtime net.ipv6.conf.eth0.use_tempaddr)" = 2 ]
+    _dropin_has "net.ipv6.conf.*.accept_ra" 0
+    _dropin_has "net.ipv6.conf.*.accept_redirects" 0
+    _dropin_has "net.ipv6.conf.*.use_tempaddr" 2
+    _vpssec_refute grep -q 'ipv6\.conf\.eth0\.' "$VPSSEC_SYSCTL_CONF"
+}
+
+@test "harden_ipv6: an interface's old values are in the logged undo command" {
+    _host_static_ipv6
+    _ipv6_defaults_hardened
+    _ipv6_iface eth0 accept_ra=0 accept_redirects=1 use_tempaddr=2 forwarding=0
+
+    kernel_fix kernel.harden_ipv6 || true
+    grep -q 'Undo for kernel.harden_ipv6: sysctl -w net.ipv6.conf.eth0.accept_redirects=1' \
+        "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "harden_ipv6: networkd's RA and privacy are left to it, and the fix says where they live" {
+    _messages_on
+    _host_static_ipv6
+    _ipv6_defaults_hardened
+    _networkd_configures ens18
+    _ipv6_iface ens18 accept_ra=0 accept_redirects=1 use_tempaddr=0 forwarding=0
+
+    run _kernel_fix_ipv6
+    [ "$status" -eq 0 ]
+    [ "$(_runtime net.ipv6.conf.ens18.use_tempaddr)" = 0 ]
+    [ "$(_runtime net.ipv6.conf.ens18.accept_redirects)" = 0 ]
+    [[ "$output" == *"$(i18n 'kernel.ipv6_networkd_skipped' "links=ens18")"* ]]
+}
+
+@test "in a container the host's fs.suid_dumpable is listed with the host's parameters, unscored" {
+    # The core-dump check leaves it to the host, and nothing else named it.
+    source "$(_vpssec_repo_root)/core/state.sh"
+    state_init
+    i18n_load en_US
+    detect_container() { echo docker; return 0; }
+    _sysctl_seed fs.suid_dumpable 2
+    _kernel_audit_kernel_params
+    [[ "$(_emitted_field kernel.kernel_params_host_managed desc)" == *"fs.suid_dumpable=2"* ]]
 }
 
 # ==============================================================================
@@ -374,6 +547,25 @@ _emitted_field() {
     run _kernel_fix_network_params
     [ "$status" -eq 0 ]
     _vpssec_refute grep -q "ip_forward" "$VPSSEC_SYSCTL_CONF"
+}
+
+@test "harden_network: sysctl's echo of each write stays out of the guide's terminal" {
+    # sysctl -w prints "key = value" for every write: thirteen lines on a stock host.
+    _messages_on
+    _host_static_ipv6
+    _vpssec_stub_script sysctl <<SH
+store="$sysctl_store"
+case "\$1" in
+    -n) cat "\$store/\$2" 2>/dev/null ;;
+    -w) printf '%s\n' "\${2#*=}" > "\$store/\${2%%=*}"; echo "\${2%%=*} = \${2#*=}" ;;
+esac
+exit 0
+SH
+    _sysctl_seed net.ipv4.tcp_syncookies 0
+
+    run _kernel_fix_network_params
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"net.ipv4.tcp_syncookies = 1"* ]]
 }
 
 @test "harden_network: ip_forward is disabled on a host that does not route" {
@@ -992,6 +1184,9 @@ esac
 exit 0
 SH
 
+    _sysctl_seed net.ipv6.conf.default.accept_redirects 1
+    _ipv6_iface eth0 accept_redirects=1 forwarding=0
+
     run _kernel_fix_ipv6
     [ "$status" -eq 1 ]
     [[ "$output" == *"kernel refused 2 runtime sysctl write"* ]]
@@ -1096,7 +1291,7 @@ SH
     local fix param before
     for fix in "enable_aslr kernel.randomize_va_space 1" \
                "harden_kernel kernel.kptr_restrict 0" \
-               "harden_ipv6 net.ipv6.conf.all.accept_redirects 1" \
+               "harden_ipv6 net.ipv6.conf.default.accept_redirects 1" \
                "disable_core_dump fs.suid_dumpable 2"; do
         read -r fix param before <<<"$fix"
         _sysctl_seed "$param" "$before"

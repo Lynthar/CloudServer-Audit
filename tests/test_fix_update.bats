@@ -4,6 +4,7 @@
 # packages, which a rollback cannot undo at all — the fix says so.
 
 load helpers.bash
+bats_require_minimum_version 1.5.0
 
 setup() {
     _vpssec_load core/distro.sh core/state.sh core/security_levels.sh core/engine.sh core/report.sh
@@ -315,6 +316,51 @@ SH
         "$VPSSEC_LOGS/vpssec.log"
 }
 
+@test "install: apt's progress stays out of the guide's terminal, in the log" {
+    # Only the install talks: `update -qq` prints nothing when it works.
+    _vpssec_stub_script apt-get <<'SH'
+[[ "$*" == *install* ]] || exit 0
+printf '%s\n' 'Get:1 http://deb.debian.org/debian bookworm/main amd64 unattended-upgrades' \
+    'Setting up unattended-upgrades (2.9.1+nmu3) ...'
+SH
+
+    run _update_fix_install_unattended
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Setting up unattended-upgrades"* ]]
+    grep -qF 'Setting up unattended-upgrades (2.9.1+nmu3) ...' "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "apt_install: a failure gives apt's own last words on stderr, and its status" {
+    # Several install fixes threw apt's stderr away: the operator read only
+    # "install failed", with no reason.
+    _vpssec_stub apt-get 100 $'Reading package lists...\nE: Unable to locate package nosuch'
+    run --separate-stderr apt_install nosuch
+    [ "$status" -eq 100 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"E: Unable to locate package nosuch"* ]]
+    _vpssec_stub_called apt-get 'install -y nosuch'
+}
+
+@test "apt_install: a prompt is never answered from the terminal, since nobody sees it" {
+    # With the output in the log, a dpkg conffile question would wait unseen.
+    _vpssec_stub_script apt-get <<'SH'
+IFS= read -r answer && exit 0
+echo "dpkg: error processing package x (--configure): EOF on stdin at conffile prompt"
+exit 100
+SH
+    run --separate-stderr apt_install x <<<"y"
+    [ "$status" -eq 100 ]
+    [[ "$stderr" == *"EOF on stdin at conffile prompt"* ]]
+}
+
+@test "apt_install: a success prints nothing" {
+    _vpssec_stub apt-get 0 'Setting up ufw (0.36.2-1) ...'
+    run --separate-stderr apt_install ufw
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ -z "$stderr" ]
+}
+
 @test "install: a failed install does not go on to write config" {
     _vpssec_stub apt-get 100
 
@@ -492,7 +538,7 @@ SH
     grep -q 'unattended-upgrades/enable_auto_updates boolean false' "$BATS_TEST_TMPDIR/debconf-fed"
     local fed_at install_at
     fed_at=$(grep -n '^debconf-set-selections' "$VPSSEC_STUB_LOG" | head -1 | cut -d: -f1)
-    install_at=$(grep -n '^apt-get install' "$VPSSEC_STUB_LOG" | head -1 | cut -d: -f1)
+    install_at=$(grep -n '^apt-get .*install' "$VPSSEC_STUB_LOG" | head -1 | cut -d: -f1)
     [ "$fed_at" -lt "$install_at" ]
     # Recorded as created beforehand, in case the preseed did not hold.
     grep -qxF "$UPDATE_AUTO_UPGRADES_CONF" "$VPSSEC_BACKUP_SESSION/.vpssec_created"

@@ -508,12 +508,21 @@ sysctl -a 2>/dev/null | grep -E 'rp_filter|redirects'
   审计对这类主机不报这一项
 - IPv6 防火墙应与 IPv4 防火墙同步配置
 
-这三个参数写在 `all` / `default` 下，**只对之后新建的网卡生效**，`eth0` 这类已经存在的
-网卡保持原值，vpssec 也只检查 `all` / `default`。要让已有网卡立刻生效，按网卡名再写一行，
-例如 `net.ipv6.conf.eth0.accept_redirects = 0`。
+这三个参数内核只读每块网卡自己的那份：写 `all` 管不到任何网卡，`default` 只给之后新建的
+网卡当初值；转发的网卡不收重定向，`accept_ra` 要为 2 才收路由通告。所以审计逐块网卡读，
+外加 `default`，有问题的点名报出（例如 `accept_redirects=1 (ICMP redirects accepted): ens18`）；
+回环和不支持临时地址的网卡（`use_tempaddr` 为 -1）不判。
 
-**自动修复**: `kernel.harden_ipv6`（需确认）。`accept_ra` 只在默认路由不是来自路由通告时
-才写；查不出来时一律按「来自路由通告」处理，宁可不改
+systemd-networkd 管的网卡（用 netplan 的主机多半如此）是例外：networkd 自己接收路由通告，
+把内核的 `accept_ra` 保持为 0，并按 `IPv6PrivacyExtensions=` 改写 `use_tempaddr`，sysctl 在这些
+网卡上改不了这两项。审计对它们不判这两项、不计分，另列一条 `kernel.ipv6_networkd_managed`，
+提示到网络配置里设：netplan 写 `accept-ra: false` 与 `ipv6-privacy: true`，`.network` 文件写
+`IPv6AcceptRA=no` 与 `IPv6PrivacyExtensions=yes`。
+
+**自动修复**: `kernel.harden_ipv6`（需确认）。改有问题的网卡的运行值与 `default`，持久化写
+通配行 `net.ipv6.conf.*.<参数>`，道理与上一节 IPv4 的网卡键相同。`accept_ra` 只在默认路由不是
+来自路由通告时才写，查不出来时一律按「来自路由通告」处理，宁可不改；networkd 管的网卡上只改
+`accept_redirects`
 
 **修复方法**:
 ```bash
@@ -523,23 +532,22 @@ ip -6 route show default
 #    （写了之后，路由器给的默认路由一过期或机器重启，IPv6 就断了；
 #    通过 IPv6 管理这台机器的话，人也就进不来了）
 
-# 2. 任何主机都可以写的部分
+# 2. 任何主机都可以写的部分（通配行逐块网卡套用，default 也在其中）
 cat >> /etc/sysctl.d/99-security.conf << 'EOF'
-net.ipv6.conf.all.accept_redirects = 0
-net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.*.accept_redirects = 0
 net.ipv6.conf.all.accept_source_route = 0
 net.ipv6.conf.default.accept_source_route = 0
-net.ipv6.conf.all.use_tempaddr = 2
-net.ipv6.conf.default.use_tempaddr = 2
+net.ipv6.conf.*.use_tempaddr = 2
 EOF
 
-# 3. 仅当第 1 步没有 proto ra（IPv6 是静态配置的）时，再加这两行
+# 3. 仅当第 1 步没有 proto ra（IPv6 是静态配置的）时，再加这一行
 cat >> /etc/sysctl.d/99-security.conf << 'EOF'
-net.ipv6.conf.all.accept_ra = 0
-net.ipv6.conf.default.accept_ra = 0
+net.ipv6.conf.*.accept_ra = 0
 EOF
 
+# 按开机时的方式整体重新套用，再抽查每块网卡的实际值
 systemctl restart systemd-sysctl
+sysctl -a 2>/dev/null | grep -E 'ipv6\.conf\..*\.(accept_ra|accept_redirects|use_tempaddr) '
 
 # 不使用 IPv6、也确认没有服务依赖它时，可以整体禁用（审计直接判通过）
 # echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.d/99-security.conf
@@ -549,7 +557,8 @@ systemctl restart systemd-sysctl
 
 ### 4. 核心转储(Core Dump)检测
 
-**检测内容**: 检查是否限制了核心转储：`fs.suid_dumpable` 为 0（容器里它归宿主机，不判）；
+**检测内容**: 检查是否限制了核心转储：`fs.suid_dumpable` 为 0（容器里它归宿主机，这里不判，
+列进宿主机参数那一条、不计分）；
 `limits.conf` 与 `limits.d/*.conf` 按 pam_limits 的顺序读下来，最后一条 `*` 的硬限制
 （`hard` 或 `-`）是 0，只设 `soft` 不算；systemd-coredump 设了 `Storage=none`（主配置或 drop-in 均可）
 

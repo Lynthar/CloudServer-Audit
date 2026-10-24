@@ -152,6 +152,15 @@ run_case "ignoreip/unknown-operator-unsaid" 1 \
     '    [[ -n "$f2b_current_ip" ]] || print_warn "$(i18n '"'"'fail2ban.operator_ip_unknown'"'"')"' \
     '    :'
 
+# "Detected log path: %(sshd_log)s": fail2ban's interpolation printed as a path.
+run_case "logpath/default-named-as-detected" 1 \
+    '    if [[ "$ssh_logpath" == /* ]]; then' \
+    '    if true; then'
+
+run_case "logpath/found-file-unnamed" 1 \
+    '    if [[ "$ssh_logpath" == /* ]]; then' \
+    '    if false; then'
+
 # The sshd jail's settings back in [DEFAULT], where they reach every jail.
 run_case "default/backend-for-every-jail" 1 \
     '# runtime). Everything else this tool sets is in [sshd] below.' \
@@ -250,8 +259,8 @@ run_case "service/postcondition-always-succeeds" 1 \
 # CONFIRM-class writer from running unasked.
 
 run_case "install/apt-failure-ignored" 1 \
-    '    if apt-get install -y fail2ban; then' \
-    '    if apt-get install -y fail2ban || true; then'
+    '    if apt_install fail2ban; then' \
+    '    if apt_install fail2ban || true; then'
 
 # The index is no longer refreshed: an empty apt cache cannot locate fail2ban.
 run_case "install/no-refresh" 1 \
