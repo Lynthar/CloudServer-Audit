@@ -574,7 +574,6 @@ declare -ga FS_CAPS_WHITELIST=(
     "/usr/*bin/arping:cap_net_raw:iputils-arping|iputils"
     "/usr/*bin/clockdiff:cap_net_raw,cap_sys_nice:iputils-clockdiff|iputils"
     "/usr/bin/gnome-keyring-daemon:cap_ipc_lock:gnome-keyring"
-    "/usr/bin/systemd-resolve:cap_net_bind_service:systemd|systemd-resolved"
     # snapd's sandbox launcher: file capabilities instead of setuid root since
     # snapd 2.70. The broadest set here.
     "/usr/lib/snapd/snap-confine:cap_chown,cap_dac_override,cap_dac_read_search,cap_fowner,cap_setgid,cap_setuid,cap_sys_chroot,cap_sys_ptrace,cap_sys_admin,cap_sys_resource:snapd"
