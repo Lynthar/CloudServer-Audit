@@ -1277,6 +1277,7 @@
     "completeness": "Incomplete scan",
     "completeness_note": "Part of this run did not finish, so the findings below the score are not the whole picture:",
     "next_manual": "this distribution is audit-only: apply each finding's Recommendations by hand",
+    "next_install": "the one-line runner keeps no copy, so install vpssec first",
     "host_hostname": "Hostname",
     "host_os": "OS",
     "host_family": "Distro Family",

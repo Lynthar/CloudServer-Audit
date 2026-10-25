@@ -55,3 +55,13 @@ run_case "passwordoff/rescue-confirmation-skipped" 1 \
 run_case "rootoff/rescue-confirmation-skipped" 2 \
     '    if ! confirm_critical "$(i18n '"'"'ssh.rescue_port_verify'"'"' "port=$SSH_RESCUE_PORT")"; then' \
     '    if false; then'
+
+# A declined fix keeps the migration: the legacy settings win at the next restart.
+run_case "migrate/declined-not-undone" 1 \
+    '        _ssh_unmigrate_legacy_dropin' \
+    '        :'
+
+# A written fix is taken for one that wrote nothing: the new drop-in is moved away.
+run_case "migrate/write-not-recorded" 1 \
+    '            SSH_DROPIN_WRITTEN=1' \
+    '            :'

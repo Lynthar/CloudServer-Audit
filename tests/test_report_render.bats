@@ -94,6 +94,16 @@ _md_section_text() {
     grep -q 'vpssec rollback' "$md"
 }
 
+@test "next steps: a one-line run is told to install vpssec before running guide" {
+    _on_debian
+    _add users.uid0 users high failed "Extra UID 0" "" "" "users.review"
+    VPSSEC_ONESHOT=1 report_generate_markdown "$md" >/dev/null
+    local install guide
+    install=$(grep -n '/main/install.sh | sudo bash$' "$md" | cut -d: -f1)
+    guide=$(grep -n 'vpssec guide --include=users' "$md" | cut -d: -f1)
+    [ -n "$install" ] && (( install < guide ))
+}
+
 @test "terminal: the partial-score line names the modules that ran, not the raw flag" {
     VPSSEC_QUIET_SCAN=0
     _add ssh.ok ssh low passed "ok" "" "" ""

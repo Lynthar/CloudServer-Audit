@@ -18,6 +18,10 @@ run_case "bucket/markdown-by-severity" 1 \
 run_case "next/guide-on-audit-only" 1 \
     '        if (( debian )); then' \
     '        if true; then'
+# A one-line run is told to run a guide it has no copy of.
+run_case "next/oneshot-not-told-to-install" 1 \
+    '            if [[ -n "${VPSSEC_ONESHOT:-}" ]]; then' \
+    '            if false; then'
 # Rollback is offered with no backup to restore.
 run_case "next/rollback-without-backup" 1 \
     '    if (( debian )) && [[ -n "$(backup_get_latest)" ]]; then' \

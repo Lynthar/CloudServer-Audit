@@ -1277,6 +1277,7 @@
     "completeness": "扫描不完整",
     "completeness_note": "本次运行有部分没有完成，分数之下的发现不是全貌：",
     "next_manual": "该发行版仅支持审计：请按各条发现的建议手工处理",
+    "next_install": "一行命令运行器不会留下副本，请先安装 vpssec",
     "host_hostname": "主机名",
     "host_os": "操作系统",
     "host_family": "发行版族系",

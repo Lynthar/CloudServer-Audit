@@ -132,6 +132,36 @@ _root_can_key_login() {
     [ ! -e "$BATS_TEST_TMPDIR/rescue-up" ]
 }
 
+@test "password-off gate: declining leaves a legacy 99- drop-in where it was" {
+    # Moved to 00- it outranks cloud-init, so the next sshd restart would
+    # apply its settings with no rescue port and no check.
+    _admins_are alice
+    _users_with_keys alice
+    _root_can_key_login no
+    _ssh_dropin_included() { return 0; }
+    printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN_LEGACY"
+    confirm_critical() { return 1; }
+
+    run ssh_fix ssh.disable_password_auth
+    [ "$status" -eq 1 ]
+    grep -qx 'X11Forwarding no' "$SSH_HARDENING_DROPIN_LEGACY"
+    [ ! -e "$SSH_HARDENING_DROPIN" ]
+}
+
+@test "password-off gate: an applied fix carries the legacy drop-in into 00-" {
+    _admins_are alice
+    _users_with_keys alice
+    _root_can_key_login no
+    _ssh_dropin_included() { return 0; }
+    printf 'X11Forwarding no\n' > "$SSH_HARDENING_DROPIN_LEGACY"
+
+    run ssh_fix ssh.disable_password_auth
+    [ "$status" -eq 0 ]
+    [ ! -e "$SSH_HARDENING_DROPIN_LEGACY" ]
+    grep -qx 'X11Forwarding no' "$SSH_HARDENING_DROPIN"
+    grep -qx 'PasswordAuthentication no' "$SSH_HARDENING_DROPIN"
+}
+
 @test "password-off gate: refuses while public key authentication is off" {
     # Keys on disk are no way in when sshd will not offer publickey: with
     # passwords off too, sshd would accept no method at all.

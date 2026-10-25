@@ -280,9 +280,16 @@ _md_next_steps() {
             local high_modules
             high_modules=$(state_get_checks \
                 | jq -r '[.[] | select(.status == "failed" and (.severity == "high" or .severity == "critical")) | .module] | unique | join(",")')
-            steps+=("**$(i18n 'common.high')**: $(i18n 'guide.select_fixes')
+            # The one-line runner deletes its tree on exit: no vpssec is left to run.
+            local install="" note=""
+            if [[ -n "${VPSSEC_ONESHOT:-}" ]]; then
+                note=" ($(i18n 'report.next_install'))"
+                install="curl -fsSL https://raw.githubusercontent.com/${VPSSEC_REPO}/main/install.sh | sudo bash
+   "
+            fi
+            steps+=("**$(i18n 'common.high')**: $(i18n 'guide.select_fixes')${note}
    \`\`\`bash
-   vpssec guide${high_modules:+ --include=$high_modules}
+   ${install}vpssec guide${high_modules:+ --include=$high_modules}
    \`\`\`")
         else
             steps+=("**$(i18n 'common.high')**: $(i18n 'report.next_manual')")

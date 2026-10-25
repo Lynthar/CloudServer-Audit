@@ -752,8 +752,9 @@ ssh_fix() {
         return 1
     fi
 
-    # Migrate any legacy `99-` drop-in to the new `00-` name before a fix reads
-    # or writes it, so prior settings are preserved and the losing file is gone.
+    # Migrate before the lockout gates: they read sshd -T, and the 00- name
+    # makes the legacy settings win. A fix that writes nothing moves it back.
+    SSH_DROPIN_MIGRATED="" SSH_DROPIN_WRITTEN=""
     _ssh_migrate_legacy_dropin || return 1
 
     case "$fix_id" in
@@ -783,9 +784,14 @@ ssh_fix() {
             ;;
         *)
             log_error "Unknown SSH fix: $fix_id"
-            return 1
+            false
             ;;
     esac
+    local rc=$?
+    if [[ -n "$SSH_DROPIN_MIGRATED" && -z "$SSH_DROPIN_WRITTEN" ]]; then
+        _ssh_unmigrate_legacy_dropin
+    fi
+    return "$rc"
 }
 
 # Rescue sshd: a second daemon on a temporary port, up BEFORE any change that
@@ -1084,6 +1090,9 @@ _ssh_rescue_arm_traps() {
 # SSH_LAST_DROPIN_PREV); empty = no call has run yet.
 SSH_LAST_DROPIN_BACKUP=""
 SSH_LAST_DROPIN_PREV=""
+# Set by this ssh_fix call: the legacy file was moved / the drop-in was written.
+SSH_DROPIN_MIGRATED=""
+SSH_DROPIN_WRITTEN=""
 
 # Migrate the legacy 99- drop-in, which loses to 50-cloud-init, to the 00-
 # name, both recorded so a rollback brings 99- back and deletes 00-. A failed
@@ -1094,7 +1103,18 @@ _ssh_migrate_legacy_dropin() {
     backup_file "$SSH_HARDENING_DROPIN_LEGACY" >/dev/null || return 1
     backup_file "$SSH_HARDENING_DROPIN" >/dev/null || return 1
     if mv "$SSH_HARDENING_DROPIN_LEGACY" "$SSH_HARDENING_DROPIN" 2>/dev/null; then
+        SSH_DROPIN_MIGRATED=1
         log_info "Migrated legacy SSH hardening drop-in to $SSH_HARDENING_DROPIN"
+    fi
+}
+
+# Undo the migration of a fix that wrote nothing: left in place, the 00- name
+# would apply the legacy settings at the next sshd restart, unverified.
+_ssh_unmigrate_legacy_dropin() {
+    if mv "$SSH_HARDENING_DROPIN" "$SSH_HARDENING_DROPIN_LEGACY" 2>/dev/null; then
+        log_info "Moved the SSH hardening drop-in back to $SSH_HARDENING_DROPIN_LEGACY"
+    else
+        log_warn "Could not move $SSH_HARDENING_DROPIN back to $SSH_HARDENING_DROPIN_LEGACY"
     fi
 }
 
@@ -1149,6 +1169,7 @@ _ssh_write_hardening_config() {
     if sshd -t -f "$temp_file" 2>/dev/null; then
         chmod 644 "$temp_file"
         if mv "$temp_file" "$SSH_HARDENING_DROPIN"; then
+            SSH_DROPIN_WRITTEN=1
             print_ok "$(i18n 'ssh.dropin_created' "path=$SSH_HARDENING_DROPIN")"
             return 0
         else
