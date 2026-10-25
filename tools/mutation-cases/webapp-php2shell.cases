@@ -28,8 +28,8 @@ run_case "range/8.6-rc4-affected" 1 \
     '    (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-4]$) ]]'
 
 run_case "versions/fpm-not-asked" 1 \
-    '    for bin in "$(command -v php 2>/dev/null)" "$(command -v php-fpm 2>/dev/null)" /usr/sbin/php-fpm*; do' \
-    '    for bin in "$(command -v php 2>/dev/null)" /usr/sbin/php-fpm*; do'
+    '    command -v php-fpm 2>/dev/null' \
+    '    :'
 
 run_case "note/fixed-php-noted" 1 \
     '        _webapp_php2shell_affected "$v" || continue' \

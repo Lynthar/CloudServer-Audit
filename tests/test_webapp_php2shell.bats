@@ -21,12 +21,22 @@ _desc() {
     jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$STATE_CHECKS_FILE"
 }
 
-# A php-fpm on PATH whose -v reports version $1.
+# A php-fpm whose -v reports version $1, as the only PHP: the host's own
+# (GitHub's Ubuntu runner ships one) would otherwise join the note.
 _fpm_reports() {
     _vpssec_stub_script php-fpm <<SH
 [[ "\$1" == -v ]] && echo "PHP $1 (fpm-fcgi) (built: Oct 21 2026 10:00:00)"
 exit 0
 SH
+    _webapp_php_bins() { echo "$(_vpssec_stub_dir)/php-fpm"; }
+}
+
+@test "both the CLI and FPM on PATH are candidate PHP binaries" {
+    _vpssec_stub_script php <<<'exit 0'
+    _vpssec_stub_script php-fpm <<<'exit 0'
+    run _webapp_php_bins
+    [[ "$output" == *"$(_vpssec_stub_dir)/php"$'\n'* ]]
+    [[ "$output" == *"$(_vpssec_stub_dir)/php-fpm"* ]]
 }
 
 @test "versions: every release before its branch's fix is affected, the fix and later are not" {

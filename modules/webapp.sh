@@ -156,10 +156,7 @@ _webapp_apache_installed() {
 # php-fpm with no CLI binary, so `command -v php` alone skips the entire
 # audit exactly where it matters most.
 _webapp_php_installed() {
-    command -v php &>/dev/null && return 0
-    command -v php-fpm &>/dev/null && return 0
-    # PHP versioned binaries: php-fpm8.2, php-fpm7.4, etc.
-    compgen -G '/usr/sbin/php-fpm*' >/dev/null 2>&1 && return 0
+    [[ -n "$(_webapp_php_bins)" ]] && return 0
     # FPM ini files exist whenever any php<ver>-fpm package is installed.
     compgen -G '/etc/php/*/fpm/php.ini' >/dev/null 2>&1 && return 0
     return 1
@@ -707,19 +704,27 @@ _webapp_php2shell_affected() {
     (( major == 8 && minor == 6 && patch == 0 )) && [[ "$rest" =~ ^(alpha|beta|RC[1-3]$) ]]
 }
 
+# Candidate PHP executables, one path per line: the CLI and FPM on PATH, and
+# the versioned FPM binaries (php-fpm8.2, php-fpm7.4, ...).
+_webapp_php_bins() {
+    command -v php 2>/dev/null
+    command -v php-fpm 2>/dev/null
+    compgen -G '/usr/sbin/php-fpm*'
+}
+
 # "binary<TAB>version" for each PHP executable on the host, FPM and CLI, as
 # its own -v reports it.
 _webapp_php_versions() {
     local bin real v
     local -A seen=()
-    for bin in "$(command -v php 2>/dev/null)" "$(command -v php-fpm 2>/dev/null)" /usr/sbin/php-fpm*; do
+    while IFS= read -r bin; do
         [[ -x "$bin" ]] || continue
         real=$(readlink -f -- "$bin") || continue
         [[ -z "${seen[$real]:-}" ]] || continue
         seen[$real]=1
         v=$("$bin" -v 2>/dev/null | sed -n '1s/^PHP \([0-9][^ ]*\) .*/\1/p')
         [[ -n "$v" ]] && printf '%s\t%s\n' "$bin" "$v"
-    done
+    done < <(_webapp_php_bins)
 }
 
 # PHP in php2shell's upstream range is an unscored note: a distribution may have
