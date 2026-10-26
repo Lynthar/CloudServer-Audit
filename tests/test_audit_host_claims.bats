@@ -234,6 +234,26 @@ _webapp_bare_host() {
     [[ "$(_emitted_ids)" == *"webapp.sensitive_files_ok"* ]]
 }
 
+@test "webapp: a page that only discloses information is medium, not high" {
+    # Matched by name alone: an info.php that only echoes was reported high.
+    _webapp_bare_host
+    mkdir -p "$etc/www/app"
+    printf '<?php echo "ok";\n' > "$etc/www/app/info.php"
+    : > "$etc/www/app/.DS_Store"
+    run webapp_audit
+    [ "$(_check_field webapp.sensitive_files severity)" = "medium" ]
+}
+
+@test "webapp: one file holding secrets keeps the finding high" {
+    _webapp_bare_host
+    mkdir -p "$etc/www/app"
+    printf '<?php echo "ok";\n' > "$etc/www/app/info.php"
+    printf 'DB_PASSWORD=x\n' > "$etc/www/app/.env"
+    run webapp_audit
+    [ "$(_check_field webapp.sensitive_files severity)" = "high" ]
+    [[ "$(_check_field webapp.sensitive_files desc)" == *"/app/.env"* ]]
+}
+
 @test "webapp: an nginx running from outside PATH is named, not 'no web server'" {
     # A source build in /usr/local/nginx/sbin: sudo's secure_path lacks it.
     _webapp_bare_host

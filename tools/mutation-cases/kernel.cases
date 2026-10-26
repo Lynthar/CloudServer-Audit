@@ -324,3 +324,17 @@ run_case "ufw-sysctl/override-first" 1 \
 run_case "forwarding/vpn-template-units-unscanned" 1 \
     "    grep -qE '^(wg-quick@|openvpn-(client|server)@)' <<<\"\$units\" && return 0" \
     '    :'
+
+# An enslaved link (Azure's VF, a bond or bridge member) governs no traffic: judging it
+# fails a host whose only weak value is there. #1 is the IPv6 scan, #2 the IPv4 one.
+run_case "iface/ipv6-enslaved-judged" 1 \
+    '        _kernel_iface_enslaved "$name" && continue' \
+    '        :'
+
+run_case "iface/ipv4-enslaved-judged" 2 \
+    '        _kernel_iface_enslaved "$name" && continue' \
+    '        :'
+
+run_case "iface/every-link-enslaved" 1 \
+    '    [[ -e "$KERNEL_SYS_CLASS_NET/$1/master" ]]' \
+    '    true'

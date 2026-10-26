@@ -22,3 +22,8 @@ run_case "select-modules/menu-gone-for-audit" 1 \
 run_case "select-language/env-ignored" 1 \
     '    VPSSEC_LANG_SET=1' \
     '    :'
+
+# guide --fix shows the menu again, and a subset can drop the named fix's module.
+run_case "select-modules/fix-shows-menu" 1 \
+    '    if [[ -n "${VPSSEC_FIX_IDS:-}" ]]; then' \
+    '    if false; then'

@@ -331,42 +331,8 @@ ingress:
 # metrics: localhost:2000
 EOF
 
-    # Also create a systemd service template
-    write_template "${template_dir}/cloudflared.service.example" <<'EOF' || return 1
-# Cloudflared Systemd Service
-# Copy to /etc/systemd/system/cloudflared.service
-
-[Unit]
-Description=Cloudflare Tunnel
-After=network.target network-online.target
-Wants=network-online.target
-
-[Service]
-Type=notify
-ExecStart=/usr/bin/cloudflared tunnel --config /etc/cloudflared/config.yml run
-Restart=on-failure
-RestartSec=5s
-
-# Security hardening
-User=cloudflared
-Group=cloudflared
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/log/cloudflared
-PrivateTmp=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
     print_ok "$(i18n 'cloudflared.templates_generated' "dir=$template_dir")"
     print_info "$(i18n 'cloudflared.config_template' "file=$output_file")"
-    print_info "$(i18n 'cloudflared.service_template' "file=${template_dir}/cloudflared.service.example")"
     print_msg ""
     print_msg "$(i18n 'cloudflared.next_steps')"
     print_msg "  1. $(i18n 'cloudflared.step_create_tunnel')"

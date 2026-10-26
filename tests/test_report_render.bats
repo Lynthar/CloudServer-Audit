@@ -48,6 +48,17 @@ _md_section_text() {
     [ "$counted" = "$listed" ]
 }
 
+@test "markdown: a finding without a desc, a suggestion or a fix gets no empty label" {
+    # update.updates_available has no desc when none of the updates is a security one.
+    _add update.updates_available update low failed "9 updates available" "" "Apply pending updates" ""
+    _add networking.public_listeners_present networking medium failed "4 listeners" "tcp/8443" "" ""
+    report_generate_markdown "$md" >/dev/null
+    _vpssec_refute grep -qE '^- \*\*(Info|Recommendations|Fix ID)\*\*: *$' "$md"
+    grep -Fqx -- '- **Recommendations**: Apply pending updates' "$md"
+    grep -Fqx -- '- **Info**: tcp/8443' "$md"
+    grep -Fqx -- '- **Fix ID**: N/A' "$md"
+}
+
 @test "terminal: a crashed module is stated above the score, an info failure drawn as low" {
     VPSSEC_QUIET_SCAN=0
     _add _internal.module_failed _internal low failed "Module backup did not complete" "" "" ""

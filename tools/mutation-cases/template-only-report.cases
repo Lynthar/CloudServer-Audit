@@ -55,8 +55,8 @@ run_case "md/annotates-everything" 1 \
     '            if true'
 
 run_case "md/note-not-appended-to-the-line" 1 \
-    '                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **\($fixid)**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"' \
-    '                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **\($fixid)**: \($c.fix_id // "N/A")\n"'
+    '                + "- **\($fixid)**: \(if ($c.fix_id // "") == "" then "N/A" else $c.fix_id end)\(tmpl_note($c))\n"' \
+    '                + "- **\($fixid)**: \(if ($c.fix_id // "") == "" then "N/A" else $c.fix_id end)\n"'
 
 # The label back to fixed English: zh_CN reports read "Fix ID" again.
 run_case "md/fix-id-label-unlocalised" 1 \

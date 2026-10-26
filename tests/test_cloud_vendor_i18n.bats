@@ -93,6 +93,32 @@ _provider_ids() {
     fi
 }
 
+@test "cloud i18n: the SSH rescue warning names every provider's own firewall" {
+    # The warning builds cloud.firewall_name_<id> from the id: a missing key would
+    # print the key itself inside a lockout warning.
+    # shellcheck source=/dev/null
+    source "$(_vpssec_repo_root)/modules/ssh.sh"
+    [ "$(_provider_ids | wc -l)" -ge 12 ]
+    SSH_RESCUE_PORT=2222
+
+    local bad="" id lang said
+    for lang in en_US zh_CN; do
+        i18n_load "$lang"
+        while read -r id; do
+            [[ -z "$id" || "$id" == "unknown" ]] && continue
+            VPSSEC_CLOUD_PROVIDER="$id"
+            said=$(_ssh_rescue_cloud_hint 2>&1)
+            [[ "$said" == *"TCP 2222"* && "$said" != *cloud.firewall_name_* ]] ||
+                bad+="${lang}: ${id} -> ${said}"$'\n'
+        done < <(_provider_ids)
+    done
+
+    if [[ -n "$bad" ]]; then
+        printf '%s' "$bad" >&2
+        return 1
+    fi
+}
+
 @test "cloud i18n: no vendor or agent key is left over from a deleted row" {
     # The other direction. Without it the guard is one-way: dropping an agent row
     # leaves its strings in both language files, where they read as supported

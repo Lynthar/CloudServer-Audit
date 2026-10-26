@@ -423,9 +423,58 @@ SH
     # The heredoc expands, so a trailing backslash becomes a line continuation:
     # a multi-line hint in the generated config would be silently glued into one
     # line, taking whatever followed with it.
-    run _nginx_catchall_config
+    run _nginx_catchall_config 80 443
     [ "$status" -eq 0 ]
+    grep -q 'listen 443 ssl default_server;' <<<"$output"
     _vpssec_refute grep -q '\\$' <<<"$output"
+}
+
+# ---- partial coverage: only the missing port, never a second default_server ----
+
+@test "catchall: where another file covers port 80, only the 443 server is written" {
+    # Writing port 80 as well was the duplicate default_server nginx -t rejects.
+    _vpssec_stub_script nginx <<SH
+case "\$*" in
+    *-T*)
+        echo 'http { server { listen 443 ssl; server_name app.example.com; } }'
+        echo 'server { listen 80 default_server; return 444; }'
+        cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null
+        ;;
+esac
+exit 0
+SH
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    grep -q 'listen 443 ssl default_server;' "$NGINX_CATCHALL_CONF"
+    _vpssec_refute grep -q 'listen 80' "$NGINX_CATCHALL_CONF"
+    [ -e "$NGINX_CATCHALL_CERT" ]
+}
+
+@test "catchall: where another file covers port 443, only the 80 server is written" {
+    _vpssec_stub_script nginx <<SH
+case "\$*" in
+    *-T*)
+        echo 'http { server { listen 443 ssl; server_name app.example.com; } }'
+        echo 'server { listen 443 ssl default_server; ssl_reject_handshake on; }'
+        cat "$NGINX_SITES_ENABLED"/*.conf 2>/dev/null
+        ;;
+esac
+exit 0
+SH
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    grep -q 'listen 80 default_server;' "$NGINX_CATCHALL_CONF"
+    _vpssec_refute grep -q '443' "$NGINX_CATCHALL_CONF"
+}
+
+@test "catchall: a rerun keeps the port its own file already covered" {
+    # An earlier run wrote port 80 only; nginx serves 443 since. The file is
+    # rewritten whole, so dropping 80 from it would undo the earlier fix.
+    _nginx_catchall_config 80 > "$NGINX_CATCHALL_CONF"
+    run _nginx_fix_add_catchall
+    [ "$status" -eq 0 ]
+    grep -q 'listen 80 default_server;' "$NGINX_CATCHALL_CONF"
+    grep -q 'listen 443 ssl default_server;' "$NGINX_CATCHALL_CONF"
 }
 
 # ---- the backup contract ---------------------------------------------
@@ -518,6 +567,16 @@ _emitted() { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
 @test "audit: serving 443 without a 443 catchall is still partial" {
     _nginx_audit_with_dump 'http { server { listen 443 ssl; } server { listen 80 default_server; return 444; } }'
     grep -qxF nginx.catchall_partial_80 <<<"$(_emitted)"
+    # Nothing holds 443 as default_server, so the fix can add it.
+    [ "$(jq -r '.[] | select(.id == "nginx.catchall_partial_80") | .fix_id' "$VPSSEC_STATE/checks.json")" = nginx.add_catchall ]
+}
+
+@test "audit: Debian's stock default site gets the finding, not a fix that must fail" {
+    # Its listen 80 default_server makes nginx reject the fix's own as a duplicate.
+    _nginx_audit_with_dump 'http { server { listen 80 default_server; listen [::]:80 default_server; root /var/www/html; server_name _; } }'
+    local row
+    row=$(jq -r '.[] | select(.id == "nginx.no_catchall") | "\(.fix_id)|\(.suggestion)"' "$VPSSEC_STATE/checks.json")
+    [[ "$row" == "|"*"Port 80 already has a default_server"*"server_name: _"*"sites-enabled/default"* ]]
 }
 
 @test "audit: a config nginx -t rejects is one finding, with no catchall or DoS verdicts" {

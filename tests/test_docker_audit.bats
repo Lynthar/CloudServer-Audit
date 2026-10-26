@@ -291,6 +291,20 @@ SH
     done
 }
 
+@test "userns is not called off once docker has stalled" {
+    # docker info is its only source: a stall left grep nothing to match, read as "not enabled".
+    _vpssec_stub_script docker <<'SH'
+case "$*" in
+    "info"|"--version") exit 0 ;;
+esac
+exec sleep 5
+SH
+    DOCKER_PROBE_TIMEOUT=1
+
+    docker_audit >/dev/null
+    _vpssec_refute grep -q '^docker.userns_' <<<"$(_emitted)"
+}
+
 @test "a docker audit that never timed out is complete" {
     _docker_with_ports ''
     docker_audit >/dev/null

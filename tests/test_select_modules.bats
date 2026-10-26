@@ -1,19 +1,19 @@
 #!/usr/bin/env bats
 # Which start-up menus a terminal gets. The module menu belongs to audit and
-# guide: rollback and status skip it, or it reads the answer typed for rollback's
-# own prompt. The language menu is skipped once VPSSEC_LANG names a language.
+# guide: rollback and status skip it (it would read rollback's answer), and so
+# does guide --fix. The language menu is skipped once VPSSEC_LANG names a language.
 
 load helpers.bash
 
-# setsid: no controlling terminal, so a menu that is reached reads EOF from
-# /dev/tty and falls through instead of waiting on whoever runs the suite.
+# Mode $1, with --fix ids $2 if given. setsid: no controlling terminal, so a menu
+# that is reached reads EOF from /dev/tty and falls through instead of waiting.
 _select_modules_as() {
     setsid -w bash -c '
         source "$1/core/common.sh"
         _tty_readable() { return 0; }
         unset VPSSEC_INCLUDE VPSSEC_YES VPSSEC_JSON_ONLY
-        VPSSEC_MODE="$2" VPSSEC_LANG=en_US select_modules
-    ' _ "$(_vpssec_repo_root)" "$1"
+        VPSSEC_MODE="$2" VPSSEC_FIX_IDS="$3" VPSSEC_LANG=en_US select_modules
+    ' _ "$(_vpssec_repo_root)" "$1" "${2:-}"
 }
 
 @test "rollback and status skip the module menu on a terminal" {
@@ -30,6 +30,12 @@ _select_modules_as() {
         [ "$status" -eq 0 ]
         [[ "$output" == *"Select modules to check:"* ]]
     done
+}
+
+@test "guide --fix skips it, so no subset can leave a named fix out" {
+    run _select_modules_as guide ssh.enable_pubkey
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 # The language menu with VPSSEC_LANG=$1 exported by the operator (none when $1 is

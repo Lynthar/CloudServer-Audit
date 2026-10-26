@@ -144,7 +144,9 @@ _baseline_selinux_denials_count() {
     # and exits 1, so the fallback appends a second one and the caller's
     # arithmetic dies. awk's `c+0` always yields one integer.
     if check_command ausearch; then
-        ausearch -m avc -ts today 2>/dev/null | awk '/type=AVC/ {c++} END {print c+0}'
+        # </dev/null: when fd 0 is a pipe (ssh without a tty, curl | bash, cron) ausearch
+        # searches stdin instead of the logs, counting 0 and waiting until the pipe closes.
+        ausearch -m avc -ts today 2>/dev/null </dev/null | awk '/type=AVC/ {c++} END {print c+0}'
     elif [[ -f "$BASELINE_AUDIT_LOG" ]]; then
         awk '/type=AVC.*denied/ {c++} END {print c+0}' "$BASELINE_AUDIT_LOG" 2>/dev/null
     else
@@ -402,10 +404,12 @@ _baseline_audit_selinux() {
     local config=$(_baseline_selinux_get_config)
     local policy=$(_baseline_selinux_get_policy)
     local denials=$(_baseline_selinux_denials_count)
+    local denials_shown="$denials"
+    [[ "$denials" == "unknown" ]] && denials_shown=$(i18n 'common.unknown')
 
     if [[ "$status" == "enforcing" ]]; then
         check_emit "baseline.selinux_enforcing" low passed \
-            desc="$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials}")"
+            desc="$(i18n 'baseline.selinux_enforcing_desc' "policy=${policy:-targeted}" "denials=${denials_shown}")"
         print_ok "$(i18n 'baseline.selinux_enforcing') $(i18n 'baseline.selinux_policy_label' "policy=${policy:-targeted}")"
 
         # Check for excessive denials
@@ -419,7 +423,7 @@ _baseline_audit_selinux() {
 
     elif [[ "$status" == "permissive" ]]; then
         check_emit "baseline.selinux_permissive" low failed \
-            desc="$(i18n 'baseline.selinux_permissive_desc')" \
+            desc="$(i18n 'baseline.selinux_permissive_desc' "denials=${denials_shown}")" \
             suggestion="$(i18n 'baseline.selinux_permissive_suggestion')" \
             fix="baseline.selinux_set_enforcing"
         print_severity "low" "$(i18n 'baseline.selinux_permissive')"
@@ -495,11 +499,20 @@ _baseline_audit_apparmor_disabled() {
     print_severity "low" "$(i18n 'baseline.apparmor_disabled')"
 }
 
+# On RHEL a disabled SELinux leaves no selinuxfs, so such a host lands here: point
+# it back at SELinux, never at AppArmor, which the family does not ship.
 _baseline_audit_no_mac() {
+    local suggestion fix_id=""
+    if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" ]]; then
+        suggestion=$(i18n 'baseline.selinux_disabled_suggestion')
+    else
+        suggestion=$(i18n 'baseline.no_mac_system_suggestion')
+        fix_id="baseline.enable_apparmor"
+    fi
     check_emit "baseline.no_mac_system" low failed \
         desc="$(i18n 'baseline.no_mac_system_desc')" \
-        suggestion="$(i18n 'baseline.no_mac_system_suggestion')" \
-        fix="baseline.enable_apparmor"
+        suggestion="$suggestion" \
+        fix="$fix_id"
     print_severity "low" "$(i18n 'baseline.no_mac_system')"
 }
 

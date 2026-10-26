@@ -33,10 +33,13 @@ _preflight_check_os() {
     local os=$(detect_os)
     local version=$(detect_os_version)
     local codename=$(detect_os_codename)
+    local desc="${os} ${version}"
+    # RHEL and Arch have no VERSION_CODENAME, which detect_os_codename answers as "unknown".
+    [[ "$codename" != unknown ]] && desc+=" (${codename})"
 
     if is_supported_os; then
         check_emit "preflight.os_supported" low passed \
-            desc="${os} ${version} (${codename})"
+            desc="$desc"
         print_ok "$(i18n 'preflight.os_supported'): ${os} ${version}"
     else
         check_emit "preflight.os_unsupported" low failed \

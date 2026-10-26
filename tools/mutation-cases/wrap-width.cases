@@ -36,3 +36,12 @@ run_case "truncate/locale-trusted" 2 \
 run_case "wrap/locale-trusted" 3 \
     '    local LC_ALL=C' \
     '    :'
+
+# An ASCII word reaching the edge mid-line is cut there again ("M" / "axAuthTries").
+run_case "wrap/word-cut-mid-line" 1 \
+    '            if (( word > 0 )); then' \
+    '            if false; then'
+
+run_case "wrap/word-start-not-recorded" 1 \
+    '            (( word < 0 )) && word=${#line} word_w=w' \
+    '            :'

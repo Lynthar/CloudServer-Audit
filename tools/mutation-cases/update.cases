@@ -163,20 +163,29 @@ run_case "apply/installed-check-inverted" 1 \
     '    if false; then'
 
 run_case "apply/upgrade-failure-swallowed" 1 \
-    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
-    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || true'
+    '    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || rc=$?' \
+    '    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || true'
 
 run_case "apply/falls-back-to-full-upgrade" 1 \
-    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
-    '    apt-get upgrade -y 2>/dev/null || rc=$?'
+    '    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || rc=$?' \
+    '    out=$(apt-get upgrade -y </dev/null 2>&1) || rc=$?'
+
+# Its -d output belongs in the log: in the guide it buried the fix's own lines.
+run_case "apply/output-to-terminal" 1 \
+    '    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || rc=$?' \
+    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null || rc=$?'
+
+run_case "apply/failure-tail-dropped" 1 \
+    '    (( rc == 0 )) || tail -n 5 <<<"$out" >&2' \
+    '    :'
 
 # ---- apply_security: the security origins only, for this one run ----------
 
 # The original defect: unattended-upgrade on the operator's origins, which on
 # Debian include the main archive's point releases.
 run_case "apply/operator-origins" 1 \
-    '    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?' \
-    '    unattended-upgrade -d 2>/dev/null || rc=$?'
+    '    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || rc=$?' \
+    '    out=$(unattended-upgrade -d </dev/null 2>&1) || rc=$?'
 
 # APT_CONFIG is read BEFORE apt.conf.d, so its #clear is undone by 50's list;
 # only as Dir::Etc::main is it read after.

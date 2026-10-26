@@ -18,11 +18,11 @@ NGINX_CATCHALL_KEY="${NGINX_SSL_DIR}/vpssec-catchall.key"
 
 # --- Nginx Helper Functions ---
 
-# Catchall coverage of a config text, as "<needed> <have>". needed is "both" when
-# nginx itself serves 443 and "80" when it does not; have is both | 80only |
-# 443only | none, a port counting when a default_server there answers 444.
+# Catchall coverage of a config text as "<needed> <have>": needed is both | 80 (nginx
+# serves 443 or not), have is both | 80only | 443only | none (a default_server there
+# answers 444). With $2 = rivals: "<port>\t<server_name>" per non-catchall default_server.
 _nginx_catchall_coverage_from_text() {
-    nginx_statements <<<"$1" | awk -F'\t' '
+    nginx_statements <<<"$1" | WANT="${2:-coverage}" awk -F'\t' '
         function port(a,   r) {
             if (a ~ /^unix:/) return ""
             if (a ~ /^\[/) { r = substr(a, index(a, "]") + 1); return (r ~ /^:/) ? substr(r, 2) : "80" }
@@ -40,7 +40,13 @@ _nginx_catchall_coverage_from_text() {
         $3 == "return" && $4 ~ /^444( |$)/ { ret[$1] = 1 }
         # nginx >= 1.19.4 refuses an unknown SNI outright; that covers 443 too.
         $3 == "ssl_reject_handshake" && $4 == "on" { rej[$1] = 1 }
+        $3 == "server_name" { name[$1] = $4 }
         END {
+            if (ENVIRON["WANT"] == "rivals") {
+                for (s in d80) if (!(s in ret)) print "80\t" name[s]
+                for (s in d443) if (!((s in ret) || (s in rej))) print "443\t" name[s]
+                exit
+            }
             for (s in d80) if (s in ret) c80 = 1
             for (s in d443) if ((s in ret) || (s in rej)) c443 = 1
             for (s in on443) if (!((s in d443) && ((s in ret) || (s in rej)))) serves = 1
@@ -58,6 +64,17 @@ _nginx_catchall_covered() {
         "both both"|"80 both"|"80 80only") return 0 ;;
     esac
     return 1
+}
+
+# The ports "<needed> <have>" still lacks a catchall on: 80, 443, or both, in that
+# order. The fix writes only these: a second default_server on a port is rejected.
+_nginx_catchall_missing_ports() {
+    local needed="${1%% *}" have="${1#* }" ports=""
+    [[ "$have" == 80only || "$have" == both ]] || ports="80"
+    if [[ "$needed" == both && "$have" != 443only && "$have" != both ]]; then
+        ports+="${ports:+ }443"
+    fi
+    echo "$ports"
 }
 
 # FIX_VERIFY predicate for nginx.add_catchall: the audit's own rule, re-read.
@@ -163,26 +180,39 @@ _nginx_audit_catchall() {
         return
     fi
 
+    # The fix adds a default_server on each missing port; where one that serves
+    # requests already sits (Debian's stock site does), nginx rejects the
+    # duplicate, so no fix is offered and the operator is told which server.
+    local fix_id="nginx.add_catchall" suggestion missing rport rnames
+    suggestion=$(i18n 'nginx.fix_add_catchall')
+    missing=$(_nginx_catchall_missing_ports "$coverage")
+    while IFS=$'\t' read -r rport rnames; do
+        [[ -n "$rport" && " $missing " == *" $rport "* ]] || continue
+        fix_id=""
+        suggestion=$(i18n 'nginx.catchall_rival' "port=$rport" "names=${rnames:--}")
+        break
+    done <<<"$(_nginx_catchall_coverage_from_text "$NGINX_DUMP" rivals)"
+
     case "${coverage#* }" in
         80only)
             check_emit "nginx.catchall_partial_80" low failed \
                 desc="$(i18n 'nginx.catchall_partial_80_desc')" \
-                suggestion="$(i18n 'nginx.fix_add_catchall')" \
-                fix="nginx.add_catchall"
+                suggestion="$suggestion" \
+                fix="$fix_id"
             print_severity "low" "$(i18n 'nginx.catchall_partial_80')"
             ;;
         443only)
             check_emit "nginx.catchall_partial_443" low failed \
                 desc="$(i18n 'nginx.catchall_partial_443_desc')" \
-                suggestion="$(i18n 'nginx.fix_add_catchall')" \
-                fix="nginx.add_catchall"
+                suggestion="$suggestion" \
+                fix="$fix_id"
             print_severity "low" "$(i18n 'nginx.catchall_partial_443')"
             ;;
         *)
             check_emit "nginx.no_catchall" low failed \
                 desc="$(i18n 'nginx.no_catchall_desc')" \
-                suggestion="$(i18n 'nginx.fix_add_catchall')" \
-                fix="nginx.add_catchall"
+                suggestion="$suggestion" \
+                fix="$fix_id"
             print_severity "low" "$(i18n 'nginx.no_catchall')"
             ;;
     esac
@@ -288,13 +318,16 @@ nginx_fix() {
     esac
 }
 
-# The catchall config text; with "both", the 443 server as well. A function so
-# the certificate paths come from the module variables. The heredoc EXPANDS, so
-# no backslash continuations: they glue lines together.
+# The catchall config text for the ports named in $@ (80, 443). A function so the
+# certificate paths come from the module variables. The heredoc EXPANDS, so no
+# backslash continuations: they glue lines together.
 _nginx_catchall_config() {
     cat <<EOF
 # vpssec - Nginx catchall configuration
 # Prevents certificate/hostname leakage for unknown requests
+EOF
+    if [[ " $* " == *" 80 "* ]]; then
+        cat <<EOF
 
 server {
     listen 80 default_server;
@@ -305,7 +338,8 @@ server {
     return 444;
 }
 EOF
-    [[ "${1:-}" == both ]] || return 0
+    fi
+    [[ " $* " == *" 443 "* ]] || return 0
     cat <<EOF
 
 server {
@@ -344,10 +378,28 @@ _nginx_fix_add_catchall() {
         print_error "$(i18n 'nginx.config_unreadable_desc' "error=${NGINX_DUMP_ERROR:-nginx -t}")"
         return 1
     fi
-    local needed
-    needed=$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")
-    needed=${needed%% *}
+    local before needed
+    before=$(_nginx_catchall_coverage_from_text "$NGINX_DUMP")
+    needed=${before%% *}
     [[ "$needed" == both ]] || print_info "$(i18n 'nginx.catchall_80_only')"
+
+    # The ports still uncovered, plus those this file covers already: it is
+    # rewritten whole, while a port another file covers would be a duplicate.
+    local want
+    want=" $(_nginx_catchall_missing_ports "$before") "
+    if [[ -f "$NGINX_CATCHALL_CONF" ]]; then
+        case "$(_nginx_catchall_coverage_from_text "$(cat "$NGINX_CATCHALL_CONF")")" in
+            *" both")    want+="80 443 " ;;
+            *" 80only")  want+="80 " ;;
+            *" 443only") want+="443 " ;;
+        esac
+    fi
+    local -a ports=()
+    [[ "$want" == *" 80 "* ]] && ports+=(80)
+    [[ "$want" == *" 443 "* ]] && ports+=(443)
+    if [[ "$needed" == both ]] && (( ${#ports[@]} == 1 )); then
+        print_info "$(i18n 'nginx.catchall_one_port' "port=${ports[0]}")"
+    fi
 
     # Decides what the validation-failure path may delete. A dangling link here
     # (what an older version's rollback left) counts as absent: the write
@@ -361,12 +413,12 @@ _nginx_fix_add_catchall() {
     backup_file "$NGINX_CATCHALL_CONF" >/dev/null || return 1
     # write_file_atomic creates the parent directory and reports its own
     # failures, so no separate mkdir with a status to discard.
-    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then
+    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "${ports[@]}")"; then
         print_error "$(i18n 'nginx.catchall_write_failed' "file=$NGINX_CATCHALL_CONF")"
         return 1
     fi
 
-    if [[ "$needed" == both ]] && ! _nginx_ensure_catchall_cert; then
+    if [[ " ${ports[*]} " == *" 443 "* ]] && ! _nginx_ensure_catchall_cert; then
         return 1
     fi
 

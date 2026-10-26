@@ -888,6 +888,20 @@ _ssh_rescue_allow_firewall() {
     esac
 }
 
+# A cloud firewall filters before the host and no backend above can see it: on a
+# recognised provider name its firewall, so a blocked rescue port is allowed there
+# or the change declined, rather than an unreachable port read as a broken rescue.
+_ssh_rescue_cloud_hint() {
+    local provider key
+    provider=$(vpssec_cloud_provider)
+    case "$provider" in
+        unknown)           return 0 ;;
+        aws-or-compatible) key='cloud.firewall_name_aws_compatible' ;;
+        *)                 key="cloud.firewall_name_${provider}" ;;
+    esac
+    tty_warn "$(i18n 'ssh.rescue_cloud_fw' "fw=$(i18n "$key")" "port=$SSH_RESCUE_PORT")"
+}
+
 # Accept "addr" or "addr/prefix" as a ufw source. Both address families;
 # prefix bounds checked per family (v4 ≤ 32, v6 ≤ 128).
 _ssh_valid_cidr() {
@@ -992,6 +1006,7 @@ EOF
             _ssh_rescue_allow_firewall
             # After the firewall rule exists, so the watchdog knows to remove it.
             _ssh_rescue_start_watchdog
+            _ssh_rescue_cloud_hint
             return 0
         fi
         # If our daemon already exited, stop waiting.

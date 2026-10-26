@@ -235,3 +235,36 @@ server { listen 80 default_server; listen 443 ssl default_server; return 444; } 
 http { server { listen 80 default_server; return 444; } }'
     [ "$output" = "80 80only" ]
 }
+
+# ---- rivals: default servers the fix's own default_server would duplicate --------
+
+@test "rivals: Debian's stock default site is one, named by its server_name" {
+    run _nginx_catchall_coverage_from_text 'http { server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/html;
+    server_name _;
+} }' rivals
+    [ "$output" = $'80\t_' ]
+}
+
+@test "rivals: a catchall is not one, on either port" {
+    run _nginx_catchall_coverage_from_text 'server { listen 80 default_server; return 444; }
+server { listen 443 ssl default_server; ssl_reject_handshake on; }' rivals
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "rivals: a 443 default_server that answers is one, a plain vhost is not" {
+    run _nginx_catchall_coverage_from_text 'http { server { listen 80; server_name a.test; }
+server { listen 443 ssl default_server; server_name b.test; } }' rivals
+    [ "$output" = $'443\tb.test' ]
+}
+
+@test "missing ports: only what the coverage still lacks" {
+    [ "$(_nginx_catchall_missing_ports 'both none')" = "80 443" ]
+    [ "$(_nginx_catchall_missing_ports 'both 80only')" = "443" ]
+    [ "$(_nginx_catchall_missing_ports 'both 443only')" = "80" ]
+    [ "$(_nginx_catchall_missing_ports '80 none')" = "80" ]
+    [ "$(_nginx_catchall_missing_ports '80 443only')" = "80" ]
+}

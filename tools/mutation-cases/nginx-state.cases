@@ -62,3 +62,23 @@ run_case "needed/stream-counts-as-serving" 1 \
 run_case "covered/80-only-never-enough" 1 \
     '        "both both"|"80 both"|"80 80only") return 0 ;;' \
     '        "both both"|"80 both") return 0 ;;'
+
+# ---- rivals and missing ports ----------------------------------------------
+
+# A catchall counted as a rival: every covered host loses its fix offer.
+run_case "rivals/catchall-80-counted" 1 \
+    '                for (s in d80) if (!(s in ret)) print "80\t" name[s]' \
+    '                for (s in d80) print "80\t" name[s]'
+
+run_case "rivals/catchall-443-counted" 1 \
+    '                for (s in d443) if (!((s in ret) || (s in rej))) print "443\t" name[s]' \
+    '                for (s in d443) if (!(s in ret)) print "443\t" name[s]'
+
+# A covered port written again is the duplicate default_server nginx rejects.
+run_case "missing/covered-80-rewritten" 1 \
+    '    [[ "$have" == 80only || "$have" == both ]] || ports="80"' \
+    '    ports="80"'
+
+run_case "missing/covered-443-rewritten" 1 \
+    '    if [[ "$needed" == both && "$have" != 443only && "$have" != both ]]; then' \
+    '    if [[ "$needed" == both ]]; then'

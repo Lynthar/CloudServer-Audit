@@ -3,10 +3,15 @@
 #
 # The run lock's conflict message: the holder's PID, and where the hint goes.
 
-# Opened with truncation before flock: the holder's PID is erased first.
+# Created with truncation before flock: the holder's PID is erased first.
 run_case "lock/truncated-before-flock" 1 \
-    '        exec 200>>"$_run_lock"' \
-    '        exec 200>"$_run_lock"'
+    '        : >>"$_run_lock"' \
+    '        : >"$_run_lock"'
+
+# Held for writing again: every child that switches SELinux domain logs a denial.
+run_case "lock/write-fd-inherited" 1 \
+    '        exec 200<"$_run_lock"' \
+    '        exec 200>>"$_run_lock"'
 
 # The winner never writes its PID, so the next conflict cannot name it.
 run_case "lock/pid-unrecorded" 1 \

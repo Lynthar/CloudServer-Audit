@@ -97,6 +97,14 @@ _checklist_tags_only() {
     [ "$(wrap_to_width '中' 1)" = '中' ]
 }
 
+@test "wrap_to_width: an ASCII word that would straddle the edge moves down whole" {
+    # A fix warning in the plan preview read "M" / "axAuthTries" across two lines.
+    [ "$(wrap_to_width '把 MaxAuth 到' 8)" = $'把 \nMaxAuth \n到' ]
+    [ "$(wrap_to_width '中 a.b_c' 5)" = $'中 \na.b_c' ]
+    # A word longer than the line has nowhere whole to go and is still cut.
+    [ "$(wrap_to_width 'abcdefghij' 4)" = $'abcd\nefgh\nij' ]
+}
+
 @test "wrap_to_width and truncate_to_width cut between characters under the C locale too" {
     # SSH sessions often arrive with LANG unset; bash then slices by bytes.
     local LC_ALL=C

@@ -105,7 +105,7 @@ run_case "stall/privileged-passed-anyway" 2 \
     '    elif ! _docker_stalled; then' \
     '    else'
 
-run_case "stall/memory-passed-anyway" 8 \
+run_case "stall/memory-passed-anyway" 9 \
     '    elif ! _docker_stalled; then' \
     '    else'
 
@@ -122,3 +122,8 @@ run_case "env/sample-separator-lost" 1 \
 run_case "env/sample-not-capped" 1 \
     '        local sample; sample=$(head -5 <<<"$hits")' \
     '        local sample; sample=$hits'
+
+# docker info is userns's only source: after a stall, grep matching nothing is no answer.
+run_case "userns/stall-reads-as-off" 6 \
+    '    elif ! _docker_stalled; then' \
+    '    else'

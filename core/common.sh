@@ -444,11 +444,11 @@ truncate_to_width() {
 }
 
 # $1 as lines of at most $2 display cells, broken between code points
-# (walked byte-wise, as above); a single character wider than $2 still
-# gets a line of its own.
+# (walked byte-wise, as above); an ASCII word that began mid-line moves to the
+# next line whole, and a word or character wider than $2 is still cut.
 wrap_to_width() {
     local text="$1" line="" ch
-    local -i target="$2" w=0 cw i n len b
+    local -i target="$2" w=0 cw i n len b word=-1 word_w=0
     if (( $(_display_width "$text") <= target )); then
         printf '%s\n' "$text"
         return
@@ -463,9 +463,20 @@ wrap_to_width() {
         elif (( b >= 0xC0 )); then len=2; else len=1; fi
         ch="${text:i:len}"
         cw=$(_display_width "$ch")
+        # word: byte offset in line where the current ASCII word starts, -1 outside one.
+        if [[ "$ch" == [A-Za-z0-9_./-] ]]; then
+            (( word < 0 )) && word=${#line} word_w=w
+        else
+            word=-1
+        fi
         if (( w > 0 && w + cw > target )); then
-            printf '%s\n' "$line"
-            line="" w=0
+            if (( word > 0 )); then
+                printf '%s\n' "${line:0:word}"
+                line="${line:word}" w=w-word_w word=0 word_w=0
+            else
+                printf '%s\n' "$line"
+                line="" w=0
+            fi
         fi
         line+="$ch"
         w+=cw
@@ -2097,6 +2108,14 @@ select_modules() {
         rollback|status) return 0 ;;
     esac
 
+    # guide --fix names its fixes: a subset leaving one's module out would make
+    # it "not offered" and exit 1, so the audit behind it runs every module.
+    if [[ -n "${VPSSEC_FIX_IDS:-}" ]]; then
+        VPSSEC_INCLUDE=""
+        export VPSSEC_INCLUDE
+        return 0
+    fi
+
     # Non-interactive run, or no terminal to read from: run all modules.
     if _noninteractive || ! _tty_readable; then
         VPSSEC_INCLUDE=""
@@ -2234,10 +2253,12 @@ vpssec_init() {
     # so there is no stale-lock cleanup. The stored PID is advisory.
     if [[ "${VPSSEC_MODE:-}" != "status" ]]; then
         local _run_lock="${VPSSEC_STATE}/.run.lock"
-        # Opened for append: truncating before the lock is won erases the
-        # holder's PID, and the conflict message below loses it.
+        # Created by >> (truncating before the lock is won erases the holder's PID),
+        # then held read-only: flock needs no write access, and a child that switches
+        # SELinux domain (modinfo in kmod_t) logs a denial for an inherited write fd.
+        : >>"$_run_lock"
         # shellcheck disable=SC2093
-        exec 200>>"$_run_lock"
+        exec 200<"$_run_lock"
         if ! flock -n 200; then
             local _other_pid _msg
             _other_pid=$(cat "$_run_lock" 2>/dev/null || true)

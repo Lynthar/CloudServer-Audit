@@ -1,0 +1,13 @@
+# Mutation cases: tests/test_preflight_os.bats against modules/preflight.sh.
+# mutate-suite: modules/preflight.sh tests/test_preflight_os.bats
+#
+# The OS line carries the codename only when os-release has one; the suite
+# stubs the detect_os* helpers.
+
+run_case "os/unknown-codename-printed" 1 \
+    '    [[ "$codename" != unknown ]] && desc+=" (${codename})"' \
+    '    desc+=" (${codename})"'
+
+run_case "os/codename-dropped" 1 \
+    '    [[ "$codename" != unknown ]] && desc+=" (${codename})"' \
+    '    :'

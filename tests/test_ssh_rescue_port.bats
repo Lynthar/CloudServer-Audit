@@ -118,6 +118,27 @@ _rescue_fw_with() {
     grep -q 'Firewall is active' <<<"$output"
 }
 
+@test "rescue firewall: on a recognised cloud, its own firewall is named with the port" {
+    # A cloud firewall drops the rescue port before any host backend sees it.
+    i18n_load en_US
+    SSH_RESCUE_PORT=2222
+    VPSSEC_CLOUD_PROVIDER=azure
+
+    run _ssh_rescue_cloud_hint
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"network security group (NSG) allows TCP 2222"* ]]
+}
+
+@test "rescue firewall: off a recognised cloud, no cloud firewall is mentioned" {
+    i18n_load en_US
+    SSH_RESCUE_PORT=2222
+    VPSSEC_CLOUD_PROVIDER=unknown
+
+    run _ssh_rescue_cloud_hint
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "rescue firewall: a rule ufw would not delete is named with the command that does" {
     i18n_load en_US
     SSH_RESCUE_FW_RULE="ufw:203.0.113.9:2222"
@@ -296,4 +317,21 @@ _caller_with_exit_trap() {
 
     _keeping_bats_traps _ssh_close_rescue_port
     _vpssec_refute _alive "$rescue"
+}
+
+@test "rescue open: on a recognised cloud, its firewall is named before the confirmation" {
+    _log_file=/dev/null
+    i18n_load en_US
+    VPSSEC_CLOUD_PROVIDER=gcp
+    _vpssec_stub sshd
+    printf '#!/usr/bin/env bash\nexec sleep 300\n' > "$BATS_TEST_TMPDIR/fake-sshd"
+    chmod +x "$BATS_TEST_TMPDIR/fake-sshd"
+    SSH_RESCUE_SSHD="$BATS_TEST_TMPDIR/fake-sshd"
+    _ssh_pick_rescue_port() { echo 2299; }
+    _ssh_rescue_is_up() { kill -0 "$SSH_RESCUE_PID" 2>/dev/null; }
+    _ssh_rescue_allow_firewall() { :; }
+
+    _keeping_bats_traps _ssh_open_rescue_port 2>"$BATS_TEST_TMPDIR/said"
+    _keeping_bats_traps _ssh_close_rescue_port
+    grep -q 'Google Cloud VPC firewall rule allows TCP 2299' "$BATS_TEST_TMPDIR/said"
 }

@@ -40,31 +40,33 @@ WEB_ROOTS=(
     "/home/*/public_html"
 )
 
-# Sensitive files/paths that should not be accessible
-SENSITIVE_PATHS=(
+# Files that should not be reachable in a web root, matched by name. HIGH: they
+# hold secrets or open an admin interface; MEDIUM: they only disclose information.
+SENSITIVE_HIGH_PATHS=(
     ".git"
     ".svn"
     ".env"
+    ".env.local"
+    ".env.production"
     ".htpasswd"
     "wp-config.php.bak"
     "config.php.bak"
     "backup.sql"
     "dump.sql"
     "database.sql"
+    "adminer.php"
+    # Not composer.json / package.json (manifests, routine in a web root) nor
+    # .htaccess (every WordPress / Laravel site ships one; deleting it, as the old
+    # suggestion said, breaks its routes): flagged, they diluted the entries above.
+)
+SENSITIVE_MEDIUM_PATHS=(
     "phpinfo.php"
     "info.php"
     "test.php"
-    "adminer.php"
     ".DS_Store"
     "Thumbs.db"
-    # No composer.json / package.json: dependency manifests are not secrets
-    # and are routine in a web root, so flagging them as HIGH diluted the
-    # genuinely dangerous entries above. No .htaccess, for the same reason:
-    # rewrite rules that every WordPress / Laravel site ships, and deleting
-    # it as the old suggestion said breaks the site's routes on Apache.
-    ".env.local"
-    ".env.production"
 )
+SENSITIVE_PATHS=("${SENSITIVE_HIGH_PATHS[@]}" "${SENSITIVE_MEDIUM_PATHS[@]}")
 
 # Nginx security headers the audit asks every site for, and the value the fix
 # sends where one is missing. X-XSS-Protection 0 turns the legacy XSS auditor
@@ -1276,7 +1278,14 @@ webapp_audit() {
     local sensitive_count=$(count_lines "$sensitive")
 
     if [[ -n "$sensitive" && "$sensitive_count" -gt 0 ]]; then
-        check_emit "webapp.sensitive_files" high failed \
+        # High as soon as one found name is on the high list, medium otherwise.
+        local sensitive_sev=medium found name
+        while IFS= read -r found; do
+            for name in "${SENSITIVE_HIGH_PATHS[@]}"; do
+                if [[ "${found##*/}" == "$name" ]]; then sensitive_sev=high; fi
+            done
+        done <<<"$sensitive"
+        check_emit "webapp.sensitive_files" "$sensitive_sev" failed \
             title="$(i18n 'webapp.sensitive_files_found'): $sensitive_count" \
             desc="$(echo "$sensitive" | head -5 | tr '\n' '; ' | sed 's/;$//')" \
             suggestion="$(i18n 'webapp.remove_sensitive')"

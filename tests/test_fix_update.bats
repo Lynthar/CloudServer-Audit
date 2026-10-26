@@ -608,6 +608,38 @@ SH
     grep -q '/var/log/apt/history.log' <<<"$output"
 }
 
+@test "apply: unattended-upgrade's own output goes to the log, not the terminal" {
+    # -d prints a line per upgradable package; in a zh_CN guide that was dozens
+    # of English lines between the fix's own messages.
+    VPSSEC_QUIET_SCAN=0
+    _uu_installed
+    _vpssec_stub_script unattended-upgrade <<'SH'
+echo 'Package tzdata has a higher version available, checking if it is from an allowed origin'
+echo 'uu-stderr-line' >&2
+exit 0
+SH
+
+    run _update_fix_apply_security
+    [ "$status" -eq 0 ]
+    _vpssec_refute grep -q 'higher version available\|uu-stderr-line' <<<"$output"
+    grep -q 'Package tzdata has a higher version available' "$VPSSEC_LOGS/vpssec.log"
+    grep -q 'uu-stderr-line' "$VPSSEC_LOGS/vpssec.log"
+}
+
+@test "apply: a failed run shows unattended-upgrade's last lines" {
+    VPSSEC_QUIET_SCAN=0
+    _uu_installed
+    _vpssec_stub_script unattended-upgrade <<'SH'
+for i in 1 2 3 4 5 6 7 8; do echo "uu line $i"; done
+exit 1
+SH
+
+    run _update_fix_apply_security
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"uu line 8"* ]]
+    _vpssec_refute grep -qx 'uu line 2' <<<"$output"
+}
+
 @test "apply: nothing is claimed about history when the run failed" {
     VPSSEC_QUIET_SCAN=0
     _uu_installed

@@ -136,3 +136,14 @@ teardown() {
     vpssec_init
     [ "$(cat "$VPSSEC_STATE/.run.lock")" = "$$" ]
 }
+
+@test "the lock fd every child inherits is read-only" {
+    # Held for writing, every modinfo the audit ran (kmod_t under SELinux) was
+    # denied the inherited fd and logged an AVC: about 22 per audit.
+    command -v flock >/dev/null || skip "flock(1) not installed"
+    VPSSEC_MODE=audit
+    vpssec_init
+    local flags
+    flags=$(awk '/^flags:/ {print $2}' "/proc/$BASHPID/fdinfo/200")
+    (( (8#$flags & 3) == 0 ))
+}

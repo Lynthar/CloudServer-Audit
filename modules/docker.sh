@@ -579,7 +579,7 @@ _docker_audit_userns_remap() {
     if _docker_check_userns; then
         check_emit "docker.userns_enabled" low passed
         print_ok "$(i18n 'docker.userns_enabled')"
-    else
+    elif ! _docker_stalled; then
         check_emit "docker.userns_not_enabled" low failed \
             desc="$(i18n 'docker.userns_not_enabled_desc')" \
             suggestion="$(i18n 'docker.userns_fix')"

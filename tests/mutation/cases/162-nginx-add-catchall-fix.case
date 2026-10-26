@@ -1,6 +1,6 @@
 # Plant: the stock default site moved out of sites-enabled. It already claims
-# default_server on :80, and the fix does not edit another site's config, so with
-# it in place nginx -t rejects the catchall by design.
+# default_server on :80 and the fix does not edit another site's config, so with
+# it in place the audit offers no fix: the catchall would be a duplicate.
 # Expect: nginx.no_catchall → nginx.add_catchall → nginx.catchall_exists. Nothing
 # then serves 443, so only the :80 server is written. Rollback deletes it (rc 0),
 # and postrollback checks nginx still accepts its config — the audit would only

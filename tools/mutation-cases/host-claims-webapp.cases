@@ -45,3 +45,13 @@ run_case "claims/apache-file-is-main-only" 1 \
 run_case "claims/apache-first-setter-wins" 1 \
     '        grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"' \
     '        [[ -z "$last" ]] && grep -qiE "^[^#]*$1[[:space:]]" "$f" 2>/dev/null && last="$f"'
+
+# ---- sensitive files: secrets high, information-only medium -----------------
+
+run_case "sensitive/everything-medium" 1 \
+    '                if [[ "${found##*/}" == "$name" ]]; then sensitive_sev=high; fi' \
+    '                :'
+
+run_case "sensitive/everything-high-again" 1 \
+    '        local sensitive_sev=medium found name' \
+    '        local sensitive_sev=high found name'

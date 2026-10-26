@@ -382,13 +382,16 @@ _md_section() {
         # Which findings the score ignores, at the finding, not only as a count.
         def heading($c):
             "#### \($c.title)" + (if $c.scored == false then " _(\($unscored))_" else "" end);
+        # A check with no desc or suggestion gets no line for it, not an empty label.
+        def field($k; $v): if ($v // "") != "" then "- **\($k)**: \($v)\n" else "" end;
         def render($c):
             if $kind == "passed" then
                 "- ✓ \($c.title)\n"
             elif $kind == "low" then
-                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n"
+                "\(heading($c))\n\n- **ID**: \($c.id)\n" + field($info; $c.desc) + field($recs; $c.suggestion)
             else
-                "\(heading($c))\n\n- **ID**: \($c.id)\n- **\($info)**: \($c.desc)\n- **\($recs)**: \($c.suggestion)\n- **\($fixid)**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"
+                "\(heading($c))\n\n- **ID**: \($c.id)\n" + field($info; $c.desc) + field($recs; $c.suggestion)
+                + "- **\($fixid)**: \(if ($c.fix_id // "") == "" then "N/A" else $c.fix_id end)\(tmpl_note($c))\n"
             end;
         # The join happens in jq: command substitution strips the trailing
         # newline, which glued the next heading onto the previous line.

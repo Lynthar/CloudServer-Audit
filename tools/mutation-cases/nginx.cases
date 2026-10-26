@@ -86,8 +86,8 @@ run_case "skip/include-hint-not-printed" 1 \
 # spans four lines, so it is broken at the CLOSING line.
 
 run_case "status/config-write-unchecked" 1 \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then' \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")" && false; then'
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "${ports[@]}")"; then' \
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "${ports[@]}")" && false; then'
 
 run_case "status/ssl-mkdir-unchecked" 1 \
     '    if ! backup_mkdir "$NGINX_SSL_DIR" 2>/dev/null; then' \
@@ -155,12 +155,24 @@ run_case "postcondition/accepts-partial-coverage" 1 \
 
 # The 443 server and its certificate only where nginx already serves 443.
 run_case "needed/443-always-written" 1 \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "$needed")"; then' \
-    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config both)"; then'
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config "${ports[@]}")"; then' \
+    '    if ! write_file_atomic "$NGINX_CATCHALL_CONF" "$(_nginx_catchall_config 80 443)"; then'
 
 run_case "needed/cert-always-made" 1 \
-    '    if [[ "$needed" == both ]] && ! _nginx_ensure_catchall_cert; then' \
+    '    if [[ " ${ports[*]} " == *" 443 "* ]] && ! _nginx_ensure_catchall_cert; then' \
     '    if ! _nginx_ensure_catchall_cert; then'
+
+# A rerun rewrites its own file whole: the port it covered before must stay in it.
+run_case "own/covered-port-dropped" 1 \
+    '            *" 80only")  want+="80 " ;;' \
+    '            *" 80only")  ;;'
+
+# ---- the audit: no fix offered where its default_server is a duplicate --------
+
+# Debian's stock default site: the fix is offered again and fails on every such host.
+run_case "rival/fix-offered-anyway" 1 \
+    '        fix_id=""' \
+    '        :'
 
 # Occurrence 2 is the fix; 1 is the audit. A config nginx rejects must stop the
 # fix before anything is staged.

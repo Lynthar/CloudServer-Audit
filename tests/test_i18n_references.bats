@@ -33,6 +33,7 @@ FAMILY_BUILDERS=(
     '"category.${category}"' '"fixwarn.${fix_id}"' '[fixtmpl.${fix_id}]'
     '"ssh.check_${stem}"' '"${fail_id}_desc"'
     '"cloud.vendor_${1}"' '"cloud.agent_${1}"' '"cloud.provider_name_${provider}"'
+    '"cloud.firewall_name_${provider}"'
     '"kernel.core_issue_$tok"' '"kernel.ipv6_issue_$tok"' '"cloudflared.issue_$tok"'
 )
 
@@ -67,6 +68,7 @@ _family_keys() {
         printf '%s\n' "cloud.vendor_$vendor" "cloud.agent_$desc"
     done
     for fam in cloud.provider_name_:_get_provider_name \
+               cloud.firewall_name_:_get_provider_name \
                kernel.core_issue_:_kernel_core_issue_text \
                kernel.ipv6_issue_:_kernel_ipv6_check_security \
                cloudflared.issue_:_cloudflared_check_ingress_security; do

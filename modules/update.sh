@@ -323,10 +323,14 @@ _update_fix_apply_security() {
     # The operator's origins can include the main archive (Debian's default
     # does), so the run gets the security ones only, through a throwaway
     # APT_CONFIG: nothing under /etc changes.
-    local cfg rc=0
+    local cfg out rc=0
     cfg=$(_update_security_only_apt_config) || { print_error "$(i18n 'update.updates_failed')"; return 1; }
-    APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d 2>/dev/null || rc=$?
+    # As apt_install: the run's output goes to the log, not into the guide, and
+    # only a failure puts its last lines on stderr.
+    out=$(APT_CONFIG="$cfg/apt.conf" unattended-upgrade -d </dev/null 2>&1) || rc=$?
     rm -rf "$cfg"
+    log_info "unattended-upgrade -d exited $rc:"$'\n'"$out"
+    (( rc == 0 )) || tail -n 5 <<<"$out" >&2
 
     if (( rc == 0 )); then
         print_ok "$(i18n 'update.updates_applied')"

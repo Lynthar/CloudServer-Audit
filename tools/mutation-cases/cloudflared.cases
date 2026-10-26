@@ -4,7 +4,3 @@
 run_case "generate/config-write-unchecked" 1 \
     "    write_template \"\$output_file\" <<'EOF' || return 1" \
     "    write_template \"\$output_file\" <<'EOF' || true"
-
-run_case "generate/service-write-unchecked" 1 \
-    "    write_template \"\${template_dir}/cloudflared.service.example\" <<'EOF' || return 1" \
-    "    write_template \"\${template_dir}/cloudflared.service.example\" <<'EOF' || true"

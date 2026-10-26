@@ -47,3 +47,12 @@ run_case "scored/markdown-unmarked" 2 \
 run_case "render/title-cut-by-bytes" 1 \
     '                _drop_last_char_var title' \
     '                title="${title:0:-1}"'
+
+# An empty desc or suggestion prints no label; an empty fix id prints N/A, not a blank.
+run_case "fields/empty-label-printed" 1 \
+    '        def field($k; $v): if ($v // "") != "" then "- **\($k)**: \($v)\n" else "" end;' \
+    '        def field($k; $v): "- **\($k)**: \($v // "")\n";'
+
+run_case "fields/empty-fix-id-blank" 1 \
+    '                + "- **\($fixid)**: \(if ($c.fix_id // "") == "" then "N/A" else $c.fix_id end)\(tmpl_note($c))\n"' \
+    '                + "- **\($fixid)**: \($c.fix_id // "N/A")\(tmpl_note($c))\n"'

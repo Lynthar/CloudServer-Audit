@@ -17,6 +17,7 @@ declare -ga KERNEL_SYSCTL_BOOT_DIRS=(/run/sysctl.d /usr/local/lib/sysctl.d /usr/
 # One directory per IPv4 / IPv6 interface, plus all and default.
 KERNEL_IPV4_CONF_DIR="/proc/sys/net/ipv4/conf"
 KERNEL_IPV6_CONF_DIR="/proc/sys/net/ipv6/conf"
+KERNEL_SYS_CLASS_NET="/sys/class/net"
 
 # Variables, not literals, so the audit predicate and the fix read the SAME
 # locations, and so the fix is reachable from a test.
@@ -279,6 +280,12 @@ _kernel_ipv6_get_stats() {
     echo "$stats"
 }
 
+# An enslaved interface (bond or bridge member, Azure's accelerated-networking VF) hands
+# what it receives to its master's stack, so its own conf governs no traffic: not judged.
+_kernel_iface_enslaved() {
+    [[ -e "$KERNEL_SYS_CLASS_NET/$1/master" ]]
+}
+
 # Links systemd-networkd configures, one name per line. It takes RAs itself with
 # the kernel's accept_ra kept at 0, and writes use_tempaddr from
 # IPv6PrivacyExtensions=: no sysctl decides either on these links.
@@ -302,6 +309,7 @@ _kernel_ipv6_scan() {
         name="${dir%/}"
         name="${name##*/}"
         case "$name" in all|default|lo) continue ;; esac
+        _kernel_iface_enslaved "$name" && continue
         names+=("$name")
     done
     for name in "${names[@]}"; do
@@ -752,8 +760,8 @@ _kernel_param_scan() {
 KERNEL_IFACE_KEYS='^(send_redirects|secure_redirects|proxy_arp|accept_redirects|rp_filter)$'
 
 # A "bad" scan line for each interface whose own value of conf.all key $1 is the
-# one in force there and misses $3; $2 is the severity. Interfaces made before
-# a default was set keep their old value, so all/default can read hardened.
+# one in force there and misses $3; $2 is the severity. An interface stops following
+# default once it has an IPv4 address, so all/default can read hardened while it does not.
 _kernel_iface_scan() {
     local key="$1" severity="$2" expected="$3" dir name param value all=0
     [[ "$key" =~ $KERNEL_IFACE_KEYS ]] || return 0
@@ -766,6 +774,7 @@ _kernel_iface_scan() {
         name="${dir%/}"
         name="${name##*/}"
         case "$name" in all|default|lo) continue ;; esac
+        _kernel_iface_enslaved "$name" && continue
         # sysctl takes a dot inside an interface name (eth0.100) as a slash.
         param="net.ipv4.conf.${name//./\/}.$key"
         value=$(_kernel_get_sysctl "$param") || true

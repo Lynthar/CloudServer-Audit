@@ -11,6 +11,14 @@ run_case "ssh-rescue/unknown-silent" 1 \
     "            tty_warn \"\$(i18n 'ssh.rescue_fw_unknown' \"port=\$SSH_RESCUE_PORT\")\"" \
     '            :'
 
+run_case "ssh-rescue/cloud-hint-never-shown" 1 \
+    '            _ssh_rescue_cloud_hint' \
+    '            :'
+
+run_case "ssh-rescue/cloud-hint-off-cloud" 1 \
+    '        unknown)           return 0 ;;' \
+    "        unknown)           key='cloud.firewall_name_unknown' ;;"
+
 run_case "watchdog/never-started" 1 \
     '            _ssh_rescue_start_watchdog' \
     '            :'

@@ -1,0 +1,25 @@
+# Mutation cases: tests/test_baseline_selinux.bats against modules/baseline.sh.
+# mutate-suite: modules/baseline.sh tests/test_baseline_selinux.bats
+#
+# The AVC count reads the audit log, never vpssec's own stdin; the suite's
+# ausearch stub reads stdin when it is a pipe, as the real one does.
+
+run_case "selinux/ausearch-reads-stdin" 1 \
+    "        ausearch -m avc -ts today 2>/dev/null </dev/null | awk '/type=AVC/ {c++} END {print c+0}'" \
+    "        ausearch -m avc -ts today 2>/dev/null | awk '/type=AVC/ {c++} END {print c+0}'"
+
+run_case "selinux/permissive-count-dropped" 1 \
+    "            desc=\"\$(i18n 'baseline.selinux_permissive_desc' \"denials=\${denials_shown}\")\" \\" \
+    "            desc=\"\$(i18n 'baseline.selinux_permissive_desc')\" \\"
+
+run_case "selinux/unknown-count-shown-raw" 1 \
+    "    [[ \"\$denials\" == \"unknown\" ]] && denials_shown=\$(i18n 'common.unknown')" \
+    '    :'
+
+run_case "no-mac/rhel-offered-apparmor" 1 \
+    '    if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" ]]; then' \
+    '    if false; then'
+
+run_case "no-mac/debian-sent-to-selinux" 1 \
+    '    if [[ "${VPSSEC_DISTRO_FAMILY:-debian}" == "rhel" ]]; then' \
+    '    if true; then'

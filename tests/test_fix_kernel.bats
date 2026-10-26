@@ -43,6 +43,13 @@ _kernel_source() {
     KERNEL_COREDUMP_DROPIN="$KERNEL_COREDUMP_D/99-vpssec.conf"
     KERNEL_IPV4_CONF_DIR="$BATS_TEST_TMPDIR/ipv4-conf"
     KERNEL_IPV6_CONF_DIR="$BATS_TEST_TMPDIR/ipv6-conf"
+    KERNEL_SYS_CLASS_NET="$BATS_TEST_TMPDIR/sys-class-net"
+}
+
+# Interface $1 is enslaved to $2, as sysfs shows it: a master link to the master's directory.
+_enslave() {
+    mkdir -p "$KERNEL_SYS_CLASS_NET/$1" "$KERNEL_SYS_CLASS_NET/$2"
+    ln -s "../$2" "$KERNEL_SYS_CLASS_NET/$1/master"
 }
 
 # Rebuild the param table as the module builds it on distro $1 (family $2).
@@ -433,6 +440,25 @@ _networkd_configures() {
     [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
 }
 
+@test "IPv6: an enslaved interface is not judged, its master is" {
+    # Azure's accelerated-networking VF eth1 sits under eth0, which handles what it receives.
+    i18n_load en_US
+    _host_static_ipv6
+    _ipv6_in_use_at 0
+    _ipv6_defaults_hardened
+    _ipv6_iface eth0 accept_ra=0 accept_redirects=0 use_tempaddr=2 forwarding=0
+    _ipv6_iface eth1 accept_ra=1 accept_redirects=1 use_tempaddr=0 forwarding=0
+    _enslave eth1 eth0
+    _kernel_audit_ipv6
+    [ -n "$(_emitted_field kernel.ipv6_secure id)" ]
+
+    _ipv6_in_use_at 0
+    _ipv6_iface eth0 accept_redirects=1
+    _kernel_audit_ipv6
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" == *eth0* ]]
+    [[ "$(_emitted_field kernel.ipv6_insecure desc)" != *eth1* ]]
+}
+
 @test "IPv6: the default that new interfaces copy is judged as well" {
     i18n_load en_US
     _host_static_ipv6
@@ -676,6 +702,23 @@ _audit_network() {
     _iface docker0 accept_redirects=1 forwarding=1
 
     _kernel_network_params_ok
+}
+
+@test "interfaces: an enslaved interface is not judged, a bond or bridge member alike" {
+    # Its master's stack handles what it receives, so only the master's own value is in force.
+    i18n_load en_US
+    _host_static_ipv6
+    _sysctl_seed net.ipv4.conf.all.accept_redirects 0
+    _sysctl_seed net.ipv4.conf.default.accept_redirects 0
+    _iface eth0 accept_redirects=0 forwarding=0
+    _iface eth1 accept_redirects=1 forwarding=0
+    _enslave eth1 eth0
+    _kernel_network_params_ok
+
+    _iface eth0 accept_redirects=1
+    _audit_network
+    [[ "$(_emitted_field kernel.network_params_medium desc)" == *"net.ipv4.conf.eth0.accept_redirects=1"* ]]
+    [[ "$(_emitted_field kernel.network_params_medium desc)" != *eth1* ]]
 }
 
 @test "interfaces: rp_filter is flagged where the interface's own value is the one in force" {
