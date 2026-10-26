@@ -65,7 +65,8 @@ _audit_nginx() {
 }
 
 _ids() { jq -r '.[].id' "$VPSSEC_STATE/checks.json"; }
-_desc() { jq -r --arg id "$1" '.[] | select(.id == $id) | .desc' "$VPSSEC_STATE/checks.json"; }
+_desc() { _field "$1" desc; }
+_field() { jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f] // ""' "$VPSSEC_STATE/checks.json"; }
 
 @test "tls: stock Debian 12 with no TLS server raises no TLS finding" {
     # nginx.conf's http{} ships TLSv1 and TLSv1.1, but nothing listens with ssl.
@@ -152,10 +153,32 @@ b.example" ]
 }
 
 @test "headers: a site is named with the headers its response lacks" {
-    _dump_http 'server { listen 80; server_name app.example; add_header X-Frame-Options DENY; }'
+    _dump_http 'server { listen 80; server_name app.example; location / { proxy_pass http://127.0.0.1:3000; } }'
     _answer 'http://app.example/' 0 'HTTP/2 200' 'x-frame-options: DENY' 'x-content-type-options: nosniff'
     _audit_nginx
     [ "$(_desc webapp.nginx_security_headers)" = "http://app.example/: Referrer-Policy, X-XSS-Protection" ]
+    [ "$(_field webapp.nginx_security_headers fix_id)" = webapp.nginx_security_headers ]
+}
+
+@test "headers: a server with add_header of its own is named apart, with no fix that cannot reach it" {
+    # nginx hands http{}'s add_header only to a server that sets none: the drop-in
+    # would be written and every verify would fail. Certbot's --hsts writes one there.
+    _dump_http 'server { listen 80; server_name app.example; add_header Strict-Transport-Security "max-age=1" always; }'
+    _answer 'http://app.example/' 0 'HTTP/1.1 200 OK' 'strict-transport-security: max-age=1'
+    _audit_nginx
+    [ "$(_desc webapp.nginx_security_headers)" = "http://app.example/: Referrer-Policy, X-Content-Type-Options, X-Frame-Options, X-XSS-Protection ($(i18n 'webapp.headers_own_add_header'))" ]
+    [ -z "$(_field webapp.nginx_security_headers fix_id)" ]
+    [ "$(_field webapp.nginx_security_headers suggestion)" = "$(i18n 'webapp.add_security_headers_in_server')" ]
+}
+
+@test "headers: the fix is offered for the sites it reaches, the others named apart" {
+    _dump_http 'server { listen 80; server_name a.example; }
+server { listen 80; server_name b.example; add_header Cache-Control no-store; }'
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK'
+    _answer 'http://b.example/' 0 'HTTP/1.1 200 OK' 'cache-control: no-store'
+    _audit_nginx
+    [ "$(_field webapp.nginx_security_headers fix_id)" = webapp.nginx_security_headers ]
+    [[ "$(_desc webapp.nginx_security_headers)" == "http://a.example/: "*"; http://b.example/: "*"($(i18n 'webapp.headers_own_add_header'))" ]]
 }
 
 @test "headers: the request names the server and goes to its listen address" {
@@ -291,6 +314,23 @@ SH
     run _webapp_nginx_security_headers_ok
     [ "$status" -eq 1 ]
     [ "$(grep -c '^curl ' "$VPSSEC_STUB_LOG")" -eq 3 ]
+}
+
+@test "verify: a site whose own add_header keeps http{}'s out does not fail the fix" {
+    _dump_http 'server { listen 80; server_name a.example; }
+server { listen 80; server_name b.example; add_header Cache-Control no-store; }'
+    sleep() { :; }
+    _answer 'http://a.example/' 0 'HTTP/1.1 200 OK' "${_ALL_FOUR[@]}"
+    _answer 'http://b.example/' 0 'HTTP/1.1 200 OK'
+    _webapp_nginx_security_headers_ok
+}
+
+@test "verify: no site answering is no proof that the headers went out" {
+    _dump_http 'server { listen 80; server_name a.example; }'
+    sleep() { :; }
+    _answer 'http://a.example/' 28
+    run _webapp_nginx_security_headers_ok
+    [ "$status" -eq 1 ]
 }
 
 @test "presence: nginx with its config outside /etc/nginx is still audited" {

@@ -44,7 +44,8 @@ curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.5.0 bash
 ```
 
 服务器自带的那些（bash、coreutils、systemd、iproute2 里的 `ss`）之外，还需要
-`jq` 与 `curl`，缺哪个两个脚本都会自己装。验签用的 `cosign` 优先装发行版软件源里的；软件源里没有，
+`jq` 与 `curl`，缺哪个两个脚本都会自己装；Arch 例外，在那里装任何东西都意味着整机升级，脚本会停下、
+给出要运行的 `pacman` 命令。验签用的 `cosign` 优先装发行版软件源里的；软件源里没有，
 就装一个钉死版本、先核对哈希。脚本装上的东西都会留在系统里，一次性运行也一样。
 
 ## 用法

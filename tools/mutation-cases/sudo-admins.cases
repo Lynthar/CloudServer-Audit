@@ -112,3 +112,12 @@ run_case "accounts/non-accounts-kept" 1 \
 run_case "grants/first-wins" 1 \
     '            last[$acct]="$auth"' \
     '            [[ -n "${last[$acct]:-}" ]] || last[$acct]="$auth"'
+
+# sudo-rs asks for the password whatever a Defaults line says of authenticate.
+run_case "sudo-rs/authenticate-honoured" 1 \
+    '                if (ENVIRON["SUDO_IS_RS"] != "") next' \
+    '                x = 1'
+
+run_case "sudo-rs/never-recognised" 1 \
+    '    [[ "$v" == sudo-rs* ]]' \
+    '    false'

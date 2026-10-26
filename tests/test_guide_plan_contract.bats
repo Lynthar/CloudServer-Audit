@@ -175,6 +175,21 @@ SH
     [ "$(cat "$BATS_TEST_TMPDIR/wt-text")" = "$(seq 1 30)" ]
 }
 
+@test "tui_review_plan: Esc on the plan is no answer, so the guide goes on to its confirmation" {
+    # guide runs under set -e: the 255 whiptail and dialog return for Esc ended it there, unsaid.
+    export TMPDIR="$BATS_TEST_TMPDIR"
+    printf '%s\n' 'plan' > "$BATS_TEST_TMPDIR/plan"
+    local backend
+    for backend in whiptail dialog; do
+        TUI_BACKEND=$backend
+        _vpssec_stub "$backend" 255
+        run tui_review_plan "$BATS_TEST_TMPDIR/plan"
+        [ "$status" -eq 0 ]
+        grep -q "^$backend .*--textbox" "$VPSSEC_STUB_LOG"
+    done
+    _vpssec_refute compgen -G "$BATS_TEST_TMPDIR/tmp.*"
+}
+
 @test "generate_plan: one entry per unique fix id, even when selected twice" {
     # Selection repeats shared_fix (the UI can produce this when two rows
     # carried the same fix), and two checks in state match it.

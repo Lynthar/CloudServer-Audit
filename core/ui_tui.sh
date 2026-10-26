@@ -67,13 +67,13 @@ tui_checklist() {
     fi
 }
 
-# Text box for viewing files/content. newt erases the right border on every
-# text row under --scrolltext, and wraps by code points, so a CJK line can
-# overrun it: lines come wrapped by display cells, the scrollbar only if needed.
+# Text box, always returning 0: it asks nothing, and Esc's 255 would end a set -e
+# guide. newt erases the right border under --scrolltext and wraps by code points:
+# lines come wrapped by display cells, the scrollbar only when they overflow.
 tui_textbox() {
     local title="$1"
     local file="$2"
-    local view="" line rc=0
+    local view="" line
     local -a scroll=(--scrolltext)
 
     # Without a temp file the plan is still shown, unwrapped and scrollable.
@@ -85,13 +85,13 @@ tui_textbox() {
     fi
 
     if [[ "$TUI_BACKEND" == "whiptail" ]]; then
-        whiptail --title "$title" ${scroll[@]+"${scroll[@]}"} --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || rc=$?
+        whiptail --title "$title" ${scroll[@]+"${scroll[@]}"} --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || true
     elif [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --title "$title" --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || rc=$?
+        dialog --title "$title" --textbox "${view:-$file}" $TUI_HEIGHT $TUI_WIDTH || true
         clear 2>/dev/null >/dev/tty || true
     fi
     [[ -z "$view" ]] || rm -f "$view"
-    return "$rc"
+    return 0
 }
 
 # --- High-level TUI Functions for vpssec ---

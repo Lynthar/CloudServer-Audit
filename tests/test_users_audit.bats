@@ -34,6 +34,8 @@ awk -F: -v k="$2" '$1 == k || $3 == k { print; found = 1; exit } END { exit !fou
 SH
     # No sshd answers, whatever the host: key files are sshd's defaults.
     _vpssec_stub sshd 255
+    # Classic sudo unless a test says otherwise.
+    _vpssec_stub sudo 0 'Sudo version 1.9.16'
 }
 
 _account() { printf '%s\n' "$@" >> "$FAKE_PASSWD"; }
@@ -83,6 +85,14 @@ S
     [[ "$desc" == *"sudoers.local: frank ALL=(ALL) NOPASSWD: ALL"* ]]
     [[ "$desc" == *"Defaults:erin !authenticate"* ]]
     [[ "$desc" != *hank* ]]
+}
+
+@test "users audit: on sudo-rs a Defaults !authenticate is no passwordless rule" {
+    _vpssec_stub sudo 0 'sudo-rs 0.2.13-0ubuntu1.2'
+    _account 'erin:x:1005:1005::/home/erin:/bin/bash'
+    printf 'Defaults:erin !authenticate\nerin ALL=(ALL) ALL\n' >> "$SUDOERS_FILE"
+    users_audit
+    _vpssec_refute _emitted users.nopasswd_sudo
 }
 
 @test "users audit: passwordless sudo for root alone is no finding" {

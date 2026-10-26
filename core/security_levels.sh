@@ -301,6 +301,8 @@ declare -gA FIX_VERIFY=(
     ["timezone.set_rtc_utc"]="_timezone_rtc_utc"
     ["timezone.set_locale"]="_timezone_locale_set"
     ["webapp.nginx_server_tokens"]="_webapp_nginx_server_tokens_ok"
+    # Reach: the drop-in sits in http{}, which a server with add_header of its
+    # own never inherits, so those sites stay reported, with no fix offered.
     ["webapp.nginx_security_headers"]="_webapp_nginx_security_headers_ok"
 
     ["update.install_unattended"]="_update_unattended_enabled"

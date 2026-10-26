@@ -160,3 +160,22 @@ run_case "headers/verify-not-retried" 1 \
 run_case "headers/verify-once" 1 \
     '    for try in 1 2 3; do' \
     '    for try in 1; do'
+
+# A server with add_header of its own never inherits http{}'s: taken as reachable,
+# the fix is offered there and every verify fails.
+run_case "headers/own-add-header-unseen" 1 \
+    '        $3 == "add_header" { own[$1] = 1 }' \
+    '        $3 == "add_header" { }'
+
+run_case "headers/own-reported-as-reachable" 1 \
+    '            [[ "$own" == own ]] && kind=own' \
+    '            :'
+
+run_case "headers/fix-offered-out-of-reach" 1 \
+    '            fix_id=""' \
+    '            :'
+
+# A verify in which no site answered saw no header go out.
+run_case "headers/verify-passes-unseen" 1 \
+    '            grep -q $'"'"'^ok\t'"'"' <<<"$results"' \
+    '            true'

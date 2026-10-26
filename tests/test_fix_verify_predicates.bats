@@ -196,7 +196,6 @@ SH
     _kernel_get_sysctl() {
         case "$1" in
             net.ipv6.conf.default.accept_ra) echo 1 ;;
-            net.ipv6.conf.default.use_tempaddr) echo 2 ;;
             *) echo 0 ;;
         esac
     }

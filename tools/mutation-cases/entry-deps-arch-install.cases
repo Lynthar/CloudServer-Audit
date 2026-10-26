@@ -1,6 +1,11 @@
 # Mutation cases: tests/test_entry_deps_arch.bats against install.sh.
 # mutate-suite: install.sh tests/test_entry_deps_arch.bats
 
-run_case "arch-deps/partial-upgrade" 1 \
-    '            pacman -Syu --noconfirm --needed "${missing[@]}"' \
-    '            pacman -Sy --noconfirm --needed "${missing[@]}"'
+run_case "arch-deps/upgrades-unasked" 1 \
+    '            print_error "On Arch, installing means a full system upgrade; run it, then re-run: pacman -Syu --needed ${missing[*]}"' \
+    '            pacman -Syu --noconfirm --needed "${missing[@]}"'
+
+# Occurrence 1: the Arch branch's exit comes first in the file.
+run_case "arch-deps/goes-on-without-tools" 1 \
+    '            exit 1' \
+    '            :'

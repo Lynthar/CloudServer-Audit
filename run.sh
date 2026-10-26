@@ -172,9 +172,10 @@ check_requirements() {
             yum -q makecache >&2 || true
             yum install -y "${missing[@]}" >&2
         elif command -v pacman &>/dev/null; then
-            # -Syu, never -Sy: installing against a freshly synced database
-            # without upgrading the rest is a partial upgrade, unsupported on Arch.
-            pacman -Syu --noconfirm --needed "${missing[@]}" >&2
+            # Arch installs only within a full upgrade (-Sy alone is the partial
+            # upgrade it does not support), and an audit must not start one unasked.
+            print_error "On Arch, installing means a full system upgrade; run it, then re-run: pacman -Syu --needed ${missing[*]}"
+            exit 1
         elif command -v zypper &>/dev/null; then
             zypper --non-interactive install "${missing[@]}" >&2
         else

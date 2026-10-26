@@ -462,7 +462,8 @@ wrap_to_width() {
         if (( b >= 0xF0 )); then len=4; elif (( b >= 0xE0 )); then len=3
         elif (( b >= 0xC0 )); then len=2; else len=1; fi
         ch="${text:i:len}"
-        cw=$(_display_width "$ch")
+        # Printable ASCII is one cell; only the rest pays for a subshell.
+        if (( b >= 0x20 && b < 0x7F )); then cw=1; else cw=$(_display_width "$ch"); fi
         # word: byte offset in line where the current ASCII word starts, -1 outside one.
         if [[ "$ch" == [A-Za-z0-9_./-] ]]; then
             (( word < 0 )) && word=${#line} word_w=w
@@ -1366,11 +1367,21 @@ _sudoers_lines() {
     done < "$file"
 }
 
+# True when `sudo` is sudo-rs. It has no authenticate setting: it warns of an
+# unknown setting on such a Defaults line and asks for the password anyway.
+_sudo_is_rs() {
+    local v
+    v=$(sudo --version 2>/dev/null) || return 1
+    [[ "$v" == sudo-rs* ]]
+}
+
 # sudoers as tab-separated records in sudo's reading order; "-" stands for an
-# empty field, which read's IFS would swallow. G file who N|P|- text: all
-# commands as root; T file who text: NOPASSWD; D file g|u|r|c who 0|1 text.
+# empty field, which read's IFS would swallow. G file who N|P|- text: all commands
+# as root; T file who text: NOPASSWD; D file g|u|r|c who 0|1 text (none on sudo-rs).
 _sudoers_records() {
-    _sudoers_lines "$SUDOERS_FILE" | LC_ALL=C awk '
+    local rs=""
+    _sudo_is_rs && rs=1
+    _sudoers_lines "$SUDOERS_FILE" | SUDO_IS_RS="$rs" LC_ALL=C awk '
         function norm(s) { gsub(/[ \t]+/, " ", s); sub(/^ /, "", s); sub(/ $/, "", s); return s }
         function tight(s) {
             gsub(/ ?, ?/, ",", s); gsub(/ ?: ?/, ":", s); gsub(/ ?= ?/, "=", s)
@@ -1464,6 +1475,7 @@ _sudoers_records() {
                 next
             }
             if (s ~ /^Defaults([:@>!]|( |$))/) {
+                if (ENVIRON["SUDO_IS_RS"] != "") next
                 c = substr(s, 9, 1); cls = "g"; bind = ""; rest = substr(s, 10)
                 if (c == ":" || c == "@" || c == ">" || c == "!") {
                     p = index(rest, " "); if (!p) next

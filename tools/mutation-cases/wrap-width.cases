@@ -5,7 +5,7 @@
 # newt counts code points, so a CJK line measured that way overran the box.
 
 run_case "wrap/code-points-counted" 1 \
-    '        cw=$(_display_width "$ch")' \
+    '        if (( b >= 0x20 && b < 0x7F )); then cw=1; else cw=$(_display_width "$ch"); fi' \
     '        cw=1'
 
 # A character wider than the line used to cost an empty line before it.

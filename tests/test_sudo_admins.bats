@@ -30,6 +30,8 @@ esac
 # By name, or by number as glibc's getent also answers.
 awk -F: -v k="$2" '$1 == k || $3 == k { print; found = 1; exit } END { exit !found }' "$f"
 SH
+    # Classic sudo unless a test says otherwise, whatever the host runs.
+    _vpssec_stub sudo 0 'Sudo version 1.9.16'
 }
 
 _rule() {
@@ -168,6 +170,16 @@ _rule() {
     sudo_nopasswd_admin erin
     _rule 80-defaults 'Defaults>www-data !authenticate'
     _vpssec_refute sudo_nopasswd_admin erin
+}
+
+@test "on sudo-rs, Defaults !authenticate decides nothing: the password is still asked" {
+    # sudo-rs has no authenticate setting: it warns of an unknown setting and asks.
+    _vpssec_stub sudo 0 'sudo-rs 0.2.13-0ubuntu1.2'
+    _rule 80-defaults 'Defaults:erin !authenticate'
+    _rule 90-erin 'erin ALL=(ALL) ALL'
+    _vpssec_refute sudo_nopasswd_admin erin
+    run sudo_admin_users
+    [[ "$output" == *erin* ]]
 }
 
 @test "a runas Defaults is applied after a user one, as in sudo" {

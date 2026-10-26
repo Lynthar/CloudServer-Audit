@@ -31,3 +31,12 @@ run_case "locale/default-locale-not-backed-up" 1 \
 run_case "ntp/undo-not-recorded" 1 \
     '            [[ "$was_on" == "yes" ]] || record_undo timezone.enable_ntp "timedatectl set-ntp false"' \
     '            :'
+
+# With no bus to timedated, chrony was installed, and Debian's chrony removes timesyncd.
+run_case "ntp/timesyncd-swapped-for-chrony" 1 \
+    '    if [[ -n "$(systemctl list-unit-files --no-legend systemd-timesyncd.service 2>/dev/null)" ]]; then' \
+    '    if false; then'
+
+run_case "ntp/timesyncd-start-unlogged" 1 \
+    '                record_undo timezone.enable_ntp "systemctl disable --now systemd-timesyncd"' \
+    '                :'

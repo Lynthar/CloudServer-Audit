@@ -50,7 +50,8 @@ curl -fsSL .../main/run.sh | sudo env VPSSEC_VERSION=v1.5.0 bash
 
 Beyond what a stock server install already has (bash, coreutils, systemd, `ss`
 from iproute2), vpssec needs `jq` and `curl`, and both scripts install whichever
-is missing. `cosign`, which checks the signature, comes from the
+is missing — except on Arch, where installing anything means a full system
+upgrade: there they stop and print the `pacman` command to run. `cosign`, which checks the signature, comes from the
 distribution's packages where they have it, and otherwise from a pinned release
 checked against its hash. Whatever the scripts install stays installed, after a
 one-shot run too.

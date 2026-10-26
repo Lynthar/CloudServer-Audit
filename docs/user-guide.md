@@ -456,14 +456,16 @@ sysctl kernel.randomize_va_space
 较大的。`default` 只管之后新建的网卡；Debian 13、Ubuntu 22.04 / 26.04 的 systemd 还自带
 `net.ipv4.conf.*.rp_filter = 2`，把每块网卡都设成宽松模式。网卡自己的值才是生效的那份时，审计
 按网卡点名报出（例如 `net.ipv4.conf.eth0.rp_filter=2`）；修复改网卡的运行值，持久化写成通配行
-`net.ipv4.conf.*.<参数>`，每块网卡出现时 udev 都会套用，与网卡名、创建先后无关。
+`net.ipv4.conf.*.<参数>`，每块网卡出现时 udev 都会套用，与网卡名、创建先后无关。上表那类转发
+主机上，网卡自己的 `proxy_arp` 不判：Calico 的 `cali*` 网卡、路由模式虚拟化主机的网桥都靠它替
+身后的机器应答 ARP，清零就断网。
 
 启用了 ufw 时还有一层：ufw 每次启动和重载都会在 sysctl.d 之后套用 `/etc/default/ufw` 里
 `IPT_SYSCTL` 指向的文件（默认 `/etc/ufw/sysctl.conf`），它出厂写着 `log_martians=0`。修复会在
 这个文件末尾追加加固值（回滚时还原），否则下一次 `ufw reload` 就把它改回去。
 
 **自动修复**: `kernel.harden_network`（需确认；可能影响容器网络）。IPv6 的
-`accept_ra`、`accept_redirects`、`use_tempaddr` 归下一节的 IPv6 检测与 `kernel.harden_ipv6`
+`accept_ra`、`accept_redirects` 归下一节的 IPv6 检测与 `kernel.harden_ipv6`
 
 **修复方法**:
 ```bash
@@ -502,22 +504,24 @@ sysctl -a 2>/dev/null | grep -E 'rp_filter|redirects'
 
 **关键配置**:
 - `net.ipv6.conf.all.accept_redirects = 0` - 禁止接受重定向
-- `net.ipv6.conf.all.use_tempaddr = 2` - 优先使用隐私扩展地址
 - `net.ipv6.conf.all.accept_ra = 0` - 禁止接受路由通告，**只适用于静态配置 IPv6 的主机**：
   靠路由通告（RA / SLAAC）拿默认路由的主机上，`accept_ra = 1` 正是它保住 IPv6 连通的设置，
   审计对这类主机不报这一项
 - IPv6 防火墙应与 IPv4 防火墙同步配置
 
-这三个参数内核只读每块网卡自己的那份：写 `all` 管不到任何网卡，`default` 只给之后新建的
+这两个参数内核只读每块网卡自己的那份：写 `all` 管不到任何网卡，`default` 只给之后新建的
 网卡当初值；转发的网卡不收重定向，`accept_ra` 要为 2 才收路由通告。所以审计逐块网卡读，
 外加 `default`，有问题的点名报出（例如 `accept_redirects=1 (ICMP redirects accepted): ens18`）；
-回环和不支持临时地址的网卡（`use_tempaddr` 为 -1）不判。
+回环不判。
+
+隐私扩展（`use_tempaddr`）不判也不改：临时地址只给 SLAAC 地址（以及手动标了 `mngtmpaddr`
+的地址）生成，设成 2 之后出站连接优先用这些轮换的地址，它们没有反向解析，发信与按 IP 放行的
+白名单都会受影响；对地址本来就公开在 DNS 里的服务器没有安全上的好处。
 
 systemd-networkd 管的网卡（用 netplan 的主机多半如此）是例外：networkd 自己接收路由通告，
-把内核的 `accept_ra` 保持为 0，并按 `IPv6PrivacyExtensions=` 改写 `use_tempaddr`，sysctl 在这些
-网卡上改不了这两项。审计对它们不判这两项、不计分，另列一条 `kernel.ipv6_networkd_managed`，
-提示到网络配置里设：netplan 写 `accept-ra: false` 与 `ipv6-privacy: true`，`.network` 文件写
-`IPv6AcceptRA=no` 与 `IPv6PrivacyExtensions=yes`。
+把内核的 `accept_ra` 保持为 0，sysctl 在这些网卡上改不了这一项。审计对它们不判 `accept_ra`、
+不计分，另列一条 `kernel.ipv6_networkd_managed`，提示到网络配置里设：netplan 写
+`accept-ra: false`，`.network` 文件写 `IPv6AcceptRA=no`。
 
 **自动修复**: `kernel.harden_ipv6`（需确认）。改有问题的网卡的运行值与 `default`，持久化写
 通配行 `net.ipv6.conf.*.<参数>`，道理与上一节 IPv4 的网卡键相同。`accept_ra` 只在默认路由不是
@@ -537,7 +541,6 @@ cat >> /etc/sysctl.d/99-security.conf << 'EOF'
 net.ipv6.conf.*.accept_redirects = 0
 net.ipv6.conf.all.accept_source_route = 0
 net.ipv6.conf.default.accept_source_route = 0
-net.ipv6.conf.*.use_tempaddr = 2
 EOF
 
 # 3. 仅当第 1 步没有 proto ra（IPv6 是静态配置的）时，再加这一行
@@ -547,7 +550,7 @@ EOF
 
 # 按开机时的方式整体重新套用，再抽查每块网卡的实际值
 systemctl restart systemd-sysctl
-sysctl -a 2>/dev/null | grep -E 'ipv6\.conf\..*\.(accept_ra|accept_redirects|use_tempaddr) '
+sysctl -a 2>/dev/null | grep -E 'ipv6\.conf\..*\.(accept_ra|accept_redirects) '
 
 # 不使用 IPv6、也确认没有服务依赖它时，可以整体禁用（审计直接判通过）
 # echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.d/99-security.conf

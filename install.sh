@@ -181,8 +181,9 @@ check_system() {
         elif command -v yum &>/dev/null; then
             yum install -y "${missing[@]}"
         elif command -v pacman &>/dev/null; then
-            # -Syu, never -Sy: a partial upgrade, unsupported on Arch.
-            pacman -Syu --noconfirm --needed "${missing[@]}"
+            # Arch installs only within a full upgrade, and that is the operator's to start.
+            print_error "On Arch, installing means a full system upgrade; run it, then re-run: pacman -Syu --needed ${missing[*]}"
+            exit 1
         elif command -v zypper &>/dev/null; then
             zypper --non-interactive install "${missing[@]}"
         else

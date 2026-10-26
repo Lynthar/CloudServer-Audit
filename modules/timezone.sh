@@ -429,7 +429,25 @@ _timezone_fix_enable_ntp() {
         fi
     fi
 
-    # Try to install and enable chrony as alternative
+    # set-ntp needs D-Bus to reach timedated; an installed timesyncd starts without
+    # it, and chrony is no stand-in: Debian's chrony package removes systemd-timesyncd.
+    if [[ -n "$(systemctl list-unit-files --no-legend systemd-timesyncd.service 2>/dev/null)" ]]; then
+        local was_enabled
+        was_enabled=$(systemctl is-enabled systemd-timesyncd 2>/dev/null) || true
+        if systemctl enable --now systemd-timesyncd &>/dev/null; then
+            print_ok "$(i18n 'timezone.ntp_enabled')"
+            if [[ "$was_enabled" == enabled ]]; then
+                record_undo timezone.enable_ntp "systemctl stop systemd-timesyncd"
+            else
+                record_undo timezone.enable_ntp "systemctl disable --now systemd-timesyncd"
+            fi
+            return 0
+        fi
+        print_error "$(i18n 'timezone.ntp_enable_failed')"
+        return 1
+    fi
+
+    # No timesyncd: chrony, installed first if it is missing
     local -a missing=()
     mapfile -t missing < <(pkg_missing chrony)
     apt_refresh_index

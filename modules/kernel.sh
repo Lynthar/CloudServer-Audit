@@ -69,9 +69,9 @@ declare -ga KERNEL_SECURITY_PARAMS=(
     "net.ipv4.conf.all.mc_forwarding:0:low:Multicast forwarding (default off; enable = mrouted role)"
     "net.ipv4.conf.all.proxy_arp:0:low:Proxy ARP (default off; enable = bridge/router role)"
 
-    # Network security - IPv6. accept_ra, accept_redirects and use_tempaddr
-    # belong to the IPv6 check; a key that exists only under "all" reaches no
-    # interface, so none is listed.
+    # Network security - IPv6. accept_ra and accept_redirects belong to the
+    # IPv6 check; a key that exists only under "all" reaches no interface, so
+    # none is listed.
     "net.ipv6.conf.all.accept_source_route:0:medium:IPv6 source routing"
     "net.ipv6.conf.default.accept_source_route:0:medium:IPv6 source routing (default)"
 
@@ -287,8 +287,7 @@ _kernel_iface_enslaved() {
 }
 
 # Links systemd-networkd configures, one name per line. It takes RAs itself with
-# the kernel's accept_ra kept at 0, and writes use_tempaddr from
-# IPv6PrivacyExtensions=: no sysctl decides either on these links.
+# the kernel's accept_ra kept at 0: no sysctl decides that on these links.
 _kernel_networkd_links() {
     command -v networkctl >/dev/null 2>&1 || return 0
     networkctl list --no-legend --no-pager 2>/dev/null \
@@ -327,11 +326,6 @@ _kernel_ipv6_scan() {
             if [[ "$fwd" == 1 ]]; then accepts=$(( value == 2 )); else accepts=$(( value != 0 )); fi
             (( accepts )) && echo "bad accept_ra_enabled $sys.accept_ra 0 $value"
         fi
-        # -1 is a link that cannot have temporary addresses (loopback, tunnels).
-        value=$(_kernel_get_sysctl "$sys.use_tempaddr") || true
-        if [[ "$value" =~ ^[0-9]+$ ]] && (( value < 2 )); then
-            echo "bad privacy_extensions_weak $sys.use_tempaddr 2 $value"
-        fi
     done
     return 0
 }
@@ -342,12 +336,12 @@ _kernel_ipv6_where() {
         | paste -sd, - | sed 's/,/, /g'
 }
 
-# Check for IPv6-specific security issues
+# IPv6 issue tokens, space-separated; $1, when given, is a scan already taken.
 _kernel_ipv6_check_security() {
-    local issues=() scan tok
+    local issues=() scan
 
     if _kernel_ipv6_enabled; then
-        scan=$(_kernel_ipv6_scan)
+        if (( $# )); then scan="$1"; else scan=$(_kernel_ipv6_scan); fi
         # Router Advertisements are a MITM vector, except on an RA/SLAAC host
         # where accept_ra=1 is what keeps the default route (as for net.*).
         grep -q '^bad accept_ra_enabled ' <<<"$scan" && issues+=("accept_ra_enabled")
@@ -358,9 +352,7 @@ _kernel_ipv6_check_security() {
             issues+=("forwarding_enabled")
         fi
 
-        for tok in privacy_extensions_weak accept_redirects_enabled; do
-            grep -q "^bad $tok " <<<"$scan" && issues+=("$tok")
-        done
+        grep -q '^bad accept_redirects_enabled ' <<<"$scan" && issues+=("accept_redirects_enabled")
     fi
 
     echo "${issues[*]}"
@@ -563,11 +555,11 @@ _kernel_audit_ipv6() {
     # IPv6 is enabled - check if it's actively used
     local ipv6_stats=$(_kernel_ipv6_get_stats)
     local ipv6_in_use=$(_kernel_ipv6_in_use && echo "yes" || echo "no")
-    local ipv6_issues=$(_kernel_ipv6_check_security)
+    local ipv6_scan=$(_kernel_ipv6_scan)
+    local ipv6_issues=$(_kernel_ipv6_check_security "$ipv6_scan")
     local ipv6_fw=$(_kernel_ipv6_firewall_check)
     # Both failing branches name the weak settings, and where each one is.
-    local tok where ipv6_scan ipv6_text=""
-    ipv6_scan=$(_kernel_ipv6_scan)
+    local tok where ipv6_text=""
     for tok in $ipv6_issues; do
         where=$(_kernel_ipv6_where "$tok" "$ipv6_scan")
         ipv6_text+="$(i18n "kernel.ipv6_issue_$tok")${where:+: $where}; "
@@ -765,6 +757,9 @@ KERNEL_IFACE_KEYS='^(send_redirects|secure_redirects|proxy_arp|accept_redirects|
 _kernel_iface_scan() {
     local key="$1" severity="$2" expected="$3" dir name param value all=0
     [[ "$key" =~ $KERNEL_IFACE_KEYS ]] || return 0
+    # On a forwarding host an interface's own proxy_arp is part of what it routes
+    # (Calico's veths, a routed hypervisor's bridge): zeroing it cuts those off.
+    [[ "$key" == proxy_arp ]] && _kernel_ip_forward_needed && return 0
     if [[ "$key" == rp_filter ]]; then
         all=$(_kernel_get_sysctl net.ipv4.conf.all.rp_filter) || true
         [[ "$all" =~ ^[0-9]+$ ]] || all=0

@@ -224,6 +224,11 @@ run_case "iface/forwarding-interface-judged" 1 \
     '                [[ "$(_kernel_get_sysctl "net.ipv4.conf.${name//./\/}.forwarding")" == 1 ]] && continue ;;' \
     '                : ;;'
 
+# A forwarding host's own proxy_arp is routing: zeroing it cuts off what it routes.
+run_case "iface/proxy-arp-forwarding-judged" 1 \
+    '    [[ "$key" == proxy_arp ]] && _kernel_ip_forward_needed && return 0' \
+    '    :'
+
 run_case "iface/rp-filter-below-all-judged" 1 \
     '            rp_filter) (( value >= all )) || continue ;;' \
     '            rp_filter) ;;'
@@ -271,10 +276,6 @@ run_case "ipv6/forwarding-redirects-judged" 1 \
 run_case "ipv6/forwarding-ra-judged-as-plain" 1 \
     '            if [[ "$fwd" == 1 ]]; then accepts=$(( value == 2 )); else accepts=$(( value != 0 )); fi' \
     '            accepts=$(( value != 0 ))'
-
-run_case "ipv6/tempaddr-minus-one-judged" 1 \
-    '        if [[ "$value" =~ ^[0-9]+$ ]] && (( value < 2 )); then' \
-    '        if [[ "$value" =~ ^-?[0-9]+$ ]] && (( value < 2 )); then'
 
 run_case "ipv6/networkd-links-judged" 1 \
     '        grep -qxF -- "$name" <<<"$managed" && continue' \

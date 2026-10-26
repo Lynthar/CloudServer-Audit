@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# On Arch the entry scripts install a missing tool with a full -Syu: -Sy syncs
-# the database and installs against it without upgrading the rest, the partial
-# upgrade Arch does not support.
+# On Arch the entry scripts install nothing: there installing means a full -Syu
+# (-Sy alone is the partial upgrade Arch does not support), and an audit or an
+# installer must not upgrade the whole host unasked. They print the command instead.
 
 load helpers.bash
 
@@ -24,15 +24,19 @@ setup() {
     id() { echo 0; }
 }
 
-@test "run.sh: a missing tool is installed with pacman -Syu" {
+@test "run.sh: a missing tool is named with the pacman command, and nothing is upgraded" {
     eval "$(awk '/^check_requirements\(\)/,/^}/' "$(_vpssec_repo_root)/run.sh")"
     VPSSEC_NO_VERIFY=1
-    check_requirements
-    [ "$(cat "$PACMAN_LOG")" = "pacman -Syu --noconfirm --needed curl" ]
+    run check_requirements
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pacman -Syu --needed curl"* ]]
+    [ ! -e "$PACMAN_LOG" ]
 }
 
-@test "install.sh: a missing tool is installed with pacman -Syu" {
+@test "install.sh: a missing tool is named with the pacman command, and nothing is upgraded" {
     eval "$(awk '/^check_system\(\)/,/^}/' "$(_vpssec_repo_root)/install.sh")"
-    check_system
-    [ "$(cat "$PACMAN_LOG")" = "pacman -Syu --noconfirm --needed curl" ]
+    run check_system
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pacman -Syu --needed curl"* ]]
+    [ ! -e "$PACMAN_LOG" ]
 }

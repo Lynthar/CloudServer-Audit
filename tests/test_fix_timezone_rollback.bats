@@ -129,3 +129,21 @@ _snapshot_of() {
     [ "$status" -eq 0 ]
     grep -q 'Undo for timezone.enable_ntp: timedatectl set-ntp false' "$VPSSEC_LOGS/vpssec.log"
 }
+
+@test "enable_ntp: with no bus to timedated, the installed timesyncd is started, not swapped for chrony" {
+    # set-ntp needs D-Bus; systemctl does not. Debian's chrony package removes systemd-timesyncd.
+    _vpssec_stub timedatectl 1
+    _vpssec_stub_script systemctl <<'SH'
+case "$*" in
+    *list-unit-files*systemd-timesyncd*) echo 'systemd-timesyncd.service disabled enabled' ;;
+    "is-enabled systemd-timesyncd") echo disabled; exit 1 ;;
+esac
+exit 0
+SH
+    _vpssec_stub apt-get 0
+    run _timezone_fix_enable_ntp
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called systemctl 'enable --now systemd-timesyncd'
+    _vpssec_refute _vpssec_stub_called apt-get
+    grep -q 'Undo for timezone.enable_ntp: systemctl disable --now systemd-timesyncd' "$VPSSEC_LOGS/vpssec.log"
+}

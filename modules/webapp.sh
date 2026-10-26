@@ -254,9 +254,9 @@ _webapp_nginx_server_tokens() {
     ' | sort -n | cut -f2
 }
 
-# The http servers the headers check requests, one per line: "url\t<url>\t<curl
-# --resolve entry, or ->", or "unchecked\t<name>\t<listen|name>" for one this
-# host cannot address. One with ssl_reject_handshake on serves no page.
+# The http servers the headers check requests, one per line: "url\t<url>\t<curl --resolve
+# entry, or ->\t<own: it sets add_header itself, or ->", or "unchecked\t<name>\t<listen|name>"
+# for one this host cannot address. One with ssl_reject_handshake on serves no page.
 _webapp_nginx_header_targets() {
     nginx_statements <<<"$NGINX_DUMP" | LC_ALL=C awk -F'\t' '
         # A listen spec into A (address to connect to), P (port) and K (the
@@ -284,6 +284,7 @@ _webapp_nginx_header_targets() {
         $3 == "server_name" { names[$1] = names[$1] " " $4 }
         $3 == "ssl" && $4 == "on" { sslon[$1] = 1 }
         $3 == "ssl_reject_handshake" && $4 == "on" { reject[$1] = 1 }
+        $3 == "add_header" { own[$1] = 1 }
         END {
             # A request with no matching name goes to the default_server of its
             # socket, else to the first server that listens there.
@@ -326,7 +327,7 @@ _webapp_nginx_header_targets() {
                 } else {
                     host = name; resolve = name ":" bP ":" addr
                 }
-                print "url\t" (bT ? "https" : "http") "://" host (bP == (bT ? "443" : "80") ? "" : ":" bP) "/\t" resolve
+                print "url\t" (bT ? "https" : "http") "://" host (bP == (bT ? "443" : "80") ? "" : ":" bP) "/\t" resolve "\t" ((s in own) ? "own" : "-")
             }
         }
     '
@@ -371,14 +372,14 @@ _webapp_probe_headers() {
     done
 }
 
-# One line per http server: "missing\t<url>\t<headers>", "ok\t<url>", or
-# "unchecked\t<url or name>\t<reason>" (listen, name, curl, budget, or curl's
-# exit code). A server that answers with no page is left out.
+# One line per http server: "ok\t<url>", "missing\t<url>\t<headers>" ("own" from a server
+# whose own add_header keeps http{}'s out), or "unchecked\t<url or name>\t<reason>" (listen,
+# name, curl, budget, or curl's exit code). A server that answers with no page is left out.
 _webapp_nginx_header_results() {
-    local kind where how out rc header joined deadline=$((SECONDS + WEBAPP_PROBE_BUDGET))
+    local kind where how own out rc header joined deadline=$((SECONDS + WEBAPP_PROBE_BUDGET))
     local -a keys=() missing=()
     mapfile -t keys < <(printf '%s\n' "${!NGINX_SECURITY_HEADERS[@]}" | LC_ALL=C sort)
-    while IFS=$'\t' read -r kind where how; do
+    while IFS=$'\t' read -r kind where how own; do
         if [[ "$kind" == unchecked ]]; then
             printf 'unchecked\t%s\t%s\n' "$where" "$how"
             continue
@@ -401,7 +402,9 @@ _webapp_nginx_header_results() {
             printf 'ok\t%s\n' "$where"
         else
             printf -v joined '%s, ' "${missing[@]}"
-            printf 'missing\t%s\t%s\n' "$where" "${joined%, }"
+            kind=missing
+            [[ "$own" == own ]] && kind=own
+            printf '%s\t%s\t%s\n' "$kind" "$where" "${joined%, }"
         fi
     done < <(_webapp_nginx_header_targets)
 }
@@ -425,14 +428,19 @@ _webapp_nginx_server_tokens_ok() {
     [[ -z "$(_webapp_nginx_server_tokens)" ]]
 }
 
+# No site the drop-in reaches lacks a header, and one was seen with all of them.
 # nginx's reload returns before its new workers take over, so a request right
 # after a fix can still meet the old configuration: ask again before failing.
 _webapp_nginx_security_headers_ok() {
-    local try
+    local try results
     for try in 1 2 3; do
         nginx_dump_reset
         nginx_dump_load || return 1
-        grep -q $'^missing\t' <<<"$(_webapp_nginx_header_results)" || return 0
+        results=$(_webapp_nginx_header_results)
+        if ! grep -q $'^missing\t' <<<"$results"; then
+            grep -q $'^ok\t' <<<"$results"
+            return
+        fi
         (( try == 3 )) || sleep 1
     done
     return 1
@@ -998,11 +1006,12 @@ _webapp_audit_nginx() {
 
     # 2. Security headers, as each site's response carries them: an application
     # behind proxy_pass may send them itself, which no nginx directive shows.
-    local kind where what joined headers_ok=0
-    local -a headers_missing=() headers_unchecked=()
+    local kind where what joined headers_ok=0 suggestion
+    local -a headers_missing=() headers_own=() headers_unchecked=()
     while IFS=$'\t' read -r kind where what; do
         case "$kind" in
             missing) headers_missing+=("$where: $what") ;;
+            own) headers_own+=("$where: $what ($(i18n 'webapp.headers_own_add_header'))") ;;
             ok) headers_ok=1 ;;
             unchecked)
                 case "$what" in
@@ -1015,13 +1024,20 @@ _webapp_audit_nginx() {
         esac
     done < <(_webapp_nginx_header_results)
 
-    if (( ${#headers_missing[@]} > 0 )); then
-        printf -v joined '%s; ' "${headers_missing[@]}"
+    # The fix's drop-in sits in http{}: offered only where a site it reaches lacks one.
+    if (( ${#headers_missing[@]} + ${#headers_own[@]} > 0 )); then
+        local fix_id="webapp.nginx_security_headers"
+        suggestion=$(i18n 'webapp.add_security_headers')
+        if (( ${#headers_missing[@]} == 0 )); then
+            fix_id=""
+            suggestion=$(i18n 'webapp.add_security_headers_in_server')
+        fi
+        printf -v joined '%s; ' "${headers_missing[@]}" "${headers_own[@]}"
         check_emit "webapp.nginx_security_headers" low failed \
-            title="$(i18n 'webapp.missing_security_headers' "count=${#headers_missing[@]}")" \
+            title="$(i18n 'webapp.missing_security_headers' "count=$(( ${#headers_missing[@]} + ${#headers_own[@]} ))")" \
             desc="${joined%; }" \
-            suggestion="$(i18n 'webapp.add_security_headers')" \
-            fix="webapp.nginx_security_headers"
+            suggestion="$suggestion" \
+            fix="$fix_id"
     elif (( headers_ok )); then
         check_emit "webapp.nginx_security_headers_ok" info passed \
             title="$(i18n 'webapp.security_headers_ok')" \
