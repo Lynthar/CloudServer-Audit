@@ -20,13 +20,13 @@ COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 # Pinned cosign for the package-manager-fallback path; the hash is verified
 # before dpkg or install sees the file. cosign-bump.yml rewrites these in
 # run.sh AND here weekly, and hard-fails if either stops matching.
-COSIGN_PIN_VERSION="3.1.3"
+COSIGN_PIN_VERSION="3.1.4"
 # .deb assets — Debian/Ubuntu (installed via dpkg)
-COSIGN_PIN_SHA256_AMD64="75357d96161da4d06d37c4b2831fa6978483cdce661999e5951b586f9ee1d710"
-COSIGN_PIN_SHA256_ARM64="cfa1a4ef37201be3086bb68f7d5f6e51dd497f28cdfa5bd990fbdffa92557cf8"
+COSIGN_PIN_SHA256_AMD64="6db74c0ad58e69fca184bf0c6c4be40304aa12ab81b4b672042f91979934d547"
+COSIGN_PIN_SHA256_ARM64="ccd63f2710d7fd4becd9f3db93b4bec15e154893fe7aa8260136575092398561"
 # static binaries — RHEL/Arch and any other non-dpkg distro
-COSIGN_PIN_SHA256_BIN_AMD64="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
-COSIGN_PIN_SHA256_BIN_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a"
+COSIGN_PIN_SHA256_BIN_AMD64="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
+COSIGN_PIN_SHA256_BIN_ARM64="ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2"
 
 # Colors
 RED='\033[0;31m'
