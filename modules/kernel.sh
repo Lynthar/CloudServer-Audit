@@ -1416,6 +1416,25 @@ _kernel_ufw_align() {
     write_file_atomic "$file" "$content"$'\n\n'"# vpssec: overrides the values above"$'\n'"$lines"
 }
 
+# For ufw.enable, which applies that file at once and at every boot: the hardened
+# keys this tool persisted, held there too. Only those, so a key in ufw's file
+# that this tool never wrote (ip_forward=1 for a VPN) stays as it is.
+_kernel_ufw_align_persisted() {
+    local entry param rest value
+    local -a held=()
+    local -A spec=()
+    [[ -f "$VPSSEC_SYSCTL_CONF" ]] || return 0
+    for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
+        param="${entry%%:*}"
+        rest="${entry#*:}"
+        spec[$param]="${rest%%:*}"
+    done
+    while IFS=$'\t' read -r param value _; do
+        _kernel_value_meets "$value" "${spec[$param]}" && held+=("$param $value ${spec[$param]}")
+    done < <(printf '%s\n' "${!spec[@]}" | LC_ALL=C sort | _kernel_boot_values 0 "$VPSSEC_SYSCTL_CONF")
+    (( ${#held[@]} == 0 )) || _kernel_ufw_align "${held[@]}"
+}
+
 _kernel_fix_kernel_params() {
     print_info "$(i18n 'kernel.hardening_kernel')"
 

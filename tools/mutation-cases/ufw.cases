@@ -121,3 +121,13 @@ run_case "enable/confirm-screen-shows-status" 1 \
 run_case "enable/unknown-ip-unsaid" 1 \
     "        tty_warn \"\$(i18n 'ufw.operator_ip_unknown')\"" \
     '        :'
+
+# ufw installed after kernel.harden_network ran: enabling it applies its stock
+# sysctl file and the earlier fix comes undone, at once and at every boot.
+run_case "enable/sysctl-not-aligned" 1 \
+    '        _kernel_ufw_align_persisted && aligned=1' \
+    '        aligned=1'
+
+run_case "enable/sysctl-align-failure-unsaid" 1 \
+    "    (( aligned )) || print_warn \"\$(i18n 'ufw.sysctl_not_aligned')\"" \
+    '    :'

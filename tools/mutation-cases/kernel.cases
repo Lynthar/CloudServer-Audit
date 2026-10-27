@@ -311,6 +311,19 @@ run_case "ufw-sysctl/agreeing-key-appended" 1 \
     '        _kernel_value_meets "$value" "${spec[$param]}" && continue' \
     '        :'
 
+run_case "ufw-sysctl/persisted-not-held" 1 \
+    '    (( ${#held[@]} == 0 )) || _kernel_ufw_align "${held[@]}"' \
+    '    :'
+
+run_case "ufw-sysctl/unhardened-persisted-copied" 1 \
+    '        _kernel_value_meets "$value" "${spec[$param]}" && held+=("$param $value ${spec[$param]}")' \
+    '        held+=("$param $value ${spec[$param]}")'
+
+# Without the drop-in there is nothing to hold, and reading it anyway spills awk's error.
+run_case "ufw-sysctl/missing-dropin-read" 1 \
+    '    [[ -f "$VPSSEC_SYSCTL_CONF" ]] || return 0' \
+    '    :'
+
 run_case "ufw-sysctl/not-backed-up" 1 \
     '    backup_file "$file" >/dev/null || return 1' \
     '    :'

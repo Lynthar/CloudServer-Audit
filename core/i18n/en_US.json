@@ -301,6 +301,7 @@
     "installing_ufw": "Installing UFW...",
     "enabling_ufw": "Enabling UFW...",
     "ufw_enable_failed": "Failed to enable UFW",
+    "sysctl_not_aligned": "Could not hold the hardened network settings in ufw's sysctl file: enabling UFW may have weakened some of them, and the next audit's network parameter check lists which",
     "default_deny_set": "Default incoming policy set to deny",
     "default_deny_failed": "Failed to set default policy",
     "ssh_rule_failed": "Failed to add SSH rule",

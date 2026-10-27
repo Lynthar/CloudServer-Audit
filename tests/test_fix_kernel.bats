@@ -880,6 +880,65 @@ _sysctl_p_value() {
     [ "$(cat "${VPSSEC_BACKUP_SESSION}${ufw_conf}")" = 'net/ipv4/conf/all/log_martians=0' ]
 }
 
+@test "ufw enable: keys harden_network persisted are held in ufw's sysctl file" {
+    # ufw installed after harden_network ran: nothing aligned its file then, and
+    # enabling ufw applies its stock log_martians=0 at once and at every boot.
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" \
+        'net/ipv4/conf/all/accept_redirects=0' \
+        'net/ipv4/conf/all/log_martians=0' \
+        'net/ipv4/conf/default/log_martians=0'
+    mkdir -p "$SYSCTL_D"
+    printf '%s\n' 'net.ipv4.conf.all.log_martians = 1' 'net.ipv4.conf.default.log_martians = 1' \
+        'net.ipv4.conf.*.accept_redirects = 0' 'net.ipv4.conf.all.accept_redirects = 0' \
+        > "$VPSSEC_SYSCTL_CONF"
+    _vpssec_begin_backup_session
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.default.log_martians)" = 1 ]
+    [ "$(grep -c accept_redirects "$ufw_conf")" = 1 ]
+    [ "$(head -1 "${VPSSEC_BACKUP_SESSION}${ufw_conf}")" = 'net/ipv4/conf/all/accept_redirects=0' ]
+}
+
+@test "ufw enable: a value in the drop-in that is not hardened is not copied" {
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0' 'net/ipv4/conf/default/log_martians=0'
+    mkdir -p "$SYSCTL_D"
+    printf '%s\n' 'net.ipv4.conf.all.log_martians = 1' 'net.ipv4.conf.default.log_martians = 0' \
+        > "$VPSSEC_SYSCTL_CONF"
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+    [ "$(grep -c 'default.log_martians' "$ufw_conf")" = 1 ]
+}
+
+@test "ufw enable: a key ufw's file sets that the drop-in does not stays the operator's" {
+    # ip_forward=1 in ufw's file is the documented way to route through ufw.
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/ip_forward=1' 'net/ipv4/conf/all/log_martians=0'
+    mkdir -p "$SYSCTL_D"
+    printf 'net.ipv4.conf.all.log_martians = 1\n' > "$VPSSEC_SYSCTL_CONF"
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.ip_forward)" = 1 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+}
+
+@test "ufw enable: without the drop-in, ufw's sysctl file is not touched" {
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0'
+    rm -f "$VPSSEC_SYSCTL_CONF"
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    [ "$(cat "$ufw_conf")" = 'net/ipv4/conf/all/log_martians=0' ]
+}
+
 # ==============================================================================
 # The core-dump fix
 # ==============================================================================

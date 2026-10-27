@@ -29,6 +29,11 @@ setup() {
     _vpssec_stub systemctl 3
     _sshd_ports 22
     _ufw_working
+
+    # ufw.enable holds harden_network's keys in ufw's sysctl file through
+    # kernel.sh, which the engine loads; test_fix_kernel.bats covers that helper.
+    declare -gA VPSSEC_MODULE_LOADED=([kernel]=1)
+    _kernel_ufw_align_persisted() { echo "ufw-sysctl-align" >> "$VPSSEC_STUB_LOG"; }
 }
 
 # ---- stubs ----------------------------------------------------------
@@ -212,6 +217,45 @@ _call_at() {
     run _ufw_fix_enable
     [ "$status" -eq 1 ]
     [ ! -s "$UFW_USER_RULES" ]
+}
+
+@test "enable: ufw's sysctl file is aligned after the confirmation and before ufw enable" {
+    # ufw installed after harden_network ran brings its own weaker values, and
+    # enabling applies them: the plan's earlier fix is undone at once and at boot.
+    confirm_critical() { echo "confirm" >> "$VPSSEC_STUB_LOG"; return 0; }
+
+    run _ufw_fix_enable
+    [ "$status" -eq 0 ]
+
+    local confirm_at align_at enable_at
+    confirm_at=$(_call_at '^confirm')
+    align_at=$(_call_at '^ufw-sysctl-align')
+    enable_at=$(_call_at '^ufw enable')
+    [ -n "$confirm_at" ]
+    [ -n "$align_at" ]
+    [ -n "$enable_at" ]
+    [ "$confirm_at" -lt "$align_at" ]
+    [ "$align_at" -lt "$enable_at" ]
+}
+
+@test "enable: declining leaves ufw's sysctl file alone" {
+    confirm_critical() { return 1; }
+
+    run _ufw_fix_enable
+    [ "$status" -eq 1 ]
+    _vpssec_refute grep -q '^ufw-sysctl-align' "$VPSSEC_STUB_LOG"
+}
+
+@test "enable: an alignment that fails is said, and the firewall still comes up" {
+    _kernel_ufw_align_persisted() { return 1; }
+    confirm_critical() { return 0; }
+    i18n_load en_US
+    VPSSEC_QUIET_SCAN=0
+
+    run _ufw_fix_enable
+    [ "$status" -eq 0 ]
+    _vpssec_stub_called ufw 'enable'
+    [[ "$output" == *"Could not hold the hardened network settings"* ]]
 }
 
 @test "enable: a successful enable logs how to undo it" {

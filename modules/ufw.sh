@@ -531,6 +531,14 @@ _ufw_fix_enable() {
         return 1
     fi
 
+    # Enabling applies ufw's sysctl file, now and at every boot: without this, a
+    # key a kernel fix persisted before ufw was installed comes back weaker.
+    local aligned=0
+    if [[ "${VPSSEC_MODULE_LOADED[kernel]:-0}" == 1 ]] || module_load kernel; then
+        _kernel_ufw_align_persisted && aligned=1
+    fi
+    (( aligned )) || print_warn "$(i18n 'ufw.sysctl_not_aligned')"
+
     print_info "$(i18n 'ufw.enabling_ufw')"
     if echo "y" | ufw enable >/dev/null; then
         print_ok "$(i18n 'ufw.ufw_enabled')"
