@@ -262,6 +262,86 @@ S
     [[ "$(_desc users.recent_users)" == *"ubuntu ("* ]]
 }
 
+# GCP has no cloud-init user: the guest agent creates each account from a metadata
+# key, lists it in its registry, and grants its group sudo in one rule of its own.
+_gcp_agent() {
+    VPSSEC_CLOUD_PROVIDER=gcp VPSSEC_CLOUD_TIER=""
+    USERS_GCP_AGENT_USERS="$BATS_TEST_TMPDIR/google_users"
+    printf '%s\n' "$@" > "$USERS_GCP_AGENT_USERS"
+    USERS_GCP_SUDOERS="$BATS_TEST_TMPDIR/sudoers.d/google_sudoers"
+    mkdir -p "$BATS_TEST_TMPDIR/sudoers.d"
+    printf '@includedir %s\n' "$BATS_TEST_TMPDIR/sudoers.d" >> "$SUDOERS_FILE"
+}
+
+_check() {
+    jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]' "$VPSSEC_STATE/checks.json"
+}
+
+@test "users audit: on GCP, an account the guest agent registered is neither suspicious nor recent" {
+    _account "admin:x:1503:1503::$BATS_TEST_TMPDIR/admin:/bin/bash"
+    mkdir -p "$BATS_TEST_TMPDIR/admin"
+    _gcp_agent admin
+    users_audit
+    _vpssec_refute _emitted users.suspicious_names
+    _vpssec_refute _emitted users.recent_users
+}
+
+@test "users audit: on GCP, an account the guest agent did not register is still reported" {
+    _account "admin:x:1503:1503::$BATS_TEST_TMPDIR/admin:/bin/bash"
+    mkdir -p "$BATS_TEST_TMPDIR/admin"
+    _gcp_agent lab sysadmin
+    users_audit
+    [ "$(_desc users.suspicious_names)" = "admin" ]
+    [[ "$(_desc users.recent_users)" == *"admin ("* ]]
+}
+
+@test "users audit: the guest agent's registry counts only on GCP" {
+    _account "lab:x:1503:1503::$BATS_TEST_TMPDIR/lab:/bin/bash"
+    mkdir -p "$BATS_TEST_TMPDIR/lab"
+    _gcp_agent lab
+    VPSSEC_CLOUD_PROVIDER=azure
+    users_audit
+    [[ "$(_desc users.recent_users)" == *"lab ("* ]]
+}
+
+@test "users audit: on GCP, the guest agent's google-sudoers rule alone is low" {
+    _gcp_agent lab
+    printf '%%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL\n' > "$USERS_GCP_SUDOERS"
+    users_audit
+    [ "$(_check users.nopasswd_sudo severity)" = low ]
+    [ "$(_check users.nopasswd_sudo title)" = "$(i18n users.nopasswd_sudo_gcp_agent): 1" ]
+}
+
+@test "users audit: the guest agent's rule off GCP is medium" {
+    _gcp_agent lab
+    printf '%%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL\n' > "$USERS_GCP_SUDOERS"
+    VPSSEC_CLOUD_PROVIDER=aws
+    users_audit
+    [ "$(_check users.nopasswd_sudo severity)" = medium ]
+}
+
+@test "users audit: on GCP, the guest agent's rule beside another passwordless rule is medium" {
+    _gcp_agent lab
+    printf '%%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL\n' > "$USERS_GCP_SUDOERS"
+    printf 'deploy ALL=(ALL) NOPASSWD: ALL\n' > "$BATS_TEST_TMPDIR/sudoers.d/90-deploy"
+    users_audit
+    [ "$(_check users.nopasswd_sudo severity)" = medium ]
+}
+
+@test "users audit: on GCP, the grant reworded is medium" {
+    _gcp_agent lab
+    printf '%%google-sudoers ALL=(ALL) NOPASSWD: ALL\n' > "$USERS_GCP_SUDOERS"
+    users_audit
+    [ "$(_check users.nopasswd_sudo severity)" = medium ]
+}
+
+@test "users audit: on GCP, the grant in a file not the agent's is medium" {
+    _gcp_agent lab
+    printf '%%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL\n' > "$BATS_TEST_TMPDIR/sudoers.d/90-ops"
+    users_audit
+    [ "$(_check users.nopasswd_sudo severity)" = medium ]
+}
+
 # ---- authorized_keys -----------------------------------------------------------------
 
 # $1 user, $2 key file mode; the account's uid owns its files.

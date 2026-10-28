@@ -34,6 +34,16 @@ run_case "agents/azure-listed-twice" 1 \
     '    "waagent|walinuxagent waagent|azure|walinuxagent|no"' \
     '    "waagent|walinuxagent waagent|azure|walinuxagent|no" "WaLinuxAgent|walinuxagent|azure|walinuxagent|no"'
 
+# GCP's telemetry plugin dropped, or found by its manager's unit, which stays
+# active when metadata switches the plugin off.
+run_case "agents/gcp-telemetry-suspicious" 1 \
+    '    "guest_telemetry||gcp|google_telemetry|optional"' \
+    '    "google_osconfig_agent|google-osconfig-agent|gcp|google_osconfig|optional"'
+
+run_case "agents/gcp-telemetry-by-manager-unit" 1 \
+    '    "guest_telemetry||gcp|google_telemetry|optional"' \
+    '    "guest_telemetry|google-guest-agent-manager|gcp|google_telemetry|optional"'
+
 # ---- metadata service --------------------------------------------------
 
 # Without -f a 404 page is a body, and it scans clean.

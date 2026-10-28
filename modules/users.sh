@@ -9,6 +9,9 @@
 USERS_SHADOW_FILE="/etc/shadow"
 USERS_LOGIN_DEFS="/etc/login.defs"
 USERS_PWQUALITY_CONF="/etc/security/pwquality.conf"
+# GCP's guest agent: the accounts it created from metadata keys, and its sudo rule.
+USERS_GCP_AGENT_USERS="/var/lib/google/google_users"
+USERS_GCP_SUDOERS="/etc/sudoers.d/google_sudoers"
 
 # System users that should have shells (whitelist)
 declare -ga ALLOWED_SHELL_USERS=(
@@ -205,17 +208,18 @@ _cloudinit_default_users_for_provider() {
     esac
 }
 
-# The recognised provider's cloud-init default user, which the name and recency
-# heuristics skip: every fresh image has one. An unrecognised provider has none,
-# so an `admin` on a plain VPS is still reported.
+# The recognised provider's default accounts, which the name and recency heuristics
+# skip: its cloud-init user, or on GCP each account the guest agent registered. An
+# unrecognised provider has none, so an `admin` on a plain VPS is still reported.
 _is_provider_default_user() {
     [[ "$(vpssec_cloud_tier)" != unknown ]] || return 1
-    [[ "$1" =~ $(_cloudinit_default_users_for_provider) ]]
+    [[ "$1" =~ $(_cloudinit_default_users_for_provider) ]] && return 0
+    [[ "$(vpssec_cloud_provider)" == gcp ]] && grep -qxF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null
 }
 
 # True only when every NOPASSWD line has exactly one principal, that
 # principal is a cloud-init default user, and it is the SAME one throughout.
-# Anything else — groups, aliases, wildcards, two default users — is high.
+# Anything else — groups, aliases, wildcards, two default users — is medium.
 _nopasswd_is_cloudinit_only() {
     local findings="$1"
     local cloudinit_users
@@ -261,6 +265,13 @@ _nopasswd_is_cloudinit_only() {
     done <<< "$findings"
 
     [[ -n "$seen_user" ]]
+}
+
+# True only on GCP when the one NOPASSWD rule is the guest agent's for its
+# google-sudoers group, verbatim in the agent's own file; any other wording is medium.
+_nopasswd_is_gcp_agent_only() {
+    [[ "$(vpssec_cloud_provider)" == gcp ]] &&
+        [[ "$1" == "$USERS_GCP_SUDOERS: %google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL" ]]
 }
 
 # Emits "user|uid|date|home|evidence" for recently created accounts. POSIX
@@ -822,9 +833,9 @@ users_audit() {
             suggestion="$(i18n 'users.review_sudo')"
     fi
 
-    # Cloud images ship NOPASSWD for their cloud-init user, so calling every
-    # fresh VM high risk destroys the signal. Entries scoped to a single
-    # cloud-init default user are medium; everything else is high.
+    # Cloud images ship NOPASSWD for their default account, so calling every fresh
+    # VM medium destroys the signal: a single cloud-init default user, or GCP's
+    # guest-agent group rule alone, is low; everything else is medium.
     local nopasswd=$(_find_nopasswd_sudo)
     local nopasswd_count=$(count_lines "$nopasswd")
 
@@ -841,6 +852,9 @@ users_audit() {
         if _nopasswd_is_cloudinit_only "$nopasswd"; then
             sev="low"
             title_key="users.nopasswd_sudo_cloudinit"
+        elif _nopasswd_is_gcp_agent_only "$nopasswd"; then
+            sev="low"
+            title_key="users.nopasswd_sudo_gcp_agent"
         fi
 
         check_emit "users.nopasswd_sudo" "$sev" failed \

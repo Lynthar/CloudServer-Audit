@@ -1416,14 +1416,22 @@ _kernel_ufw_align() {
     write_file_atomic "$file" "$content"$'\n\n'"# vpssec: overrides the values above"$'\n'"$lines"
 }
 
-# For ufw.enable, which applies that file at once and at every boot: the hardened
-# keys this tool persisted, held there too. Only those, so a key in ufw's file
-# that this tool never wrote (ip_forward=1 for a VPN) stays as it is.
+# For ufw.enable, which applies that file at once and at every boot: hardened keys held
+# there too. ufw's stock file is nobody's choice, so every key sysctl.d leaves hardened;
+# an edited one, only those this tool persisted, so an operator's ip_forward=1 stays.
 _kernel_ufw_align_persisted() {
-    local entry param rest value
-    local -a held=()
+    local entry param rest value f globs=0
+    local -a held=() files=()
     local -A spec=()
-    [[ -f "$VPSSEC_SYSCTL_CONF" ]] || return 0
+    if [[ "$(file_package_verified "$(fw_ufw_sysctl_file)")" == ufw ]]; then
+        while IFS= read -r f; do
+            [[ -r "$f" ]] && files+=("$f")
+        done < <(_kernel_boot_sysctl_files)
+        globs=$(_kernel_sysctl_globs)
+    elif [[ -f "$VPSSEC_SYSCTL_CONF" ]]; then
+        files=("$VPSSEC_SYSCTL_CONF")
+    fi
+    (( ${#files[@]} > 0 )) || return 0
     for entry in "${KERNEL_SECURITY_PARAMS[@]}"; do
         param="${entry%%:*}"
         rest="${entry#*:}"
@@ -1431,7 +1439,7 @@ _kernel_ufw_align_persisted() {
     done
     while IFS=$'\t' read -r param value _; do
         _kernel_value_meets "$value" "${spec[$param]}" && held+=("$param $value ${spec[$param]}")
-    done < <(printf '%s\n' "${!spec[@]}" | LC_ALL=C sort | _kernel_boot_values 0 "$VPSSEC_SYSCTL_CONF")
+    done < <(printf '%s\n' "${!spec[@]}" | LC_ALL=C sort | _kernel_boot_values "$globs" "${files[@]}")
     (( ${#held[@]} == 0 )) || _kernel_ufw_align "${held[@]}"
 }
 

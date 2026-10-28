@@ -54,7 +54,7 @@ _plant_cron() {
 _plant_ps() {
     _vpssec_stub_script ps <<SH
 case "\$*" in
-    *pcpu,pid,args*) echo "95.0 999999999 ffmpeg -i rtsp://admin:$CANARY@cam.invalid/1" ;;
+    *pcpu,pid,etimes,args*) echo "95.0 999999999 3600 ffmpeg -i rtsp://admin:$CANARY@cam.invalid/1" ;;
     *-p*) exit 1 ;;
 esac
 exit 0

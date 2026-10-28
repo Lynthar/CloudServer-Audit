@@ -321,8 +321,22 @@ run_case "ufw-sysctl/unhardened-persisted-copied" 1 \
 
 # Without the drop-in there is nothing to hold, and reading it anyway spills awk's error.
 run_case "ufw-sysctl/missing-dropin-read" 1 \
-    '    [[ -f "$VPSSEC_SYSCTL_CONF" ]] || return 0' \
-    '    :'
+    '    elif [[ -f "$VPSSEC_SYSCTL_CONF" ]]; then' \
+    '    else'
+
+# A stock ufw file is the package's, so every key sysctl.d leaves hardened is held:
+# GCE's log_martians=1 lives in the vendor's own file, never in vpssec's.
+run_case "ufw-sysctl/stock-file-not-widened" 1 \
+    '    if [[ "$(file_package_verified "$(fw_ufw_sysctl_file)")" == ufw ]]; then' \
+    '    if false; then'
+
+run_case "ufw-sysctl/edited-file-widened" 1 \
+    '    if [[ "$(file_package_verified "$(fw_ufw_sysctl_file)")" == ufw ]]; then' \
+    '    if true; then'
+
+run_case "ufw-sysctl/stock-globs-ignored" 1 \
+    '        globs=$(_kernel_sysctl_globs)' \
+    '        :'
 
 run_case "ufw-sysctl/not-backed-up" 1 \
     '    backup_file "$file" >/dev/null || return 1' \

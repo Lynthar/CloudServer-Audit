@@ -939,6 +939,75 @@ _sysctl_p_value() {
     [ "$(cat "$ufw_conf")" = 'net/ipv4/conf/all/log_martians=0' ]
 }
 
+# ufw's sysctl file as the package shipped it ("ufw"), or edited (no answer), and
+# sysctl.d as these tests write it, with no system directories behind it.
+_ufw_file_stock() {
+    if [[ "$1" == yes ]]; then
+        file_package_verified() { echo ufw; }
+    else
+        file_package_verified() { return 1; }
+    fi
+    KERNEL_SYSCTL_BOOT_DIRS=()
+    mkdir -p "$SYSCTL_D"
+}
+
+@test "ufw enable: from ufw's stock file, a key another sysctl.d file hardened is held" {
+    # GCE images harden log_martians in their own file, so harden_network never
+    # persists it, and enabling ufw would apply the stock 0 at once and at boot.
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0' 'net/ipv4/conf/default/log_martians=0'
+    _ufw_file_stock yes
+    printf '%s\n' 'net.ipv4.conf.all.log_martians=1' 'net.ipv4.conf.default.log_martians=1' \
+        > "$SYSCTL_D/60-gce-network-security.conf"
+    _vpssec_begin_backup_session
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.default.log_martians)" = 1 ]
+}
+
+@test "ufw enable: from ufw's stock file, a key a sysctl.d glob hardened is held" {
+    # systemd 245 and later expand a glob key, as systemd's own 50-default.conf uses.
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0'
+    _ufw_file_stock yes
+    _kernel_sysctl_globs() { echo 1; }
+    printf 'net.ipv4.conf.*.log_martians = 1\n' > "$SYSCTL_D/60-vendor.conf"
+    _vpssec_begin_backup_session
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 1 ]
+}
+
+@test "ufw enable: from ufw's stock file, a key sysctl.d leaves weak is not held" {
+    # The last file to set it wins at boot: an operator's 0 after the vendor's 1.
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0'
+    _ufw_file_stock yes
+    printf 'net.ipv4.conf.all.log_martians=1\n' > "$SYSCTL_D/60-gce-network-security.conf"
+    printf 'net.ipv4.conf.all.log_martians=0\n' > "$SYSCTL_D/90-local.conf"
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ufw_conf")" = 'net/ipv4/conf/all/log_martians=0' ]
+}
+
+@test "ufw enable: an edited ufw file holds only what this tool persisted" {
+    local ufw_conf="$etc/ufw/sysctl.conf"
+    _ufw_sysctl "$ufw_conf" 'net/ipv4/conf/all/log_martians=0' 'net/ipv4/conf/all/rp_filter=2'
+    _ufw_file_stock no
+    printf '%s\n' 'net.ipv4.conf.all.log_martians=1' 'net.ipv4.conf.all.rp_filter=1' \
+        > "$SYSCTL_D/60-gce-network-security.conf"
+    rm -f "$VPSSEC_SYSCTL_CONF"
+
+    run _kernel_ufw_align_persisted
+    [ "$status" -eq 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.log_martians)" = 0 ]
+    [ "$(_sysctl_p_value "$ufw_conf" net.ipv4.conf.all.rp_filter)" = 2 ]
+}
+
 # ==============================================================================
 # The core-dump fix
 # ==============================================================================

@@ -532,7 +532,7 @@ _ufw_fix_enable() {
     fi
 
     # Enabling applies ufw's sysctl file, now and at every boot: without this, a
-    # key a kernel fix persisted before ufw was installed comes back weaker.
+    # key hardened before ufw was installed comes back weaker.
     local aligned=0
     if [[ "${VPSSEC_MODULE_LOADED[kernel]:-0}" == 1 ]] || module_load kernel; then
         _kernel_ufw_align_persisted && aligned=1

@@ -167,6 +167,9 @@ usermod -s /sbin/nologin <账户名>
   `centos` / `admin` / `azureuser` / `opc` 等）的 NOPASSWD：低危。
   几乎所有云厂商出厂镜像都给 cloud-init 默认用户配了 NOPASSWD，是事实
   标准、普遍且预期内，单独标高危没有信号增益。
+- GCP 上 guest agent 给 `google-sudoers` 组写的那一条（`/etc/sudoers.d/google_sudoers`
+  里原样的 `%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL`），且是唯一的免密规则：低危。
+  GCP 镜像没有 cloud-init 默认用户，登录账号由 guest agent 按元数据公钥创建、加进这个组。
 - 其它 NOPASSWD 条目：中危。免密 sudo 可直接提权到 root，但需先拿到
   该账户才能利用（提权放大器，并非"当下已暴露"），故为中危而非高危。
 
@@ -1227,7 +1230,7 @@ grep -n "LD_PRELOAD" /root/.bashrc /root/.profile /home/*/.bashrc /home/*/.profi
 
 **检测特征**:
 - 进程名: xmrig, minerd, kinsing 等
-- 高 CPU 使用率（按可执行文件名跳过 apt、python、java 等已知的高负载程序）
+- 高 CPU 使用率（按可执行文件名跳过 apt、python、java 等已知的高负载程序；存活不到 1 秒的进程不判，它的 CPU 平均值只是一两个时钟滴答）
 - 本机向公网地址的已知矿池端口 (3333, 4444, 5555 等) 发起的连接；回环、私网、链路本地、100.64/10 与 IPv6 ULA 上的连接是本机或内网服务，不算
 
 **修复方法**:

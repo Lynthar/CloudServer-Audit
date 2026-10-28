@@ -125,3 +125,29 @@ run_case "sudoers/dropin-path-names-main" 1 \
 run_case "keys/default-path-only" 1 \
     '        done < <(sshd_authorized_keys_files "$user")' \
     '        done < <(echo "$home/.ssh/authorized_keys")'
+
+# ---- GCP's guest agent ----------------------------------------------------------
+
+run_case "gcp/registered-user-reported" 1 \
+    '    [[ "$(vpssec_cloud_provider)" == gcp ]] && grep -qxF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null' \
+    '    false'
+
+run_case "gcp/registry-off-gcp" 1 \
+    '    [[ "$(vpssec_cloud_provider)" == gcp ]] && grep -qxF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null' \
+    '    grep -qxF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null'
+
+run_case "gcp/registry-substring" 1 \
+    '    [[ "$(vpssec_cloud_provider)" == gcp ]] && grep -qxF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null' \
+    '    [[ "$(vpssec_cloud_provider)" == gcp ]] && grep -qF -- "$1" "$USERS_GCP_AGENT_USERS" 2>/dev/null'
+
+run_case "gcp/agent-rule-medium" 1 \
+    '            title_key="users.nopasswd_sudo_gcp_agent"' \
+    '            sev="medium"'
+
+run_case "gcp/agent-rule-off-gcp" 1 \
+    '    [[ "$(vpssec_cloud_provider)" == gcp ]] &&' \
+    '    true &&'
+
+run_case "gcp/agent-rule-any-file" 1 \
+    '        [[ "$1" == "$USERS_GCP_SUDOERS: %google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL" ]]' \
+    '        [[ "$1" == *": %google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL" ]]'

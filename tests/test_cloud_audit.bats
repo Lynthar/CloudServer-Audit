@@ -76,6 +76,14 @@ SH
     [[ "$(_field cloud.suspicious_agents desc)" == "evil-agent (pid:1, user:root)" ]]
 }
 
+@test "agents: GCP's guest telemetry plugin is a listed agent, not a suspicious one" {
+    _procs google_guest_ag guest_telemetry core_plugin bash
+
+    cloud_audit >/dev/null
+    [[ "$(_field cloud.agents_found desc)" == *"guest_telemetry (GCP): Guest Agent telemetry plugin"* ]]
+    _vpssec_refute grep -q 'cloud.suspicious_agents' <<<"$(_emitted)"
+}
+
 # systemctl with unit $1 active and no other. is-active succeeds when any unit
 # named is active, one unit per argument.
 _active_unit() {
@@ -107,6 +115,15 @@ SH
     cloud_audit >/dev/null
     [ "$(_field cloud.agents_found title)" = "$(i18n cloud.agents_found): 1" ]
     [ "$(_field cloud.agents_found desc)" = "waagent (Azure): Linux VM Agent" ]
+}
+
+@test "agents: the telemetry plugin is not listed while only its manager runs" {
+    # Metadata can switch the plugin off, and the manager's unit stays active.
+    _procs bash
+    _active_unit google-guest-agent-manager
+
+    cloud_audit >/dev/null
+    _vpssec_refute grep -q guest_telemetry <<<"$(_field cloud.agents_found desc)"
 }
 
 @test "agents: the Azure agent under RHEL's unit is found" {

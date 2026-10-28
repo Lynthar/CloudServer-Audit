@@ -11,8 +11,8 @@ CLOUD_AZURE_ASSET_TAG="7783-7084-3265-9085-8269-3286-77"
 # --- Known Cloud Vendor Agents Database ---
 
 # Format: process_name|service_name|vendor_key|desc_key|can_disable; column 2
-# may list several units, space-separated. Columns 3 and 4 are i18n KEY SUFFIXES,
-# rendered only at display. The vendor column shares the provider id space.
+# lists units space-separated, none for a plugin found only by its process. Columns
+# 3 and 4 are i18n KEY SUFFIXES, rendered at display; vendor shares the provider ids.
 declare -ga KNOWN_CLOUD_AGENTS=(
     # Alibaba Cloud
     "AliYunDun|aegis|alibaba|aliyundun|yes"
@@ -45,6 +45,8 @@ declare -ga KNOWN_CLOUD_AGENTS=(
     # Google Cloud
     "google_guest_agent|google-guest-agent|gcp|google_guest|optional"
     "google_osconfig_agent|google-osconfig-agent|gcp|google_osconfig|optional"
+    # A plugin the guest agent's manager runs, and metadata can switch off: no unit.
+    "guest_telemetry||gcp|google_telemetry|optional"
 
     # DigitalOcean
     "do-agent|do-agent|digitalocean|do_agent|yes"
@@ -459,7 +461,7 @@ _find_known_agents() {
         # full name of a longer agent never matches.
         if pgrep -x "${proc_name:0:15}" &>/dev/null; then
             found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|running")
-        # is-active succeeds when any of the units is active.
+        # is-active succeeds when any of the units is active, and fails given none.
         elif systemctl is-active "${units[@]}" &>/dev/null; then
             found+=("$proc_name|$service_name|$vendor_key|$desc_key|$can_disable|service")
         fi
